@@ -1,0 +1,173 @@
+# SpeedDial Protocol v1
+
+Wire protocol between the SpeedDial daemon and UI clients.
+Transport: **WebSocket, text frames, newline-free JSON-RPC 2.0**, one message per frame.
+Default endpoint: `ws://127.0.0.1:7331/ws`.
+
+All timestamps are ISO-8601 UTC strings. All IDs are URL-safe random strings (16+ chars).
+Money/cost values are decimal USD strings.
+
+## Envelope
+
+Request:  `{"jsonrpc":"2.0","id":<int|string>,"method":"<name>","params":{...}}`
+Success:  `{"jsonrpc":"2.0","id":<same>,"result":{...}}`
+Failure:  `{"jsonrpc":"2.0","id":<same>,"error":{"code":<int>,"message":<string>,"data":<any?>}}`
+Notification (server→client, no `id`): `{"jsonrpc":"2.0","method":"<name>","params":{...}}`
+
+Error codes: standard JSON-RPC (-32700, -32600, -32601, -32602, -32603) plus:
+`-32001` unauthenticated, `-32002` not found, `-32003` conflict, `-32010` provider unavailable,
+`-32011` agent process error, `-32020` git error.
+
+## Auth
+
+If the daemon requires auth (default when bound to non-loopback, or `--token` given), the
+client's first request MUST be `auth.authenticate`. All other requests before that fail
+with `-32001`. Loopback connections without a configured token skip auth.
+
+- `auth.authenticate {token: string}` → `{ok: true, daemon: DaemonInfo}`
+
+## Models
+
+```ts
+DaemonInfo = {
+  version: string,            // semver
+  protocolVersion: 1,
+  authRequired: boolean,
+  providers: ProviderInfo[],
+}
+
+ProviderInfo = {
+  id: string,                 // "omp" | "claude" | "codex" | custom
+  name: string,               // display name
+  available: boolean,         // command resolvable on this host
+  command: string,            // resolved spawn command (display/debug)
+  models: string[],           // selectable model ids, may be []
+}
+
+Project = {
+  id: string,
+  name: string,
+  path: string,               // absolute path on the daemon host
+  addedAt: string,
+  lastActiveAt: string,
+}
+
+SessionStatus = "idle" | "running" | "waitingPermission" | "error" | "closed"
+SessionMode   = "build" | "plan"
+
+Session = {
+  id: string,
+  projectId: string,
+  providerId: string,
+  title: string,
+  status: SessionStatus,
+  mode: SessionMode,
+  model: string | null,
+  cwd: string,                // working dir of the agent (project path or worktree)
+  archived: boolean,
+  createdAt: string,
+  updatedAt: string,
+}
+
+FileEntry = { name: string, path: string, isDir: boolean, size: int, modifiedAt: string }
+
+GitStatusFile = { path: string, indexStatus: string, worktreeStatus: string, staged: boolean }
+GitStatus = { branch: string, ahead: int, behind: int, files: GitStatusFile[] }
+GitDiff = { path: string, patch: string, isNew: boolean, isDeleted: boolean, isBinary: boolean }
+Branch = { name: string, isCurrent: boolean, upstream: string | null }
+```
+
+### SessionEvent (discriminated union on `type`)
+
+`seq` and `timestamp` are added by the daemon when persisting/broadcasting; clients always
+receive them. `sessions.history` returns events ordered by `seq` ascending.
+
+```ts
+SessionEvent =
+  | { type: "userMessage", text: string }
+  | { type: "agentMessageChunk", text: string }        // streaming delta
+  | { type: "agentThoughtChunk", text: string }        // streaming delta, collapsible in UI
+  | { type: "toolCall", toolCall: ToolCall }           // created or updated; match by toolCall.id
+  | { type: "plan", entries: PlanEntry[] }             // full replacement
+  | { type: "permissionRequest", request: PermissionRequest }
+  | { type: "permissionResolved", requestId: string, optionId: string }
+  | { type: "usage", usage: UsageInfo }
+  | { type: "turnComplete", stopReason: string }       // "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...
+  | { type: "sessionError", message: string }
+
+ToolCall = {
+  id: string, title: string,
+  kind: string,              // "read"|"edit"|"delete"|"move"|"search"|"execute"|"think"|"fetch"|"other"
+  status: "pending" | "running" | "completed" | "failed",
+  content: ToolCallContent[], // may be []
+  locations: string[],        // file paths touched, may be []
+  rawInput: any | null,
+  rawOutput: any | null,
+}
+ToolCallContent =
+  | { type: "text", text: string }
+  | { type: "diff", path: string, oldText: string | null, newText: string }
+  | { type: "terminal", terminalId: string, output: string }
+
+PlanEntry = { content: string, priority: "high" | "medium" | "low", status: "pending" | "in_progress" | "completed" }
+
+PermissionRequest = {
+  requestId: string,
+  toolCallId: string | null,
+  title: string,
+  options: PermissionOption[],
+}
+PermissionOption = { optionId: string, name: string, kind: "allow_once" | "allow_always" | "reject_once" | "reject_always" }
+
+UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: string | null }
+```
+
+## Methods
+
+### Daemon
+- `daemon.info {}` → `DaemonInfo`
+- `providers.list {}` → `{providers: ProviderInfo[]}`
+
+### Projects
+- `projects.list {}` → `{projects: Project[]}`
+- `projects.add {path: string, name?: string}` → `{project: Project}` — errors `-32602` if path missing or not a directory
+- `projects.remove {id: string}` → `{}` — also archives its sessions; does NOT touch the filesystem
+- `projects.rename {id: string, name: string}` → `{project: Project}`
+
+### Sessions
+- `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
+- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string}` → `{session: Session}`
+- `sessions.send {sessionId: string, text: string}` → `{}` — starts a turn; errors `-32003` if a turn is already running
+- `sessions.cancel {sessionId: string}` → `{}`
+- `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
+- `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
+- `sessions.delete {sessionId: string}` → `{}` — kills the agent process if alive
+- `sessions.setMode {sessionId: string, mode: SessionMode}` → `{session: Session}`
+- `sessions.setModel {sessionId: string, model: string}` → `{session: Session}`
+- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page
+- `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
+
+### Files (paths are relative to the project root; absolute rejected with `-32602`)
+- `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending
+- `fs.read {projectId: string, path: string, maxBytes?: int}` → `{content: string, truncated: boolean, isBinary: boolean}` — default maxBytes 512 KiB, hard cap 4 MiB; binary files return `isBinary: true` with empty content
+
+### Git (all scoped to the project's repo)
+- `git.status {projectId: string}` → `{status: GitStatus}`
+- `git.diff {projectId: string, path?: string, staged?: boolean}` → `{diffs: GitDiff[]}` — patches are unified diffs for that file only
+- `git.branches {projectId: string}` → `{branches: Branch[]}`
+- `git.checkout {projectId: string, branch: string}` → `{}`
+- `git.createBranch {projectId: string, name: string, checkout?: boolean}` → `{}`
+- `git.commit {projectId: string, message: string, stageAll?: boolean}` → `{commitHash: string}`
+- `git.push {projectId: string, setUpstream?: boolean}` → `{}`
+- `git.createPullRequest {projectId: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated
+
+## Notifications (daemon → all authenticated clients)
+
+- `session.created {session: Session}`
+- `session.updated {session: Session}` — any metadata/status change
+- `session.removed {sessionId: string}`
+- `session.event {sessionId: string, seq: int, event: SessionEvent}`
+- `projects.changed {}` — clients refetch `projects.list`
+
+`seq` is a per-session monotonically increasing integer starting at 1. Clients use it for
+gap detection: on reconnect, refetch history with `beforeSeq` of the oldest known gap.

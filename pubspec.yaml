@@ -1,0 +1,10 @@
+name: speeddial_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - packages/protocol
+  - packages/daemon
+  - packages/app

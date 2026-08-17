@@ -1,0 +1,13 @@
+# Generated
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+.packages
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

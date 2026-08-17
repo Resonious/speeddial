@@ -1,0 +1,2 @@
+/// SpeedDial daemon library.
+library;
