@@ -3,6 +3,13 @@ import 'dart:convert';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'api/daemon_client.dart';
+import 'state/chat_store.dart';
+import 'state/files_store.dart';
+import 'state/git_store.dart';
+import 'state/projects_store.dart';
+import 'state/sessions_store.dart';
+
 /// Connection state of a daemon endpoint. In-memory only for now; later
 /// phases drive transitions from the WebSocket client.
 enum ConnectionStatus { disconnected, connecting, connected, failed }
@@ -55,7 +62,8 @@ class ConnectionsStore extends ChangeNotifier {
       <String, ConnectionStatus>{};
   static int _idCounter = 0;
 
-  List<DaemonEndpoint> get endpoints => List<DaemonEndpoint>.unmodifiable(_endpoints);
+  List<DaemonEndpoint> get endpoints =>
+      List<DaemonEndpoint>.unmodifiable(_endpoints);
 
   ConnectionStatus statusOf(String id) =>
       _statuses[id] ?? ConnectionStatus.disconnected;
@@ -83,15 +91,21 @@ class ConnectionsStore extends ChangeNotifier {
     }
   }
 
+  /// Adds an endpoint. When [id] is given it is used verbatim (tests and
+  /// demo mode register clients under such ids); otherwise one is generated.
   Future<void> addEndpoint({
     required String name,
     required String url,
     required String token,
+    String? id,
   }) async {
-    final String id =
+    final String resolvedId =
+        id ??
         'ep-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${_idCounter++}';
-    _endpoints.add(DaemonEndpoint(id: id, name: name, url: url, token: token));
-    _statuses[id] = ConnectionStatus.disconnected;
+    _endpoints.add(
+      DaemonEndpoint(id: resolvedId, name: name, url: url, token: token),
+    );
+    _statuses[resolvedId] = ConnectionStatus.disconnected;
     notifyListeners();
     await _persist();
   }
@@ -117,7 +131,7 @@ class ConnectionsStore extends ChangeNotifier {
 }
 
 /// Holds the currently selected daemon/project/session ids. Nullable and
-/// notify-on-set; later phases (chat, git, files) key off these.
+/// notify-on-set; the chat, files and git stores key off these.
 class SelectionStore extends ChangeNotifier {
   String? _selectedDaemonId;
   String? _selectedProjectId;
@@ -145,13 +159,68 @@ class SelectionStore extends ChangeNotifier {
   }
 }
 
-/// Immutable store graph handed to [AppScope].
-@immutable
+/// Store graph handed to [AppScope]. The five domain stores are constructed
+/// internally and resolve their [DaemonClient] through [clientFor], which
+/// serves ids registered via [registerClient] (tests/demo) or the optional
+/// constructor resolver (real wiring in a later phase).
 class AppData {
-  const AppData({required this.connections, required this.selection});
+  /// [connections] and [selection] default to fresh instances; they exist so
+  /// the pre-Phase-3 callers (main.dart) can keep injecting. The canonical
+  /// construction is `AppData()..registerClient('id', client)`.
+  AppData({
+    ConnectionsStore? connections,
+    SelectionStore? selection,
+    DaemonClient Function(String daemonId)? clientFor,
+  })  : connections = connections ?? ConnectionsStore(),
+        selection = selection ?? SelectionStore(),
+        _fallbackClientFor = clientFor {
+    projects = ProjectsStore(clientFor: this.clientFor);
+    sessions = SessionsStore(clientFor: this.clientFor);
+    chat = ChatStore(clientFor: this.clientFor);
+    files = FilesStore(clientFor: this.clientFor);
+    git = GitStore(clientFor: this.clientFor);
+  }
 
   final ConnectionsStore connections;
   final SelectionStore selection;
+
+  late final ProjectsStore projects;
+  late final SessionsStore sessions;
+  late final ChatStore chat;
+  late final FilesStore files;
+  late final GitStore git;
+
+  final Map<String, DaemonClient> _clients = <String, DaemonClient>{};
+
+  /// Optional resolver consulted when an id was never [registerClient]ed; the
+  /// real WebSocket wiring lands in a later phase.
+  final DaemonClient Function(String daemonId)? _fallbackClientFor;
+
+  /// Registers the client serving [daemonId]. Tests and demo mode inject
+  /// fakes this way. Notifies nothing.
+  void registerClient(String daemonId, DaemonClient client) {
+    _clients[daemonId] = client;
+  }
+
+  /// Returns the registered client for [daemonId], or throws [StateError].
+  DaemonClient clientFor(String daemonId) {
+    final DaemonClient? client = _clients[daemonId];
+    if (client != null) return client;
+    final DaemonClient Function(String daemonId)? fallback = _fallbackClientFor;
+    if (fallback != null) return fallback(daemonId);
+    throw StateError('No client registered for daemon "$daemonId"');
+  }
+
+  /// Releases every store in the graph.
+  void dispose() {
+    connections.dispose();
+    selection.dispose();
+    projects.dispose();
+    sessions.dispose();
+    chat.dispose();
+    files.dispose();
+    git.dispose();
+  }
 }
 
 /// Inherited-widget accessor for the store graph. Panes read stores with

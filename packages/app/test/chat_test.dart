@@ -1,0 +1,214 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:speeddial_app/src/api/fake_daemon.dart';
+import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
+import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
+import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
+import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
+
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+
+void main() {
+  /// Pumps the chat pane at 1200x800 with the fake daemon registered, and
+  /// (optionally) a session selected.
+  Future<(AppData, FakeDaemonClient)> pumpChat(
+    WidgetTester tester, {
+    bool selectSession = true,
+    Duration eventDelay = const Duration(milliseconds: 1),
+  }) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake = FakeDaemonClient(eventDelay: eventDelay);
+    final AppData app = AppData()..registerClient('fake', fake);
+    await app.sessions.refresh('fake');
+
+    if (selectSession) {
+      final Project project = (await fake.listProjects()).first;
+      final Session session = (await fake.listSessions()).first;
+      app.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = project.id
+        ..selectedSessionId = session.id;
+    }
+
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      AppScope(
+        data: app,
+        child: MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(body: ChatPane()),
+        ),
+      ),
+    );
+    await tester.pump();
+    return (app, fake);
+  }
+
+  /// Pumps frames until [condition] holds or [attempts] budget is spent.
+  Future<void> pumpUntil(
+    WidgetTester tester,
+    bool Function() condition, {
+    int attempts = 200,
+    Duration step = const Duration(milliseconds: 10),
+  }) async {
+    for (int i = 0; i < attempts && !condition(); i++) {
+      await tester.pump(step);
+    }
+  }
+
+  testWidgets('empty state shows the select-session placeholder',
+      (WidgetTester tester) async {
+    await pumpChat(tester, selectSession: false);
+
+    expect(find.text('Select or create a session'), findsOneWidget);
+    expect(find.byType(ToolCallCard), findsNothing);
+    expect(find.byType(PlanPanel), findsNothing);
+  });
+
+  testWidgets('streaming fake events render markdown, tool card and plan',
+      (WidgetTester tester) async {
+    await pumpChat(tester);
+
+    // PROTOCOL.md: events only start flowing after `sessions.send` starts a
+    // turn, so drive the composer (same path the other tests use).
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => find
+          .textContaining('Working on it', findRichText: true)
+          .evaluate()
+          .isNotEmpty,
+    );
+
+    // Drain the markdown settle/highlight timer so the test ends clean.
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    // Merged agent message chunks render as markdown body text.
+    expect(
+      find.textContaining('Working on it', findRichText: true),
+      findsOneWidget,
+    );
+    // Tool call card (running -> completed via a second event) is a single card.
+    expect(find.byType(ToolCallCard), findsOneWidget);
+    // Plan event renders its checklist.
+    expect(find.byType(PlanPanel), findsOneWidget);
+    // Usage event surfaces in the composer footer.
+    expect(find.textContaining('tokens'), findsOneWidget);
+  });
+
+  testWidgets('typing and Enter sends a message; user bubble appears',
+      (WidgetTester tester) async {
+    await pumpChat(tester);
+
+    await tester.enterText(find.byType(TextField), 'hello world');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    await pumpUntil(tester, () => find.text('hello world').evaluate().isNotEmpty);
+    expect(find.text('hello world'), findsOneWidget);
+
+    // Drain stream + settle timers.
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('Shift+Enter inserts a newline instead of sending',
+      (WidgetTester tester) async {
+    await pumpChat(tester);
+
+    await tester.enterText(find.byType(TextField), 'line one');
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+
+    final TextField field =
+        tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'line one\n');
+    // The newline landed in the field; nothing was sent — the exact text
+    // appears only in the field itself, not as an extra user bubble.
+    expect(find.text('line one\n'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('stop button shows while running and cancels back to idle',
+      (WidgetTester tester) async {
+    await pumpChat(
+      tester,
+      eventDelay: const Duration(milliseconds: 50),
+    );
+
+    await tester.enterText(find.byType(TextField), 'run this');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    // Wait for the session to enter running (stop icon replaces send).
+    await pumpUntil(
+      tester,
+      () => find.byIcon(Icons.stop_circle_outlined).evaluate().isNotEmpty,
+      attempts: 50,
+    );
+    expect(find.byIcon(Icons.stop_circle_outlined), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.stop_circle_outlined));
+    await tester.pump();
+
+    await pumpUntil(
+      tester,
+      () => find.byIcon(Icons.stop_circle_outlined).evaluate().isEmpty,
+    );
+    expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
+    expect(find.byIcon(Icons.send), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('permission script shows banner; allow resolves the request',
+      (WidgetTester tester) async {
+    final (AppData app, _) = await pumpChat(
+      tester,
+      eventDelay: const Duration(milliseconds: 10),
+    );
+
+    await tester.enterText(find.byType(TextField), 'permission please');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    await pumpUntil(tester, () => find.byType(PermissionBanner).evaluate().isNotEmpty);
+    expect(find.byType(PermissionBanner), findsOneWidget);
+
+    // Allow options are the banner's FilledButtons (rejects are outlined).
+    await tester.tap(find.byType(FilledButton).first, warnIfMissed: false);
+    await tester.pump();
+
+    await pumpUntil(tester, () => find.byType(PermissionBanner).evaluate().isEmpty);
+    expect(find.byType(PermissionBanner), findsNothing);
+
+    // Turn completed: observed status back to idle (lands at turnComplete,
+    // a beat after the banner hides on permissionResolved).
+    final String sessionId = (await app.clientFor('fake').listSessions()).first.id;
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.idle,
+    );
+    expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+
+    await tester.pump(const Duration(seconds: 1));
+  });
+}

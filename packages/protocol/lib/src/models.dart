@@ -511,6 +511,31 @@ class FileEntry {
       };
 }
 
+/// Result of `fs.read`.
+class FileReadResult {
+  const FileReadResult({
+    required this.content,
+    required this.truncated,
+    required this.isBinary,
+  });
+
+  final String content;
+  final bool truncated;
+  final bool isBinary;
+
+  factory FileReadResult.fromJson(Map<String, Object?> json) => FileReadResult(
+        content: json['content']! as String,
+        truncated: json['truncated']! as bool,
+        isBinary: json['isBinary']! as bool,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'content': content,
+        'truncated': truncated,
+        'isBinary': isBinary,
+      };
+}
+
 /// One file's git state, as reported by `git status --porcelain=v2`.
 class GitStatusFile {
   const GitStatusFile({

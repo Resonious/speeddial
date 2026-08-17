@@ -1,0 +1,247 @@
+import 'package:flutter/material.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+
+import '../../scope.dart';
+import '../../theme.dart';
+
+/// Palette color for a session lifecycle status.
+Color sessionStatusColor(SpeedDialColors colors, SessionStatus status) {
+  switch (status) {
+    case SessionStatus.running:
+      return colors.running;
+    case SessionStatus.waitingPermission:
+      return colors.waitingPermission;
+    case SessionStatus.error:
+      return colors.error;
+    case SessionStatus.closed:
+      return colors.closed;
+    case SessionStatus.idle:
+      return colors.idle;
+  }
+}
+
+/// Small pill showing a session's lifecycle status, tinted with the status
+/// color from the theme.
+class SessionStatusChip extends StatelessWidget {
+  const SessionStatusChip({super.key, required this.status});
+
+  final SessionStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    final Color color = sessionStatusColor(colors, status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        status.name,
+        style: Theme.of(context)
+            .textTheme
+            .labelSmall
+            ?.copyWith(color: color, fontSize: 10),
+      ),
+    );
+  }
+}
+
+/// Small mono badge carrying a session's provider id.
+class ProviderBadge extends StatelessWidget {
+  const ProviderBadge({super.key, required this.providerId});
+
+  final String providerId;
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        providerId,
+        style: colors.mono.copyWith(fontSize: 10),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+/// One session row inside an expanded project: status chip, provider badge,
+/// title, and an archive/delete menu. Tapping selects the session.
+class SessionRow extends StatelessWidget {
+  const SessionRow({
+    super.key,
+    required this.session,
+    required this.selected,
+    required this.daemonId,
+    required this.projectId,
+  });
+
+  final Session session;
+  final bool selected;
+  final String daemonId;
+  final String projectId;
+
+  Future<void> _archive(BuildContext context, AppData data) async {
+    await data.sessions.archive(daemonId, session.id, true);
+  }
+
+  Future<void> _delete(BuildContext context, AppData data) async {
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('Delete session'),
+            content: Text('Delete "${session.title}"? This cannot be undone.'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const Key('session-delete-confirm'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    await data.sessions.delete(daemonId, session.id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: 24, right: 4),
+      selected: selected,
+      selectedTileColor: scheme.surfaceContainerHighest,
+      leading: Tooltip(
+        message: session.status.name,
+        child: SizedBox(
+          width: 22,
+          child: Center(
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: sessionStatusColor(context.speedDialColors, session.status),
+              ),
+            ),
+          ),
+        ),
+      ),
+      title: Text(
+        session.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textTheme.bodySmall
+            ?.copyWith(color: selected ? scheme.primary : null),
+      ),
+      subtitle: Wrap(
+        spacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          ProviderBadge(providerId: session.providerId),
+          Text(
+            session.mode.name,
+            style: textTheme.labelSmall
+                ?.copyWith(color: scheme.onSurfaceVariant, fontSize: 10),
+          ),
+          SessionStatusChip(status: session.status),
+        ],
+      ),
+      trailing: PopupMenuButton<_SessionAction>(
+        tooltip: 'Session actions',
+        icon: const Icon(Icons.more_vert, size: 18),
+        onSelected: (_SessionAction action) {
+          switch (action) {
+            case _SessionAction.archive:
+              _archive(context, data);
+            case _SessionAction.delete:
+              _delete(context, data);
+          }
+        },
+        itemBuilder: (BuildContext context) =>
+            const <PopupMenuEntry<_SessionAction>>[
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.archive,
+            child: Text('Archive'),
+          ),
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.delete,
+            child: Text('Delete'),
+          ),
+        ],
+      ),
+      onTap: () {
+        data.selection.selectedProjectId = projectId;
+        data.selection.selectedSessionId = session.id;
+      },
+    );
+  }
+}
+
+enum _SessionAction { archive, delete }
+
+/// The expanded children of a project tile: the session rows for that
+/// project, or (rare) a "no sessions" hint.
+class SessionList extends StatelessWidget {
+  const SessionList({
+    super.key,
+    required this.sessions,
+    required this.daemonId,
+    required this.projectId,
+  });
+
+  final List<Session> sessions;
+  final String daemonId;
+  final String projectId;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    if (sessions.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 8, 12),
+        child: Text(
+          'No sessions',
+          style: Theme.of(context)
+              .textTheme
+              .bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (final Session session in sessions)
+          SessionRow(
+            key: ValueKey<String>('session-${session.id}'),
+            session: session,
+            selected: data.selection.selectedSessionId == session.id,
+            daemonId: daemonId,
+            projectId: projectId,
+          ),
+      ],
+    );
+  }
+}

@@ -10,15 +10,9 @@ void main() {
   /// mock at the given logical viewport size.
   Future<AppData> pumpApp(WidgetTester tester, {Size size = const Size(1440, 900)}) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final AppData data = AppData(
-      connections: ConnectionsStore(),
-      selection: SelectionStore(),
-    );
+    final AppData data = AppData();
     await data.connections.init();
-    addTearDown(() {
-      data.connections.dispose();
-      data.selection.dispose();
-    });
+    addTearDown(data.dispose);
 
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;

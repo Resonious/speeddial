@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../../state/projects_store.dart';
 import '../../theme.dart';
+import 'new_session_sheet.dart';
+import 'session_list.dart';
 
-/// Daemon rail: lists configured endpoints with connection status dots and an
-/// "Add daemon" action. Rendered inside the wide-layout rail slot or a drawer
-/// on narrow screens.
+/// Daemon rail: configured endpoints, then the project/session tree of the
+/// selected daemon, plus an "Add daemon" action. Rendered inside the
+/// wide-layout rail slot or a drawer on narrow screens.
 class LeftRail extends StatelessWidget {
   const LeftRail({super.key});
 
@@ -34,21 +38,22 @@ class LeftRail extends StatelessWidget {
                 ),
               ),
               if (endpoints.isEmpty)
-                Expanded(
-                  child: Center(
-                    child: Text(
-                      'No daemons yet',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: scheme.onSurfaceVariant),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Text(
+                    'No daemons yet',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 )
               else
-                Expanded(
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 232),
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 4),
+                    shrinkWrap: true,
                     itemCount: endpoints.length,
                     itemBuilder: (BuildContext context, int index) {
                       final DaemonEndpoint endpoint = endpoints[index];
@@ -57,13 +62,13 @@ class LeftRail extends StatelessWidget {
                         status: data.connections.statusOf(endpoint.id),
                         selected:
                             data.selection.selectedDaemonId == endpoint.id,
-                        onTap: () =>
-                            data.selection.selectedDaemonId = endpoint.id,
+                        onTap: () => _selectDaemon(context, endpoint),
                       );
                     },
                   ),
                 ),
               const Divider(height: 1),
+              const Expanded(child: _ProjectTree()),
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: OutlinedButton.icon(
@@ -79,11 +84,339 @@ class LeftRail extends StatelessWidget {
     );
   }
 
+  /// Selects [endpoint] and loads its projects/sessions. Failures surface
+  /// through the stores (`ProjectsStore.lastError`); selection stays so the
+  /// user can retry or switch away.
+  static Future<void> _selectDaemon(
+    BuildContext context,
+    DaemonEndpoint endpoint,
+  ) async {
+    final AppData data = AppScope.of(context);
+    data.selection.selectedDaemonId = endpoint.id;
+    data.selection.selectedProjectId = null;
+    data.selection.selectedSessionId = null;
+    try {
+      await data.projects.refresh(endpoint.id);
+      await data.sessions.refresh(endpoint.id);
+    } on Object catch (e) {
+      // Unregistered daemons (e.g. freshly added, not yet wired up) surface
+      // here; the stores keep their own errors, the rail stays usable.
+      debugPrint('LeftRail: failed to load projects for ${endpoint.id}: $e');
+    }
+  }
+
   Future<void> _showAddDaemonDialog(BuildContext context) {
+    // Resolve the store graph on the rail's context; the dialog route's own
+    // context sits above [AppScope], so AppScope.of must not run in it.
+    final ConnectionsStore connections = AppScope.of(context).connections;
     return showDialog<void>(
       context: context,
       builder: (BuildContext context) =>
-          _AddDaemonDialog(connections: AppScope.of(context).connections),
+          _AddDaemonDialog(connections: connections),
+    );
+  }
+}
+
+/// Projects and sessions of the selected daemon, or an empty-state hint.
+///
+/// Subscribes to selection, projects and sessions itself so it stays live
+/// even though the rail constructs it `const`.
+class _ProjectTree extends StatelessWidget {
+  const _ProjectTree();
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[
+        data.selection,
+        data.projects,
+        data.sessions,
+      ]),
+      builder: (BuildContext context, Widget? _) {
+        final String? daemonId = data.selection.selectedDaemonId;
+        if (daemonId == null) {
+          return Center(
+            child: Text(
+              'Add a daemon to begin',
+              style:
+                  textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          );
+        }
+
+        final List<Project> projects = data.projects.projectsFor(daemonId);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(left: 16, right: 4, top: 8),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      'Projects',
+                      style: textTheme.labelMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('add-project'),
+                    tooltip: 'Add project',
+                    icon: const Icon(Icons.create_new_folder, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _showAddProjectDialog(context, daemonId),
+                  ),
+                ],
+              ),
+            ),
+            if (data.projects.isLoading(daemonId))
+              const Expanded(
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (projects.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'No projects yet',
+                    style: textTheme.bodySmall
+                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  children: <Widget>[
+                    for (final Project project in projects)
+                      _ProjectTile(
+                        key: ValueKey<String>('project-${project.id}'),
+                        project: project,
+                        daemonId: daemonId,
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// One expandable project row: name/path, new-session action, remove menu,
+/// and the session list as its expanded children. Expands whenever the rail
+/// selects this project (or the user expands it, which selects it).
+class _ProjectTile extends StatelessWidget {
+  const _ProjectTile({
+    super.key,
+    required this.project,
+    required this.daemonId,
+  });
+
+  final Project project;
+  final String daemonId;
+
+  bool _selected(AppData data) =>
+      data.selection.selectedProjectId == project.id;
+
+  Future<void> _showNewSessionSheet(BuildContext context) async {
+    // Resolve the store graph on the rail's context; the sheet route's own
+    // context sits above [AppScope], so AppScope.of must not run in it.
+    final AppData data = AppScope.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (BuildContext context) => Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: NewSessionSheet(
+          data: data,
+          daemonId: daemonId,
+          projectId: project.id,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _removeProject(BuildContext context) async {
+    final AppData data = AppScope.of(context);
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('Remove project'),
+            content: Text('Remove "${project.name}" from this daemon?'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const Key('project-remove-confirm'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Remove'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    await data.projects.remove(daemonId, project.id);
+    if (data.selection.selectedProjectId == project.id) {
+      data.selection.selectedProjectId = null;
+      data.selection.selectedSessionId = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool selected = _selected(data);
+    final List<Session> sessions = data.sessions.sessionsFor(project.id);
+
+    return ExpansionTile(
+      key: ValueKey<Object>('project-${project.id}-$selected'),
+      initiallyExpanded: selected,
+      tilePadding: const EdgeInsets.only(left: 8, right: 4),
+      childrenPadding: const EdgeInsets.only(bottom: 4),
+      shape: const Border(),
+      collapsedShape: const Border(),
+      title: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              project.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          IconButton(
+            key: ValueKey<String>('new-session-${project.id}'),
+            tooltip: 'New session',
+            icon: const Icon(Icons.add_comment, size: 18),
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _showNewSessionSheet(context),
+          ),
+          PopupMenuButton<_ProjectAction>(
+            tooltip: 'Project actions',
+            icon: const Icon(Icons.more_vert, size: 18),
+            onSelected: (_ProjectAction action) {
+              switch (action) {
+                case _ProjectAction.remove:
+                  _removeProject(context);
+              }
+            },
+            itemBuilder: (BuildContext context) =>
+                const <PopupMenuEntry<_ProjectAction>>[
+              PopupMenuItem<_ProjectAction>(
+                value: _ProjectAction.remove,
+                child: Text('Remove'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      subtitle: Text(
+        project.path,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+      onExpansionChanged: (bool expanded) {
+        if (expanded) data.selection.selectedProjectId = project.id;
+      },
+      children: <Widget>[
+        SessionList(
+          sessions: sessions,
+          daemonId: daemonId,
+          projectId: project.id,
+        ),
+      ],
+    );
+  }
+}
+
+enum _ProjectAction { remove }
+
+/// Prompts for an absolute path and adds the project to the daemon.
+Future<void> _showAddProjectDialog(BuildContext context, String daemonId) {
+  // Resolve the store on the rail's context; the dialog route's own context
+  // sits above [AppScope], so AppScope.of must not run in it.
+  final ProjectsStore projects = AppScope.of(context).projects;
+  return showDialog<void>(
+    context: context,
+    builder: (BuildContext context) =>
+        _AddProjectDialog(projects: projects, daemonId: daemonId),
+  );
+}
+
+class _AddProjectDialog extends StatefulWidget {
+  const _AddProjectDialog({required this.projects, required this.daemonId});
+
+  final ProjectsStore projects;
+  final String daemonId;
+
+  @override
+  State<_AddProjectDialog> createState() => _AddProjectDialogState();
+}
+
+class _AddProjectDialogState extends State<_AddProjectDialog> {
+  final TextEditingController _path = TextEditingController();
+
+  @override
+  void dispose() {
+    _path.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final String path = _path.text.trim();
+    if (path.isEmpty) return;
+    await widget.projects.add(
+          widget.daemonId,
+          path,
+        );
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add project'),
+      content: TextField(
+        key: const Key('add-project-path'),
+        controller: _path,
+        autofocus: true,
+        onSubmitted: (String _) => _submit(),
+        decoration: const InputDecoration(
+          labelText: 'Absolute path',
+          hintText: '/home/user/code/my-project',
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('add-project-submit'),
+          onPressed: _submit,
+          child: const Text('Add'),
+        ),
+      ],
     );
   }
 }
