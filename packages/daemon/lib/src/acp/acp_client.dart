@@ -205,7 +205,13 @@ class AcpClient {
           (decoded.containsKey('result') || decoded.containsKey('error'))) {
         _handleResponse(decoded);
       } else if (decoded['method'] is String) {
-        unawaited(_handleAgentMessage(decoded));
+        // Process agent messages strictly in arrival order. Fire-and-forget
+        // dispatch let a `session/request_permission` (whose engine callback
+        // emits synchronously onto the sessionChanges/events streams) overtake
+        // `session/update`s that were still queued for async stream delivery,
+        // reordering the engine's event stream. Awaiting each message keeps
+        // updates and request-driven emissions in wire order.
+        await _handleAgentMessage(decoded);
       }
       // Anything else is ignored defensively.
     }

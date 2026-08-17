@@ -225,7 +225,7 @@ class DaemonStore {
         session.id,
       ],
     );
-    if (_db.getUpdatedRows() == 0) {
+    if (_db.updatedRows == 0) {
       throw DaemonError(kErrNotFound, 'Session not found: ${session.id}');
     }
   }

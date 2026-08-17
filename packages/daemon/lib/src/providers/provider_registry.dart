@@ -6,9 +6,14 @@
 ///   * `codex`  → `npx -y @zed-industries/codex-acp`
 ///
 /// `~/.speeddial/config.json` may add or override providers under the
-/// `providers` key: `{"providers": {"<id>": {"name": "...", "command":
-/// ["...", ...]}}}`. A provider is `available` when its executable is an
-/// absolute path that exists, or resolves via `PATH`.
+/// `providers` key:
+///
+/// ```json
+/// {"providers": {"<id>": {"name": "...", "command": ["...", ...]}}}
+/// ```
+///
+/// A provider is `available` when its executable is an absolute path that
+/// exists, or resolves via `PATH`.
 library;
 
 import 'dart:convert';

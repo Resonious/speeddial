@@ -60,8 +60,8 @@ class SessionEngine {
   SessionEngine({
     required DaemonStore store,
     required ProviderRegistry providers,
-  })  : _store = store,
-        _providers = providers;
+  })  : _store = store, // ignore: prefer_initializing_formals — public API name
+        _providers = providers; // ignore: prefer_initializing_formals — public API name
 
   final DaemonStore _store;
   final ProviderRegistry _providers;
