@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -9,6 +11,11 @@ import '../api/daemon_client.dart';
 /// [lastError] and rethrown nowhere. Mutating methods ([add], [remove])
 /// update the cache on success, record failures in [lastError], and rethrow
 /// so callers can react.
+///
+/// On first use of a daemon the store subscribes to its `projectsChanged`
+/// notifications and refetches the listing, so daemon-side project changes
+/// surface without a manual [refresh]; the subscription lives until the
+/// store is disposed.
 class ProjectsStore extends ChangeNotifier {
   ProjectsStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
@@ -18,6 +25,12 @@ class ProjectsStore extends ChangeNotifier {
 
   final Map<String, List<Project>> _projectsByDaemon =
       <String, List<Project>>{};
+
+  /// One `projectsChanged` subscription per daemon, alive from first use
+  /// until [dispose].
+  final Map<String, StreamSubscription<void>> _projectSubs =
+      <String, StreamSubscription<void>>{};
+
   final Set<String> _loading = <String>{};
   Object? _lastError;
 
@@ -31,6 +44,7 @@ class ProjectsStore extends ChangeNotifier {
   Object? get lastError => _lastError;
 
   Future<void> refresh(String daemonId) async {
+    _ensureDaemonSubscriptions(daemonId);
     _loading.add(daemonId);
     notifyListeners();
     try {
@@ -48,6 +62,7 @@ class ProjectsStore extends ChangeNotifier {
   }
 
   Future<Project> add(String daemonId, String path, {String? name}) async {
+    _ensureDaemonSubscriptions(daemonId);
     try {
       final Project project =
           await _clientFor(daemonId).addProject(path, name: name);
@@ -64,6 +79,7 @@ class ProjectsStore extends ChangeNotifier {
   }
 
   Future<void> remove(String daemonId, String projectId) async {
+    _ensureDaemonSubscriptions(daemonId);
     try {
       await _clientFor(daemonId).removeProject(projectId);
       _projectsByDaemon[daemonId]?.removeWhere(
@@ -74,5 +90,24 @@ class ProjectsStore extends ChangeNotifier {
       _lastError = error;
       rethrow;
     }
+  }
+
+  /// Subscribes to the daemon's `projectsChanged` notifications so
+  /// daemon-side add/rename/remove surface via a refetch.
+  void _ensureDaemonSubscriptions(String daemonId) {
+    if (_projectSubs.containsKey(daemonId)) return;
+    final DaemonClient client = _clientFor(daemonId);
+    _projectSubs[daemonId] = client.projectsChanged.listen((void _) {
+      unawaited(refresh(daemonId));
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final StreamSubscription<void> sub in _projectSubs.values) {
+      sub.cancel();
+    }
+    _projectSubs.clear();
+    super.dispose();
   }
 }

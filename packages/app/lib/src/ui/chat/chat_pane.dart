@@ -90,19 +90,41 @@ class _ChatPaneState extends State<ChatPane> {
     return ListenableBuilder(
       listenable: data.selection,
       builder: (BuildContext context, Widget? _) {
+        // Re-sync on every rebuild, not just on selection changes. When a
+        // pane is recreated while a session is already selected (layout
+        // switches, future navigation), its first watch can be unwound by a
+        // sibling pane's `dispose` running later in the same frame (that
+        // unwatch removes the buffer this pane just recreated), which would
+        // otherwise leave the timeline permanently empty. Idempotent, so
+        // this is a no-op once the watch is stable.
+        _syncWatch(
+          data.chat,
+          data.selection.selectedDaemonId,
+          data.selection.selectedSessionId,
+        );
         final String? daemonId = data.selection.selectedDaemonId;
         final String? sessionId = data.selection.selectedSessionId;
         if (daemonId == null || sessionId == null) {
           return const _EmptyState();
         }
-        return _SessionSurface(data: data, daemonId: daemonId, sessionId: sessionId);
+        return _SessionSurface(
+          key: ValueKey<String>('$daemonId/$sessionId'),
+          data: data,
+          daemonId: daemonId,
+          sessionId: sessionId,
+        );
       },
     );
   }
 }
 
-class _SessionSurface extends StatelessWidget {
+/// Renders the selected session's live surface. Stateful so the timeline
+/// derivation and the latest-permission scan are cached per (session,
+/// revision) instead of re-running over the whole event list on every chunk
+/// notification, and so send/cancel/setMode failures can surface a SnackBar.
+class _SessionSurface extends StatefulWidget {
   const _SessionSurface({
+    super.key,
     required this.data,
     required this.daemonId,
     required this.sessionId,
@@ -113,21 +135,45 @@ class _SessionSurface extends StatelessWidget {
   final String sessionId;
 
   @override
+  State<_SessionSurface> createState() => _SessionSurfaceState();
+}
+
+class _SessionSurfaceState extends State<_SessionSurface> {
+  /// Revision of the buffered events underlying [_items]/[_pending]. Starts
+  /// at -1 so the first build always derives.
+  int _revision = -1;
+  List<TimelineItem> _items = const <TimelineItem>[];
+  PermissionRequest? _pending;
+
+  @override
   Widget build(BuildContext context) {
+    final AppData data = widget.data;
+    final String daemonId = widget.daemonId;
+    final String sessionId = widget.sessionId;
     final ChatStore chat = data.chat;
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[chat, data.sessions]),
       builder: (BuildContext context, Widget? _) {
         final List<SessionEvent> events = chat.eventsFor(sessionId);
+        // ChatStore bumps a per-session counter on every buffer mutation,
+        // so the cached derivation is skipped for rebuilds that carry no
+        // new content (unrelated sessions' notifications, status/usage-only
+        // updates) instead of re-scanning the whole event list per chunk.
+        final int revision = chat.revisionFor(sessionId);
+        if (revision != _revision) {
+          _revision = revision;
+          _items = deriveTimelineItems(events);
+          _pending = _resolveLatest(events);
+        }
         final SessionStatus status = chat.statusOf(sessionId);
         final SessionMode mode = chat.modeOf(sessionId);
         final UsageInfo? usage = chat.usageOf(sessionId);
-        final PermissionRequest? pending = _resolveLatest(events);
+        final PermissionRequest? pending = _pending;
         final Session? session = data.sessions.byId(sessionId);
 
         return Column(
           children: <Widget>[
-            Expanded(child: Timeline(events: events)),
+            Expanded(child: Timeline(items: _items)),
             if (pending != null)
               PermissionBanner(
                 request: pending,
@@ -148,18 +194,53 @@ class _SessionSurface extends StatelessWidget {
               usage: usage,
               model: session?.model,
               onSend: (String text) {
-                if (status == SessionStatus.running) return;
-                unawaited(chat.send(daemonId, sessionId, text));
+                if (status == SessionStatus.running) {
+                  return Future<void>.value();
+                }
+                return _sendMessage(text);
               },
-              onStop: () => unawaited(chat.cancel(daemonId, sessionId)),
+              onStop: () => unawaited(_cancelTurn()),
               onModeChanged: (SessionMode next) {
-                unawaited(data.sessions.setMode(daemonId, sessionId, next));
+                unawaited(_switchMode(next));
               },
             ),
           ],
         );
       },
     );
+  }
+
+  Future<void> _sendMessage(String text) async {
+    try {
+      await widget.data.chat.send(widget.daemonId, widget.sessionId, text);
+    } on DaemonError catch (error) {
+      await _showError(error);
+      // Delegate the text restore to the composer, which knows the draft.
+      rethrow;
+    }
+  }
+
+  Future<void> _cancelTurn() async {
+    try {
+      await widget.data.chat.cancel(widget.daemonId, widget.sessionId);
+    } on DaemonError catch (error) {
+      await _showError(error);
+    }
+  }
+
+  Future<void> _switchMode(SessionMode next) async {
+    try {
+      await widget.data.sessions
+          .setMode(widget.daemonId, widget.sessionId, next);
+    } on DaemonError catch (error) {
+      await _showError(error);
+    }
+  }
+
+  Future<void> _showError(DaemonError error) async {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(error.message)));
   }
 
   static PermissionRequest? _resolveLatest(List<SessionEvent> events) {

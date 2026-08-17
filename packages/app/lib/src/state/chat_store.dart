@@ -5,12 +5,23 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
 
+/// Composite `daemonId/sessionId` key backing the store's maps. Session ids
+/// are daemon-scoped (PROTOCOL.md), so the same id may legitimately exist on
+/// several daemons; public single-id getters resolve across daemons by
+/// scanning for a unique match, preferring the entry whose daemonId is the
+/// most recently watched/updated for that id. Any remaining ambiguity is
+/// resolved last-write-wins (see the resolution helpers in [ChatStore]).
+String _scopedKey(String daemonId, String id) => '$daemonId/$id';
+
 /// Per-session event buffer plus its live subscription state.
 class _SessionBuffer {
-  _SessionBuffer(this.sessionId, this.daemonId);
+  _SessionBuffer(this.sessionId, this.daemonId) : key = _scopedKey(daemonId, sessionId);
 
   final String sessionId;
   final String daemonId;
+
+  /// Composite key backing the store's maps ([_scopedKey]).
+  final String key;
   final List<SessionEvent> events = <SessionEvent>[];
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
@@ -20,18 +31,61 @@ class _SessionBuffer {
   /// in [pending] so they can never overtake (and shadow) the refetch.
   bool resyncing = false;
   int maxSeq = 0;
+
+  /// Open chunk-merge run, if the tail of [events] is a chunk delta family
+  /// that is still accumulating text (see [_ChunkRun]).
+  _ChunkRun? chunkRun;
+}
+
+/// Scratch state for a run of consecutive same-kind chunk deltas.
+///
+/// ARCHITECTURE.md: streaming chunks append to the last event's StringBuffer
+/// rather than rebuilding a concatenated string per delta (the old
+/// `lastEvent.text + event.text` was O(n) per chunk, O(n²) per turn). While
+/// a run is open, the merged event at the tail of the buffer list keeps its
+/// original (first chunk) text and the accumulated text lives only here; the
+/// event is rematerialized from [buffer] — once, at final size — when the
+/// run closes (a different event type arrives) or when the store's
+/// `eventsFor` reads the buffer. Buffered events stay immutable.
+class _ChunkRun {
+  _ChunkRun({
+    required this.isMessage,
+    required String text,
+    this.seq,
+    this.timestamp,
+  }) : buffer = StringBuffer(text);
+
+  /// True for [AgentMessageChunkEvent] runs, false for
+  /// [AgentThoughtChunkEvent] runs; the two families never merge with each
+  /// other.
+  final bool isMessage;
+  final StringBuffer buffer;
+
+  /// Seq/timestamp of the newest delta in the run; the merged event carries
+  /// them (matching the pre-StringBuffer merge semantics).
+  int? seq;
+  DateTime? timestamp;
 }
 
 /// Holds the live event buffer for every watched session.
 ///
 /// [watchSession] subscribes to the client's live event stream and, on first
-/// watch, backfills `history()`; live events with `seq` at or below the known
-/// maximum are dropped as duplicates. Consecutive
+/// watch, backfills `history()` (paging backwards through `hasMore` until
+/// every persisted event is loaded); live events with `seq` at or below the
+/// known maximum are dropped as duplicates. Consecutive
 /// [AgentMessageChunkEvent]/[AgentThoughtChunkEvent] deltas merge into a
 /// single buffered event (events are immutable, so a new event is built with
-/// the concatenated text). Listener notifications are coalesced to at most one
-/// per microtask batch; sessions are the finest-grained key, so buffers for
-/// unrelated sessions do not disturb each other.
+/// the concatenated text when the merge run closes or the buffer is read).
+/// Listener notifications are coalesced to at most one per microtask batch;
+/// sessions are the finest-grained key, so buffers for unrelated sessions do
+/// not disturb each other.
+///
+/// Buffers and derived state are keyed by composite `daemonId/sessionId`
+/// keys so the same session id on two daemons never collides. All public
+/// methods keep their single-id signatures; ambiguous ids resolve by
+/// preferring the daemon most recently watched/updated for that id, then
+/// last-write-wins on scan order (see the `_bufferFor` / `_derivedKeyFor`
+/// helpers).
 class ChatStore extends ChangeNotifier {
   ChatStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
@@ -44,6 +98,14 @@ class ChatStore extends ChangeNotifier {
   final Map<String, SessionStatus> _statusById = <String, SessionStatus>{};
   final Map<String, SessionMode> _modeById = <String, SessionMode>{};
   final Map<String, UsageInfo> _usageById = <String, UsageInfo>{};
+
+  /// Monotonic per-session buffer mutation counter, keyed like the rest of
+  /// the derived state; incremented on every event appended or merged in.
+  final Map<String, int> _revisions = <String, int>{};
+
+  /// Most recently watched/updated daemon per session id; disambiguates
+  /// cross-daemon id collisions in the public single-id getters below.
+  final Map<String, String> _lastDaemonBySession = <String, String>{};
 
   /// One `sessionUpdates`/`sessionRemovals` subscription per daemon, alive
   /// while at least one of its sessions is watched.
@@ -61,30 +123,56 @@ class ChatStore extends ChangeNotifier {
   bool _notifyScheduled = false;
 
   /// Unmodifiable coalescing-friendly view of a session's buffered events.
-  /// Empty list for sessions that were never watched.
-  List<SessionEvent> eventsFor(String sessionId) =>
-      List<SessionEvent>.unmodifiable(
-        _buffers[sessionId]?.events ?? const <SessionEvent>[],
-      );
+  /// Empty list for sessions that were never watched. Reading this
+  /// materializes any open chunk-merge run (building the final merged text
+  /// once) but does not itself notify or bump the session's revision.
+  List<SessionEvent> eventsFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer == null) return const <SessionEvent>[];
+    _materializeChunkRun(buffer);
+    return List<SessionEvent>.unmodifiable(buffer.events);
+  }
 
   /// Latest derived status; default idle for unknown sessions.
-  SessionStatus statusOf(String sessionId) =>
-      _statusById[sessionId] ?? SessionStatus.idle;
+  SessionStatus statusOf(String sessionId) {
+    final String? key = _derivedKeyFor(sessionId);
+    return key == null ? SessionStatus.idle : _statusById[key] ?? SessionStatus.idle;
+  }
 
   /// Latest usage reported by a `UsageEvent`, if any.
-  UsageInfo? usageOf(String sessionId) => _usageById[sessionId];
+  UsageInfo? usageOf(String sessionId) {
+    final String? key = _derivedKeyFor(sessionId);
+    return key == null ? null : _usageById[key];
+  }
 
   /// Latest known mode (from `session.updated`); default build.
-  SessionMode modeOf(String sessionId) =>
-      _modeById[sessionId] ?? SessionMode.build;
+  SessionMode modeOf(String sessionId) {
+    final String? key = _derivedKeyFor(sessionId);
+    return key == null ? SessionMode.build : _modeById[key] ?? SessionMode.build;
+  }
 
-  /// Starts buffering [sessionId]'s events. Idempotent; on first watch also
-  /// backfills history and reconciles it with events that arrived meanwhile.
+  /// How many times [sessionId]'s buffer was mutated (events appended or
+  /// merged) since it started being watched. 0 for sessions nobody watches.
+  /// Lets app-layer code detect "new content arrived" without diffing event
+  /// lists. Cleared when the session's derived state is forgotten (unwatch /
+  /// daemon-side removal).
+  int revisionFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer != null) return _revisions[buffer.key] ?? 0;
+    final String? key = _derivedKeyFor(sessionId);
+    return key == null ? 0 : _revisions[key] ?? 0;
+  }
+
+  /// Starts buffering [sessionId]'s events. Idempotent per daemon; on first
+  /// watch also backfills history, reconciles it with events that arrived
+  /// meanwhile, and seeds status/mode from a one-shot `listSessions`.
   void watchSession(String daemonId, String sessionId) {
-    if (_buffers.containsKey(sessionId)) return;
+    final String key = _scopedKey(daemonId, sessionId);
+    _lastDaemonBySession[sessionId] = daemonId;
+    if (_buffers.containsKey(key)) return;
     final DaemonClient client = _clientFor(daemonId);
     final _SessionBuffer buffer = _SessionBuffer(sessionId, daemonId);
-    _buffers[sessionId] = buffer;
+    _buffers[key] = buffer;
     buffer.eventSub = client.sessionEvents(sessionId).listen(
       (SessionEvent event) => _onLiveEvent(buffer, event),
       onError: (Object _) {
@@ -94,14 +182,19 @@ class ChatStore extends ChangeNotifier {
     _ensureDaemonSubscriptions(daemonId, client);
     // First watch: catch up on persisted events, then reconcile live ones.
     unawaited(_loadHistory(client, buffer));
+    // Cheap, once per watch: make statusOf/modeOf correct before the first
+    // live event or session.updated notification arrives.
+    unawaited(_seedSession(client, daemonId, sessionId));
   }
 
-  /// Stops buffering [sessionId] and releases its subscriptions.
+  /// Stops buffering [sessionId] (the preferred cross-daemon match) and
+  /// releases its subscriptions.
   void unwatch(String sessionId) {
-    final _SessionBuffer? buffer = _buffers.remove(sessionId);
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
     if (buffer == null) return;
+    _buffers.remove(buffer.key);
     buffer.eventSub?.cancel();
-    _forget(buffer.sessionId);
+    _forget(buffer.daemonId, buffer.sessionId);
     _maybeReleaseDaemon(buffer.daemonId);
     _scheduleNotify();
   }
@@ -123,17 +216,65 @@ class ChatStore extends ChangeNotifier {
           .respondPermission(sessionId, requestId, optionId);
 
   // ---------------------------------------------------------------------
-  // Event handling
+  // Cross-daemon id resolution
+  // ---------------------------------------------------------------------
+
+  /// The watched buffer for [sessionId], preferring the daemon most recently
+  /// touched for that id ([_lastDaemonBySession]); falls back to a unique
+  /// match scan.
+  _SessionBuffer? _bufferFor(String sessionId) {
+    final String? daemonId = _lastDaemonBySession[sessionId];
+    if (daemonId != null) {
+      final _SessionBuffer? preferred = _buffers[_scopedKey(daemonId, sessionId)];
+      if (preferred != null) return preferred;
+    }
+    for (final _SessionBuffer buffer in _buffers.values) {
+      if (buffer.sessionId == sessionId) return buffer;
+    }
+    return null;
+  }
+
+  /// Composite key of the derived state for [sessionId], or null. Derived
+  /// entries can exist for sessions that were updated (but never watched),
+  /// so the scan covers the by-id/status maps rather than only buffers.
+  ///
+  /// Session ids are daemon-scoped (PROTOCOL.md): two daemons may hold the
+  /// same id with different content. When a collision exists, the entry for
+  /// the daemon most recently watched/updated wins; anything else resolves
+  /// last-write-wins (map iteration order), which is acceptable because the
+  /// UI always selects an explicit daemon alongside a session id.
+  String? _derivedKeyFor(String sessionId) {
+    final String? daemonId = _lastDaemonBySession[sessionId];
+    if (daemonId != null) {
+      final String preferred = _scopedKey(daemonId, sessionId);
+      if (_sessionsById.containsKey(preferred) ||
+          _statusById.containsKey(preferred)) {
+        return preferred;
+      }
+    }
+    for (final String key in _statusById.keys) {
+      if (key.endsWith('/$sessionId')) return key;
+    }
+    for (final String key in _sessionsById.keys) {
+      if (key.endsWith('/$sessionId')) return key;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Daemon subscriptions
   // ---------------------------------------------------------------------
 
   void _ensureDaemonSubscriptions(String daemonId, DaemonClient client) {
     _updateSubs.putIfAbsent(
       daemonId,
-      () => client.sessionUpdates.listen(_onSessionUpdate),
+      () => client.sessionUpdates
+          .listen((Session session) => _onSessionUpdate(daemonId, session)),
     );
     _removalSubs.putIfAbsent(
       daemonId,
-      () => client.sessionRemovals.listen(_onSessionRemoved),
+      () => client.sessionRemovals
+          .listen((String sessionId) => _onSessionRemoved(daemonId, sessionId)),
     );
     _resyncSubs.putIfAbsent(
       daemonId,
@@ -152,28 +293,55 @@ class ChatStore extends ChangeNotifier {
     _resyncSubs.remove(daemonId)?.cancel();
   }
 
-  void _onSessionUpdate(Session session) {
-    _sessionsById[session.id] = session;
-    _statusById[session.id] = session.status;
-    _modeById[session.id] = session.mode;
+  void _onSessionUpdate(String daemonId, Session session) {
+    _lastDaemonBySession[session.id] = daemonId;
+    final String key = _scopedKey(daemonId, session.id);
+    _sessionsById[key] = session;
+    _statusById[key] = session.status;
+    _modeById[key] = session.mode;
     _scheduleNotify();
   }
 
-  void _onSessionRemoved(String sessionId) {
-    final _SessionBuffer? buffer = _buffers.remove(sessionId);
+  void _onSessionRemoved(String daemonId, String sessionId) {
+    final String key = _scopedKey(daemonId, sessionId);
+    final _SessionBuffer? buffer = _buffers.remove(key);
     if (buffer != null) {
       buffer.eventSub?.cancel();
       _maybeReleaseDaemon(buffer.daemonId);
     }
-    _forget(sessionId);
+    _forget(daemonId, sessionId);
     _scheduleNotify();
   }
 
-  void _forget(String sessionId) {
-    _sessionsById.remove(sessionId);
-    _statusById.remove(sessionId);
-    _modeById.remove(sessionId);
-    _usageById.remove(sessionId);
+  void _forget(String daemonId, String sessionId) {
+    final String key = _scopedKey(daemonId, sessionId);
+    _sessionsById.remove(key);
+    _statusById.remove(key);
+    _modeById.remove(key);
+    _usageById.remove(key);
+    _revisions.remove(key);
+  }
+
+  /// Fills status/mode from a one-shot `listSessions` so derived state is
+  /// correct (not the idle default) as soon as a session is watched, even
+  /// before any event or session.updated notification has arrived.
+  Future<void> _seedSession(
+    DaemonClient client,
+    String daemonId,
+    String sessionId,
+  ) async {
+    try {
+      final List<Session> sessions =
+          await client.listSessions(includeArchived: true);
+      for (final Session session in sessions) {
+        if (session.id == sessionId) {
+          _onSessionUpdate(daemonId, session);
+          return;
+        }
+      }
+    } on Object {
+      // Live sessionUpdates keep the state fresh when they arrive.
+    }
   }
 
   /// Reconciles watched buffers with persisted history after a reconnect.
@@ -184,6 +352,10 @@ class ChatStore extends ChangeNotifier {
   /// (like the initial history load) so a fast live notification can never
   /// advance [maxSeq] past the gap and make the refetch drop it as a
   /// duplicate.
+  ///
+  /// Backfill pages backwards (see [_applyHistory]): each page is fetched
+  /// with `beforeSeq` = the oldest seq of the page before it until
+  /// [DaemonClient.history] reports no older page.
   Future<void> _resyncDaemon(String daemonId) async {
     final DaemonClient client = _clientFor(daemonId);
     final List<_SessionBuffer> buffers = <_SessionBuffer>[
@@ -197,11 +369,7 @@ class ChatStore extends ChangeNotifier {
     try {
       for (final _SessionBuffer buffer in buffers) {
         try {
-          final List<SessionEvent> history =
-              await client.history(buffer.sessionId);
-          for (final SessionEvent event in history) {
-            _applyLive(buffer, event);
-          }
+          await _applyHistory(client, buffer, _applyLive);
         } on Object {
           // Live events still flow; the next resync (or reconnect) retries.
         }
@@ -235,14 +403,45 @@ class ChatStore extends ChangeNotifier {
     _scheduleNotify();
   }
 
+  /// Fetches persisted history for [buffer], paging backwards through older
+  /// pages until none remain, and feeds each event through [apply].
+  ///
+  /// The daemon's pages are strict (`seq < beforeSeq`), so the next page is
+  /// requested with [beforeSeq] equal to the oldest seq of the last page —
+  /// PROTOCOL.md: "refetch history with beforeSeq of the oldest known gap".
+  /// Pages arrive newest-first but are fed to [apply] oldest-first so the
+  /// buffer stays ascending by `seq` (and dedupe in [_applyLive] keeps its
+  /// monotone max quickly).
+  Future<void> _applyHistory(
+    DaemonClient client,
+    _SessionBuffer buffer,
+    void Function(_SessionBuffer, SessionEvent) apply,
+  ) async {
+    final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
+    int? beforeSeq; // null → the latest page first.
+    while (true) {
+      final ({List<SessionEvent> events, bool hasMore}) page =
+          await client.history(buffer.sessionId, beforeSeq: beforeSeq);
+      pages.add(page.events);
+      if (!page.hasMore || page.events.isEmpty) break;
+      final int? oldest = page.events.first.seq;
+      if (oldest == null) break; // no seqs: cannot page further.
+      beforeSeq = oldest;
+    }
+    for (final List<SessionEvent> page in pages.reversed) {
+      for (final SessionEvent event in page) {
+        apply(buffer, event);
+      }
+    }
+  }
+
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     try {
-      final List<SessionEvent> history = await client.history(buffer.sessionId);
-      for (final SessionEvent event in history) {
-        _append(buffer, event);
+      await _applyHistory(client, buffer, (b, event) {
+        _append(b, event);
         final int? seq = event.seq;
-        if (seq != null && seq > buffer.maxSeq) buffer.maxSeq = seq;
-      }
+        if (seq != null && seq > b.maxSeq) b.maxSeq = seq;
+      });
     } catch (_) {
       // Live stream remains the source of truth; nothing to propagate.
     } finally {
@@ -256,45 +455,107 @@ class ChatStore extends ChangeNotifier {
   }
 
   /// Appends [event], merging consecutive chunk deltas of the same kind into
-  /// one buffered event, and records any derived state it carries.
+  /// one buffered event, and records any derived state it carries. Every
+  /// call is a buffer mutation, so it bumps the session's revision.
   void _append(_SessionBuffer buffer, SessionEvent event) {
-    final List<SessionEvent> events = buffer.events;
-    if (events.isNotEmpty &&
-        (event is AgentMessageChunkEvent || event is AgentThoughtChunkEvent)) {
-      final SessionEvent lastEvent = events.last;
-      if (event is AgentMessageChunkEvent && lastEvent is AgentMessageChunkEvent) {
-        events[events.length - 1] = AgentMessageChunkEvent(
-          text: lastEvent.text + event.text,
-          seq: event.seq,
-          timestamp: event.timestamp,
-        );
-        return;
-      }
-      if (event is AgentThoughtChunkEvent && lastEvent is AgentThoughtChunkEvent) {
-        events[events.length - 1] = AgentThoughtChunkEvent(
-          text: lastEvent.text + event.text,
-          seq: event.seq,
-          timestamp: event.timestamp,
-        );
-        return;
-      }
+    _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + 1;
+
+    // A switch over the sealed type reaches the chunk getters via pattern
+    // bindings (an `is A || is B` test would not promote the scrutinee).
+    switch (event) {
+      case AgentMessageChunkEvent(
+        :final String text, :final int? seq, :final DateTime? timestamp
+      ):
+        _mergeChunk(buffer,
+            isMessage: true, text: text, seq: seq, timestamp: timestamp, event: event);
+      case AgentThoughtChunkEvent(
+        :final String text, :final int? seq, :final DateTime? timestamp
+      ):
+        _mergeChunk(buffer,
+            isMessage: false, text: text, seq: seq, timestamp: timestamp, event: event);
+      default:
+        _closeChunkRun(buffer);
+        buffer.events.add(event);
+        _noteEvent(buffer, event);
     }
-    events.add(event);
+  }
+
+  /// Extends the open same-family chunk run with [text], or — when [event]
+  /// opens a different family or no run is open — closes any open run and
+  /// starts a fresh one. Never merges message chunks with thought chunks.
+  void _mergeChunk(
+    _SessionBuffer buffer, {
+    required bool isMessage,
+    required String text,
+    required int? seq,
+    required DateTime? timestamp,
+    required SessionEvent event,
+  }) {
+    final _ChunkRun? run = buffer.chunkRun;
+    if (run != null && run.isMessage == isMessage) {
+      // Same-kind run continues: accumulate in the scratch buffer only.
+      run.buffer.write(text);
+      run.seq = seq;
+      run.timestamp = timestamp;
+      return;
+    }
+    // Different event type (or the other chunk family): the run closes, so
+    // the two events never merge, then a fresh run opens.
+    _closeChunkRun(buffer);
+    buffer.chunkRun = _ChunkRun(
+      isMessage: isMessage,
+      text: text,
+      seq: seq,
+      timestamp: timestamp,
+    );
+    buffer.events.add(event);
     _noteEvent(buffer, event);
+  }
+
+  /// Replaces the tail event with one built from the run's scratch buffer —
+  /// the merged text, built once at its final size. Leaves the run open so
+  /// more same-kind chunks can keep accumulating.
+  void _materializeChunkRun(_SessionBuffer buffer) {
+    final _ChunkRun? run = buffer.chunkRun;
+    if (run == null) return;
+    final List<SessionEvent> events = buffer.events;
+    if (events.isEmpty) {
+      buffer.chunkRun = null;
+      return;
+    }
+    events[events.length - 1] = run.isMessage
+        ? AgentMessageChunkEvent(
+            text: run.buffer.toString(),
+            seq: run.seq,
+            timestamp: run.timestamp,
+          )
+        : AgentThoughtChunkEvent(
+            text: run.buffer.toString(),
+            seq: run.seq,
+            timestamp: run.timestamp,
+          );
+  }
+
+  /// Closes the open chunk-merge run: materializes its event and drops the
+  /// scratch state.
+  void _closeChunkRun(_SessionBuffer buffer) {
+    if (buffer.chunkRun == null) return;
+    _materializeChunkRun(buffer);
+    buffer.chunkRun = null;
   }
 
   void _noteEvent(_SessionBuffer buffer, SessionEvent event) {
     switch (event) {
       case TurnCompleteEvent():
-        _statusById[buffer.sessionId] = SessionStatus.idle;
+        _statusById[buffer.key] = SessionStatus.idle;
       case SessionErrorEvent():
-        _statusById[buffer.sessionId] = SessionStatus.error;
+        _statusById[buffer.key] = SessionStatus.error;
       case PermissionRequestEvent():
-        _statusById[buffer.sessionId] = SessionStatus.waitingPermission;
+        _statusById[buffer.key] = SessionStatus.waitingPermission;
       case PermissionResolvedEvent():
-        _statusById[buffer.sessionId] = SessionStatus.running;
+        _statusById[buffer.key] = SessionStatus.running;
       case UsageEvent(:final usage):
-        _usageById[buffer.sessionId] = usage;
+        _usageById[buffer.key] = usage;
       default:
         break;
     }

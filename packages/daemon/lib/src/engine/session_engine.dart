@@ -29,6 +29,10 @@ import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'event_mapper.dart';
 
+/// JSON-RPC code: invalid params (PROTOCOL.md `-32602`), used for
+/// `sessions.create` cwd confinement rejects.
+const int _kErrInvalidParams = -32602;
+
 /// One live engine session: its agent client plus in-memory turn state.
 class _LiveSession {
   _LiveSession({
@@ -133,6 +137,24 @@ class SessionEngine {
     if (project == null) {
       throw DaemonError(kErrNotFound, 'Unknown project: $projectId');
     }
+    if (cwd != null) {
+      // The session cwd becomes the agent's working directory and the fs
+      // sandbox root; allowing an arbitrary cwd would void project
+      // confinement (the agent's read/write handlers confine to the cwd).
+      // Compare symlink-resolved real paths so a cwd that is a symlink
+      // escape is rejected; equality is allowed.
+      final realProject = _realPathOfDeepestExisting(project.path);
+      final realCwd = _realPathOfDeepestExisting(cwd);
+      final prefix = realProject.endsWith(p.separator)
+          ? realProject
+          : '$realProject${p.separator}';
+      if (realCwd != realProject && !realCwd.startsWith(prefix)) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'cwd must be inside the project directory',
+        );
+      }
+    }
     final workingDir = cwd ?? project.path;
     final now = DateTime.now().toUtc();
     final session = Session(
@@ -226,14 +248,7 @@ class SessionEngine {
     }
     if (live.turn == null) return;
     await live.client.cancel(live.acpSessionId);
-    for (final completer in live.pendingPermissions.values) {
-      if (!completer.isCompleted) {
-        completer.completeError(
-          StateError('Permission request cancelled'),
-        );
-      }
-    }
-    live.pendingPermissions.clear();
+    _expirePendingPermissions(live, 'Permission request cancelled');
   }
 
   Future<Session> rename(String sessionId, String title) =>
@@ -273,6 +288,13 @@ class SessionEngine {
 
   /// Resolves a parked permission request. Unknown/expired requests error
   /// `kErrNotFound` (per PROTOCOL.md `sessions.respondPermission`).
+  ///
+  /// Parked requests are expired (completed with an error and cleared) when
+  /// the agent's process dies mid-turn, on delete, and on dispose, so a stale
+  /// `respondPermission` after the fact reads as `kErrNotFound` — it can
+  /// never revive a dead session's turn. A request that is somehow still
+  /// parked on a session already in `error`/`closed` status is refused with
+  /// `kErrConflict` instead of being resolved.
   Future<void> respondPermission(
     String sessionId,
     String requestId,
@@ -284,9 +306,21 @@ class SessionEngine {
     }
     final completer = live.pendingPermissions.remove(requestId);
     if (completer == null) {
+      // Covers never-parked ids, expired ids, and stale ids on sessions whose
+      // agent died (the pending set was cleared when the turn errored).
       throw DaemonError(
         kErrNotFound,
         'Unknown or expired permission request: $requestId',
+      );
+    }
+    if (live.session.status == SessionStatus.error ||
+        live.session.status == SessionStatus.closed) {
+      // The agent this request belonged to is gone; resolving it would flip
+      // the session back towards running without an agent behind it.
+      throw DaemonError(
+        kErrConflict,
+        'Session "$sessionId" is not waiting for a permission '
+        '(its agent process is gone; create a new session)',
       );
     }
     // The resolved event + status flip happen inside the parked handler as it
@@ -303,6 +337,9 @@ class SessionEngine {
     }
     if (live != null) {
       live.closed = true;
+      // Expire parked permissions first: a stale respondPermission must not
+      // observe them as resolvable once the session is gone.
+      _expirePendingPermissions(live, 'Session deleted');
       _toolCalls.remove(sessionId);
       await live.client.dispose();
     }
@@ -316,6 +353,7 @@ class SessionEngine {
   Future<void> dispose() async {
     for (final live in _live.values) {
       live.closed = true;
+      _expirePendingPermissions(live, 'Daemon shutting down');
       await live.client.dispose();
     }
     _live.clear();
@@ -347,12 +385,30 @@ class SessionEngine {
       _setStatus(live, SessionStatus.idle);
     } on Object catch (error) {
       if (!live.closed) {
+        // The agent is gone (process exit / stream failure). Expire every
+        // parked permission first so a stale respondPermission reports
+        // kErrNotFound and cannot flip the dead session back to running.
+        _expirePendingPermissions(live, 'Agent process ended: $error');
         _emit(live, SessionErrorEvent(message: 'Agent process ended: $error'));
         _setStatus(live, SessionStatus.error);
       }
     } finally {
       await subscription.cancel();
     }
+  }
+
+  /// Completes and clears every parked permission request for [live]. Called
+  /// when a turn errors (agent death), on cancel (the agent already received
+  /// the cancelled outcome), on delete, and on dispose. A stale
+  /// `respondPermission` afterwards correctly reports `kErrNotFound` instead
+  /// of resuming a dead turn.
+  void _expirePendingPermissions(_LiveSession live, String reason) {
+    for (final completer in live.pendingPermissions.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError(reason));
+      }
+    }
+    live.pendingPermissions.clear();
   }
 
   SessionEvent? _mapUpdate(_LiveSession live, AcpSessionUpdate update) {
@@ -435,6 +491,21 @@ class SessionEngine {
     final file = _resolveInCwd(sessionId, path);
     await file.parent.create(recursive: true);
     await file.writeAsString(content);
+  }
+
+  /// The symlink-resolved real path of [path], or of its deepest existing
+  /// ancestor when [path] itself does not exist yet.
+  String _realPathOfDeepestExisting(String path) {
+    var current = p.normalize(p.absolute(path));
+    while (true) {
+      try {
+        return File(current).resolveSymbolicLinksSync();
+      } on FileSystemException {
+        final parent = p.dirname(current);
+        if (parent == current) rethrow; // Reached the filesystem root.
+        current = parent;
+      }
+    }
   }
 
   /// Resolves [requested] against the session cwd and rejects anything that

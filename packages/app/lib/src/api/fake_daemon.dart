@@ -41,6 +41,7 @@ class FakeDaemonClient implements DaemonClient {
 
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
+  late final StreamController<void> _projectsChangedController;
 
   // ---------------------------------------------------------------------
   // Setup
@@ -131,6 +132,7 @@ class FakeDaemonClient implements DaemonClient {
     ];
     _sessionUpdatesController = StreamController<Session>.broadcast();
     _sessionRemovalsController = StreamController<String>.broadcast();
+    _projectsChangedController = StreamController<void>.broadcast();
   }
 
   Project _project(String id) {
@@ -209,6 +211,7 @@ class FakeDaemonClient implements DaemonClient {
       Branch(name: 'main', isCurrent: true, upstream: null),
     ];
     _gitDiffs[project.id] = const <GitDiff>[];
+    _projectsChangedController.add(null);
     return project;
   }
 
@@ -225,6 +228,7 @@ class FakeDaemonClient implements DaemonClient {
     for (final String sessionId in removed) {
       _removeSession(sessionId);
     }
+    _projectsChangedController.add(null);
   }
 
   // ---------------------------------------------------------------------
@@ -384,7 +388,7 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<List<SessionEvent>> history(
+  Future<({List<SessionEvent> events, bool hasMore})> history(
     String sessionId, {
     int limit = 200,
     int? beforeSeq,
@@ -393,12 +397,35 @@ class FakeDaemonClient implements DaemonClient {
     _requireSession(sessionId);
     final List<SessionEvent> all =
         List<SessionEvent>.of(_history[sessionId] ?? const <SessionEvent>[]);
+    // Strictly below beforeSeq (mirrors the daemon's listEvents paging).
     final List<SessionEvent> filtered = beforeSeq == null
         ? all
         : all.where((SessionEvent e) => (e.seq ?? 0) < beforeSeq).toList();
-    return filtered.length <= limit
-        ? filtered
-        : filtered.sublist(filtered.length - limit);
+    // The newest `limit` events ascending; hasMore means an older page exists.
+    final bool hasMore = filtered.length > limit;
+    return (
+      events: hasMore ? filtered.sublist(filtered.length - limit) : filtered,
+      hasMore: hasMore,
+    );
+  }
+
+  /// Seeds persisted history for [sessionId] as if the daemon had recorded
+  /// it earlier (e.g. to exercise multi-page `history` backfill in the app).
+  /// Events are stamped with ascending `seq`s continuing from the session's
+  /// current sequence; nothing is emitted on the live streams. Order given
+  /// is the `seq` order.
+  void seedHistory(String sessionId, Iterable<SessionEvent> events) {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final List<SessionEvent> stamped = <SessionEvent>[];
+    int seq = _seqBySession[sessionId] ?? 0;
+    final DateTime now = DateTime.now().toUtc();
+    for (final SessionEvent event in events) {
+      seq += 1;
+      stamped.add(_withSeq(event, seq, now));
+    }
+    _seqBySession[sessionId] = seq;
+    _history.putIfAbsent(sessionId, () => <SessionEvent>[]).addAll(stamped);
   }
 
   @override
@@ -582,6 +609,12 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Stream<void> get projectsChanged {
+    _ensureSeeded();
+    return _projectsChangedController.stream;
+  }
+
+  @override
   Stream<void> get resynced => const Stream<void>.empty();
 
   @override
@@ -601,6 +634,7 @@ class FakeDaemonClient implements DaemonClient {
     if (_seeded) {
       await _sessionUpdatesController.close();
       await _sessionRemovalsController.close();
+      await _projectsChangedController.close();
     }
   }
 
@@ -610,8 +644,8 @@ class FakeDaemonClient implements DaemonClient {
 
   Future<void> _runScript(String sessionId, String text) async {
     const List<String> chunks = <String>[
-      'Working on it…',
-      '```dart\nvoid main() {}\n```',
+      'Working on it…\n\n',
+      '```dart\nvoid main() {}\n```\n\n',
       'Done.',
     ];
     for (final String chunk in chunks) {

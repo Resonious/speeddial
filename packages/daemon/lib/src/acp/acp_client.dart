@@ -323,11 +323,18 @@ class AcpClient {
       optionId = await handler(sessionId, toolCallId, title, options);
     } on Object {
       // Timeout or handler failure is reported back as an internal error so
-      // the agent does not wait forever.
+      // the agent does not wait forever. When the agent's process has already
+      // exited (e.g. the engine expired the parked request on agent death),
+      // the report cannot be delivered; swallow the send failure so the read
+      // loop does not surface an unhandled async error.
       if (!pending.responded) {
         pending.responded = true;
         _pendingPermissions.remove(id);
-        await _sendResponseError(id, -32603, 'Permission request handler failed');
+        try {
+          await _sendResponseError(id, -32603, 'Permission request handler failed');
+        } on Object {
+          // Agent process is gone; nothing left to report to.
+        }
       }
       return;
     }

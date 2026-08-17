@@ -433,4 +433,89 @@ void main() {
     expect(session.model, 'sonnet');
     expect(session.cwd, project.path);
   });
+
+  test('agent death mid-permission expires the parked request', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    // The 'die' turn parks a permission request (the agent requests it and
+    // then waits for `<cwd>/agent.turn.die` before exiting).
+    final permissionFuture = waitForPermissionRequest();
+    final send = engine.sendMessage(session.id, 'die');
+    final request = await permissionFuture;
+    expect(request.request.requestId, isNotEmpty);
+    expect(store.getSession(session.id)!.status, SessionStatus.waitingPermission);
+
+    var sendDone = false;
+    unawaited(send.then((_) {
+      sendDone = true;
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(sendDone, isFalse,
+        reason: 'the turn is parked until the agent dies');
+
+    // Kill the agent mid-request: the turn errors and the session ends in
+    // error status.
+    File(p.join(tempDir.path, 'agent.turn.die')).writeAsStringSync('die');
+    await send;
+    expect(store.getSession(session.id)!.status, SessionStatus.error,
+        reason: 'agent death must leave the session in error');
+
+    // The parked request is gone: a stale respondPermission is not-found and
+    // cannot flip the dead session back to running.
+    await expectLater(
+      engine.respondPermission(session.id, request.request.requestId, 'allow'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrNotFound)),
+    );
+    expect(store.getSession(session.id)!.status, SessionStatus.error,
+        reason: 'a stale respondPermission must not revive the session');
+  });
+
+  test('createSession rejects cwd outside the project sandbox', () async {
+    Session ok;
+    // The project root itself is allowed (equality).
+    ok = await engine.createSession(
+        projectId: 'p1', providerId: 'fake', cwd: tempDir.path);
+    expect(ok.cwd, tempDir.path);
+
+    // A real subdirectory of the project is allowed.
+    Directory(p.join(tempDir.path, 'sub')).createSync();
+    ok = await engine.createSession(projectId: 'p1', providerId: 'fake',
+        cwd: p.join(tempDir.path, 'sub'));
+    expect(ok.cwd, p.join(tempDir.path, 'sub'));
+
+    // Absolute paths outside the project are invalid params.
+    await expectLater(
+      engine.createSession(projectId: 'p1', providerId: 'fake', cwd: '/'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', -32602)),
+      reason: 'a filesystem-root cwd voids the ACP fs sandbox',
+    );
+    if (Platform.isLinux || Platform.isMacOS) {
+      final outside = await Directory.systemTemp.createTemp('sd_cwd_out_');
+      addTearDown(() async {
+        try {
+          await outside.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      await expectLater(
+        engine.createSession(
+            projectId: 'p1', providerId: 'fake', cwd: outside.path),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+      // A symlink inside the project that points outside is an escape too.
+      Link(p.join(tempDir.path, 'escape'))
+          .createSync(outside.path);
+      await expectLater(
+        engine.createSession(projectId: 'p1', providerId: 'fake',
+            cwd: p.join(tempDir.path, 'escape')),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+    }
+  });
 }

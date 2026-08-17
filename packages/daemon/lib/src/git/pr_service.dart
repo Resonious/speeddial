@@ -23,20 +23,25 @@ class PrService {
 
   /// Creates a pull request for the current branch and returns its URL.
   ///
-  /// With no [title] (and no [body]/[base]/[draft]), uses `gh pr create
-  /// --fill` so the CLI derives title/body from the latest commit.
+  /// Uses `gh pr create --fill` (deriving title/body from the latest commit)
+  /// only when every field is absent — a provided [base] or [draft] must
+  /// reach `gh` explicitly, since `--fill` alone would drop them. Otherwise
+  /// each provided flag is passed individually.
   Future<String> createPullRequest(String repoPath,
       {String? title,
       String? body,
       String? base,
       bool draft = false}) async {
     final args = <String>['pr', 'create'];
-    if (title == null) {
+    final useFill = title == null && body == null && base == null && !draft;
+    if (useFill) {
       args.add('--fill');
     } else {
-      args
-        ..add('--title')
-        ..add(title);
+      if (title != null) {
+        args
+          ..add('--title')
+          ..add(title);
+      }
       if (body != null) {
         args
           ..add('--body')

@@ -14,21 +14,23 @@ import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
-  /// Pumps the chat pane at 1200x800 with the fake daemon registered, and
-  /// (optionally) a session selected.
+  /// Pumps the chat pane at 1200x800 with a fake daemon registered (either
+  /// [fake] or a fresh scripted one), and (optionally) a session selected.
   Future<(AppData, FakeDaemonClient)> pumpChat(
     WidgetTester tester, {
     bool selectSession = true,
     Duration eventDelay = const Duration(milliseconds: 1),
+    FakeDaemonClient? fake,
   }) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake = FakeDaemonClient(eventDelay: eventDelay);
-    final AppData app = AppData()..registerClient('fake', fake);
+    final FakeDaemonClient fakeClient =
+        fake ?? FakeDaemonClient(eventDelay: eventDelay);
+    final AppData app = AppData()..registerClient('fake', fakeClient);
     await app.sessions.refresh('fake');
 
     if (selectSession) {
-      final Project project = (await fake.listProjects()).first;
-      final Session session = (await fake.listSessions()).first;
+      final Project project = (await fakeClient.listProjects()).first;
+      final Session session = (await fakeClient.listSessions()).first;
       app.selection
         ..selectedDaemonId = 'fake'
         ..selectedProjectId = project.id
@@ -49,7 +51,7 @@ void main() {
       ),
     );
     await tester.pump();
-    return (app, fake);
+    return (app, fakeClient);
   }
 
   /// Pumps frames until [condition] holds or [attempts] budget is spent.
@@ -63,6 +65,58 @@ void main() {
       await tester.pump(step);
     }
   }
+
+  testWidgets(
+      'session already selected when the pane first mounts still renders its history',
+      (WidgetTester tester) async {
+    // Seed a completed turn BEFORE the pane ever mounts, then select the
+    // session; the pane must watch it on its initial build (not only on a
+    // later selection change) and backfill the persisted history.
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final AppData app = AppData()..registerClient('fake', fake);
+    await app.sessions.refresh('fake');
+    final Project project = (await fake.listProjects()).first;
+    final Session session = (await fake.listSessions()).first;
+
+    await fake.sendMessage(session.id, 'hello seeded');
+    await tester.pump(const Duration(seconds: 1)); // run the scripted turn
+
+    app.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = project.id
+      ..selectedSessionId = session.id;
+
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      AppScope(
+        data: app,
+        child: MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(body: ChatPane()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => find.text('hello seeded').evaluate().isNotEmpty,
+    );
+
+    expect(find.text('hello seeded'), findsOneWidget);
+    expect(
+      find.textContaining('Working on it', findRichText: true),
+      findsOneWidget,
+    );
+    // Drain stream + settle timers so the test ends clean.
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 350));
+  });
 
   testWidgets('empty state shows the select-session placeholder',
       (WidgetTester tester) async {
@@ -211,4 +265,38 @@ void main() {
 
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('send failure shows a SnackBar and restores the composer text',
+      (WidgetTester tester) async {
+    await pumpChat(tester, fake: _FailingSendFake());
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    await pumpUntil(
+      tester,
+      () => find.byType(SnackBar).evaluate().isNotEmpty,
+    );
+    // DaemonError surfaced as a SnackBar...
+    expect(find.text('a turn is already running'), findsOneWidget);
+    // ...and the draft was restored into the field.
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'hello');
+    expect(find.byIcon(Icons.send), findsOneWidget); // send re-enabled
+
+    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+  });
+}
+
+/// A fake whose sends always fail like a turn conflict, driving the
+/// composer/pane failure path (SnackBar + text restore).
+class _FailingSendFake extends FakeDaemonClient {
+  @override
+  Future<void> sendMessage(String sessionId, String text) async {
+    throw const DaemonError(kErrConflict, 'a turn is already running');
+  }
 }

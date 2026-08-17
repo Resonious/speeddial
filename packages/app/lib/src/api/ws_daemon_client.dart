@@ -60,9 +60,18 @@ class WsDaemonClient implements DaemonClient {
   final StreamController<String> _sessionRemovalsController =
       StreamController<String>.broadcast();
 
+  final StreamController<void> _projectsChangedController =
+      StreamController<void>.broadcast();
+
   static const Duration _maxReconnectDelay = Duration(seconds: 15);
 
   WebSocketChannel? _channel;
+
+  /// Whether [_channel] has completed its connect handshake (`ready`). Only
+  /// an established channel gets a graceful (awaited) close; closing a
+  /// channel whose handshake failed can wait forever for a close handshake
+  /// the peer will never send, so those are released without awaiting.
+  bool _socketReady = false;
   RpcPeer? _peer;
   StreamSubscription<dynamic>? _socketSub;
   StreamSubscription<RpcNotification>? _notificationSub;
@@ -145,17 +154,38 @@ class WsDaemonClient implements DaemonClient {
   /// when the transport already shut the channel down on its own.
   Future<void> _tearDownSocket() async {
     final WebSocketChannel? channel = _channel;
+    final bool established = _socketReady;
     _channel = null;
+    _socketReady = false;
     await _notificationSub?.cancel();
     _notificationSub = null;
     await _socketSub?.cancel();
     _socketSub = null;
     await _peer?.close();
     _peer = null;
+    if (channel == null) return;
+    if (established) {
+      // The handshake completed, so a close frame round-trips normally.
+      try {
+        await channel.sink.close();
+      } on Object {
+        // Already closed by the transport; nothing to do.
+      }
+    } else {
+      // The channel never completed its handshake (connection refused,
+      // unreachable host): adapters' `sink.close()` can wait forever for a
+      // close handshake that will never arrive. Release it without awaiting
+      // — the socket is unreachable either way.
+      unawaited(_closeQuietly(channel));
+    }
+  }
+
+  /// Best-effort close that never blocks or propagates.
+  Future<void> _closeQuietly(WebSocketChannel channel) async {
     try {
-      await channel?.sink.close();
+      await channel.sink.close();
     } on Object {
-      // Already closed by the transport; nothing to do.
+      // The socket was never established; nothing to clean up.
     }
   }
 
@@ -168,6 +198,7 @@ class WsDaemonClient implements DaemonClient {
     final WebSocketChannel channel = WebSocketChannel.connect(uri);
     _channel = channel;
     await channel.ready;
+    _socketReady = true;
     if (_disposed) {
       await channel.sink.close();
       return;
@@ -215,6 +246,7 @@ class WsDaemonClient implements DaemonClient {
   void _handleSocketClosed() {
     if (_disposed) return;
     _channel = null;
+    _socketReady = false;
     unawaited(_peer?.close());
     if (_establishing) return;
     _scheduleReconnect();
@@ -256,6 +288,7 @@ class WsDaemonClient implements DaemonClient {
     await _sessionEventFeed.close();
     await _sessionUpdatesController.close();
     await _sessionRemovalsController.close();
+    await _projectsChangedController.close();
     await _resyncController.close();
     connState.dispose();
   }
@@ -304,6 +337,8 @@ class WsDaemonClient implements DaemonClient {
         if (sessionId is String) {
           _sessionRemovalsController.add(sessionId);
         }
+      case 'projects.changed':
+        _projectsChangedController.add(null);
     }
   }
 
@@ -324,6 +359,9 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
+
+  @override
+  Stream<void> get projectsChanged => _projectsChangedController.stream;
 
   @override
   Stream<void> get resynced => _resyncController.stream;
@@ -457,7 +495,7 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<List<SessionEvent>> history(
+  Future<({List<SessionEvent> events, bool hasMore})> history(
     String sessionId, {
     int limit = 200,
     int? beforeSeq,
@@ -470,7 +508,10 @@ class WsDaemonClient implements DaemonClient {
         'beforeSeq': ?beforeSeq,
       },
     );
-    return _decodeList(_resultField(result, 'events'), SessionEvent.fromJson);
+    return (
+      events: _decodeList(_resultField(result, 'events'), SessionEvent.fromJson),
+      hasMore: _resultField(result, 'hasMore') == true,
+    );
   }
 
   @override

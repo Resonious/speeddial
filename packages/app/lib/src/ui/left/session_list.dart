@@ -118,6 +118,11 @@ class SessionRow extends StatelessWidget {
         false;
     if (!confirmed) return;
     await data.sessions.delete(daemonId, session.id);
+    if (data.selection.selectedSessionId == session.id) {
+      // Unpin the chat pane from the dead session (same pattern as the
+      // project-removal clearing in left_rail).
+      data.selection.selectedSessionId = null;
+    }
   }
 
   @override
@@ -193,6 +198,13 @@ class SessionRow extends StatelessWidget {
       onTap: () {
         data.selection.selectedProjectId = projectId;
         data.selection.selectedSessionId = session.id;
+        // On narrow layouts the rail lives in a drawer; selecting a session
+        // should dismiss it so the chat is immediately visible. The wide
+        // layout has no open drawer, so this is a no-op there.
+        final ScaffoldState? scaffold = Scaffold.maybeOf(context);
+        if (scaffold != null && scaffold.isDrawerOpen) {
+          Navigator.of(context).pop();
+        }
       },
     );
   }

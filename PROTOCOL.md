@@ -24,6 +24,10 @@ If the daemon requires auth (default when bound to non-loopback, or `--token` gi
 client's first request MUST be `auth.authenticate`. All other requests before that fail
 with `-32001`. Loopback connections without a configured token skip auth.
 
+As the sole exception besides `auth.authenticate`, `daemon.info` is always answered
+pre-auth — it returns `authRequired: true` on a token-gated daemon — so clients can
+probe whether a token is needed before authenticating.
+
 - `auth.authenticate {token: string}` → `{ok: true, daemon: DaemonInfo}`
 
 ## Models

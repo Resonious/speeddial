@@ -14,6 +14,8 @@
 //         `session/cancel` notification resolves it with `cancelled`.
 //       - "weird": emits an unknown update variant (must be dropped by the
 //         client), then usage_update and `end_turn`.
+//       - "die": parks a session/request_permission, then exits the process
+//         when `<cwd>/agent.turn.die` appears (mid-request agent death).
 //       - "hang": sends nothing and never resolves the turn.
 //   * `session/cancel` (notification) resolves any pending prompt with
 //     `cancelled`.
@@ -223,6 +225,49 @@ Future<void> _runTurn(
 
   if (text == 'cancel') return; // Left pending; session/cancel resolves it.
   if (text == 'hang') return; // Never resolves; used with dispose().
+  if (text == 'die') {
+    // Park a permission request at the engine, then wait for the test's kill
+    // signal (`<cwd>/agent.turn.die`) and exit mid-request: the engine must
+    // expire the parked request and mark the session error. This simulates
+    // an agent process dying while a permission is outstanding.
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'agent_message_chunk',
+      'content': <String, Object?>{
+        'type': 'text',
+        'text': 'I will inspect the target file.',
+      },
+      'messageId': 'm1',
+    });
+    unawaited(
+      _request('session/request_permission', <String, Object?>{
+        'sessionId': sessionId,
+        'toolCall': <String, Object?>{
+          'toolCallId': 'tc1',
+          'title': 'Read example.txt',
+          'kind': 'read',
+          'status': 'in_progress',
+        },
+        'options': <Object?>[
+          <String, Object?>{
+            'optionId': 'allow',
+            'name': 'Allow reading',
+            'kind': 'allow_always',
+          },
+          <String, Object?>{
+            'optionId': 'reject',
+            'name': 'Reject reading',
+            'kind': 'reject_once',
+          },
+        ],
+      }).catchError((Object _) => <String, Object?>{}),
+    );
+    final dieFile =
+        File('${Directory.current.path}/agent.turn.die');
+    while (!dieFile.existsSync()) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    exit(0);
+  }
   if (text == 'weird') {
     // Unknown update variant: the client must drop it without crashing.
     await _sendUpdate(<String, Object?>{'sessionUpdate': 'experimental_update', 'payload': 'hi'});

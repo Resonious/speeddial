@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -31,7 +33,11 @@ class Composer extends StatefulWidget {
   /// Model id label (static text) when the session has one.
   final String? model;
 
-  final ValueChanged<String> onSend;
+  /// Starts a turn with [text]. Completes when the daemon accepted it; on
+  /// failure (a [DaemonError] surfaced as a SnackBar by the caller) the
+  /// composer restores the text into the field so the draft is never lost.
+  /// Returning a future is what lets the composer know the send outcome.
+  final Future<void> Function(String text) onSend;
   final VoidCallback onStop;
   final ValueChanged<SessionMode> onModeChanged;
 
@@ -79,7 +85,23 @@ class _ComposerState extends State<Composer> {
     if (text.isEmpty || _running || !mounted) return;
     _controller.clear();
     setState(() => _hasText = false);
-    widget.onSend(text);
+    unawaited(_dispatch(text));
+  }
+
+  /// Runs the send future; restores the draft into the field when it fails
+  /// so a rejected send (e.g. a conflict surfaced as a SnackBar by the
+  /// pane) never loses the user's message.
+  Future<void> _dispatch(String text) async {
+    try {
+      await widget.onSend(text);
+    } catch (_) {
+      if (!mounted) return;
+      _controller.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+      setState(() => _hasText = true);
+    }
   }
 
   /// Inserts a newline at the cursor (Shift+Enter) without relying on the

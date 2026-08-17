@@ -315,30 +315,44 @@ class SessionsAttachCommand extends Command<int> {
     final id = _requireSessionId(this);
     final conn = resolveConnection(globalResults!);
     final output = Output(json: conn.json, onFlush: () => stdout.flush());
-    final done = Completer<void>();
+    final done = Completer<int>();
     StreamSubscription<({String sessionId, int seq, SessionEvent event})>? sub;
     final client = await DaemonClient.connect(conn.url, token: conn.token);
-    sub = client.sessionEvents.listen((tuple) {
-      if (tuple.sessionId != id) return;
-      if (conn.json) {
-        output.raw(<String, Object?>{
-          'sessionId': tuple.sessionId,
-          'seq': tuple.seq,
-          'event': tuple.event.toJson(),
-        });
-      } else {
-        final seq = tuple.seq.toString().padLeft(4, ' ');
-        output.line('#$seq  ${summarizeSessionEvent(tuple.event)}');
-      }
-      output.flush();
-    });
+    sub = client.sessionEvents.listen(
+      (tuple) {
+        if (tuple.sessionId != id) return;
+        if (conn.json) {
+          output.raw(<String, Object?>{
+            'sessionId': tuple.sessionId,
+            'seq': tuple.seq,
+            'event': tuple.event.toJson(),
+          });
+        } else {
+          final seq = tuple.seq.toString().padLeft(4, ' ');
+          output.line('#$seq  ${summarizeSessionEvent(tuple.event)}');
+        }
+        output.flush();
+      },
+      // The daemon died under us: the socket closes and the notifications
+      // stream ends (or errors). Complete the wait with the standard
+      // daemon-unreachable exit path instead of hanging forever.
+      onDone: () {
+        if (done.isCompleted) return;
+        stderr.writeln('speeddial: cannot reach daemon: connection closed');
+        done.complete(Exit.unreachable);
+      },
+      onError: (Object error) {
+        if (done.isCompleted) return;
+        stderr.writeln('speeddial: cannot reach daemon: $error');
+        done.complete(Exit.unreachable);
+      },
+    );
     ProcessSignal.sigint.watch().listen((_) async {
       await sub?.cancel();
       await client.close();
-      done.complete();
+      if (!done.isCompleted) done.complete(Exit.ok);
     });
-    await done.future;
-    return Exit.ok;
+    return done.future;
   }
 }
 

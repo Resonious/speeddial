@@ -81,9 +81,12 @@ class GitStore extends ChangeNotifier {
       daemonId, projectId, () => _clientFor(daemonId).gitPush(projectId));
 
   Future<String> createPr(String daemonId, String projectId,
-          {String? title, String? body, String? base}) =>
-      _runMutating(daemonId, projectId,
-          () => _clientFor(daemonId).gitCreatePr(projectId, title: title, body: body, base: base));
+          {String? title, String? body, String? base, bool draft = false}) =>
+      _runMutating(
+          daemonId,
+          projectId,
+          () => _clientFor(daemonId).gitCreatePr(
+              projectId, title: title, body: body, base: base, draft: draft));
 
   Future<T> _runMutating<T>(
     String daemonId,

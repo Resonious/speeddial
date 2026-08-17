@@ -221,6 +221,44 @@ void main() {
       final status = await service.status(repo.path);
       expect(status.files, isEmpty);
     });
+
+    test('checkout rejects dash-prefixed branch names', () async {
+      final repo = await _initRepo();
+      await _write(repo, 'a.txt', 'x\n');
+      await _commitAll(repo, 'init');
+
+      await expectLater(
+        service.checkout(repo.path, '--delete'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('invalid branch name'))),
+      );
+      expect((await service.branches(repo.path)).map((b) => b.name),
+          isNot(contains('--delete')),
+          reason: 'the crafted name must never reach git');
+    });
+
+    test('createBranch rejects dash-prefixed names with and without checkout',
+        () async {
+      final repo = await _initRepo();
+      await _write(repo, 'a.txt', 'x\n');
+      await _commitAll(repo, 'init');
+
+      for (final call in <Future<void> Function()>[
+        () => service.createBranch(repo.path, '-D'),
+        () => service.createBranch(repo.path, '-D', checkout: false),
+      ]) {
+        await expectLater(
+          call(),
+          throwsA(isA<DaemonError>()
+              .having((e) => e.code, 'code', kErrGit)
+              .having((e) => e.message, 'message', contains('invalid branch name'))),
+        );
+      }
+      expect((await service.branches(repo.path)).map((b) => b.name),
+          isNot(contains('-D')),
+          reason: 'the crafted name must never reach git');
+    });
   });
 
   group('push', () {

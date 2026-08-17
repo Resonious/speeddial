@@ -449,15 +449,13 @@ class _GitPaneState extends State<_GitPane> {
     );
     if (request == null || !mounted) return;
     try {
-      // The dialog collects draft too, but the pinned GitStore API only
-      // takes title/body/base; the draft flag will plumb through when the
-      // store grows the parameter.
       final String url = await _app.git.createPr(
         widget.daemonId,
         widget.projectId,
         title: request.title.isEmpty ? null : request.title,
         body: request.body.isEmpty ? null : request.body,
         base: request.base.isEmpty ? null : request.base,
+        draft: request.draft,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -554,17 +552,18 @@ class _CreatePrRequest {
     required this.title,
     required this.body,
     required this.base,
+    required this.draft,
   });
 
   final String title;
   final String body;
   final String base;
+  final bool draft;
 }
 
 /// Form dialog for creating a pull request: title/body/base plus a draft
-/// toggle (collected locally — the pinned store call takes no draft yet).
-/// Popped with the entered values; the caller performs the actual `createPr`
-/// call.
+/// toggle. Popped with the entered values; the caller performs the actual
+/// `createPr` call (threading `draft` through to the daemon).
 class _CreatePrDialog extends StatefulWidget {
   const _CreatePrDialog();
 
@@ -637,6 +636,7 @@ class _CreatePrDialogState extends State<_CreatePrDialog> {
               title: _title.text,
               body: _body.text,
               base: _base.text,
+              draft: _draft,
             ),
           ),
           child: const Text('Create'),

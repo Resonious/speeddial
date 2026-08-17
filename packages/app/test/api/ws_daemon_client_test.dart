@@ -91,13 +91,22 @@ class TestDaemonServer {
     });
     peer.registerHandler('sessions.history', (Map<String, Object?> params) {
       final String sessionId = params['sessionId']! as String;
+      final int limit = (params['limit'] as int?) ?? 200;
+      final int? beforeSeq = params['beforeSeq'] as int?;
+      final List<Map<String, Object?>> all =
+          history[sessionId] ?? const <Map<String, Object?>>[];
+      // Strictly below beforeSeq, ascending by seq; newest `limit` kept.
+      final List<Map<String, Object?>> filtered =
+          beforeSeq == null ? all : <Map<String, Object?>>[
+        for (final Map<String, Object?> event in all)
+          if ((event['seq']! as int) < beforeSeq) event,
+      ];
+      final bool hasMore = filtered.length > limit;
       return <String, Object?>{
-        'events': <Object?>[
-          for (final Map<String, Object?> event
-              in history[sessionId] ?? const <Map<String, Object?>>[])
-            event,
-        ],
-        'hasMore': false,
+        'events': hasMore
+            ? <Object?>[...filtered.sublist(filtered.length - limit)]
+            : <Object?>[...filtered],
+        'hasMore': hasMore,
       };
     });
 
@@ -186,6 +195,11 @@ class TestDaemonServer {
     if (peers.isEmpty) return;
     peers.last
         .notify('session.removed', <String, Object?>{'sessionId': sessionId});
+  }
+
+  void pushProjectsChanged() {
+    if (peers.isEmpty) return;
+    peers.last.notify('projects.changed', <String, Object?>{});
   }
 
   /// Server-side socket drop: closes the most recent accepted connection.
@@ -288,6 +302,26 @@ void main() {
     expect(client.connState.value, DaemonConnectionState.connected);
   });
 
+  test('connect to an unreachable socket fails instead of hanging', () async {
+    // A port that is guaranteed closed: bind, observe the port, release it.
+    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final int port = sink.port;
+    await sink.close(force: true);
+
+    final WsDaemonClient client = WsDaemonClient(
+      url: 'ws://127.0.0.1:$port/ws',
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    // The handshake is refused; connect must fail fast and land `failed`
+    // (never hang on closing a channel that never established).
+    await expectLater(client.connect(), throwsA(anything));
+    expect(client.connState.value, DaemonConnectionState.failed);
+    expect(client.isConnected, isFalse);
+  });
+
   test('routes session.event / updated / removed notifications to streams',
       () async {
     final TestDaemonServer server = await TestDaemonServer.start();
@@ -303,28 +337,38 @@ void main() {
     final List<SessionEvent> events = <SessionEvent>[];
     final List<Session> updates = <Session>[];
     final List<String> removals = <String>[];
+    int projectsChanged = 0;
     final StreamSubscription<SessionEvent> eventSub =
         client.sessionEvents('sess-1').listen(events.add);
     final StreamSubscription<Session> updateSub =
         client.sessionUpdates.listen(updates.add);
     final StreamSubscription<String> removalSub =
         client.sessionRemovals.listen(removals.add);
+    final StreamSubscription<void> projectSub =
+        client.projectsChanged.listen((void _) => projectsChanged++);
     addTearDown(eventSub.cancel);
     addTearDown(updateSub.cancel);
     addTearDown(removalSub.cancel);
+    addTearDown(projectSub.cancel);
 
     server.pushEvent('sess-1');
     server.pushEvent('sess-1');
     server.pushSessionUpdated();
     server.pushSessionRemoved('sess-1');
+    server.pushProjectsChanged();
     await waitFor(
-      () => events.length >= 2 && updates.length == 1 && removals.length == 1,
+      () =>
+          events.length >= 2 &&
+          updates.length == 1 &&
+          removals.length == 1 &&
+          projectsChanged == 1,
     );
 
     expect(events, everyElement(isA<UserMessageEvent>()));
     expect(events[0].seq, lessThan(events[1].seq!));
     expect(updates.single.status, SessionStatus.running);
     expect(removals.single, 'sess-1');
+    expect(projectsChanged, 1);
 
     // Per-session filters: events for sess-1 never leak onto sess-2.
     final List<SessionEvent> other = <SessionEvent>[];
@@ -429,5 +473,44 @@ void main() {
       for (final SessionEvent event in chat.eventsFor('sess-1')) event.seq!,
     ];
     expect(seqs, orderedEquals(seqs.toSet().toList()..sort()));
+  });
+
+  test('history pages backwards with beforeSeq and hasMore', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    // Seed a quiet session's persisted history directly (the liveliness
+    // timer only pushes events for 'sess-1').
+    server.history['sess-paging'] = <Map<String, Object?>>[
+      for (var i = 1; i <= 5; i++)
+        <String, Object?>{'type': 'userMessage', 'text': 'm$i', 'seq': i},
+    ];
+
+    final ({List<SessionEvent> events, bool hasMore}) all =
+        await client.history('sess-paging');
+    expect(all.hasMore, isFalse);
+    expect(all.events.map((SessionEvent e) => e.seq).toList(), <int>[1, 2, 3, 4, 5]);
+
+    final ({List<SessionEvent> events, bool hasMore}) page1 =
+        await client.history('sess-paging', limit: 2);
+    expect(page1.hasMore, isTrue);
+    expect(page1.events.map((SessionEvent e) => e.seq).toList(), <int>[4, 5]);
+
+    final ({List<SessionEvent> events, bool hasMore}) page2 =
+        await client.history('sess-paging', limit: 2, beforeSeq: 4);
+    expect(page2.hasMore, isTrue);
+    expect(page2.events.map((SessionEvent e) => e.seq).toList(), <int>[2, 3]);
+
+    final ({List<SessionEvent> events, bool hasMore}) page3 =
+        await client.history('sess-paging', limit: 2, beforeSeq: 2);
+    expect(page3.hasMore, isFalse);
+    expect(page3.events.map((SessionEvent e) => e.seq).toList(), <int>[1]);
   });
 }

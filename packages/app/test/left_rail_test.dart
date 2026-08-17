@@ -160,6 +160,38 @@ void main() {
     expect(app.selection.selectedProjectId, demo.id);
   });
 
+  testWidgets('deleting the selected session clears the selection',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    // Select the first session row.
+    await tester.tap(find.text('Build the feature'));
+    await tester.pumpAndSettle();
+    expect(app.selection.selectedSessionId, 'sess-1');
+
+    // Delete it via the row menu and confirm.
+    await tester.tap(
+      find.descendant(
+        of: find.widgetWithText(ListTile, 'Build the feature'),
+        matching: find.byIcon(Icons.more_vert),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-delete-confirm')));
+    await tester.pumpAndSettle();
+
+    // The chat pane must unpin from the dead session; the project stays.
+    expect(app.selection.selectedSessionId, isNull);
+    expect(app.selection.selectedProjectId, 'proj-demo');
+    expect(find.text('Build the feature'), findsNothing);
+    expect(find.text('Plan the refactor'), findsOneWidget);
+  });
+
   testWidgets('archiving a session removes it from the default list',
       (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);
@@ -205,13 +237,15 @@ void main() {
     expect(find.text('Add daemon'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget);
     expect(app.connections.endpoints, hasLength(2));
-    // The endpoint is wired to a WsDaemonClient whose connect attempt fails
-    // fast on the invalid 'localhost:7331' scheme (see shell_test).
+    // The endpoint is wired to a WsDaemonClient whose attempt to reach the
+    // dead normalized URL cannot complete under the widget-test binding
+    // (mocked HttpClient swallows the handshake — see shell_test); it is
+    // never `connected`, only failed/hanging in the real app.
     expect(
       app.connections.statusOf(
         app.connections.endpoints.lastWhere((DaemonEndpoint e) => e.id != 'fake').id,
       ),
-      ConnectionStatus.failed,
+      isNot(ConnectionStatus.connected),
     );
   });
 }

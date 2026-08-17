@@ -32,6 +32,13 @@ class _ShellState extends State<_Shell> {
   bool _rightOpen = true;
   final GlobalKey<ScaffoldState> _narrowScaffoldKey = GlobalKey<ScaffoldState>();
 
+  /// Keeps the chat pane's element (and therefore its session watch, cache
+  /// and composer draft) alive across wide↔narrow layout switches. Without
+  /// it the pane remounts on every resize and a freshly recreated watch can
+  /// be unwound by the old pane's `dispose` running later in the same
+  /// frame, leaving the timeline empty.
+  final GlobalKey _chatPaneKey = GlobalKey();
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -53,7 +60,7 @@ class _ShellState extends State<_Shell> {
                     children: <Widget>[
                       if (_leftOpen) const SizedBox(width: 280, child: LeftRail()),
                       if (_leftOpen) const VerticalDivider(width: 1, thickness: 1),
-                      const Expanded(child: ChatPane()),
+                      Expanded(child: ChatPane(key: _chatPaneKey)),
                       if (_rightOpen) const VerticalDivider(width: 1, thickness: 1),
                       if (_rightOpen) const SizedBox(width: 360, child: RightPanel()),
                     ],
@@ -83,7 +90,7 @@ class _ShellState extends State<_Shell> {
             ],
           ),
           drawer: const Drawer(child: LeftRail()),
-          body: const ChatPane(),
+          body: ChatPane(key: _chatPaneKey),
         );
       },
     );
@@ -93,6 +100,7 @@ class _ShellState extends State<_Shell> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (BuildContext context) => SizedBox(
         height: MediaQuery.sizeOf(context).height * 0.75,
         child: const RightPanel(),

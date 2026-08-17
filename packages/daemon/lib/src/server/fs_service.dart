@@ -121,6 +121,14 @@ class FsService {
 
   /// Resolves [requested] against [rootPath], rejecting absolute paths and
   /// anything that escapes the root (after canonicalization) with `-32602`.
+  ///
+  /// The lexical check alone is not a confinement boundary: subsequent I/O
+  /// follows symlinks (`followLinks` is on), so a symlink inside the root
+  /// pointing outside it would smuggle reads out of the sandbox. The real
+  /// (symlink-resolved) path of the deepest existing ancestor of the target —
+  /// or of the target itself when it exists — is therefore verified against
+  /// the symlink-resolved root, and only paths that remain inside are
+  /// accepted.
   String resolveInRoot(String rootPath, String requested) {
     if (p.isAbsolute(requested)) {
       throw DaemonError(_kErrInvalidParams, 'Absolute paths are not allowed');
@@ -130,7 +138,33 @@ class FsService {
     final prefix = root.endsWith(p.separator)
         ? root
         : '$root${p.separator}';
-    if (candidate == root || candidate.startsWith(prefix)) return candidate;
+    if (candidate == root || candidate.startsWith(prefix)) {
+      final realRoot = _realPathOfDeepestExisting(root);
+      final realCandidate = _realPathOfDeepestExisting(candidate);
+      final realPrefix = realRoot.endsWith(p.separator)
+          ? realRoot
+          : '$realRoot${p.separator}';
+      if (realCandidate == realRoot ||
+          realCandidate.startsWith(realPrefix)) {
+        return candidate;
+      }
+    }
     throw DaemonError(_kErrInvalidParams, 'Path escapes the project root');
+  }
+
+  /// The symlink-resolved real path of [path], or of its deepest existing
+  /// ancestor when [path] itself does not exist yet (targets may be missing,
+  /// e.g. `fs.read` of a path whose sibling ancestors are symlinks).
+  String _realPathOfDeepestExisting(String path) {
+    var current = path;
+    while (true) {
+      try {
+        return File(current).resolveSymbolicLinksSync();
+      } on FileSystemException {
+        final parent = p.dirname(current);
+        if (parent == current) rethrow; // Reached the filesystem root.
+        current = parent;
+      }
+    }
   }
 }

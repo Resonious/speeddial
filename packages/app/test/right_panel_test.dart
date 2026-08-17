@@ -230,4 +230,42 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('failed directory listing shows an error row; retry recovers',
+      (WidgetTester tester) async {
+    final _FlakyFilesFake fake = _FlakyFilesFake();
+    await pumpRightPanel(tester, fake);
+
+    // The root load failed: an error row with a Retry button replaces the
+    // endless spinner.
+    expect(find.text('no such directory: .'), findsOneWidget);
+    expect(find.byKey(const Key('files-dir-retry')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    // The daemon recovers; retrying loads the listing.
+    fake.allowRoot = true;
+    await tester.tap(find.byKey(const Key('files-dir-retry')));
+    await tester.pumpAndSettle();
+
+    final Project project = (await fake.listProjects()).single;
+    final List<FileEntry> root = await fake.listFiles(project.id);
+    for (final FileEntry entry in root) {
+      expect(find.text(entry.name), findsOneWidget);
+    }
+    expect(find.byKey(const Key('files-dir-retry')), findsNothing);
+  });
+}
+
+/// A fake whose root directory listing fails until [allowRoot] is set,
+/// driving the files tab's error-row + retry path.
+class _FlakyFilesFake extends FakeDaemonClient {
+  bool allowRoot = false;
+
+  @override
+  Future<List<FileEntry>> listFiles(String projectId, [String path = '.']) async {
+    if (path == '.' && !allowRoot) {
+      throw const DaemonError(kErrNotFound, 'no such directory: .');
+    }
+    return super.listFiles(projectId, path);
+  }
 }

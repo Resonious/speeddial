@@ -130,8 +130,9 @@ void main() {
           ),
         );
       } else if (notification.method == 'session.updated') {
-        // The engine also publishes `session.updated` at create time; only the
-        // rename's broadcast has the new title.
+        // The daemon relays `session.updated` only after `session.created`
+        // for a session; the rename's broadcast is the first one observed
+        // here. Filter by title to pick it out.
         final session = Session.fromJson(
           (notification.params['session']! as Map).cast<String, Object?>(),
         );

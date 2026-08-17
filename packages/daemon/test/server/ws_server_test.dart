@@ -316,6 +316,7 @@ void main() {
             .having((e) => e.code, 'code', kErrNotFound)),
       );
 
+      await untilRecorded(client, 'projects.changed', 3);
       final changed = client.of('projects.changed');
       expect(changed, hasLength(greaterThanOrEqualTo(3)),
           reason: 'add, rename, and remove each announce projects.changed');
@@ -349,6 +350,7 @@ void main() {
       expect(session.status, SessionStatus.idle);
       expect(session.title, 'Lifecycle');
       expect(session.mode, SessionMode.build);
+      await untilRecorded(client, 'session.created', 1);
       expect(client.of('session.created'), hasLength(1));
 
       // Start a turn; it parks at the permission request until resolved.
@@ -379,7 +381,10 @@ void main() {
       await send;
       expect(sendDone, isTrue);
 
-      // All ten events arrived in the order the agent produced them.
+      // All ten events arrived in the order the agent produced them. The
+      // turn's tail (usage, turnComplete) is emitted asynchronously after the
+      // response, so poll the recorder before counting.
+      await untilRecorded(client, 'session.event', 10);
       final events = client
           .of('session.event')
           .map((n) => SessionEvent.fromJson(
@@ -444,6 +449,7 @@ void main() {
             .title,
         'Renamed',
       );
+      await untilRecorded(client, 'session.updated', 1);
       expect(client.of('session.updated'), isNotEmpty);
 
       final modeChanged = j(await client.peer.call('sessions.setMode',
@@ -486,6 +492,7 @@ void main() {
       // Delete removes the session and announces session.removed.
       await client.peer
           .call('sessions.delete', <String, Object?>{'sessionId': session.id});
+      await untilRecorded(client, 'session.removed', 1);
       expect(client.of('session.removed'), hasLength(1));
       await expectLater(
         client.peer.call('sessions.delete',
@@ -673,6 +680,58 @@ void main() {
     });
   });
 
+  group('origin', () {
+    test('rejects cross-origin upgrades with 403; loopback and absent '
+        'origins pass', () async {
+      await startServer();
+      final port = server!.port;
+
+      // No Origin header (non-browser CLI-style client): allowed.
+      final plain = await WebSocket.connect('ws://127.0.0.1:$port/ws');
+      await plain.close();
+
+      // Loopback Origin: allowed.
+      final loopback = await WebSocket.connect('ws://127.0.0.1:$port/ws',
+          headers: {'origin': 'http://localhost:7331'});
+      await loopback.close();
+
+      // Non-loopback Origin: rejected with 403 before the upgrade.
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(
+            Uri.parse('http://127.0.0.1:$port/ws'));
+        request.headers.set(HttpHeaders.connectionHeader, 'Upgrade');
+        request.headers.set(HttpHeaders.upgradeHeader, 'websocket');
+        request.headers.set('sec-websocket-key', 'dGhlIHNhbXBsZSBub25jZQ==');
+        request.headers.set('sec-websocket-version', '13');
+        request.headers.set('origin', 'http://evil.example');
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.forbidden,
+            reason: 'cross-origin WebSocket upgrades must be refused with 403');
+        await response.drain<void>();
+      } finally {
+        client.close(force: true);
+      }
+
+      // An opaque origin ("null", e.g. sandboxed iframes) is not loopback.
+      final nullOrigin = HttpClient();
+      try {
+        final request = await nullOrigin.getUrl(
+            Uri.parse('http://127.0.0.1:$port/ws'));
+        request.headers.set(HttpHeaders.connectionHeader, 'Upgrade');
+        request.headers.set(HttpHeaders.upgradeHeader, 'websocket');
+        request.headers.set('sec-websocket-key', 'dGhlIHNhbXBsZSBub25jZQ==');
+        request.headers.set('sec-websocket-version', '13');
+        request.headers.set('origin', 'null');
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.forbidden);
+        await response.drain<void>();
+      } finally {
+        nullOrigin.close(force: true);
+      }
+    });
+  });
+
   group('notifications', () {
     test('session lifecycle events fan out to every authenticated client',
         () async {
@@ -693,6 +752,8 @@ void main() {
             'providerId': 'fake',
           }));
       final sessionId = (created['session']! as Map)['id']! as String;
+      await untilRecorded(a, 'session.created', 1);
+      await untilRecorded(b, 'session.created', 1);
       expect(a.of('session.created'), hasLength(1));
       expect(b.of('session.created'), hasLength(1),
           reason: 'creation announces to all clients');
@@ -747,6 +808,49 @@ void main() {
 
       await a.close();
       await b.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a fresh observer sees session.created before any session.updated '
+        'for a new session', () async {
+      await startServer();
+      final a = await connect(server!.port);
+      final fresh = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_created_first_');
+      final project = Project.fromJson((j(await a.peer.call('projects.add',
+                  <String, Object?>{'path': dir.path}))['project']! as Map)
+          .cast<String, Object?>());
+
+      final created = j(await a.peer.call('sessions.create',
+          <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+          }));
+      final sessionId = (created['session']! as Map)['id']! as String;
+
+      // Wait for created to arrive on the fresh observer, then trigger a
+      // session.updated (rename) and confirm the ordering holds.
+      await untilRecorded(fresh, 'session.created', 1);
+      await a.peer.call('sessions.rename',
+          <String, Object?>{'sessionId': sessionId, 'title': 'Renamed'});
+      await untilRecorded(fresh, 'session.updated', 1);
+
+      final order = fresh.notifications
+          .where((n) =>
+              (n.method == 'session.created' ||
+                  n.method == 'session.updated') &&
+              n.params['session'] is Map &&
+              (n.params['session']! as Map)['id'] == sessionId)
+          .map((n) => n.method)
+          .toList();
+      expect(order, isNotEmpty);
+      expect(order, contains('session.updated'),
+          reason: 'the rename update must arrive at all');
+      expect(order.first, 'session.created',
+          reason: 'the relay must not emit session.updated for a session '
+              'before its session.created has been broadcast');
+
+      await a.close();
+      await fresh.close();
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

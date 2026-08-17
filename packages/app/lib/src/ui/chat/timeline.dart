@@ -145,15 +145,18 @@ List<TimelineItem> deriveTimelineItems(List<SessionEvent> events) {
   return items;
 }
 
-/// Virtualized, bottom-anchored timeline of a session's events.
+/// Virtualized, bottom-anchored timeline of a session's derived items.
+///
+/// [items] is the [deriveTimelineItems] output for the session; callers
+/// cache it per session revision so every chunk notification does not
+/// re-scan the full raw event list.
 class Timeline extends StatelessWidget {
-  const Timeline({super.key, required this.events});
+  const Timeline({super.key, required this.items});
 
-  final List<SessionEvent> events;
+  final List<TimelineItem> items;
 
   @override
   Widget build(BuildContext context) {
-    final List<TimelineItem> items = deriveTimelineItems(events);
     return ListView.builder(
       reverse: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,

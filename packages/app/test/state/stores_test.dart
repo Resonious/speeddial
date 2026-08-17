@@ -76,6 +76,25 @@ void main() {
       await refreshing;
       expect(app.projects.isLoading('fake'), isFalse);
     });
+
+    test('refreshes when the daemon announces projects.changed', () async {
+      await app.projects.refresh('fake');
+      expect(app.projects.projectsFor('fake'), hasLength(1));
+
+      // Daemon-side add: the subscription triggers a refetch on its own.
+      await fake.addProject('/work/other', name: 'Other');
+      await _waitUntil(() => app.projects.projectsFor('fake').length == 2);
+      expect(
+        app.projects.projectsFor('fake').map((Project p) => p.name),
+        contains('Other'),
+      );
+
+      // Daemon-side remove: the refetch drops it (and its sessions).
+      await fake.removeProject('proj-demo');
+      await _waitUntil(() => app.projects.projectsFor('fake').length == 1);
+      expect(app.projects.projectsFor('fake').single.name, 'Other');
+      expect(app.projects.lastError, isNull);
+    });
   });
 
   group('sessions', () {
@@ -114,6 +133,57 @@ void main() {
       await app.sessions.refresh('fake');
       expect(app.sessions.sessionsFor(projectId), hasLength(2));
     });
+
+    test('reacts to daemon sessionUpdates / sessionRemovals without a refresh',
+        () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+      expect(app.sessions.byId('sess-1')!.title, 'Build the feature');
+
+      // A daemon-side rename (no store call): the subscription upserts.
+      await fake.renameSession('sess-1', 'Renamed externally');
+      await _flushMicrotasks();
+      expect(app.sessions.byId('sess-1')!.title, 'Renamed externally');
+      expect(
+        app.sessions
+            .sessionsFor(projectId)
+            .singleWhere((Session s) => s.id == 'sess-1')
+            .title,
+        'Renamed externally',
+      );
+
+      // A daemon-side create lands in the bucket too.
+      final Session created =
+          await fake.createSession(projectId: projectId, providerId: 'omp');
+      await _flushMicrotasks();
+      expect(app.sessions.byId(created.id), isNotNull);
+      expect(app.sessions.sessionsFor(projectId), hasLength(3));
+
+      // A daemon-side delete removes it.
+      await fake.deleteSession(created.id);
+      await _flushMicrotasks();
+      expect(app.sessions.byId(created.id), isNull);
+      expect(app.sessions.sessionsFor(projectId), hasLength(2));
+    });
+
+    test('byId prefers the most recently used daemon for a shared id',
+        () async {
+      final FakeDaemonClient fake2 = FakeDaemonClient();
+      app.registerClient('fake2', fake2);
+      await app.sessions.refresh('fake');
+      await app.sessions.refresh('fake2'); // last used for both daemons
+
+      await app.sessions.rename('fake2', 'sess-1', 'From fake2');
+      expect(app.sessions.byId('sess-1')!.title, 'From fake2');
+
+      await app.sessions.rename('fake', 'sess-1', 'From fake');
+      expect(app.sessions.byId('sess-1')!.title, 'From fake');
+
+      // fake's entry is untouched internally; refreshing fake2 makes fake2's
+      // copy authoritative again for the shared id.
+      await app.sessions.refresh('fake2');
+      expect(app.sessions.byId('sess-1')!.title, 'From fake2');
+    });
   });
 
   group('chat', () {
@@ -132,7 +202,7 @@ void main() {
           events.whereType<AgentMessageChunkEvent>().toList();
       expect(chunks, hasLength(1));
       expect(chunks.single.text,
-          'Working on it…```dart\nvoid main() {}\n```Done.');
+          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.');
 
       // Tool call appears once per status transition, plan and usage once.
       expect(events.whereType<ToolCallEvent>(), hasLength(2));
@@ -189,8 +259,9 @@ void main() {
       // Run a full turn first so history() has events to replay.
       final String sessionId = (await fake.listSessions()).first.id;
       await fake.sendMessage(sessionId, 'hello');
-      await _waitUntil(() async =>
-          (await fake.history(sessionId)).any((SessionEvent e) => e is TurnCompleteEvent));
+      await _waitUntil(() async => (await fake.history(sessionId))
+          .events
+          .any((SessionEvent e) => e is TurnCompleteEvent));
 
       int notifications = 0;
       app.chat.addListener(() => notifications++);
@@ -226,8 +297,122 @@ void main() {
       await _flushMicrotasks();
       final List<SessionEvent> events = app.chat.eventsFor(sessionId);
       expect(events.whereType<AgentMessageChunkEvent>().single.text,
-          'Working on it…```dart\nvoid main() {}\n```Done.');
+          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.');
       expect(events.whereType<TurnCompleteEvent>(), hasLength(1));
+    });
+
+    test('watch backfills multi-page history by paging backwards', () async {
+      // Seed more than one page (default history limit is 200).
+      fake.seedHistory('sess-1', <SessionEvent>[
+        for (var i = 1; i <= 450; i++) UserMessageEvent(text: 'm$i'),
+      ]);
+
+      app.chat.watchSession('fake', 'sess-1');
+      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 450);
+
+      final List<SessionEvent> events = app.chat.eventsFor('sess-1');
+      // All three pages arrived, in ascending seq order, with no overlap.
+      expect(events.map((SessionEvent e) => e.seq).toList(),
+          List<int?>.generate(450, (int i) => i + 1));
+      expect(
+        (events.first as UserMessageEvent).text,
+        'm1',
+      );
+      expect(
+        (events.last as UserMessageEvent).text,
+        'm450',
+      );
+
+      // A live event after the backfill continues from the known max seq.
+      await app.chat.send('fake', 'sess-1', 'after backfill');
+      await _waitUntil(() => app.chat
+          .eventsFor('sess-1')
+          .any((SessionEvent e) => e is TurnCompleteEvent));
+      // The turn appends 9 raw events, but the 3 chunk deltas (452-454)
+      // merge into one buffered record (seq 454): 450 + 7 = 457.
+      expect(app.chat.eventsFor('sess-1'), hasLength(457));
+      // Merged chunk records the last delta's seq; the tail is contiguous.
+      expect(
+        app.chat.eventsFor('sess-1').sublist(450).map((SessionEvent e) => e.seq),
+        <int>[451, 454, 455, 456, 457, 458, 459],
+      );
+      expect(
+        (app.chat.eventsFor('sess-1').lastWhere((SessionEvent e) =>
+            e is UserMessageEvent) as UserMessageEvent)
+            .text,
+        'after backfill',
+      );
+    });
+
+    test('revisionFor increments on every buffer mutation', () async {
+      final String sessionId = (await fake.listSessions()).first.id;
+      expect(app.chat.revisionFor(sessionId), 0); // never watched
+
+      app.chat.watchSession('fake', sessionId);
+      await _flushMicrotasks();
+      expect(app.chat.revisionFor(sessionId), 0); // empty history: no-op watch
+
+      await app.chat.send('fake', sessionId, 'hello');
+      await _waitUntil(() => app.chat
+          .eventsFor(sessionId)
+          .any((SessionEvent e) => e is TurnCompleteEvent));
+      // 9 events (userMessage, 3 chunk deltas, 2 tool calls, plan, usage,
+      // turnComplete); the merged chunk deltas still count as mutations.
+      expect(app.chat.revisionFor(sessionId), 9);
+
+      // Reading the buffer never bumps the revision.
+      final int settled = app.chat.revisionFor(sessionId);
+      app.chat.eventsFor(sessionId);
+      expect(app.chat.revisionFor(sessionId), settled);
+
+      // Unwatching forgets the counters for that session.
+      app.chat.unwatch(sessionId);
+      expect(app.chat.revisionFor(sessionId), 0);
+    });
+
+    test('same session id on two daemons stays separate, last watch wins',
+        () async {
+      final FakeDaemonClient fake2 =
+          FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+      app.registerClient('fake2', fake2);
+      final String sessionId = (await fake.listSessions()).first.id;
+
+      app.chat.watchSession('fake', sessionId);
+      await app.chat.send('fake', sessionId, 'hello');
+      await _waitUntil(() => app.chat
+          .eventsFor(sessionId)
+          .any((SessionEvent e) => e is TurnCompleteEvent));
+      expect(app.chat.eventsFor(sessionId), isNotEmpty);
+      final int fakeRevisions = app.chat.revisionFor(sessionId);
+
+      // Now watch the same id on fake2: the public getters shift to fake2's
+      // fresh buffer — its own history is empty, unlike fake's full turn.
+      app.chat.watchSession('fake2', sessionId);
+      await _flushMicrotasks();
+      expect(app.chat.eventsFor(sessionId), isEmpty);
+      expect(app.chat.revisionFor(sessionId), 0);
+
+      // A turn on fake2 fills only fake2's buffer; seqs start at 1 again.
+      await app.chat.send('fake2', sessionId, 'hi there');
+      await _waitUntil(() => app.chat
+          .eventsFor(sessionId)
+          .any((SessionEvent e) => e is TurnCompleteEvent));
+      final List<SessionEvent> fake2Events = app.chat.eventsFor(sessionId);
+      expect(fake2Events.first, isA<UserMessageEvent>());
+      expect(fake2Events.first.seq, 1);
+      // 9 raw events; the 3 chunk deltas merge into one Buffered event whose
+      // seq is the last delta's, so the buffer holds 7 events with seqs
+      // [1, 4, 5, 6, 7, 8, 9].
+      expect(fake2Events.map((SessionEvent e) => e.seq).toList(),
+          <int>[1, 4, 5, 6, 7, 8, 9]);
+      expect(app.chat.revisionFor(sessionId), 9);
+
+      // Unwatching releases the preferred (fake2) buffer; resolution shifts
+      // back to fake's still-watched buffer with its turn intact.
+      app.chat.unwatch(sessionId);
+      await _flushMicrotasks();
+      expect(app.chat.eventsFor(sessionId).first, isA<UserMessageEvent>());
+      expect(app.chat.revisionFor(sessionId), fakeRevisions);
     });
   });
 

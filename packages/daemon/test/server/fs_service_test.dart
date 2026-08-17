@@ -199,4 +199,69 @@ void main() {
       );
     });
   });
+
+  group('symlink confinement', () {
+    late Directory outside;
+
+    setUp(() {
+      outside = Directory.systemTemp.createTempSync('fs_outside_');
+      File(p.join(outside.path, 'secret.txt')).writeAsStringSync('secret');
+    });
+
+    tearDown(() {
+      try {
+        outside.deleteSync(recursive: true);
+      } on Object {
+        // Cleanup failure is not a test failure.
+      }
+    });
+
+    test('rejects a directory symlink pointing outside the root', () {
+      Link(p.join(tempDir.path, 'evil')).createSync(outside.path);
+
+      expect(
+        () => fs.list(rootPath: tempDir.path, path: 'evil'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+        reason: 'listing a symlinked escape must be rejected',
+      );
+      expect(
+        () => fs.read(rootPath: tempDir.path, path: 'evil/secret.txt'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+        reason: 'reading through a symlinked escape must be rejected',
+      );
+    });
+
+    test('rejects a file symlink pointing outside the root', () {
+      Link(p.join(tempDir.path, 'leak.txt')).createSync(
+          p.join(outside.path, 'secret.txt'));
+
+      expect(
+        () => fs.read(rootPath: tempDir.path, path: 'leak.txt'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+    });
+
+    test('still allows symlinks that stay inside the root', () {
+      write('real.txt', 'inner');
+      Link(p.join(tempDir.path, 'alias.txt'))
+          .createSync(p.join(tempDir.path, 'real.txt'));
+
+      // The deepest existing ancestor of a missing target under a symlinked
+      // dir stays inside (the sibling symlink resolves within the root).
+      expect(
+        fs.read(rootPath: tempDir.path, path: 'alias.txt').content,
+        'inner',
+      );
+
+      // Even a *missing* path under an in-root symlinked directory is fine
+      // as long as the resolved real ancestor stays inside the root.
+      Link(p.join(tempDir.path, 'inroot')).createSync(tempDir.path);
+      final resolved =
+          fs.resolveInRoot(tempDir.path, 'inroot/not-there-yet.txt');
+      expect(resolved, p.join(tempDir.path, 'inroot', 'not-there-yet.txt'));
+    });
+  });
 }

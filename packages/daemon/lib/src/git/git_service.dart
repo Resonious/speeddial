@@ -59,15 +59,30 @@ class GitService {
   }
 
   Future<void> checkout(String repoPath, String branch) async {
+    _validateBranchName(branch);
     await _run(repoPath, ['checkout', branch]);
   }
 
   Future<void> createBranch(String repoPath, String name,
       {bool checkout = true}) async {
+    _validateBranchName(name);
     if (checkout) {
       await _run(repoPath, ['checkout', '-b', name]);
     } else {
       await _run(repoPath, ['branch', name]);
+    }
+  }
+
+  /// Rejects branch names that start with `-`: git would parse them as flags
+  /// (e.g. `--delete` after `checkout`), letting a crafted name mutate the
+  /// repository instead of naming a branch.
+  void _validateBranchName(String name) {
+    if (name.startsWith('-')) {
+      throw DaemonError(
+        kErrGit,
+        'invalid branch name: $name',
+        <String, Object?>{'branchName': name},
+      );
     }
   }
 

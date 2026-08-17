@@ -118,7 +118,11 @@ void main() {
     ]);
     expect(
       events.whereType<AgentMessageChunkEvent>().map((AgentMessageChunkEvent e) => e.text).toList(),
-      <String>['Working on it…', '```dart\nvoid main() {}\n```', 'Done.'],
+      <String>[
+        'Working on it…\n\n',
+        '```dart\nvoid main() {}\n```\n\n',
+        'Done.',
+      ],
     );
     final List<ToolCallEvent> toolCalls = events.whereType<ToolCallEvent>().toList();
     expect(toolCalls, hasLength(2));
@@ -138,10 +142,12 @@ void main() {
     await updateSub.cancel();
 
     // History reflects the same events, ascending seq starting at 1.
-    final List<SessionEvent> history = await fake.history('sess-1');
-    expect(history, hasLength(events.length));
-    expect(history.map((SessionEvent e) => e.seq).toList(),
-        List<int?>.generate(history.length, (int i) => i + 1));
+    final ({List<SessionEvent> events, bool hasMore}) page0 =
+        await fake.history('sess-1');
+    expect(page0.hasMore, isFalse);
+    expect(page0.events, hasLength(events.length));
+    expect(page0.events.map((SessionEvent e) => e.seq).toList(),
+        List<int?>.generate(page0.events.length, (int i) => i + 1));
   });
 
   test('permission script parks until respondPermission', () async {
@@ -191,18 +197,82 @@ void main() {
 
     await fake.sendMessage('sess-1', 'hello');
     // Even with no subscription the events are recorded for history().
-    await _waitUntil(() async =>
-        (await fake.history('sess-1')).any((SessionEvent e) => e is TurnCompleteEvent));
-    final List<SessionEvent> history = await fake.history('sess-1');
-    expect(history, hasLength(9));
-    expect(history.last, isA<TurnCompleteEvent>());
+    await _waitUntil(() async => (await fake.history('sess-1'))
+        .events
+        .any((SessionEvent e) => e is TurnCompleteEvent));
+    final ({List<SessionEvent> events, bool hasMore}) all =
+        await fake.history('sess-1');
+    expect(all.hasMore, isFalse);
+    expect(all.events, hasLength(9));
+    expect(all.events.last, isA<TurnCompleteEvent>());
 
     // beforeSeq excludes newer events; limit pages from the end.
-    final List<SessionEvent> page = await fake.history('sess-1', limit: 3);
-    expect(page, hasLength(3));
-    expect(page.last, isA<TurnCompleteEvent>());
-    final List<SessionEvent> older = await fake.history('sess-1', beforeSeq: 4);
-    expect(older.map((SessionEvent e) => e.seq).toList(), <int>[1, 2, 3]);
+    final ({List<SessionEvent> events, bool hasMore}) page =
+        await fake.history('sess-1', limit: 3);
+    expect(page.hasMore, isTrue);
+    expect(page.events, hasLength(3));
+    expect(page.events.last, isA<TurnCompleteEvent>());
+    final ({List<SessionEvent> events, bool hasMore}) older =
+        await fake.history('sess-1', beforeSeq: 4);
+    expect(older.hasMore, isFalse);
+    expect(older.events.map((SessionEvent e) => e.seq).toList(), <int>[1, 2, 3]);
+  });
+
+  test('history pages backwards with beforeSeq and reports hasMore', () async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    // Preload > one page via the seeding helper (seqs assigned 1..5).
+    fake.seedHistory('sess-1', <SessionEvent>[
+      for (var i = 1; i <= 5; i++) UserMessageEvent(text: 'm$i'),
+    ]);
+
+    final ({List<SessionEvent> events, bool hasMore}) all =
+        await fake.history('sess-1');
+    expect(all.hasMore, isFalse);
+    expect(all.events.map((SessionEvent e) => e.seq).toList(), <int>[1, 2, 3, 4, 5]);
+    expect(
+      all.events.map((SessionEvent e) => (e as UserMessageEvent).text),
+      <String>['m1', 'm2', 'm3', 'm4', 'm5'],
+    );
+
+    final ({List<SessionEvent> events, bool hasMore}) page1 =
+        await fake.history('sess-1', limit: 2);
+    expect(page1.hasMore, isTrue);
+    expect(page1.events.map((SessionEvent e) => e.seq).toList(), <int>[4, 5]);
+
+    final ({List<SessionEvent> events, bool hasMore}) page2 =
+        await fake.history('sess-1', limit: 2, beforeSeq: 4);
+    expect(page2.hasMore, isTrue);
+    expect(page2.events.map((SessionEvent e) => e.seq).toList(), <int>[2, 3]);
+
+    final ({List<SessionEvent> events, bool hasMore}) page3 =
+        await fake.history('sess-1', limit: 2, beforeSeq: 2);
+    expect(page3.hasMore, isFalse);
+    expect(page3.events.map((SessionEvent e) => e.seq).toList(), <int>[1]);
+
+    // Seeded events stay consistent with later live turns (seqs continue).
+    fake.seedHistory('sess-1', <SessionEvent>[UserMessageEvent(text: 'm6')]);
+    final ({List<SessionEvent> events, bool hasMore}) continued =
+        await fake.history('sess-1', beforeSeq: 7);
+    expect(continued.events.map((SessionEvent e) => e.seq).toList(),
+        <int>[1, 2, 3, 4, 5, 6]);
+    expect(
+      continued.events.last,
+      isA<UserMessageEvent>()
+          .having((UserMessageEvent e) => e.text, 'text', 'm6'),
+    );
+  });
+
+  test('projectsChanged emits on add and remove project', () async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    int emissions = 0;
+    final StreamSubscription<void> sub =
+        fake.projectsChanged.listen((void _) => emissions++);
+    addTearDown(sub.cancel);
+
+    await fake.addProject('/work/other', name: 'Other');
+    await fake.removeProject('proj-demo');
+    await Future<void>.delayed(Duration.zero);
+    expect(emissions, 2);
   });
 
   test('sendMessage while a turn is running throws a conflict error', () async {

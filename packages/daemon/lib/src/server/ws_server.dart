@@ -131,6 +131,14 @@ class SpeedDialServer {
   late final StreamSubscription<String> _removalsSub;
   bool _closed = false;
 
+  /// Session ids whose `session.created` broadcast has been sent. The engine
+  /// publishes `session.updated` during `sessions.create` (before the wire
+  /// handler has broadcast `session.created`); relaying those would deliver
+  /// an update for a session the client has never seen created. The relay
+  /// skips ids absent from this set, the create handler adds the id right
+  /// after broadcasting `session.created`, and removals drop it.
+  final Set<String> _createdBroadcast = <String>{};
+
   /// The bound port (meaningful after [bind]).
   int get port => _httpServer?.port ?? 0;
 
@@ -168,9 +176,14 @@ class SpeedDialServer {
       });
     });
     _changesSub = _engine.sessionChanges.listen((session) {
+      // Skip updates for sessions whose `session.created` has not been
+      // broadcast yet: the engine emits updates while `sessions.create` is
+      // still in flight, and a client must observe created before updated.
+      if (!_createdBroadcast.contains(session.id)) return;
       _broadcast('session.updated', <String, Object?>{'session': session.toJson()});
     });
     _removalsSub = _engine.sessionRemovals.listen((sessionId) {
+      _createdBroadcast.remove(sessionId);
       _broadcast('session.removed', <String, Object?>{'sessionId': sessionId});
     });
   }
@@ -187,6 +200,19 @@ class SpeedDialServer {
   Future<void> _handleRequest(HttpRequest request) async {
     if (request.uri.path == '/ws' &&
         WebSocketTransformer.isUpgradeRequest(request)) {
+      // Cross-Site WebSocket Hijacking: a browser page on any origin can open
+      // a WebSocket to the daemon (cookies are not involved, but an Origin
+      // check keeps third-party pages from driving the local daemon). When an
+      // Origin is present its host must be loopback; non-browser clients
+      // (like our CLI) send no Origin and are always allowed.
+      final origin = request.headers.value('origin');
+      if (origin != null && !_isLoopbackOrigin(origin)) {
+        request.response
+          ..statusCode = HttpStatus.forbidden
+          ..write('forbidden')
+          ..close();
+        return;
+      }
       try {
         final socket = await WebSocketTransformer.upgrade(request);
         unawaited(
@@ -238,6 +264,16 @@ class SpeedDialServer {
     );
   }
 
+  /// Whether an Origin header's host is loopback (localhost / 127.0.0.1 /
+  /// ::1). Malformed or opaque origins ("null") have no host and are not
+  /// loopback.
+  bool _isLoopbackOrigin(String origin) {
+    final uri = Uri.tryParse(origin);
+    if (uri == null) return false;
+    final host = uri.host.toLowerCase();
+    return host == 'localhost' || host == '127.0.0.1' || host == '::1';
+  }
+
   void _dropClient(_Client client, StreamController<Object?> incoming) {
     _clients.remove(client);
     client.peer.close();
@@ -259,19 +295,6 @@ class SpeedDialServer {
       client.peer.notify(method, params);
     }
   }
-
-  /// Yields to the event loop so notification frames already queued on every
-  /// authenticated client's socket are flushed and delivered before a method
-  /// response is written.
-  ///
-  /// A broadcast made inside a request handler and a response to that request
-  /// are otherwise written in the same synchronous burst; the caller then
-  /// processes its response (completing its call) before a peer's socket has
-  /// delivered its copy of the notification, so the peer observes the
-  /// broadcast late. dart:io's [WebSocket] exposes no `flush`, so this drains
-  /// pending socket writes by ceding a full event-loop turn, guaranteeing the
-  /// queued notifications reach every client before the response is sent.
-  Future<void> _flushBroadcasts() => Future<void>.delayed(Duration.zero);
 
   // -------------------------------------------------------------------------
   // Method dispatch
@@ -377,7 +400,6 @@ class SpeedDialServer {
     );
     _store.insertProject(project); // Duplicate path → kErrConflict.
     _broadcast('projects.changed', <String, Object?>{});
-    await _flushBroadcasts();
     return <String, Object?>{'project': project.toJson()};
   }
 
@@ -388,7 +410,6 @@ class SpeedDialServer {
     }
     _store.removeProject(id);
     _broadcast('projects.changed', <String, Object?>{});
-    await _flushBroadcasts();
     return <String, Object?>{};
   }
 
@@ -397,7 +418,6 @@ class SpeedDialServer {
     final name = _requiredString(params, 'name');
     final project = _store.renameProject(id, name);
     _broadcast('projects.changed', <String, Object?>{});
-    await _flushBroadcasts();
     return <String, Object?>{'project': project.toJson()};
   }
 
@@ -433,13 +453,14 @@ class SpeedDialServer {
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
       cwd: rawCwd is String && rawCwd.isNotEmpty ? rawCwd : null,
     );
-    // The engine already published `session.updated`; PROTOCOL.md wants an
-    // explicit `session.created` for new sessions.
+    // The engine already published `session.updated` (suppressed by the
+    // created-set while `sessions.create` is in flight); PROTOCOL.md wants an
+    // explicit `session.created` for new sessions. Only after broadcasting it
+    // may the sessionChanges relay let updates through. Broadcasts are
+    // synchronous and per-connection FIFO, so on every socket
+    // `session.created` is queued before any later `session.updated`.
     _broadcast('session.created', <String, Object?>{'session': session.toJson()});
-    // Flush the broadcast to every client before responding: the response is
-    // written on the requesting socket, so without this the caller would
-    // complete its call before a peer has observed `session.created`.
-    await _flushBroadcasts();
+    _createdBroadcast.add(session.id);
     return <String, Object?>{'session': session.toJson()};
   }
 

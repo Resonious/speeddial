@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/main.dart';
+import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 
 void main() {
@@ -83,18 +85,147 @@ void main() {
     await tester.tap(find.byKey(const Key('add-daemon-submit')));
     await tester.pumpAndSettle();
 
-    // Dialog closed, endpoint materialized in the store and the rail.
+    // Dialog closed, endpoint materialized in the store and the rail. The
+    // bare host was normalized into a connectable ws:// URL.
     expect(find.text('Add daemon'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget);
     expect(data.connections.endpoints, hasLength(1));
-    expect(data.connections.endpoints.single.url, 'localhost:7331');
+    expect(
+      data.connections.endpoints.single.url,
+      'ws://localhost:7331/ws',
+    );
     expect(data.connections.endpoints.single.token, 'secret');
     // Adding an endpoint triggers a connection attempt (AppData rewires the
-    // endpoint to a WsDaemonClient); the 'localhost:7331' scheme is invalid,
-    // so the attempt fails fast and the status lands on `failed`.
+    // endpoint to a WsDaemonClient). Nothing listens on localhost:7331, so
+    // the attempt cannot succeed — but under the widget-test binding the
+    // mocked HttpClient swallows the ws handshake, so the refusal never
+    // resolves here (the real app lands `failed`; ws_daemon_client_test
+    // pins that failure path against a real dead port). Never `connected`.
     expect(
       data.connections.statusOf(data.connections.endpoints.single.id),
-      ConnectionStatus.failed,
+      isNot(ConnectionStatus.connected),
     );
+  });
+
+  test('addEndpoint normalizes bare hosts into ws:// URLs', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final ConnectionsStore store = ConnectionsStore();
+    await store.addEndpoint(name: 'a', url: 'localhost:7331', token: '');
+    await store.addEndpoint(name: 'b', url: 'ws://host:9000/ws', token: '');
+    await store.addEndpoint(name: 'c', url: 'wss://secure.example', token: '');
+    await store.addEndpoint(
+      name: 'd',
+      url: 'wss://tunnel.example/proxy',
+      token: '',
+    );
+    await store.addEndpoint(name: 'e', url: '  ws://host:1/  ', token: '');
+
+    expect(store.endpoints[0].url, 'ws://localhost:7331/ws');
+    expect(store.endpoints[1].url, 'ws://host:9000/ws'); // untouched
+    expect(store.endpoints[2].url, 'wss://secure.example/ws');
+    expect(store.endpoints[3].url, 'wss://tunnel.example/proxy'); // path kept
+    expect(store.endpoints[4].url, 'ws://host:1/ws'); // trimmed
+  });
+
+  testWidgets('demo mode: buildDemoAppData populates the tree without taps',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final AppData data = buildDemoAppData();
+    addTearDown(data.dispose);
+
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    // Let the unawaited project/session refreshes land.
+    await tester.pump();
+    await tester.pump();
+
+    // The rail shows the seeded project without any user interaction.
+    expect(data.selection.selectedDaemonId, 'demo');
+    expect(find.text('Local demo'), findsOneWidget);
+    expect(find.text('Demo Project'), findsOneWidget);
+    expect(find.text('No projects yet'), findsNothing);
+  });
+
+  testWidgets('mobile: tapping a session in the drawer selects it and closes the drawer',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final AppData data = AppData()..registerClient('fake', fake);
+    await data.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    await data.projects.refresh('fake');
+    await data.sessions.refresh('fake');
+    data.selection.selectedDaemonId = 'fake';
+    addTearDown(data.dispose);
+
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    expect(find.text('Demo Project'), findsOneWidget);
+
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Build the feature'));
+    await tester.pumpAndSettle();
+
+    // The session was selected and the drawer dismissed.
+    expect(data.selection.selectedSessionId, 'sess-1');
+    expect(find.text('Daemons'), findsNothing);
+    expect(find.text('Build the feature'), findsNothing);
+  });
+
+  testWidgets('narrow layout with a session already selected keeps the timeline',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final AppData data = AppData()..registerClient('fake', fake);
+    await data.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    await data.projects.refresh('fake');
+    await data.sessions.refresh('fake');
+    final Project project = (await fake.listProjects()).first;
+    final Session session = (await fake.listSessions()).first;
+    await fake.sendMessage(session.id, 'hello seeded');
+    await tester.pump(const Duration(seconds: 1)); // run the scripted turn
+    data.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = project.id
+      ..selectedSessionId = session.id;
+    addTearDown(data.dispose);
+
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pump();
+
+    // Switch to the narrow (mobile) layout: the chat pane must not lose its
+    // session watch or its rendered timeline.
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('hello seeded'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 350));
   });
 }

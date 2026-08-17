@@ -170,6 +170,15 @@ class _DirListState extends State<_DirList> {
       builder: (BuildContext context, _) {
         final List<FileEntry>? entries =
             _app.files.entriesFor(widget.projectId, widget.path);
+        final Object? dirError =
+            _app.files.dirErrorFor(widget.projectId, widget.path);
+        if (entries == null && dirError != null) {
+          return _DirErrorRow(
+            message: _errorText(dirError),
+            onRetry: () => _app.files
+                .loadDir(widget.daemonId, widget.projectId, widget.path),
+          );
+        }
         if (entries == null) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
@@ -315,6 +324,50 @@ class _FileRowState extends State<_FileRow> {
             onFileTap: widget.onFileTap,
           ),
       ],
+    );
+  }
+}
+
+String _errorText(Object error) {
+  if (error is DaemonError) return error.message;
+  if (error is String) return error;
+  return error.toString();
+}
+
+/// Inline row shown when a directory listing failed: the error message plus
+/// a retry button (the store keeps no success entry on failure, so without
+/// this the tree would spin forever).
+class _DirErrorRow extends StatelessWidget {
+  const _DirErrorRow({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 8, 12, 8),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.error_outline, size: 14, color: scheme.error),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: scheme.error),
+            ),
+          ),
+          TextButton(
+            key: const Key('files-dir-retry'),
+            onPressed: onRetry,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
     );
   }
 }

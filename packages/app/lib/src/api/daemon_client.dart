@@ -76,9 +76,15 @@ abstract class DaemonClient {
   Future<Session> setMode(String sessionId, SessionMode mode);
   Future<Session> setModel(String sessionId, String model);
 
-  /// Persisted events for a session, ordered by `seq` ascending. Without
-  /// [beforeSeq] the latest page (up to [limit]) is returned.
-  Future<List<SessionEvent>> history(String sessionId, {int limit = 200, int? beforeSeq});
+  /// A page of persisted events for a session, ordered by `seq` ascending.
+  /// Without [beforeSeq] the latest page (up to [limit]) is returned;
+  /// [hasMore] reports whether an older page exists (callers page backwards
+  /// by passing `beforeSeq = oldestKnownSeq - 1` until it is false).
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  });
 
   /// Resolves a pending permission request; errors `-32002` if unknown/expired.
   Future<void> respondPermission(String sessionId, String requestId, String optionId);
@@ -117,6 +123,11 @@ abstract class DaemonClient {
 
   /// Ids of sessions that were removed.
   Stream<String> get sessionRemovals;
+
+  /// Emits whenever the daemon announces `projects.changed` (a project was
+  /// added, renamed, or removed on the daemon side); consumers refetch
+  /// `listProjects()`.
+  Stream<void> get projectsChanged;
 
   /// Emits after every successful reconnect, once the client is authenticated
   /// again. Store-side consumers (e.g. ChatStore) refetch persisted history

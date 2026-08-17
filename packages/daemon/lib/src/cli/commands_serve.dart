@@ -100,7 +100,7 @@ class ServeCommand extends Command<int> {
       rethrow;
     }
 
-    _writeDiscoveryFile(
+    await _writeDiscoveryFile(
       host: host,
       port: server.port,
       token: authToken,
@@ -189,13 +189,14 @@ int? _currentPid() {
   return null;
 }
 
-/// Atomically writes `~/.speeddial/daemon.json` (temp file + rename).
-void _writeDiscoveryFile({
+/// Atomically writes `~/.speeddial/daemon.json` (temp file + rename),
+/// restricted to the owner (0600) because it carries the auth token.
+Future<void> _writeDiscoveryFile({
   required String host,
   required int port,
   required String? token,
   required int? pid,
-}) {
+}) async {
   final dir = Directory(speeddialHomeDir());
   dir.createSync(recursive: true);
   final data = <String, Object?>{
@@ -204,9 +205,23 @@ void _writeDiscoveryFile({
     'token': ?token,
     'pid': ?pid,
   };
+  final target = p.join(dir.path, 'daemon.json');
   final tmp = File(p.join(dir.path, 'daemon.json.tmp'));
   tmp.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(data));
-  tmp.renameSync(p.join(dir.path, 'daemon.json'));
+  tmp.renameSync(target);
+  await _chmod0600(target);
+}
+
+/// Best-effort `chmod 0600` on [path]. `dart:io` has no chmod, so the
+/// external `chmod` binary is used on POSIX platforms; elsewhere the file is
+/// left as created.
+Future<void> _chmod0600(String path) async {
+  if (!Platform.isLinux && !Platform.isMacOS) return;
+  try {
+    await Process.run('chmod', ['0600', path]);
+  } on ProcessException {
+    // Best-effort: the discovery file was still written.
+  }
 }
 
 /// Removes the discovery file on shutdown (best-effort).

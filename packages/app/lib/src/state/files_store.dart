@@ -17,6 +17,8 @@ class FilesStore extends ChangeNotifier {
 
   final Map<(String, String), List<FileEntry>> _entries =
       <(String, String), List<FileEntry>>{};
+  final Map<(String, String), Object> _dirErrors =
+      <(String, String), Object>{};
 
   /// Null while `projectId/dirPath` has not been loaded yet.
   List<FileEntry>? entriesFor(String projectId, String dirPath) {
@@ -24,11 +26,22 @@ class FilesStore extends ChangeNotifier {
     return entries == null ? null : List<FileEntry>.unmodifiable(entries);
   }
 
+  /// Error from the most recent [loadDir] for `projectId/dirPath`, if any.
+  /// Panes render a retry row instead of an endless spinner.
+  Object? dirErrorFor(String projectId, String dirPath) =>
+      _dirErrors[(projectId, dirPath)];
+
   Future<void> loadDir(String daemonId, String projectId, String dirPath) async {
-    final List<FileEntry> entries =
-        await _clientFor(daemonId).listFiles(projectId, dirPath);
-    _entries[(projectId, dirPath)] = entries;
-    notifyListeners();
+    try {
+      final List<FileEntry> entries =
+          await _clientFor(daemonId).listFiles(projectId, dirPath);
+      _entries[(projectId, dirPath)] = entries;
+      _dirErrors.remove((projectId, dirPath));
+    } catch (error) {
+      _dirErrors[(projectId, dirPath)] = error;
+    } finally {
+      notifyListeners();
+    }
   }
 
   Future<FileReadResult> readFile(

@@ -180,10 +180,25 @@ class _ProjectTree extends StatelessWidget {
             else if (projects.isEmpty)
               Expanded(
                 child: Center(
-                  child: Text(
-                    'No projects yet',
-                    style: textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (data.projects.lastError != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 0, 24, 6),
+                          child: Text(
+                            _errorText(data.projects.lastError!),
+                            textAlign: TextAlign.center,
+                            style: textTheme.bodySmall
+                                ?.copyWith(color: scheme.error),
+                          ),
+                        ),
+                      Text(
+                        'No projects yet',
+                        style: textTheme.bodySmall
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
                   ),
                 ),
               )
@@ -208,10 +223,19 @@ class _ProjectTree extends StatelessWidget {
   }
 }
 
+String _errorText(Object error) {
+  if (error is DaemonError) return error.message;
+  if (error is String) return error;
+  return error.toString();
+}
+
 /// One expandable project row: name/path, new-session action, remove menu,
 /// and the session list as its expanded children. Expands whenever the rail
 /// selects this project (or the user expands it, which selects it).
-class _ProjectTile extends StatelessWidget {
+///
+/// Stateful (instead of forcing a remount via a selection-derived key) so
+/// selecting a project expands in place without recreating the session rows.
+class _ProjectTile extends StatefulWidget {
   const _ProjectTile({
     super.key,
     required this.project,
@@ -221,8 +245,57 @@ class _ProjectTile extends StatelessWidget {
   final Project project;
   final String daemonId;
 
-  bool _selected(AppData data) =>
-      data.selection.selectedProjectId == project.id;
+  @override
+  State<_ProjectTile> createState() => _ProjectTileState();
+}
+
+class _ProjectTileState extends State<_ProjectTile> {
+  final ExpansibleController _controller = ExpansibleController();
+  AppData? _data;
+
+  Project get project => widget.project;
+  String get daemonId => widget.daemonId;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final AppData data = AppScope.of(context);
+    if (!identical(_data, data)) {
+      _data?.selection.removeListener(_onSelectionChanged);
+      _data = data;
+      // Selection is a plain store notification, not an inherited-widget
+      // change, so react to it directly.
+      data.selection.addListener(_onSelectionChanged);
+    }
+    _scheduleSelectionSync();
+  }
+
+  @override
+  void dispose() {
+    _data?.selection.removeListener(_onSelectionChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onSelectionChanged() => _scheduleSelectionSync();
+
+  /// Mirrors the previous remount-per-selection semantics: the selected
+  /// project is expanded, any other project is collapsed. Deferred past the
+  /// build phase because [ExpansibleController.expand] may rebuild the tile.
+  void _scheduleSelectionSync() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final AppData? data = _data;
+      if (data == null) return;
+      final String? selected = data.selection.selectedProjectId;
+      if (selected == project.id) {
+        if (!_controller.isExpanded) _controller.expand();
+      } else if (selected != null && _controller.isExpanded) {
+        _controller.collapse();
+      }
+    });
+  }
 
   Future<void> _showNewSessionSheet(BuildContext context) async {
     // Resolve the store graph on the rail's context; the sheet route's own
@@ -281,12 +354,11 @@ class _ProjectTile extends StatelessWidget {
     final AppData data = AppScope.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool selected = _selected(data);
     final List<Session> sessions = data.sessions.sessionsFor(project.id);
 
     return ExpansionTile(
-      key: ValueKey<Object>('project-${project.id}-$selected'),
-      initiallyExpanded: selected,
+      key: ValueKey<String>('project-${project.id}'),
+      controller: _controller,
       tilePadding: const EdgeInsets.only(left: 8, right: 4),
       childrenPadding: const EdgeInsets.only(bottom: 4),
       shape: const Border(),

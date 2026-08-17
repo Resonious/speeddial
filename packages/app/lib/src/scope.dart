@@ -103,8 +103,32 @@ class ConnectionsStore extends ChangeNotifier {
     }
   }
 
+  /// Normalizes a user-entered host or URL into a connectable endpoint:
+  /// prepends `ws://` when no scheme is present and appends `/ws` when the
+  /// value has no path. `localhost:7331` → `ws://localhost:7331/ws`;
+  /// `wss://host` → `wss://host/ws`; `ws://host:7331/ws` is unchanged.
+  static String normalizeEndpointUrl(String url) {
+    final String trimmed = url.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final bool hasScheme = trimmed.contains('://');
+    final String withScheme = hasScheme ? trimmed : 'ws://$trimmed';
+    final int authorityStart = withScheme.indexOf('://') + 3;
+    final String rest = withScheme.substring(authorityStart);
+    final int firstSlash = rest.indexOf('/');
+    // A path exists when a '/' separates the authority from non-empty
+    // path characters.
+    final bool hasPath = firstSlash >= 0 && firstSlash < rest.length - 1;
+    if (hasPath) return withScheme;
+    final String base = withScheme.endsWith('/')
+        ? withScheme.substring(0, withScheme.length - 1)
+        : withScheme;
+    return '$base/ws';
+  }
+
   /// Adds an endpoint. When [id] is given it is used verbatim (tests and
   /// demo mode register clients under such ids); otherwise one is generated.
+  /// [url] is normalized (see [normalizeEndpointUrl]) so dialogs and tests
+  /// can pass bare hosts.
   Future<void> addEndpoint({
     required String name,
     required String url,
@@ -115,7 +139,12 @@ class ConnectionsStore extends ChangeNotifier {
         id ??
         'ep-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}-${_idCounter++}';
     _endpoints.add(
-      DaemonEndpoint(id: resolvedId, name: name, url: url, token: token),
+      DaemonEndpoint(
+        id: resolvedId,
+        name: name,
+        url: normalizeEndpointUrl(url),
+        token: token,
+      ),
     );
     _statuses[resolvedId] = ConnectionStatus.disconnected;
     notifyListeners();
@@ -397,5 +426,10 @@ AppData buildDemoAppData() {
   );
   data.selection.selectedDaemonId = 'demo';
   data.connections.setStatus('demo', ConnectionStatus.connected);
+  // Populate the project/session stores immediately; without these refreshes
+  // the rail would show "No projects yet" until the user re-taps the daemon
+  // tile (selection-change notifications alone do not load listings).
+  unawaited(data.projects.refresh('demo'));
+  unawaited(data.sessions.refresh('demo'));
   return data;
 }
