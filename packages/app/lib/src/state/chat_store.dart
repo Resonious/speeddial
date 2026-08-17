@@ -15,6 +15,10 @@ class _SessionBuffer {
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
   bool historyLoaded = false;
+
+  /// True while a resync history refetch is in flight; live events then park
+  /// in [pending] so they can never overtake (and shadow) the refetch.
+  bool resyncing = false;
   int maxSeq = 0;
 }
 
@@ -47,6 +51,12 @@ class ChatStore extends ChangeNotifier {
       <String, StreamSubscription<Session>>{};
   final Map<String, StreamSubscription<String>> _removalSubs =
       <String, StreamSubscription<String>>{};
+
+  /// One `resynced` subscription per daemon, alive with the session watches.
+  /// After a reconnect the client re-emits [DaemonClient.resynced] and we
+  /// backfill persisted history so events missed offline are never lost.
+  final Map<String, StreamSubscription<void>> _resyncSubs =
+      <String, StreamSubscription<void>>{};
 
   bool _notifyScheduled = false;
 
@@ -125,6 +135,12 @@ class ChatStore extends ChangeNotifier {
       daemonId,
       () => client.sessionRemovals.listen(_onSessionRemoved),
     );
+    _resyncSubs.putIfAbsent(
+      daemonId,
+      () => client.resynced.listen((void _) {
+        unawaited(_resyncDaemon(daemonId));
+      }),
+    );
   }
 
   void _maybeReleaseDaemon(String daemonId) {
@@ -133,6 +149,7 @@ class ChatStore extends ChangeNotifier {
     if (stillWatched) return;
     _updateSubs.remove(daemonId)?.cancel();
     _removalSubs.remove(daemonId)?.cancel();
+    _resyncSubs.remove(daemonId)?.cancel();
   }
 
   void _onSessionUpdate(Session session) {
@@ -159,8 +176,50 @@ class ChatStore extends ChangeNotifier {
     _usageById.remove(sessionId);
   }
 
+  /// Reconciles watched buffers with persisted history after a reconnect.
+  /// Replaying the full tail is safe: [_applyLive] dedupes by [seq] against
+  /// [maxSeq], so only events missed while the socket was down are appended.
+  ///
+  /// While the refetch is in flight, live events are staged in [pending]
+  /// (like the initial history load) so a fast live notification can never
+  /// advance [maxSeq] past the gap and make the refetch drop it as a
+  /// duplicate.
+  Future<void> _resyncDaemon(String daemonId) async {
+    final DaemonClient client = _clientFor(daemonId);
+    final List<_SessionBuffer> buffers = <_SessionBuffer>[
+      for (final _SessionBuffer buffer in _buffers.values)
+        if (buffer.daemonId == daemonId && buffer.historyLoaded) buffer,
+    ];
+    if (buffers.isEmpty) return;
+    for (final _SessionBuffer buffer in buffers) {
+      buffer.resyncing = true;
+    }
+    try {
+      for (final _SessionBuffer buffer in buffers) {
+        try {
+          final List<SessionEvent> history =
+              await client.history(buffer.sessionId);
+          for (final SessionEvent event in history) {
+            _applyLive(buffer, event);
+          }
+        } on Object {
+          // Live events still flow; the next resync (or reconnect) retries.
+        }
+      }
+    } finally {
+      for (final _SessionBuffer buffer in buffers) {
+        buffer.resyncing = false;
+        for (final SessionEvent event in buffer.pending) {
+          _applyLive(buffer, event);
+        }
+        buffer.pending.clear();
+      }
+    }
+    _scheduleNotify();
+  }
+
   void _onLiveEvent(_SessionBuffer buffer, SessionEvent event) {
-    if (!buffer.historyLoaded) {
+    if (!buffer.historyLoaded || buffer.resyncing) {
       // History is still in flight; keep the event and reconcile later.
       buffer.pending.add(event);
       return;
@@ -268,6 +327,10 @@ class ChatStore extends ChangeNotifier {
       sub.cancel();
     }
     _removalSubs.clear();
+    for (final StreamSubscription<void> sub in _resyncSubs.values) {
+      sub.cancel();
+    }
+    _resyncSubs.clear();
     super.dispose();
   }
 }

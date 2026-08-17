@@ -205,11 +205,13 @@ void main() {
     expect(find.text('Add daemon'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget);
     expect(app.connections.endpoints, hasLength(2));
+    // The endpoint is wired to a WsDaemonClient whose connect attempt fails
+    // fast on the invalid 'localhost:7331' scheme (see shell_test).
     expect(
       app.connections.statusOf(
         app.connections.endpoints.lastWhere((DaemonEndpoint e) => e.id != 'fake').id,
       ),
-      ConnectionStatus.disconnected,
+      ConnectionStatus.failed,
     );
   });
 }

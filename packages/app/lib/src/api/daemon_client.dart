@@ -1,5 +1,23 @@
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+/// Connection state of a live [DaemonClient], exposed through
+/// `WsDaemonClient.connState` (a [ValueNotifier]) so stores and UI can track
+/// an endpoint's health. Starts at [connecting]; a failed initial connect
+/// lands on [failed].
+enum DaemonConnectionState {
+  /// First connection attempt in progress (or awaiting auth).
+  connecting,
+
+  /// Authenticated and receiving live notifications.
+  connected,
+
+  /// The socket dropped; waiting to retry with exponential backoff.
+  reconnecting,
+
+  /// The initial connection (or auth) failed and was not retried.
+  failed,
+}
+
 /// Client interface for a single SpeedDial daemon endpoint, as consumed by
 /// the app's stores and panes.
 ///
@@ -99,6 +117,13 @@ abstract class DaemonClient {
 
   /// Ids of sessions that were removed.
   Stream<String> get sessionRemovals;
+
+  /// Emits after every successful reconnect, once the client is authenticated
+  /// again. Store-side consumers (e.g. ChatStore) refetch persisted history
+  /// on this to backfill events missed while the socket was down. Never emits
+  /// on the initial connect; implementations that never reconnect emit
+  /// nothing.
+  Stream<void> get resynced;
 
   // ---------------------------------------------------------------------
   // Lifecycle

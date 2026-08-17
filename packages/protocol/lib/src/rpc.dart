@@ -46,7 +46,7 @@ class RpcPeer {
   final Map<String, FutureOr<Object?> Function(Map<String, Object?>)> _handlers =
       <String, FutureOr<Object?> Function(Map<String, Object?>)>{};
   final StreamController<RpcNotification> _notificationController =
-      StreamController<RpcNotification>(sync: true);
+      StreamController<RpcNotification>.broadcast(sync: true);
 
   late final StreamSubscription<Object?> _incomingSub;
   int _nextId = 1;

@@ -582,6 +582,9 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Stream<void> get resynced => const Stream<void>.empty();
+
+  @override
   bool get isConnected => !_disposed;
 
   @override

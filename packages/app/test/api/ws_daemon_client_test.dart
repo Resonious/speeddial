@@ -1,0 +1,433 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+
+import 'package:speeddial_app/src/api/daemon_client.dart';
+import 'package:speeddial_app/src/api/ws_daemon_client.dart';
+import 'package:speeddial_app/src/state/chat_store.dart';
+
+/// Polls until [condition] holds, failing the test after [timeout].
+Future<void> waitFor(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 5),
+}) async {
+  final DateTime deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('condition did not become true within $timeout');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+/// An in-process daemon speaking the protocol through [RpcPeer] over a real
+/// `dart:io` WebSocket: registers `auth.authenticate`, `daemon.info`,
+/// `projects.list`, `sessions.send` and `sessions.history`, and pushes
+/// `session.event` notifications on a timer for each accepted connection.
+class TestDaemonServer {
+  TestDaemonServer._(this.server);
+
+  final HttpServer server;
+  final List<WebSocket> sockets = <WebSocket>[];
+  final List<RpcPeer> peers = <RpcPeer>[];
+  final List<Timer> timers = <Timer>[];
+  final Map<String, List<Map<String, Object?>>> history =
+      <String, List<Map<String, Object?>>>{};
+
+  int connectionCount = 0;
+  int seq = 0;
+
+  static Future<TestDaemonServer> start({String token = 'secret'}) async {
+    final HttpServer server = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final TestDaemonServer daemon = TestDaemonServer._(server);
+    server.listen((HttpRequest request) => daemon._handle(request, token));
+    return daemon;
+  }
+
+  String get url => 'ws://127.0.0.1:${server.port}/ws';
+
+  Future<void> _handle(HttpRequest request, String token) async {
+    final WebSocket socket = await WebSocketTransformer.upgrade(request);
+    sockets.add(socket);
+    connectionCount++;
+    final RpcPeer peer = RpcPeer(
+      incoming: socket.map((Object? message) => jsonDecode(message as String)),
+      send: (Object? message) {
+        try {
+          socket.add(jsonEncode(message));
+        } on Object {
+          // Socket is gone; the peer is being torn down.
+        }
+      },
+    );
+    peers.add(peer);
+
+    peer.registerHandler(
+      'auth.authenticate',
+      (Map<String, Object?> params) {
+        if (params['token'] != token) {
+          throw DaemonError(kErrUnauthenticated, 'bad token');
+        }
+        return <String, Object?>{'ok': true, 'daemon': daemonInfoJson()};
+      },
+    );
+    peer.registerHandler('daemon.info', (Map<String, Object?> _) {
+      return daemonInfoJson();
+    });
+    peer.registerHandler('projects.list', (Map<String, Object?> _) {
+      return <String, Object?>{'projects': <Object?>[projectJson()]};
+    });
+    peer.registerHandler('sessions.send', (Map<String, Object?> params) {
+      if (params['text'] == 'boom') {
+        throw DaemonError(kErrConflict, 'turn already running');
+      }
+      return <String, Object?>{};
+    });
+    peer.registerHandler('sessions.history', (Map<String, Object?> params) {
+      final String sessionId = params['sessionId']! as String;
+      return <String, Object?>{
+        'events': <Object?>[
+          for (final Map<String, Object?> event
+              in history[sessionId] ?? const <Map<String, Object?>>[])
+            event,
+        ],
+        'hasMore': false,
+      };
+    });
+
+    // Liveliness: push `session.event` notifications while this socket lives.
+    final Stopwatch firstPush = Stopwatch()..start();
+    final Timer timer = Timer.periodic(
+      const Duration(milliseconds: 20),
+      (Timer _) {
+        if (firstPush.elapsed < const Duration(milliseconds: 30)) return;
+        pushEvent('sess-1');
+      },
+    );
+    timers.add(timer);
+    socket.done.whenComplete(() {
+      unawaited(peer.close());
+      timer.cancel();
+    });
+  }
+
+  Map<String, Object?> daemonInfoJson() => <String, Object?>{
+        'version': '1.2.3',
+        'protocolVersion': 1,
+        'authRequired': true,
+        'providers': <Object?>[
+          <String, Object?>{
+            'id': 'omp',
+            'name': 'OMP Agent',
+            'available': true,
+            'command': 'omp',
+            'models': <Object?>['omp-default'],
+          },
+        ],
+      };
+
+  Map<String, Object?> projectJson() => <String, Object?>{
+        'id': 'proj-1',
+        'name': 'Demo',
+        'path': '/demo',
+        'addedAt': '2026-01-01T00:00:00.000Z',
+        'lastActiveAt': '2026-01-01T00:00:00.000Z',
+      };
+
+  Map<String, Object?> sessionJson({String status = 'idle'}) =>
+      <String, Object?>{
+        'id': 'sess-1',
+        'projectId': 'proj-1',
+        'providerId': 'omp',
+        'title': 'Build the feature',
+        'status': status,
+        'mode': 'build',
+        'model': 'omp-default',
+        'cwd': '/demo',
+        'archived': false,
+        'createdAt': '2026-01-01T00:00:00.000Z',
+        'updatedAt': '2026-01-01T00:00:00.000Z',
+      };
+
+  /// Pushes a `session.event` notification on the most recent connection.
+  void pushEvent(String sessionId, {String? text}) {
+    if (peers.isEmpty) return;
+    final int nextSeq = ++seq;
+    final Map<String, Object?> event = <String, Object?>{
+      'type': 'userMessage',
+      'text': text ?? 'msg $nextSeq',
+      'seq': nextSeq,
+    };
+    history
+        .putIfAbsent(sessionId, () => <Map<String, Object?>>[])
+        .add(event);
+    peers.last.notify('session.event', <String, Object?>{
+      'sessionId': sessionId,
+      'seq': nextSeq,
+      'event': event,
+    });
+  }
+
+  void pushSessionUpdated({String status = 'running'}) {
+    if (peers.isEmpty) return;
+    peers.last.notify(
+      'session.updated',
+      <String, Object?>{'session': sessionJson(status: status)},
+    );
+  }
+
+  void pushSessionRemoved(String sessionId) {
+    if (peers.isEmpty) return;
+    peers.last
+        .notify('session.removed', <String, Object?>{'sessionId': sessionId});
+  }
+
+  /// Server-side socket drop: closes the most recent accepted connection.
+  Future<void> kick() async {
+    if (timers.isNotEmpty) timers.removeLast().cancel();
+    final WebSocket socket = sockets.removeLast();
+    await socket.close();
+  }
+
+  Future<void> close() async {
+    for (final Timer timer in timers) {
+      timer.cancel();
+    }
+    timers.clear();
+    for (final WebSocket socket in sockets) {
+      await socket.close();
+    }
+    sockets.clear();
+    for (final RpcPeer peer in peers) {
+      unawaited(peer.close());
+    }
+    peers.clear();
+    await server.close(force: true);
+  }
+}
+
+void main() {
+  test('connect authenticates and typed calls roundtrip', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    expect(client.connState.value, DaemonConnectionState.connecting);
+    expect(client.isConnected, isFalse);
+
+    await client.connect();
+    expect(client.connState.value, DaemonConnectionState.connected);
+    expect(client.isConnected, isTrue);
+    expect(server.connectionCount, 1);
+
+    // Typed call roundtrip (daemon.info).
+    final DaemonInfo info = await client.info();
+    expect(info.version, '1.2.3');
+    expect(info.providers.single.id, 'omp');
+
+    // projects.list decoding.
+    final List<Project> projects = await client.listProjects();
+    expect(projects.single.name, 'Demo');
+
+    // DaemonError codes pass through untouched (sessions.send).
+    await expectLater(
+      client.sendMessage('sess-1', 'boom'),
+      throwsA(
+        isA<DaemonError>()
+            .having((DaemonError e) => e.code, 'code', kErrConflict),
+      ),
+    );
+
+    // Void calls resolve without error.
+    await client.sendMessage('sess-1', 'hello');
+  });
+
+  test('auth failure propagates and leaves the client failed', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'wrong',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.connect(),
+      throwsA(
+        isA<DaemonError>()
+            .having((DaemonError e) => e.code, 'code', kErrUnauthenticated),
+      ),
+    );
+    expect(client.connState.value, DaemonConnectionState.failed);
+    expect(client.isConnected, isFalse);
+  });
+
+  test('connects without auth when no token is configured', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    await client.connect();
+    expect(client.isConnected, isTrue);
+    expect(client.connState.value, DaemonConnectionState.connected);
+  });
+
+  test('routes session.event / updated / removed notifications to streams',
+      () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    final List<SessionEvent> events = <SessionEvent>[];
+    final List<Session> updates = <Session>[];
+    final List<String> removals = <String>[];
+    final StreamSubscription<SessionEvent> eventSub =
+        client.sessionEvents('sess-1').listen(events.add);
+    final StreamSubscription<Session> updateSub =
+        client.sessionUpdates.listen(updates.add);
+    final StreamSubscription<String> removalSub =
+        client.sessionRemovals.listen(removals.add);
+    addTearDown(eventSub.cancel);
+    addTearDown(updateSub.cancel);
+    addTearDown(removalSub.cancel);
+
+    server.pushEvent('sess-1');
+    server.pushEvent('sess-1');
+    server.pushSessionUpdated();
+    server.pushSessionRemoved('sess-1');
+    await waitFor(
+      () => events.length >= 2 && updates.length == 1 && removals.length == 1,
+    );
+
+    expect(events, everyElement(isA<UserMessageEvent>()));
+    expect(events[0].seq, lessThan(events[1].seq!));
+    expect(updates.single.status, SessionStatus.running);
+    expect(removals.single, 'sess-1');
+
+    // Per-session filters: events for sess-1 never leak onto sess-2.
+    final List<SessionEvent> other = <SessionEvent>[];
+    final StreamSubscription<SessionEvent> otherSub =
+        client.sessionEvents('sess-2').listen(other.add);
+    addTearDown(otherSub.cancel);
+    server.pushEvent('sess-1');
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(other, isEmpty);
+  });
+
+  test('reconnects after the server closes the socket', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+    expect(server.connectionCount, 1);
+
+    final List<DaemonConnectionState> states = <DaemonConnectionState>[];
+    client.connState.addListener(() {
+      states.add(client.connState.value);
+    });
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub =
+        client.resynced.listen((void _) => resyncCount++);
+    addTearDown(resyncSub.cancel);
+
+    await server.kick(); // server-side drop
+
+    await waitFor(
+      () =>
+          client.connState.value == DaemonConnectionState.connected &&
+          resyncCount == 1,
+    );
+    // The drop surfaced as reconnecting, then re-auth succeeded.
+    expect(
+      states,
+      contains(DaemonConnectionState.reconnecting),
+    );
+    expect(states.last, DaemonConnectionState.connected);
+    expect(server.connectionCount, greaterThanOrEqualTo(2));
+
+    // Live notifications flow again on the fresh socket.
+    final List<SessionEvent> events = <SessionEvent>[];
+    final StreamSubscription<SessionEvent> eventSub =
+        client.sessionEvents('sess-1').listen(events.add);
+    addTearDown(eventSub.cancel);
+    await waitFor(() => events.isNotEmpty);
+  });
+
+  test('ChatStore backfills missed history after a reconnect', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    final ChatStore chat = ChatStore(clientFor: (String daemonId) => client);
+    addTearDown(chat.dispose);
+    chat.watchSession('d', 'sess-1');
+
+    // Let several events flow and the initial history load settle.
+    await waitFor(() => server.seq >= 5);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(chat.eventsFor('sess-1'), isNotEmpty);
+
+    // Drop the socket. While the client is offline, the daemon keeps
+    // producing events that reach _history only_ (recorded server-side, no
+    // live socket to notify).
+    final List<DaemonConnectionState> observed = <DaemonConnectionState>[];
+    client.connState.addListener(() => observed.add(client.connState.value));
+    await server.kick();
+    await waitFor(
+      () => observed.contains(DaemonConnectionState.reconnecting),
+    );
+    server.pushEvent('sess-1');
+    server.pushEvent('sess-1');
+    final int offlineSeq = server.seq;
+
+    await waitFor(
+      () => client.connState.value == DaemonConnectionState.connected,
+    );
+    // The buffer must contain the offline events: only the resynced-triggered
+    // history refetch can supply them (a live-only client would skip them).
+    await waitFor(() {
+      return chat
+          .eventsFor('sess-1')
+          .any((SessionEvent event) => event.seq == offlineSeq);
+    });
+
+    // No duplicates: the refetch dedupes against the already-buffered seqs.
+    final List<int> seqs = <int>[
+      for (final SessionEvent event in chat.eventsFor('sess-1')) event.seq!,
+    ];
+    expect(seqs, orderedEquals(seqs.toSet().toList()..sort()));
+  });
+}

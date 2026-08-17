@@ -89,9 +89,12 @@ void main() {
     expect(data.connections.endpoints, hasLength(1));
     expect(data.connections.endpoints.single.url, 'localhost:7331');
     expect(data.connections.endpoints.single.token, 'secret');
+    // Adding an endpoint triggers a connection attempt (AppData rewires the
+    // endpoint to a WsDaemonClient); the 'localhost:7331' scheme is invalid,
+    // so the attempt fails fast and the status lands on `failed`.
     expect(
       data.connections.statusOf(data.connections.endpoints.single.id),
-      ConnectionStatus.disconnected,
+      ConnectionStatus.failed,
     );
   });
 }

@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api/daemon_client.dart';
+import 'api/fake_daemon.dart';
+import 'api/ws_daemon_client.dart';
 import 'state/chat_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
@@ -67,6 +70,15 @@ class ConnectionsStore extends ChangeNotifier {
 
   ConnectionStatus statusOf(String id) =>
       _statuses[id] ?? ConnectionStatus.disconnected;
+
+  /// Updates the in-memory status of an existing endpoint and notifies
+  /// listeners. Unknown ids are ignored (no status is materialized); setting
+  /// the same value is a no-op.
+  void setStatus(String id, ConnectionStatus status) {
+    if (!_statuses.containsKey(id) || _statuses[id] == status) return;
+    _statuses[id] = status;
+    notifyListeners();
+  }
 
   /// Loads persisted endpoints (called once at startup).
   Future<void> init() async {
@@ -161,12 +173,15 @@ class SelectionStore extends ChangeNotifier {
 
 /// Store graph handed to [AppScope]. The five domain stores are constructed
 /// internally and resolve their [DaemonClient] through [clientFor], which
-/// serves ids registered via [registerClient] (tests/demo) or the optional
-/// constructor resolver (real wiring in a later phase).
+/// serves ids registered via [registerClient] (tests/demo), the optional
+/// constructor resolver, or — for plain [DaemonEndpoint]s — a lazily created
+/// and cached [WsDaemonClient] connecting to the endpoint's own URL/token.
 class AppData {
   /// [connections] and [selection] default to fresh instances; they exist so
-  /// the pre-Phase-3 callers (main.dart) can keep injecting. The canonical
-  /// construction is `AppData()..registerClient('id', client)`.
+  /// the pre-Phase-3 callers (main.dart) can keep injecting. [clientFor], if
+  /// given, is consulted for ids that were never [registerClient]ed and takes
+  /// precedence over the lazy WebSocket wiring (legacy override). The
+  /// canonical construction is `AppData()..registerClient('id', client)`.
   AppData({
     ConnectionsStore? connections,
     SelectionStore? selection,
@@ -179,6 +194,9 @@ class AppData {
     chat = ChatStore(clientFor: this.clientFor);
     files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
+    // Endpoints added after construction connect on arrival; status-only
+    // changes are filtered out by [_connectedEndpointIds] to avoid churn.
+    this.connections.addListener(_onConnectionsChanged);
   }
 
   final ConnectionsStore connections;
@@ -192,27 +210,149 @@ class AppData {
 
   final Map<String, DaemonClient> _clients = <String, DaemonClient>{};
 
-  /// Optional resolver consulted when an id was never [registerClient]ed; the
-  /// real WebSocket wiring lands in a later phase.
+  /// Lazily created WebSocket clients, one per endpoint id.
+  final Map<String, WsDaemonClient> _websocketClients =
+      <String, WsDaemonClient>{};
+
+  /// connState listeners per WebSocket client (kept for disposal).
+  final Map<String, VoidCallback> _statusListeners = <String, VoidCallback>{};
+
+  /// Endpoint ids whose lazily created client already had [connect] triggered;
+  /// presence prevents re-connecting on unrelated status notifications.
+  final Set<String> _connectedEndpointIds = <String>{};
+
+  /// Optional resolver consulted when an id was never [registerClient]ed; when
+  /// provided it owns all non-registered wiring (the WebSocket clients are not
+  /// created in that case).
   final DaemonClient Function(String daemonId)? _fallbackClientFor;
 
   /// Registers the client serving [daemonId]. Tests and demo mode inject
-  /// fakes this way. Notifies nothing.
+  /// fakes this way; registered ids always win over the lazy wiring and are
+  /// never connected (or disposed) by [AppData]. Notifies nothing.
   void registerClient(String daemonId, DaemonClient client) {
     _clients[daemonId] = client;
   }
 
-  /// Returns the registered client for [daemonId], or throws [StateError].
+  /// Returns the client for [daemonId]: registered client first, then the
+  /// optional constructor resolver, then a lazily created [WsDaemonClient]
+  /// for a known [DaemonEndpoint]. The first touch of a lazily created
+  /// client also starts its (unawaited) connection; failures land in
+  /// [ConnectionsStore.statusOf] as `failed` via the connState listener.
+  /// Throws [StateError] for unknown ids.
   DaemonClient clientFor(String daemonId) {
     final DaemonClient? client = _clients[daemonId];
     if (client != null) return client;
     final DaemonClient Function(String daemonId)? fallback = _fallbackClientFor;
     if (fallback != null) return fallback(daemonId);
-    throw StateError('No client registered for daemon "$daemonId"');
+    final WsDaemonClient wsClient = _ensureWebSocketClient(daemonId);
+    // A lazy client is created only once per endpoint; the first time it is
+    // touched, trigger its connect. A connect already started by
+    // [connectAll] or the connect-on-add path is left in flight.
+    if (_connectedEndpointIds.add(daemonId)) {
+      unawaited(_connectQuietly(daemonId));
+    }
+    return wsClient;
   }
 
-  /// Releases every store in the graph.
+  /// Connects every currently configured endpoint, creating and caching its
+  /// WebSocket client. Called once at startup after
+  /// [ConnectionsStore.init]; endpoints added later are connected
+  /// automatically as they arrive. Registered ids and endpoints handled by
+  /// the constructor resolver are skipped. Tolerant of unreachable daemons:
+  /// they surface through `ConnectionsStore.statusOf` as `failed`.
+  Future<void> connectAll() async {
+    if (_fallbackClientFor != null) return;
+    for (final DaemonEndpoint endpoint in connections.endpoints) {
+      if (_clients.containsKey(endpoint.id)) continue;
+      if (!_connectedEndpointIds.add(endpoint.id)) continue;
+      await _connectQuietly(endpoint.id);
+    }
+  }
+
+  void _onConnectionsChanged() {
+    if (_fallbackClientFor != null) return;
+    final Set<String> known = <String>{
+      for (final DaemonEndpoint endpoint in connections.endpoints) endpoint.id,
+    };
+    for (final String id in known) {
+      if (_clients.containsKey(id)) continue; // registered fake: leave alone
+      if (!_connectedEndpointIds.add(id)) continue; // already connecting
+      unawaited(_connectQuietly(id));
+    }
+    for (final String id in _connectedEndpointIds.toList(growable: false)) {
+      if (!known.contains(id)) {
+        _connectedEndpointIds.remove(id);
+        _disposeWebSocketClient(id);
+      }
+    }
+  }
+
+  Future<void> _connectQuietly(String daemonId) async {
+    try {
+      await _ensureWebSocketClient(daemonId).connect();
+    } on Object {
+      // Failures surface as a failed connection status; nothing to propagate.
+    }
+  }
+
+  WsDaemonClient _ensureWebSocketClient(String daemonId) {
+    final WsDaemonClient? existing = _websocketClients[daemonId];
+    if (existing != null) return existing;
+    final DaemonEndpoint? endpoint = _endpointFor(daemonId);
+    if (endpoint == null) {
+      throw StateError('No client registered for daemon "$daemonId"');
+    }
+    final WsDaemonClient client = WsDaemonClient(
+      url: endpoint.url,
+      token: endpoint.token,
+    );
+    void listener() {
+      connections.setStatus(daemonId, _mapClientState(client.connState.value));
+    }
+    client.connState.addListener(listener);
+    _websocketClients[daemonId] = client;
+    _statusListeners[daemonId] = listener;
+    return client;
+  }
+
+  void _disposeWebSocketClient(String daemonId) {
+    final WsDaemonClient? client = _websocketClients.remove(daemonId);
+    if (client == null) return;
+    final VoidCallback? listener = _statusListeners.remove(daemonId);
+    if (listener != null) client.connState.removeListener(listener);
+    unawaited(client.dispose());
+  }
+
+  DaemonEndpoint? _endpointFor(String daemonId) {
+    for (final DaemonEndpoint endpoint in connections.endpoints) {
+      if (endpoint.id == daemonId) return endpoint;
+    }
+    return null;
+  }
+
+  static ConnectionStatus _mapClientState(DaemonConnectionState state) =>
+      switch (state) {
+        DaemonConnectionState.connected => ConnectionStatus.connected,
+        DaemonConnectionState.connecting ||
+        DaemonConnectionState.reconnecting =>
+          ConnectionStatus.connecting,
+        DaemonConnectionState.failed => ConnectionStatus.failed,
+      };
+
+  /// Releases every store in the graph plus any lazily created WebSocket
+  /// clients. Registered clients (fakes) are left to their owners.
   void dispose() {
+    connections.removeListener(_onConnectionsChanged);
+    for (final MapEntry<String, VoidCallback> entry
+        in _statusListeners.entries) {
+      _websocketClients[entry.key]?.connState.removeListener(entry.value);
+    }
+    _statusListeners.clear();
+    for (final WsDaemonClient client in _websocketClients.values) {
+      unawaited(client.dispose());
+    }
+    _websocketClients.clear();
+    _connectedEndpointIds.clear();
     connections.dispose();
     selection.dispose();
     projects.dispose();
@@ -240,4 +380,22 @@ class AppScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(AppScope oldWidget) => oldWidget.data != data;
+}
+
+/// Builds the store graph for `--dart-define=demo=true` mode: a single `demo`
+/// endpoint backed by an in-memory [FakeDaemonClient], already selected and
+/// marked connected. The fake is registered before the endpoint is added, so
+/// the lazy WebSocket wiring never touches it.
+AppData buildDemoAppData() {
+  final AppData data = AppData();
+  data.registerClient('demo', FakeDaemonClient());
+  data.connections.addEndpoint(
+    id: 'demo',
+    name: 'Local demo',
+    url: 'fake://local',
+    token: '',
+  );
+  data.selection.selectedDaemonId = 'demo';
+  data.connections.setStatus('demo', ConnectionStatus.connected);
+  return data;
 }

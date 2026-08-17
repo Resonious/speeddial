@@ -19,6 +19,9 @@ const int kErrAgentProcess = -32011;
 /// A git/gh operation failed.
 const int kErrGit = -32020;
 
+/// JSON-RPC internal error (-32603): malformed frames, unexpected shapes.
+const int kErrInternal = -32603;
+
 /// Error payload carried across the wire inside a JSON-RPC error object.
 ///
 /// Throw this from daemon internals and let the transport translate it;

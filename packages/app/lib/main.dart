@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'src/scope.dart';
@@ -7,18 +9,21 @@ import 'src/ui/shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   const bool demoMode = bool.fromEnvironment('demo');
+  late final AppData data;
   if (demoMode) {
-    // The --demo dart-define flag is accepted but not wired up yet; later
-    // phases swap in the fake daemon client here.
-    debugPrint('SpeedDial: demo mode requested but not implemented yet.');
+    // `--dart-define=demo=true`: in-memory fake daemon, nothing to load.
+    data = buildDemoAppData();
+  } else {
+    final ConnectionsStore connections = ConnectionsStore();
+    await connections.init();
+    data = AppData(
+      connections: connections,
+      selection: SelectionStore(),
+    );
+    // Connect every saved endpoint; failures land in their connection
+    // statuses instead of blocking startup.
+    unawaited(data.connectAll());
   }
-
-  final ConnectionsStore connections = ConnectionsStore();
-  await connections.init();
-  final AppData data = AppData(
-    connections: connections,
-    selection: SelectionStore(),
-  );
   runApp(SpeedDialApp(data: data));
 }
 

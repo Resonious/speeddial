@@ -153,6 +153,17 @@ class DaemonStore {
     }
   }
 
+  /// Renames the project with [id]; throws `DaemonError(kErrNotFound)` for an
+  /// unknown id. The project path (and therefore the filesystem mapping) is
+  /// untouched.
+  Project renameProject(String id, String name) {
+    _db.execute('UPDATE projects SET name = ? WHERE id = ?', [name, id]);
+    if (_db.updatedRows == 0) {
+      throw DaemonError(kErrNotFound, 'Project not found: $id');
+    }
+    return getProject(id)!;
+  }
+
   // -------------------------------------------------------------------------
   // Sessions
   // -------------------------------------------------------------------------

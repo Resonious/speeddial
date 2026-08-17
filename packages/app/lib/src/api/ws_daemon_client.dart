@@ -1,0 +1,653 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'daemon_client.dart';
+
+/// Live [DaemonClient] speaking PROTOCOL.md's JSON-RPC 2.0 envelope over a
+/// WebSocket. Transport is `package:web_socket_channel` (works on native and
+/// web; no `dart:io` import), decoded frames are fed to an [RpcPeer].
+///
+/// [connect] must be called before use: the client authenticates first when a
+/// [token] is configured and then switches `connState` to connected. Socket
+/// drops (server close or network error) are retried with exponential backoff
+/// starting at [reconnectBase] (doubling per attempt, capped at 15s); after
+/// each successful reconnect the client re-authenticates and emits on
+/// [resynced] so stores can backfill history missed while offline.
+///
+/// Live notifications are broadcast without buffering: a session that nobody
+/// is watching simply loses its events (stores watch deliberately and recover
+/// through [resynced] + `history()`).
+class WsDaemonClient implements DaemonClient {
+  WsDaemonClient({
+    required this.url,
+    this.token,
+    // The explicit initializer (rather than a `this.` formal) keeps the
+    // field's default next to its declaration.
+    Duration reconnectBase = const Duration(milliseconds: 500),
+  }) : reconnectBase = reconnectBase; // ignore: prefer_initializing_formals
+
+  /// WebSocket endpoint, e.g. `ws://127.0.0.1:7331/ws`.
+  final String url;
+
+  /// Token for `auth.authenticate`; null means the daemon requires none
+  /// (loopback per PROTOCOL.md).
+  final String? token;
+
+  /// Delay of the first reconnect attempt; every retry doubles this,
+  /// capped at 15 seconds.
+  final Duration reconnectBase;
+
+  /// Live connection state; drive UI/status off this (or [isConnected]).
+  /// Starts at [DaemonConnectionState.connecting].
+  final ValueNotifier<DaemonConnectionState> connState =
+      ValueNotifier<DaemonConnectionState>(DaemonConnectionState.connecting);
+
+  /// Emits after each successful reconnect (never on the first connect).
+  final StreamController<void> _resyncController =
+      StreamController<void>.broadcast();
+
+  /// Every decoded `session.event` notification, keyed by session id.
+  final StreamController<({String sessionId, SessionEvent event})>
+      _sessionEventFeed = StreamController.broadcast();
+
+  final StreamController<Session> _sessionUpdatesController =
+      StreamController<Session>.broadcast();
+
+  final StreamController<String> _sessionRemovalsController =
+      StreamController<String>.broadcast();
+
+  static const Duration _maxReconnectDelay = Duration(seconds: 15);
+
+  WebSocketChannel? _channel;
+  RpcPeer? _peer;
+  StreamSubscription<dynamic>? _socketSub;
+  StreamSubscription<RpcNotification>? _notificationSub;
+  Timer? _reconnectTimer;
+  Future<void>? _inFlightConnect;
+  bool _establishing = false;
+  int _reconnectAttempt = 0;
+  bool _disposed = false;
+
+  // ---------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------
+
+  /// Opens the socket (authenticating when [token] is set) and switches
+  /// [connState] to connected. Idempotent: a no-op while a connection attempt
+  /// is in flight or the client is already connected. A failed auth (or any
+  /// other initial-connect failure) propagates as a [DaemonError] and leaves
+  /// [connState] at [DaemonConnectionState.failed].
+  Future<void> connect() {
+    if (_disposed) return Future<void>.value();
+    final Future<void>? inFlight = _inFlightConnect;
+    if (inFlight != null) return inFlight;
+    if (connState.value == DaemonConnectionState.connected) {
+      return Future<void>.value();
+    }
+    final Future<void> attempt =
+        _establish(initial: true).whenComplete(() => _inFlightConnect = null);
+    _inFlightConnect = attempt;
+    return attempt;
+  }
+
+  /// Establishes one connection. [initial] distinguishes the user-visible
+  /// first connect (failures propagate, state ends `failed`) from automatic
+  /// reconnects (failures schedule another backoff retry).
+  Future<void> _establish({required bool initial}) async {
+    if (_disposed) return;
+    _establishing = true;
+    try {
+      connState.value = initial
+          ? DaemonConnectionState.connecting
+          : DaemonConnectionState.reconnecting;
+      await _openSocket();
+      if (_disposed) return;
+      final String? token = this.token;
+      if (token != null) {
+        await _peer!.call(
+          'auth.authenticate',
+          <String, Object?>{'token': token},
+        );
+      }
+      if (_disposed) return;
+      connState.value = DaemonConnectionState.connected;
+      _reconnectAttempt = 0;
+      if (!initial) {
+        // Back on the wire: stores backfill what they missed while offline.
+        _resyncController.add(null);
+      }
+    } on DaemonError {
+      if (_disposed) return;
+      await _tearDownSocket();
+      if (initial) {
+        connState.value = DaemonConnectionState.failed;
+        rethrow;
+      }
+      _scheduleReconnect();
+    } on Object {
+      if (_disposed) return;
+      await _tearDownSocket();
+      if (initial) {
+        connState.value = DaemonConnectionState.failed;
+        rethrow;
+      }
+      _scheduleReconnect();
+    } finally {
+      _establishing = false;
+    }
+  }
+
+  /// Closes the current socket and its peer, if any. Idempotent; safe to run
+  /// when the transport already shut the channel down on its own.
+  Future<void> _tearDownSocket() async {
+    final WebSocketChannel? channel = _channel;
+    _channel = null;
+    await _notificationSub?.cancel();
+    _notificationSub = null;
+    await _socketSub?.cancel();
+    _socketSub = null;
+    await _peer?.close();
+    _peer = null;
+    try {
+      await channel?.sink.close();
+    } on Object {
+      // Already closed by the transport; nothing to do.
+    }
+  }
+
+  /// Opens a fresh socket and attaches a fresh [RpcPeer] to it.
+  Future<void> _openSocket() async {
+    final Uri uri = Uri.parse(url);
+    if (uri.scheme != 'ws' && uri.scheme != 'wss') {
+      throw ArgumentError.value(url, 'url', 'WebSocket URL must use ws:// or wss://');
+    }
+    final WebSocketChannel channel = WebSocketChannel.connect(uri);
+    _channel = channel;
+    await channel.ready;
+    if (_disposed) {
+      await channel.sink.close();
+      return;
+    }
+    _peer?.close();
+    await _notificationSub?.cancel();
+
+    final StreamController<Object?> incoming = StreamController<Object?>();
+    final RpcPeer peer = RpcPeer(
+      incoming: incoming.stream,
+      send: (Object? message) {
+        try {
+          channel.sink.add(jsonEncode(message));
+        } on Object {
+          // Socket may be closing underneath; the drop handler covers it.
+        }
+      },
+    );
+    _peer = peer;
+    _notificationSub = peer.notifications.listen(_handleNotification);
+    _socketSub = channel.stream.listen(
+      (Object? data) {
+        if (data is String) {
+          try {
+            incoming.add(jsonDecode(data));
+          } on FormatException {
+            // Malformed frame: ignore, mirroring RpcPeer's tolerance.
+          }
+        }
+      },
+      onError: (Object _) {
+        unawaited(incoming.close());
+        _handleSocketClosed();
+      },
+      onDone: () {
+        unawaited(incoming.close());
+        _handleSocketClosed();
+      },
+    );
+  }
+
+  /// The socket ended or errored: unblock pending calls and schedule a
+  /// reconnect. During an in-flight [connect]/[reconnect] the establish flow
+  /// itself disposes of the failure, so it does nothing here.
+  void _handleSocketClosed() {
+    if (_disposed) return;
+    _channel = null;
+    unawaited(_peer?.close());
+    if (_establishing) return;
+    _scheduleReconnect();
+  }
+
+  /// Arms the exponential-backoff retry timer. base * 2^n, capped at 15s.
+  void _scheduleReconnect() {
+    if (_disposed) return;
+    connState.value = DaemonConnectionState.reconnecting;
+    final int attempt = _reconnectAttempt++;
+    var ms = reconnectBase.inMilliseconds;
+    for (var i = 0;
+        i < attempt && ms < _maxReconnectDelay.inMilliseconds;
+        i++) {
+      ms *= 2;
+    }
+    if (ms > _maxReconnectDelay.inMilliseconds) {
+      ms = _maxReconnectDelay.inMilliseconds;
+    }
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(milliseconds: ms < 1 ? 1 : ms), () {
+      if (_disposed || _establishing) return;
+      // A manual connect() may have won the race since this was scheduled.
+      if (connState.value == DaemonConnectionState.connected) return;
+      unawaited(_establish(initial: false));
+    });
+  }
+
+  @override
+  bool get isConnected => connState.value == DaemonConnectionState.connected;
+
+  @override
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    await _tearDownSocket();
+    await _sessionEventFeed.close();
+    await _sessionUpdatesController.close();
+    await _sessionRemovalsController.close();
+    await _resyncController.close();
+    connState.dispose();
+  }
+
+  // ---------------------------------------------------------------------
+  // Inbound notifications
+  // ---------------------------------------------------------------------
+
+  void _handleNotification(RpcNotification notification) {
+    if (_disposed) return;
+    final Map<String, Object?> params = notification.params;
+    switch (notification.method) {
+      case 'session.event':
+        final Object? sessionId = params['sessionId'];
+        final Object? event = params['event'];
+        if (sessionId is String && event is Map) {
+          // The daemon stamps seq/timestamp into the event itself; fall back
+          // to the envelope-level fields for lenient servers.
+          final Map<String, Object?> eventJson = Map<String, Object?>.from(
+            event,
+          );
+          eventJson.putIfAbsent('seq', () => params['seq']);
+          eventJson.putIfAbsent('timestamp', () => params['timestamp']);
+          try {
+            _sessionEventFeed.add((
+              sessionId: sessionId,
+              event: SessionEvent.fromJson(eventJson),
+            ));
+          } on Object {
+            // Malformed event: drop rather than kill the notification feed.
+          }
+        }
+      case 'session.created':
+      case 'session.updated':
+        final Object? session = params['session'];
+        if (session is Map) {
+          try {
+            _sessionUpdatesController
+                .add(Session.fromJson(Map<String, Object?>.from(session)));
+          } on Object {
+            // Malformed session: drop.
+          }
+        }
+      case 'session.removed':
+        final Object? sessionId = params['sessionId'];
+        if (sessionId is String) {
+          _sessionRemovalsController.add(sessionId);
+        }
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Live streams
+  // ---------------------------------------------------------------------
+
+  @override
+  Stream<SessionEvent> sessionEvents(String sessionId) =>
+      _sessionEventFeed.stream
+          .where((({String sessionId, SessionEvent event}) entry) =>
+              entry.sessionId == sessionId)
+          .map((({String sessionId, SessionEvent event}) entry) =>
+              entry.event);
+
+  @override
+  Stream<Session> get sessionUpdates => _sessionUpdatesController.stream;
+
+  @override
+  Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
+
+  @override
+  Stream<void> get resynced => _resyncController.stream;
+
+  // ---------------------------------------------------------------------
+  // Daemon / projects
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<DaemonInfo> info() async {
+    final Object? result = await _requirePeer().call('daemon.info');
+    return DaemonInfo.fromJson(_resultMap(result));
+  }
+
+  @override
+  Future<List<Project>> listProjects() async {
+    final Object? result = await _requirePeer().call('projects.list');
+    return _decodeList(_resultField(result, 'projects'), Project.fromJson);
+  }
+
+  @override
+  Future<Project> addProject(String path, {String? name}) async {
+    final Object? result = await _requirePeer().call(
+      'projects.add',
+      <String, Object?>{'path': path, 'name': ?name},
+    );
+    return Project.fromJson(_resultMap(_resultField(result, 'project')));
+  }
+
+  @override
+  Future<void> removeProject(String id) async {
+    await _requirePeer().call('projects.remove', <String, Object?>{'id': id});
+  }
+
+  // ---------------------------------------------------------------------
+  // Sessions
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.list',
+      <String, Object?>{
+        'projectId': ?projectId,
+        'includeArchived': includeArchived,
+      },
+    );
+    return _decodeList(_resultField(result, 'sessions'), Session.fromJson);
+  }
+
+  @override
+  Future<Session> createSession({
+    required String projectId,
+    required String providerId,
+    String? model,
+    SessionMode? mode,
+    String? title,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.create',
+      <String, Object?>{
+        'projectId': projectId,
+        'providerId': providerId,
+        'model': ?model,
+        'mode': ?mode?.wire,
+        'title': ?title,
+      },
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
+  Future<void> sendMessage(String sessionId, String text) async {
+    await _requirePeer().call(
+      'sessions.send',
+      <String, Object?>{'sessionId': sessionId, 'text': text},
+    );
+  }
+
+  @override
+  Future<void> cancelSession(String sessionId) async {
+    await _requirePeer()
+        .call('sessions.cancel', <String, Object?>{'sessionId': sessionId});
+  }
+
+  @override
+  Future<Session> renameSession(String sessionId, String title) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.rename',
+      <String, Object?>{'sessionId': sessionId, 'title': title},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
+  Future<Session> archiveSession(String sessionId, bool archived) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.archive',
+      <String, Object?>{'sessionId': sessionId, 'archived': archived},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
+  Future<void> deleteSession(String sessionId) async {
+    await _requirePeer().call(
+      'sessions.delete',
+      <String, Object?>{'sessionId': sessionId},
+    );
+  }
+
+  @override
+  Future<Session> setMode(String sessionId, SessionMode mode) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.setMode',
+      <String, Object?>{'sessionId': sessionId, 'mode': mode.wire},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
+  Future<Session> setModel(String sessionId, String model) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.setModel',
+      <String, Object?>{'sessionId': sessionId, 'model': model},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
+  Future<List<SessionEvent>> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.history',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'limit': limit,
+        'beforeSeq': ?beforeSeq,
+      },
+    );
+    return _decodeList(_resultField(result, 'events'), SessionEvent.fromJson);
+  }
+
+  @override
+  Future<void> respondPermission(
+    String sessionId,
+    String requestId,
+    String optionId,
+  ) async {
+    await _requirePeer().call(
+      'sessions.respondPermission',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'optionId': optionId,
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Files
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<List<FileEntry>> listFiles(String projectId,
+      [String path = '.']) async {
+    final Object? result = await _requirePeer().call(
+      'fs.list',
+      <String, Object?>{'projectId': projectId, 'path': path},
+    );
+    return _decodeList(_resultField(result, 'entries'), FileEntry.fromJson);
+  }
+
+  @override
+  Future<FileReadResult> readFile(
+    String projectId,
+    String path, {
+    int? maxBytes,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'fs.read',
+      <String, Object?>{
+        'projectId': projectId,
+        'path': path,
+        'maxBytes': ?maxBytes,
+      },
+    );
+    return FileReadResult.fromJson(_resultMap(result));
+  }
+
+  // ---------------------------------------------------------------------
+  // Git
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<GitStatus> gitStatus(String projectId) async {
+    final Object? result = await _requirePeer().call(
+      'git.status',
+      <String, Object?>{'projectId': projectId},
+    );
+    return GitStatus.fromJson(_resultMap(_resultField(result, 'status')));
+  }
+
+  @override
+  Future<List<GitDiff>> gitDiff(
+    String projectId, {
+    String? path,
+    bool staged = false,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'git.diff',
+      <String, Object?>{
+        'projectId': projectId,
+        'path': ?path,
+        'staged': staged,
+      },
+    );
+    return _decodeList(_resultField(result, 'diffs'), GitDiff.fromJson);
+  }
+
+  @override
+  Future<List<Branch>> gitBranches(String projectId) async {
+    final Object? result = await _requirePeer().call(
+      'git.branches',
+      <String, Object?>{'projectId': projectId},
+    );
+    return _decodeList(_resultField(result, 'branches'), Branch.fromJson);
+  }
+
+  @override
+  Future<void> gitCheckout(String projectId, String branch) async {
+    await _requirePeer().call(
+      'git.checkout',
+      <String, Object?>{'projectId': projectId, 'branch': branch},
+    );
+  }
+
+  @override
+  Future<String> gitCommit(
+    String projectId,
+    String message, {
+    bool stageAll = false,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'git.commit',
+      <String, Object?>{
+        'projectId': projectId,
+        'message': message,
+        'stageAll': stageAll,
+      },
+    );
+    return _resultField(result, 'commitHash')! as String;
+  }
+
+  @override
+  Future<void> gitPush(String projectId) async {
+    await _requirePeer()
+        .call('git.push', <String, Object?>{'projectId': projectId});
+  }
+
+  @override
+  Future<String> gitCreatePr(
+    String projectId, {
+    String? title,
+    String? body,
+    String? base,
+    bool draft = false,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'git.createPullRequest',
+      <String, Object?>{
+        'projectId': projectId,
+        'title': ?title,
+        'body': ?body,
+        'base': ?base,
+        'draft': draft,
+      },
+    );
+    return _resultField(result, 'url')! as String;
+  }
+
+  // ---------------------------------------------------------------------
+  // Result decoding helpers
+  // ---------------------------------------------------------------------
+
+  RpcPeer _requirePeer() {
+    if (_disposed) {
+      throw DaemonError(kErrInternal, 'daemon client disposed');
+    }
+    final RpcPeer? peer = _peer;
+    if (peer == null || connState.value != DaemonConnectionState.connected) {
+      throw DaemonError(kErrInternal, 'daemon client is not connected');
+    }
+    return peer;
+  }
+
+  static Map<String, Object?> _resultMap(Object? raw) {
+    if (raw is Map) return Map<String, Object?>.from(raw);
+    throw DaemonError(kErrInternal, 'malformed result: expected an object');
+  }
+
+  static Object? _resultField(Object? result, String key) {
+    final Map<String, Object?> map = _resultMap(result);
+    if (!map.containsKey(key)) {
+      throw DaemonError(kErrInternal, 'malformed result: missing "$key"');
+    }
+    return map[key];
+  }
+
+  static List<T> _decodeList<T>(
+    Object? raw,
+    T Function(Map<String, Object?>) fromJson,
+  ) {
+    if (raw is! List) {
+      throw DaemonError(kErrInternal, 'malformed result: expected a list');
+    }
+    return <T>[
+      for (final Object? item in raw) fromJson(_resultMap(item)),
+    ];
+  }
+}
