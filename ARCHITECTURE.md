@@ -58,7 +58,8 @@ lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (overr
                     --db or SPEEDIAL_DB). Tables: projects, sessions, session_events.
                     WAL mode, foreign keys on. Events stored as JSON blobs + seq.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
-                    for status, --no-color unified diffs, branch lists. PrService uses
+                    for status, --no-color unified diffs, branch lists; fetch and
+                    worktree add/remove back per-session worktrees. PrService uses
                     `gh pr create`. All ops take an absolute repo path.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing.
@@ -72,7 +73,7 @@ WebSocket except `serve` and `token`:
   Writes PID + port + token to `~/.speeddial/daemon.json` for discovery.
 - `token` — prints/rotates the auth token.
 - `projects list|add <path>|remove <id>`
-- `sessions list [--project <id>]|create --project <id> --provider <id> [--model m] [--mode plan] [--title t]|send <id> <text>|cancel <id>|archive <id>|delete <id>|history <id>|attach <id>` (attach = stream session.event notifications to stdout)
+- `sessions list [--project <id>]|create --project <id> --provider <id> [--model m] [--mode plan] [--title t] [--base b]|send <id> <text>|cancel <id>|archive <id>|delete <id>|history <id>|attach <id>` (attach = stream session.event notifications to stdout)
 - `git status|diff [--staged]|commit -m <msg> [--all]|push|pr [--title t] [--base b]` — all take `--project <id>`
 - Global flags: `--host`, `--port`, `--token` override discovery file.
 

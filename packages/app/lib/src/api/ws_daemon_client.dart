@@ -422,6 +422,7 @@ class WsDaemonClient implements DaemonClient {
     String? model,
     SessionMode? mode,
     String? title,
+    String? baseBranch,
   }) async {
     final Object? result = await _requirePeer().call(
       'sessions.create',
@@ -431,6 +432,7 @@ class WsDaemonClient implements DaemonClient {
         'model': ?model,
         'mode': ?mode?.wire,
         'title': ?title,
+        'baseBranch': ?baseBranch,
       },
     );
     return Session.fromJson(_resultMap(_resultField(result, 'session')));

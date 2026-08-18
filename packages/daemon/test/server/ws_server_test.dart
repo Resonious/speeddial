@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
+import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:speeddial_daemon/src/server/ws_server.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
@@ -173,7 +174,8 @@ void main() {
   });
 
   Future<SpeedDialServer> startServer({String? authToken}) async {
-    engine = SessionEngine(store: store, providers: providers);
+    engine = SessionEngine(store: store, providers: providers,
+        git: GitService());
     await engine!.restore();
     server = await SpeedDialServer.bind(
       host: '127.0.0.1',
@@ -503,6 +505,75 @@ void main() {
 
       await client.close();
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('sessions.create with baseBranch runs the session in a worktree',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      // Project repo cloned from a local bare origin (filesystem-only
+      // remote; no network), so fetch has an origin/main to refresh.
+      final parent = await Directory.systemTemp.createTemp('sd_ws_wt_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result =
+            await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+
+      final created = j(await client.peer
+          .call('sessions.create', <String, Object?>{
+        'projectId': project.id,
+        'providerId': 'fake',
+        'title': 'Worktree session',
+        'baseBranch': 'main',
+      }));
+      final session = Session.fromJson(
+          (created['session']! as Map).cast<String, Object?>());
+      expect(session.cwd, contains('.speeddial-worktrees'));
+      expect(Directory(session.cwd).existsSync(), isTrue);
+      final branch = await Process.run(
+          'git', ['branch', '--show-current'],
+          workingDirectory: session.cwd);
+      expect((branch.stdout as String).trim(),
+          startsWith('speeddial/worktree-session-'));
+
+      // baseBranch and cwd conflict over the wire too.
+      await expectLater(
+        client.peer.call('sessions.create', <String, Object?>{
+          'projectId': project.id,
+          'providerId': 'fake',
+          'cwd': repoPath,
+          'baseBranch': 'main',
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await client.close();
+    });
   });
 
   group('fs', () {

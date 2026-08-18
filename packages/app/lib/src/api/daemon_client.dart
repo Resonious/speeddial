@@ -53,12 +53,15 @@ abstract class DaemonClient {
   Future<List<Session>> listSessions({String? projectId, bool includeArchived = false});
 
   /// Creates a session and returns it; also surfaces on [sessionUpdates].
+  /// When [baseBranch] is given the daemon fetches `origin/<baseBranch>` and
+  /// runs the agent in a fresh worktree branched off the remote tip.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
     String? model,
     SessionMode? mode,
     String? title,
+    String? baseBranch,
   });
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].

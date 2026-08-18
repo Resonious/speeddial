@@ -114,6 +114,7 @@ class SessionsStore extends StoreBase {
     String? model,
     SessionMode? mode,
     String? title,
+    String? baseBranch,
   }) async {
     _ensureDaemonSubscriptions(daemonId);
     final Session session = await _clientFor(daemonId).createSession(
@@ -122,6 +123,7 @@ class SessionsStore extends StoreBase {
       model: model,
       mode: mode,
       title: title,
+      baseBranch: baseBranch,
     );
     // Upsert rather than blind-add: daemons surface the created session on
     // `sessionUpdates`, and a live listener (running synchronously inside

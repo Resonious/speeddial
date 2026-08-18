@@ -140,7 +140,12 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
-- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string}` → `{session: Session}`
+- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string}` → `{session: Session}`
+  — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
+    worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
+    `speeddial/<slug>-<id8>` branch based on `origin/<baseBranch>`, and uses the worktree as the
+    session `cwd`. `baseBranch` and `cwd` are mutually exclusive (`-32602`); fetch/worktree
+    failures are `-32020`. Deleting the session never touches the worktree on disk.
 - `sessions.send {sessionId: string, text: string}` → `{}` — starts a turn; errors `-32003` if a turn is already running
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`

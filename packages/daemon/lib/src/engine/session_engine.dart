@@ -25,6 +25,7 @@ import 'package:uuid/uuid.dart';
 
 import '../acp/acp_client.dart';
 import '../acp/acp_types.dart';
+import '../git/git_service.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'event_mapper.dart';
@@ -64,11 +65,17 @@ class SessionEngine {
   SessionEngine({
     required DaemonStore store,
     required ProviderRegistry providers,
+    GitService? git,
   })  : _store = store, // ignore: prefer_initializing_formals — public API name
-        _providers = providers; // ignore: prefer_initializing_formals — public API name
+        _providers = providers, // ignore: prefer_initializing_formals — public API name
+        _git = git; // ignore: prefer_initializing_formals — public API name
 
   final DaemonStore _store;
   final ProviderRegistry _providers;
+
+  /// Git operations for per-session worktrees (`baseBranch` on
+  /// [createSession]); null only in tests that never pass a base branch.
+  final GitService? _git;
   final Uuid _uuid = const Uuid();
 
   final Map<String, _LiveSession> _live = {};
@@ -115,6 +122,13 @@ class SessionEngine {
   }
 
   /// Creates a new protocol session and spawns its ACP agent.
+  ///
+  /// When [baseBranch] is given, the session runs in a fresh git worktree:
+  /// the daemon fetches `origin/<baseBranch>` in the project repo and adds a
+  /// worktree at `<project-parent>/.speeddial-worktrees/<name>-<id8>` on a
+  /// new `speeddial/<slug>-<id8>` branch based on the remote tip. The
+  /// worktree becomes the session cwd; [cwd] and [baseBranch] are mutually
+  /// exclusive. The worktree is rolled back if the agent fails to start.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -122,6 +136,7 @@ class SessionEngine {
     SessionMode? mode,
     String? title,
     String? cwd,
+    String? baseBranch,
   }) async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
@@ -136,6 +151,12 @@ class SessionEngine {
     final project = _store.getProject(projectId);
     if (project == null) {
       throw DaemonError(kErrNotFound, 'Unknown project: $projectId');
+    }
+    if (cwd != null && baseBranch != null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'cwd and baseBranch are mutually exclusive',
+      );
     }
     if (cwd != null) {
       // The session cwd becomes the agent's working directory and the fs
@@ -155,10 +176,37 @@ class SessionEngine {
         );
       }
     }
-    final workingDir = cwd ?? project.path;
+    final sessionId = _uuid.v4();
+    final shortId = sessionId.substring(0, 8);
+
+    // A daemon-computed worktree path needs no confinement check: it is
+    // derived from the project path, never from client input.
+    String? worktreePath;
+    final String workingDir;
+    if (baseBranch != null) {
+      final git = _git;
+      if (git == null) {
+        throw DaemonError(kErrGit, 'worktree sessions are not supported');
+      }
+      await git.fetch(project.path, baseBranch);
+      worktreePath = p.join(
+        p.dirname(project.path),
+        '.speeddial-worktrees',
+        '${p.basename(project.path)}-$shortId',
+      );
+      await git.addWorktree(
+        project.path,
+        path: worktreePath,
+        branch: 'speeddial/${_branchSlug(title) ?? 'session'}-$shortId',
+        baseRef: 'origin/$baseBranch',
+      );
+      workingDir = worktreePath;
+    } else {
+      workingDir = cwd ?? project.path;
+    }
     final now = DateTime.now().toUtc();
     final session = Session(
-      id: _uuid.v4(),
+      id: sessionId,
       projectId: projectId,
       providerId: providerId,
       title: title ?? 'New session',
@@ -189,8 +237,15 @@ class SessionEngine {
       }
       acpSessionId = await client.newSession(cwd: workingDir);
     } on Object catch (error) {
-      // Never leak a half-initialized agent process.
+      // Never leak a half-initialized agent process or its worktree.
       await client.dispose();
+      if (worktreePath != null) {
+        try {
+          await _git!.removeWorktree(project.path, worktreePath);
+        } on Object {
+          // Rollback is best-effort; the spawn error is the real failure.
+        }
+      }
       throw DaemonError(
         kErrAgentProcess,
         'Failed to start provider "$providerId": $error',
@@ -506,6 +561,21 @@ class SessionEngine {
         current = parent;
       }
     }
+  }
+
+  /// Turns a session title into a git-branch-safe slug (`[a-z0-9-]`, max 32
+  /// chars); null when nothing usable remains.
+  static String? _branchSlug(String? title) {
+    if (title == null) return null;
+    final slug = title
+        .toLowerCase()
+        .replaceAll(RegExp('[^a-z0-9]+'), '-')
+        .replaceAll(RegExp('-{2,}'), '-')
+        .replaceAll(RegExp('^-+|-+\$'), '');
+    if (slug.isEmpty) return null;
+    if (slug.length <= 32) return slug;
+    // Truncation may cut mid-word and leave a dangling '-'.
+    return slug.substring(0, 32).replaceAll(RegExp('-+\$'), '');
   }
 
   /// Resolves [requested] against the session cwd and rejects anything that

@@ -125,8 +125,8 @@ void main() {
     expect(find.text('No sessions'), findsOneWidget);
   });
 
-  testWidgets('new-session sheet creates a session that is selected in the list',
-      (WidgetTester tester) async {
+  testWidgets('new-session sheet sends the initial prompt and creates a '
+      'worktree session', (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     await tester.tap(find.text('Demo Project'));
@@ -141,23 +141,76 @@ void main() {
     expect(find.text('New session'), findsOneWidget);
     // Provider dropdown defaults to the daemon's first available provider.
     expect(find.text('OMP Agent'), findsOneWidget);
+    // The title field is gone; the prompt is the primary input, and a git
+    // project offers worktree creation with the current branch preselected.
+    expect(find.byKey(const Key('new-session-title')), findsNothing);
+    expect(find.byKey(const Key('new-session-prompt')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
+    expect(find.text('main'), findsOneWidget);
 
-    await tester.enterText(find.byKey(const Key('new-session-title')), 'Fix login');
+    await tester.enterText(
+      find.byKey(const Key('new-session-prompt')),
+      'Fix the login redirect\nIt loops on mobile.',
+    );
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
 
-    // Sheet closed; the new session is visible and selected.
+    // Sheet closed; the prompt's first line became the rail title.
     expect(find.text('New session'), findsNothing);
-    expect(find.text('Fix login'), findsOneWidget);
+    expect(find.text('Fix the login redirect'), findsOneWidget);
 
     final Project demo = app.projects.projectsFor('fake').single;
     final List<Session> sessions = app.sessions.sessionsFor(demo.id);
     expect(sessions, hasLength(3));
-    final Session created = sessions.lastWhere((Session s) => s.id != 'sess-1' && s.id != 'sess-2');
-    expect(created.title, 'Fix login');
+    final Session created = sessions.lastWhere(
+        (Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+    expect(created.title, 'Fix the login redirect');
+    expect(created.cwd, contains('.speeddial-worktrees'),
+        reason: 'a base branch routes the session into a worktree');
     expect(created.projectId, demo.id);
     expect(app.selection.selectedSessionId, created.id);
     expect(app.selection.selectedProjectId, demo.id);
+
+    // The prompt went out as the session's first turn.
+    app.chat.watchSession('fake', created.id);
+    await tester.pump();
+    await tester.pump();
+    expect(
+      app.chat
+          .eventsFor(created.id)
+          .whereType<UserMessageEvent>()
+          .map((UserMessageEvent e) => e.text),
+      contains('Fix the login redirect\nIt loops on mobile.'),
+    );
+  });
+
+  testWidgets('unchecking the worktree box hides the base branch and keeps '
+      'the project cwd', (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('new-session-proj-demo')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-session-worktree')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-session-base-branch')), findsNothing);
+
+    await tester.enterText(
+        find.byKey(const Key('new-session-prompt')), 'Quick fix');
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    final Project demo = app.projects.projectsFor('fake').single;
+    final Session created = app.sessions
+        .sessionsFor(demo.id)
+        .lastWhere((Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+    expect(created.title, 'Quick fix');
+    expect(created.cwd, demo.path);
   });
 
   testWidgets('deleting the selected session clears the selection',

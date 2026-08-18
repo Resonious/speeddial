@@ -17,6 +17,19 @@ Future<Directory> _initRepo() async {
   return dir;
 }
 
+/// A repo cloned from a local bare "origin" (filesystem-only remote: no
+/// network), so fetch/worktree flows have a real `origin/<branch>` to track.
+Future<({Directory origin, Directory repo})> _initRepoWithOrigin() async {
+  final parent = await Directory.systemTemp.createTemp('sd_git_wt_');
+  final origin = Directory(p.join(parent.path, 'origin.git'));
+  await Process.run('git', ['init', '--bare', '-b', 'main', origin.path]);
+  final repo = Directory(p.join(parent.path, 'repo'));
+  await Process.run('git', ['clone', origin.path, repo.path]);
+  await _git(repo, ['config', 'user.email', 'test@example.com']);
+  await _git(repo, ['config', 'user.name', 'Test User']);
+  return (origin: origin, repo: repo);
+}
+
 Future<void> _write(Directory repo, String name, String content) async {
   await File(p.join(repo.path, name)).writeAsString(content);
 }
@@ -274,6 +287,123 @@ void main() {
             .having((e) => e.code, 'code', kErrGit)
             .having((e) => e.data, 'data', isNotNull)),
       );
+    });
+  });
+
+  group('worktrees', () {
+    test('fetch + addWorktree branches off the latest origin tip', () async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+
+      // Advance origin/main through a second clone so fetch has new work.
+      final other = Directory(
+          p.join(repos.origin.parent.path, 'other'));
+      await Process.run('git', ['clone', repos.origin.path, other.path]);
+      await _git(other, ['config', 'user.email', 'test@example.com']);
+      await _git(other, ['config', 'user.name', 'Test User']);
+      await _write(other, 'b.txt', 'from other\n');
+      await _commitAll(other, 'advance');
+      await _git(other, ['push', 'origin', 'main']);
+      final originTip = ((await _git(other, ['rev-parse', 'HEAD']))
+              .stdout as String)
+          .trim();
+
+      await service.fetch(repo.path, 'main');
+      final localTip =
+          ((await _git(repo, ['rev-parse', 'origin/main'])).stdout as String)
+              .trim();
+      expect(localTip, originTip,
+          reason: 'fetch must refresh the remote-tracking ref');
+
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repo.path,
+        path: wtPath,
+        branch: 'speeddial/fix-login-1a2b3c4d',
+        baseRef: 'origin/main',
+      );
+      final wtHead = ((await Process.run(
+                  'git', ['rev-parse', 'HEAD'],
+                  workingDirectory: wtPath))
+              .stdout as String)
+          .trim();
+      expect(wtHead, originTip);
+      final wtBranch = ((await Process.run(
+                  'git', ['branch', '--show-current'],
+                  workingDirectory: wtPath))
+              .stdout as String)
+          .trim();
+      expect(wtBranch, 'speeddial/fix-login-1a2b3c4d');
+      expect(File(p.join(wtPath, 'b.txt')).existsSync(), isTrue,
+          reason: 'worktree must contain the latest origin content');
+    });
+
+    test('addWorktree fails with kErrGit for an unknown base ref', () async {
+      final repos = await _initRepoWithOrigin();
+      await _write(repos.repo, 'a.txt', 'v1\n');
+      await _commitAll(repos.repo, 'init');
+      await _git(repos.repo, ['push', '-u', 'origin', 'main']);
+
+      await expectLater(
+        service.addWorktree(
+          repos.repo.path,
+          path: p.join(repos.origin.parent.path, 'wt'),
+          branch: 'speeddial/x-1a2b3c4d',
+          baseRef: 'origin/nope',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)),
+      );
+    });
+
+    test('removeWorktree deletes the worktree and its registration',
+        () async {
+      final repos = await _initRepoWithOrigin();
+      await _write(repos.repo, 'a.txt', 'v1\n');
+      await _commitAll(repos.repo, 'init');
+      await _git(repos.repo, ['push', '-u', 'origin', 'main']);
+
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repos.repo.path,
+        path: wtPath,
+        branch: 'speeddial/x-1a2b3c4d',
+        baseRef: 'origin/main',
+      );
+      expect(Directory(wtPath).existsSync(), isTrue);
+
+      await service.removeWorktree(repos.repo.path, wtPath);
+      expect(Directory(wtPath).existsSync(), isFalse);
+      final list = (await _git(repos.repo, ['worktree', 'list', '--porcelain']))
+          .stdout as String;
+      expect(list, isNot(contains(wtPath)));
+    });
+
+    test('fetch/addWorktree reject dash-prefixed names before hitting git',
+        () async {
+      final repos = await _initRepoWithOrigin();
+      await _write(repos.repo, 'a.txt', 'v1\n');
+      await _commitAll(repos.repo, 'init');
+
+      for (final call in <Future<void> Function()>[
+        () => service.fetch(repos.repo.path, '-D'),
+        () => service.addWorktree(repos.repo.path,
+            path: 'wt', branch: '-D', baseRef: 'origin/main'),
+        () => service.addWorktree(repos.repo.path,
+            path: 'wt', branch: 'ok', baseRef: '--detach'),
+        () => service.addWorktree(repos.repo.path,
+            path: '--prune', branch: 'ok', baseRef: 'origin/main'),
+      ]) {
+        await expectLater(
+          call(),
+          throwsA(isA<DaemonError>()
+              .having((e) => e.code, 'code', kErrGit)
+              .having((e) => e.message, 'message', contains('invalid'))),
+        );
+      }
     });
   });
 

@@ -266,7 +266,9 @@ class DaemonClient {
     ];
   }
 
-  /// `sessions.create` — spawns an agent session in [projectId].
+  /// `sessions.create` — spawns an agent session in [projectId]. When
+  /// [baseBranch] is given the daemon creates a git worktree off
+  /// `origin/<baseBranch>` and uses it as the session cwd.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -274,6 +276,7 @@ class DaemonClient {
     SessionMode? mode,
     String? title,
     String? cwd,
+    String? baseBranch,
   }) async {
     final result = await _peer.call(
       'sessions.create',
@@ -284,6 +287,7 @@ class DaemonClient {
         'mode': ?mode?.wire,
         'title': ?title,
         'cwd': ?cwd,
+        'baseBranch': ?baseBranch,
       },
     );
     final map = _asMap(result, 'sessions.create');

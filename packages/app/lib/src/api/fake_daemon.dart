@@ -253,19 +253,26 @@ class FakeDaemonClient implements DaemonClient {
     String? model,
     SessionMode? mode,
     String? title,
+    String? baseBranch,
   }) async {
     _ensureSeeded();
     _project(projectId);
     final DateTime now = DateTime.now().toUtc();
+    final String id = 'sess-${_sessionCounter++}';
     final Session session = Session(
-      id: 'sess-${_sessionCounter++}',
+      id: id,
       projectId: projectId,
       providerId: providerId,
       title: title ?? 'New session',
       status: SessionStatus.idle,
       mode: mode ?? SessionMode.build,
       model: model,
-      cwd: _project(projectId).path,
+      // No real git here: a base branch just moves the cwd to a plausible
+      // worktree path, mirroring the daemon's layout.
+      cwd: baseBranch == null
+          ? _project(projectId).path
+          : '${_project(projectId).path}/../.speeddial-worktrees/'
+              '${_project(projectId).name.toLowerCase()}-$id',
       archived: false,
       createdAt: now,
       updatedAt: now,

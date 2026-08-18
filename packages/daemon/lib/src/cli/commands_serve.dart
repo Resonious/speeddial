@@ -60,8 +60,8 @@ class ServeCommand extends Command<int> {
 
     final store = DaemonStore(dbPath);
     final providers = ProviderRegistry();
-    final engine = SessionEngine(store: store, providers: providers);
     final git = GitService();
+    final engine = SessionEngine(store: store, providers: providers, git: git);
     final pr = PrService();
     await engine.restore();
 

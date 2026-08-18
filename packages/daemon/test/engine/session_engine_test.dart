@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
+import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -517,5 +518,135 @@ void main() {
             .having((e) => e.code, 'code', -32602)),
       );
     }
+  });
+
+  group('worktree sessions', () {
+    Future<String> runGit(String cwd, List<String> args) async {
+      final result = await Process.run('git', args, workingDirectory: cwd);
+      if (result.exitCode != 0) {
+        throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+      }
+      return (result.stdout as String).trim();
+    }
+
+    /// Registers a git-backed project at `<tempDir>/repo`: a clone of a
+    /// local bare "origin" (filesystem-only remote, no network) with one
+    /// pushed commit. Returns the repo path and its origin/main tip hash.
+    Future<({String repoPath, String originTip})> setupGitProject() async {
+      final originDir = p.join(tempDir.path, 'origin.git');
+      await runGit(tempDir.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(tempDir.path, 'repo');
+      await runGit(tempDir.path, ['clone', originDir, repoPath]);
+      await runGit(repoPath, ['config', 'user.email', 'test@example.com']);
+      await runGit(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await runGit(repoPath, ['add', '-A']);
+      await runGit(repoPath, ['commit', '-m', 'init']);
+      await runGit(repoPath, ['push', '-u', 'origin', 'main']);
+      final tip = await runGit(repoPath, ['rev-parse', 'origin/main']);
+      store.insertProject(Project(
+        id: 'gitp',
+        name: 'Git Project',
+        path: repoPath,
+        addedAt: DateTime.now().toUtc(),
+        lastActiveAt: DateTime.now().toUtc(),
+      ));
+      return (repoPath: repoPath, originTip: tip);
+    }
+
+    test('createSession with baseBranch runs the agent in a worktree off '
+        'origin/<base>', () async {
+      final git = await setupGitProject();
+      final gitEngine = SessionEngine(
+          store: store, providers: fakeProviders(), git: GitService());
+      try {
+        final session = await gitEngine.createSession(
+          projectId: 'gitp',
+          providerId: 'fake',
+          title: 'Fix the login bug!',
+          baseBranch: 'main',
+        );
+
+        final shortId = session.id.substring(0, 8);
+        final worktreeDir =
+            p.join(tempDir.path, '.speeddial-worktrees', 'repo-$shortId');
+        expect(session.cwd, worktreeDir);
+        expect(Directory(worktreeDir).existsSync(), isTrue);
+        // Branched off the remote tip, not the local checkout.
+        expect(
+            await runGit(worktreeDir, ['rev-parse', 'HEAD']), git.originTip);
+        expect(await runGit(worktreeDir, ['branch', '--show-current']),
+            'speeddial/fix-the-login-bug-$shortId');
+        // The persisted session carries the worktree cwd too.
+        expect(store.getSession(session.id)!.cwd, worktreeDir);
+      } finally {
+        await gitEngine.dispose();
+      }
+    });
+
+    test('createSession rejects cwd combined with baseBranch', () async {
+      final git = await setupGitProject();
+      final gitEngine = SessionEngine(
+          store: store, providers: fakeProviders(), git: GitService());
+      try {
+        await expectLater(
+          gitEngine.createSession(
+            projectId: 'gitp',
+            providerId: 'fake',
+            cwd: git.repoPath,
+            baseBranch: 'main',
+          ),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+        expect(
+            Directory(p.join(tempDir.path, '.speeddial-worktrees'))
+                .existsSync(),
+            isFalse,
+            reason: 'rejection must happen before any git work');
+      } finally {
+        await gitEngine.dispose();
+      }
+    });
+
+    test('createSession removes the worktree when the agent fails to start',
+        () async {
+      await setupGitProject();
+      final failing = ProviderRegistry(configOverrides: <String, Object?>{
+        'providers': <String, Object?>{
+          'bad': <String, Object?>{
+            'name': 'Bad Agent',
+            // Starts and exits immediately without answering initialize.
+            'command': <String>[Platform.resolvedExecutable, '--version'],
+          },
+        },
+      });
+      final gitEngine =
+          SessionEngine(store: store, providers: failing, git: GitService());
+      try {
+        await expectLater(
+          gitEngine.createSession(
+              projectId: 'gitp', providerId: 'bad', baseBranch: 'main'),
+          throwsA(isA<DaemonError>()
+              .having((e) => e.code, 'code', kErrAgentProcess)),
+        );
+        final listed = await runGit(p.join(tempDir.path, 'repo'),
+            ['worktree', 'list', '--porcelain']);
+        expect(listed, isNot(contains('.speeddial-worktrees')),
+            reason:
+                'the worktree of a session that never started is rolled back');
+      } finally {
+        await gitEngine.dispose();
+      }
+    });
+
+    test('createSession with baseBranch requires a git-enabled engine',
+        () async {
+      await setupGitProject();
+      await expectLater(
+        engine.createSession(
+            projectId: 'gitp', providerId: 'fake', baseBranch: 'main'),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrGit)),
+      );
+    });
   });
 }

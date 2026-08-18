@@ -106,6 +106,42 @@ class GitService {
     }
   }
 
+  /// Fetches [branch] from [remote], refreshing the remote-tracking ref
+  /// (`origin/<branch>`) so worktrees branch off the latest remote tip.
+  Future<void> fetch(String repoPath, String branch,
+      {String remote = 'origin'}) async {
+    _validateBranchName(branch);
+    _validateBranchName(remote);
+    await _run(repoPath, ['fetch', remote, branch]);
+  }
+
+  /// Creates a worktree at [path] on a new branch [branch] based on
+  /// [baseRef] (e.g. `origin/main`). Fails with [DaemonError] `kErrGit` when
+  /// the base ref is unknown or the path is occupied.
+  Future<void> addWorktree(
+    String repoPath, {
+    required String path,
+    required String branch,
+    required String baseRef,
+  }) async {
+    _validateBranchName(branch);
+    _validateBranchName(baseRef);
+    if (path.startsWith('-')) {
+      throw DaemonError(kErrGit, 'invalid worktree path: $path');
+    }
+    await _run(repoPath, ['worktree', 'add', path, '-b', branch, baseRef]);
+  }
+
+  /// Removes the worktree at [path], discarding any uncommitted changes in
+  /// it (`--force`): only used to roll back a worktree whose session never
+  /// started, never for user-facing deletion.
+  Future<void> removeWorktree(String repoPath, String path) async {
+    if (path.startsWith('-')) {
+      throw DaemonError(kErrGit, 'invalid worktree path: $path');
+    }
+    await _run(repoPath, ['worktree', 'remove', '--force', path]);
+  }
+
   Future<ProcessResult> _run(String repoPath, List<String> args) async {
     final result = await Process.run(gitPath, args, workingDirectory: repoPath);
     if (result.exitCode != 0) {
