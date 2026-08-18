@@ -368,9 +368,14 @@ class AppData {
         DaemonConnectionState.failed => ConnectionStatus.failed,
       };
 
+  /// True after [dispose]; async startup work must check this between awaits.
+  bool get isDisposed => _disposed;
+  bool _disposed = false;
+
   /// Releases every store in the graph plus any lazily created WebSocket
   /// clients. Registered clients (fakes) are left to their owners.
   void dispose() {
+    _disposed = true;
     connections.removeListener(_onConnectionsChanged);
     for (final MapEntry<String, VoidCallback> entry
         in _statusListeners.entries) {
@@ -431,5 +436,26 @@ AppData buildDemoAppData() {
   // tile (selection-change notifications alone do not load listings).
   unawaited(data.projects.refresh('demo'));
   unawaited(data.sessions.refresh('demo'));
+  // Open straight into a live session: select the seeded project + session,
+  // refresh git, and stream a scripted turn so the demo dashboard has real
+  // content (history backfill covers a turn that started before the watch).
+  unawaited(() async {
+    await data.projects.refresh('demo');
+    await data.sessions.refresh('demo');
+    if (data.isDisposed) return;
+    final projects = data.projects.projectsFor('demo');
+    if (projects.isEmpty) return;
+    final project = projects.first;
+    data.selection.selectedProjectId = project.id;
+    final sessions = data.sessions.sessionsFor(project.id);
+    if (sessions.isEmpty) return;
+    final session = sessions.first;
+    data.selection.selectedSessionId = session.id;
+    if (data.isDisposed) return;
+    unawaited(data.git.refresh('demo', project.id));
+    unawaited(
+      data.chat.send('demo', session.id, 'Add retry logic to the sync loop'),
+    );
+  }());
   return data;
 }

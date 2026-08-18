@@ -147,6 +147,19 @@ void main() {
     expect(find.text('Local demo'), findsOneWidget);
     expect(find.text('Demo Project'), findsOneWidget);
     expect(find.text('No projects yet'), findsNothing);
+
+    // The demo opens straight into a live session: project + session
+    // selected, scripted turn streamed into the timeline.
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(data.selection.selectedProjectId, isNotNull);
+    expect(data.selection.selectedSessionId, isNotNull);
+    // Drain the scripted turn (~9 events at the fake's 50ms event delay) so
+    // no timers outlive the test.
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.textContaining('Working on it', findRichText: true),
+        findsOneWidget);
+    expect(find.textContaining('Add retry logic', findRichText: true),
+        findsOneWidget);
   });
 
   testWidgets('mobile: tapping a session in the drawer selects it and closes the drawer',

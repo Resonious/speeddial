@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'store_base.dart';
 
-import 'package:flutter/foundation.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
@@ -86,7 +86,7 @@ class _ChunkRun {
 /// preferring the daemon most recently watched/updated for that id, then
 /// last-write-wins on scan order (see the `_bufferFor` / `_derivedKeyFor`
 /// helpers).
-class ChatStore extends ChangeNotifier {
+class ChatStore extends StoreBase {
   ChatStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
       : _clientFor = clientFor;

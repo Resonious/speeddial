@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'store_base.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
@@ -8,7 +8,7 @@ import '../api/daemon_client.dart';
 /// [entriesFor] returns null until that directory was loaded, so panes can
 /// render a placeholder and trigger [loadDir]. [readFile] is a pure pass-
 /// through with no caching.
-class FilesStore extends ChangeNotifier {
+class FilesStore extends StoreBase {
   FilesStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
       : _clientFor = clientFor;

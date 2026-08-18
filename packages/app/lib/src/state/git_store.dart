@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'store_base.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
@@ -10,7 +10,7 @@ import '../api/daemon_client.dart';
 /// rethrow their failures (so callers can react, e.g. an empty-message
 /// commit) and also record them in [errorFor]. Mutators never auto-refresh
 /// status; panes call [refresh] after a successful mutation.
-class GitStore extends ChangeNotifier {
+class GitStore extends StoreBase {
   GitStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
       : _clientFor = clientFor;

@@ -1,6 +1,6 @@
 import 'dart:async';
+import 'store_base.dart';
 
-import 'package:flutter/foundation.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
@@ -16,7 +16,7 @@ import '../api/daemon_client.dart';
 /// notifications and refetches the listing, so daemon-side project changes
 /// surface without a manual [refresh]; the subscription lives until the
 /// store is disposed.
-class ProjectsStore extends ChangeNotifier {
+class ProjectsStore extends StoreBase {
   ProjectsStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
       : _clientFor = clientFor;
