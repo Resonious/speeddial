@@ -505,5 +505,64 @@ void main() {
         'feature/x',
       );
     });
+
+    test('session scope keys status/branches/errors per worktree session',
+        () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      final Session session = await app.sessions.create(
+        'fake',
+        projectId: projectId,
+        providerId: 'omp',
+        title: 'Worktree session',
+        baseBranch: 'main',
+      );
+      expect(session.cwd, contains('.speeddial-worktrees'));
+
+      // The session scope is a cache entry of its own: refreshing it shows
+      // the worktree branch and leaves the project entry untouched.
+      expect(app.git.statusFor(projectId, sessionId: session.id), isNull);
+      await app.git.refresh('fake', projectId, sessionId: session.id);
+      final GitStatus sessionStatus =
+          app.git.statusFor(projectId, sessionId: session.id)!;
+      expect(sessionStatus.branch, 'speeddial/${session.id}');
+      expect(sessionStatus.files, isEmpty);
+      expect(
+        app.git
+            .branchesFor(projectId, sessionId: session.id)!
+            .single
+            .name,
+        'speeddial/${session.id}',
+      );
+      expect(app.git.statusFor(projectId), isNull,
+          reason: 'project scope stays empty until refreshed itself');
+
+      await app.git.refresh('fake', projectId);
+      expect(app.git.statusFor(projectId)!.branch, 'main');
+      expect(app.git.statusFor(projectId)!.files, isNotEmpty,
+          reason: 'the project checkout still has its own change');
+
+      // Errors are scoped too: a failing commit under the session does not
+      // mark the project entry.
+      await expectLater(
+        app.git.commit('fake', projectId, '', sessionId: session.id),
+        throwsA(isA<DaemonError>()),
+      );
+      expect(app.git.errorFor(projectId, sessionId: session.id),
+          isA<DaemonError>());
+      expect(app.git.errorFor(projectId), isNull);
+
+      // A session of another project is rejected (refresh records it).
+      final Project other = await fake.addProject('/other');
+      final Session otherSession = await app.sessions.create(
+        'fake',
+        projectId: other.id,
+        providerId: 'omp',
+      );
+      await app.git.refresh('fake', projectId, sessionId: otherSession.id);
+      expect(app.git.errorFor(projectId, sessionId: otherSession.id),
+          isA<DaemonError>());
+      expect(app.git.statusFor(projectId, sessionId: otherSession.id),
+          isNull);
+    });
   });
 }

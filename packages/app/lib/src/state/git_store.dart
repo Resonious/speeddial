@@ -3,8 +3,12 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
 
-/// Caches git status/branches per project and runs mutating operations
-/// (checkout/commit/push/createPr) with a busy flag and per-project error.
+/// Caches git status/branches per repo root and runs mutating operations
+/// (checkout/commit/push/createPr) with a busy flag and per-root error.
+///
+/// Every method takes an optional [sessionId]: when given, the operation and
+/// its cache entry are scoped to that session's working tree (its worktree),
+/// not the project checkout. Cache keys are therefore `sessionId ?? projectId`.
 ///
 /// [refresh] is fire-and-forget: failures land in [errorFor]. Mutators
 /// rethrow their failures (so callers can react, e.g. an empty-message
@@ -22,31 +26,42 @@ class GitStore extends StoreBase {
   final Map<String, Object> _errors = <String, Object>{};
   final Set<String> _busy = <String>{};
 
-  GitStatus? statusFor(String projectId) => _status[projectId];
+  /// Session ids are globally unique (uuid), so `sessionId ?? projectId`
+  /// cannot collide with a plain project id.
+  String _key(String projectId, String? sessionId) => sessionId ?? projectId;
 
-  List<Branch>? branchesFor(String projectId) {
-    final List<Branch>? branches = _branches[projectId];
+  GitStatus? statusFor(String projectId, {String? sessionId}) =>
+      _status[_key(projectId, sessionId)];
+
+  List<Branch>? branchesFor(String projectId, {String? sessionId}) {
+    final List<Branch>? branches = _branches[_key(projectId, sessionId)];
     return branches == null ? null : List<Branch>.unmodifiable(branches);
   }
 
-  bool isBusy(String projectId) => _busy.contains(projectId);
+  bool isBusy(String projectId, {String? sessionId}) =>
+      _busy.contains(_key(projectId, sessionId));
 
-  Object? errorFor(String projectId) => _errors[projectId];
+  Object? errorFor(String projectId, {String? sessionId}) =>
+      _errors[_key(projectId, sessionId)];
 
-  Future<void> refresh(String daemonId, String projectId) async {
-    _busy.add(projectId);
+  Future<void> refresh(String daemonId, String projectId,
+      {String? sessionId}) async {
+    final String key = _key(projectId, sessionId);
+    _busy.add(key);
     notifyListeners();
     try {
       final DaemonClient client = _clientFor(daemonId);
-      final GitStatus status = await client.gitStatus(projectId);
-      final List<Branch> branches = await client.gitBranches(projectId);
-      _status[projectId] = status;
-      _branches[projectId] = branches;
-      _errors.remove(projectId);
+      final GitStatus status =
+          await client.gitStatus(projectId, sessionId: sessionId);
+      final List<Branch> branches =
+          await client.gitBranches(projectId, sessionId: sessionId);
+      _status[key] = status;
+      _branches[key] = branches;
+      _errors.remove(key);
     } catch (error) {
-      _errors[projectId] = error;
+      _errors[key] = error;
     } finally {
-      _busy.remove(projectId);
+      _busy.remove(key);
       notifyListeners();
     }
   }
@@ -54,56 +69,74 @@ class GitStore extends StoreBase {
   Future<List<GitDiff>> diff(
     String daemonId,
     String projectId, {
+    String? sessionId,
     String? path,
     bool staged = false,
   }) async {
+    final String key = _key(projectId, sessionId);
     try {
-      final List<GitDiff> diffs =
-          await _clientFor(daemonId).gitDiff(projectId, path: path, staged: staged);
-      _errors.remove(projectId);
+      final List<GitDiff> diffs = await _clientFor(daemonId).gitDiff(projectId,
+          sessionId: sessionId, path: path, staged: staged);
+      _errors.remove(key);
       return diffs;
     } catch (error) {
-      _errors[projectId] = error;
+      _errors[key] = error;
       rethrow;
     }
   }
 
-  Future<void> checkout(String daemonId, String projectId, String branch) =>
-      _runMutating(
-          daemonId, projectId, () => _clientFor(daemonId).gitCheckout(projectId, branch));
-
-  Future<String> commit(String daemonId, String projectId, String message,
-          {bool stageAll = false}) =>
-      _runMutating(daemonId, projectId,
-          () => _clientFor(daemonId).gitCommit(projectId, message, stageAll: stageAll));
-
-  Future<void> push(String daemonId, String projectId) => _runMutating(
-      daemonId, projectId, () => _clientFor(daemonId).gitPush(projectId));
-
-  Future<String> createPr(String daemonId, String projectId,
-          {String? title, String? body, String? base, bool draft = false}) =>
+  Future<void> checkout(String daemonId, String projectId, String branch,
+          {String? sessionId}) =>
       _runMutating(
           daemonId,
-          projectId,
-          () => _clientFor(daemonId).gitCreatePr(
-              projectId, title: title, body: body, base: base, draft: draft));
+          _key(projectId, sessionId),
+          () => _clientFor(daemonId)
+              .gitCheckout(projectId, branch, sessionId: sessionId));
+
+  Future<String> commit(String daemonId, String projectId, String message,
+          {String? sessionId, bool stageAll = false}) =>
+      _runMutating(
+          daemonId,
+          _key(projectId, sessionId),
+          () => _clientFor(daemonId).gitCommit(projectId, message,
+              sessionId: sessionId, stageAll: stageAll));
+
+  Future<void> push(String daemonId, String projectId, {String? sessionId}) =>
+      _runMutating(daemonId, _key(projectId, sessionId),
+          () => _clientFor(daemonId).gitPush(projectId, sessionId: sessionId));
+
+  Future<String> createPr(String daemonId, String projectId,
+          {String? sessionId,
+          String? title,
+          String? body,
+          String? base,
+          bool draft = false}) =>
+      _runMutating(
+          daemonId,
+          _key(projectId, sessionId),
+          () => _clientFor(daemonId).gitCreatePr(projectId,
+              sessionId: sessionId,
+              title: title,
+              body: body,
+              base: base,
+              draft: draft));
 
   Future<T> _runMutating<T>(
     String daemonId,
-    String projectId,
+    String key,
     Future<T> Function() action,
   ) async {
-    _busy.add(projectId);
+    _busy.add(key);
     notifyListeners();
     try {
       final T result = await action();
-      _errors.remove(projectId);
+      _errors.remove(key);
       return result;
     } catch (error) {
-      _errors[projectId] = error;
+      _errors[key] = error;
       rethrow;
     } finally {
-      _busy.remove(projectId);
+      _busy.remove(key);
       notifyListeners();
     }
   }

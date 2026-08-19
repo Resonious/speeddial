@@ -130,6 +130,44 @@ void main() {
     expect(find.text('Staged'), findsNothing);
   });
 
+  testWidgets('git tab follows the selected worktree session',
+      (WidgetTester tester) async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData app = await pumpRightPanel(tester, fake);
+    final Project project = (await fake.listProjects()).single;
+
+    // No session selected: the project checkout is shown.
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+    expect(find.text('lib/main.dart'), findsOneWidget);
+
+    // Selecting a worktree session switches the tab to the session's tree:
+    // the worktree branch and its (clean) status replace the project's.
+    final Session session = await app.sessions.create(
+      'fake',
+      projectId: project.id,
+      providerId: 'omp',
+      title: 'Worktree session',
+      baseBranch: 'main',
+    );
+    app.selection.selectedSessionId = session.id;
+    await tester.pumpAndSettle();
+
+    expect(find.text('speeddial/${session.id}'), findsOneWidget);
+    expect(find.text('No changes'), findsOneWidget);
+    expect(find.text('lib/main.dart'), findsNothing);
+    expect(
+      app.git.statusFor(project.id, sessionId: session.id),
+      isNotNull,
+      reason: 'the pane refreshes under the session scope',
+    );
+
+    // Clearing the selection falls back to the project checkout.
+    app.selection.selectedSessionId = null;
+    await tester.pumpAndSettle();
+    expect(find.text('lib/main.dart'), findsOneWidget);
+  });
+
   testWidgets('tapping a changed file shows its diff with colored lines',
       (WidgetTester tester) async {
     final FakeDaemonClient fake = FakeDaemonClient();

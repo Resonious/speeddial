@@ -106,13 +106,19 @@ abstract class DaemonClient {
   // Git
   // ---------------------------------------------------------------------
 
-  Future<GitStatus> gitStatus(String projectId);
-  Future<List<GitDiff>> gitDiff(String projectId, {String? path, bool staged = false});
-  Future<List<Branch>> gitBranches(String projectId);
-  Future<void> gitCheckout(String projectId, String branch);
-  Future<String> gitCommit(String projectId, String message, {bool stageAll = false});
-  Future<void> gitPush(String projectId);
-  Future<String> gitCreatePr(String projectId, {String? title, String? body, String? base, bool draft = false});
+  // Every git method takes an optional [sessionId]: when given, the daemon
+  // runs the operation in that session's cwd (its worktree) instead of the
+  // project path. The session must belong to the project.
+  Future<GitStatus> gitStatus(String projectId, {String? sessionId});
+  Future<List<GitDiff>> gitDiff(String projectId,
+      {String? sessionId, String? path, bool staged = false});
+  Future<List<Branch>> gitBranches(String projectId, {String? sessionId});
+  Future<void> gitCheckout(String projectId, String branch, {String? sessionId});
+  Future<String> gitCommit(String projectId, String message,
+      {String? sessionId, bool stageAll = false});
+  Future<void> gitPush(String projectId, {String? sessionId});
+  Future<String> gitCreatePr(String projectId,
+      {String? sessionId, String? title, String? body, String? base, bool draft = false});
 
   // ---------------------------------------------------------------------
   // Live streams

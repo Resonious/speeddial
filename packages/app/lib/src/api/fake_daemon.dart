@@ -35,10 +35,11 @@ class FakeDaemonClient implements DaemonClient {
   final Map<String, List<FileEntry>> _fileTree = <String, List<FileEntry>>{};
   final Map<String, String> _fileContents = <String, String>{};
 
+  // Git state is keyed by repo root (project path, or the session's worktree
+  // cwd) so worktree sessions see their own tree, mirroring the daemon.
   final Map<String, GitStatus> _gitStatus = <String, GitStatus>{};
   final Map<String, List<Branch>> _gitBranches = <String, List<Branch>>{};
   final Map<String, List<GitDiff>> _gitDiffs = <String, List<GitDiff>>{};
-
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
   late final StreamController<void> _projectsChangedController;
@@ -103,7 +104,7 @@ class FakeDaemonClient implements DaemonClient {
       ..['pubspec.yaml'] = 'name: demo\n'
       ..['lib/main.dart'] = 'import "package:flutter/material.dart";\n\n'
           'void main() => runApp(const App());\n';
-    _gitStatus[project.id] = const GitStatus(
+    _gitStatus[project.path] = const GitStatus(
       branch: 'main',
       ahead: 0,
       behind: 0,
@@ -116,11 +117,11 @@ class FakeDaemonClient implements DaemonClient {
         ),
       ],
     );
-    _gitBranches[project.id] = const <Branch>[
+    _gitBranches[project.path] = const <Branch>[
       Branch(name: 'main', isCurrent: true, upstream: 'origin/main'),
       Branch(name: 'feature/x', isCurrent: false, upstream: null),
     ];
-    _gitDiffs[project.id] = const <GitDiff>[
+    _gitDiffs[project.path] = const <GitDiff>[
       GitDiff(
         path: 'lib/main.dart',
         patch: '--- a/lib/main.dart\n+++ b/lib/main.dart\n@@ -1 +1 @@\n'
@@ -201,16 +202,16 @@ class FakeDaemonClient implements DaemonClient {
       lastActiveAt: now,
     );
     _projects.add(project);
-    _gitStatus[project.id] = const GitStatus(
+    _gitStatus[project.path] = const GitStatus(
       branch: 'main',
       ahead: 0,
       behind: 0,
       files: <GitStatusFile>[],
     );
-    _gitBranches[project.id] = const <Branch>[
+    _gitBranches[project.path] = const <Branch>[
       Branch(name: 'main', isCurrent: true, upstream: null),
     ];
-    _gitDiffs[project.id] = const <GitDiff>[];
+    _gitDiffs[project.path] = const <GitDiff>[];
     _projectsChangedController.add(null);
     return project;
   }
@@ -278,6 +279,22 @@ class FakeDaemonClient implements DaemonClient {
       updatedAt: now,
     );
     _sessions[session.id] = session;
+    if (baseBranch != null) {
+      // A fresh worktree branched off the remote tip is clean; give it its
+      // own git state so session-scoped git calls see the worktree, not the
+      // main checkout.
+      final String branch = 'speeddial/${session.id}';
+      _gitStatus[session.cwd] = GitStatus(
+        branch: branch,
+        ahead: 0,
+        behind: 0,
+        files: const <GitStatusFile>[],
+      );
+      _gitBranches[session.cwd] = <Branch>[
+        Branch(name: branch, isCurrent: true, upstream: null),
+      ];
+      _gitDiffs[session.cwd] = const <GitDiff>[];
+    }
     _sessionUpdatesController.add(session);
     return session;
   }
@@ -496,51 +513,70 @@ class FakeDaemonClient implements DaemonClient {
   // Git
   // ---------------------------------------------------------------------
 
+  /// The repo root a git call runs against: the session's cwd (worktree)
+  /// when [sessionId] is given, else the project path — same resolution and
+  /// errors as the daemon (`kErrNotFound` unknown session, `-32602` when the
+  /// session belongs to another project).
+  String _gitRoot(String projectId, String? sessionId) {
+    final Project project = _project(projectId);
+    if (sessionId == null) return project.path;
+    final Session? session = _sessions[sessionId];
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'unknown session: $sessionId');
+    }
+    if (session.projectId != project.id) {
+      throw const DaemonError(-32602, 'session does not belong to project');
+    }
+    return session.cwd;
+  }
+
   @override
-  Future<GitStatus> gitStatus(String projectId) async {
+  Future<GitStatus> gitStatus(String projectId, {String? sessionId}) async {
     _ensureSeeded();
-    _project(projectId);
-    return _gitStatus[projectId]!;
+    return _gitStatus[_gitRoot(projectId, sessionId)]!;
   }
 
   @override
   Future<List<GitDiff>> gitDiff(
     String projectId, {
+    String? sessionId,
     String? path,
     bool staged = false,
   }) async {
     _ensureSeeded();
-    _project(projectId);
-    final List<GitDiff> diffs = _gitDiffs[projectId] ?? const <GitDiff>[];
+    final List<GitDiff> diffs =
+        _gitDiffs[_gitRoot(projectId, sessionId)] ?? const <GitDiff>[];
     if (path == null) return List<GitDiff>.unmodifiable(diffs);
     return List<GitDiff>.unmodifiable(
         diffs.where((GitDiff d) => d.path == path));
   }
 
   @override
-  Future<List<Branch>> gitBranches(String projectId) async {
+  Future<List<Branch>> gitBranches(String projectId,
+      {String? sessionId}) async {
     _ensureSeeded();
-    _project(projectId);
-    return List<Branch>.unmodifiable(_gitBranches[projectId] ?? const <Branch>[]);
+    return List<Branch>.unmodifiable(
+        _gitBranches[_gitRoot(projectId, sessionId)] ?? const <Branch>[]);
   }
 
   @override
-  Future<void> gitCheckout(String projectId, String branch) async {
+  Future<void> gitCheckout(String projectId, String branch,
+      {String? sessionId}) async {
     _ensureSeeded();
-    _project(projectId);
-    final List<Branch> branches = _gitBranches[projectId]!;
+    final String root = _gitRoot(projectId, sessionId);
+    final List<Branch> branches = _gitBranches[root]!;
     if (!branches.any((Branch b) => b.name == branch)) {
       throw DaemonError(kErrGit, 'no such branch: $branch');
     }
-    _gitBranches[projectId] = List<Branch>.unmodifiable(branches
+    _gitBranches[root] = List<Branch>.unmodifiable(branches
         .map((Branch b) => Branch(
               name: b.name,
               isCurrent: b.name == branch,
               upstream: b.upstream,
             ))
         .toList());
-    final GitStatus status = _gitStatus[projectId]!;
-    _gitStatus[projectId] = GitStatus(
+    final GitStatus status = _gitStatus[root]!;
+    _gitStatus[root] = GitStatus(
       branch: branch,
       ahead: status.ahead,
       behind: status.behind,
@@ -552,40 +588,42 @@ class FakeDaemonClient implements DaemonClient {
   Future<String> gitCommit(
     String projectId,
     String message, {
+    String? sessionId,
     bool stageAll = false,
   }) async {
     _ensureSeeded();
-    _project(projectId);
+    final String root = _gitRoot(projectId, sessionId);
     if (message.trim().isEmpty) {
       throw const DaemonError(kErrGit, 'commit message is empty');
     }
-    final GitStatus status = _gitStatus[projectId]!;
-    _gitStatus[projectId] = GitStatus(
+    final GitStatus status = _gitStatus[root]!;
+    _gitStatus[root] = GitStatus(
       branch: status.branch,
       ahead: status.ahead,
       behind: status.behind,
       files: const <GitStatusFile>[],
     );
-    _gitDiffs[projectId] = const <GitDiff>[];
+    _gitDiffs[root] = const <GitDiff>[];
     return 'deadbeef';
   }
 
   @override
-  Future<void> gitPush(String projectId) async {
+  Future<void> gitPush(String projectId, {String? sessionId}) async {
     _ensureSeeded();
-    _project(projectId);
+    _gitRoot(projectId, sessionId);
   }
 
   @override
   Future<String> gitCreatePr(
     String projectId, {
+    String? sessionId,
     String? title,
     String? body,
     String? base,
     bool draft = false,
   }) async {
     _ensureSeeded();
-    _project(projectId);
+    _gitRoot(projectId, sessionId);
     return 'https://github.com/speeddial/demo/pull/1';
   }
 

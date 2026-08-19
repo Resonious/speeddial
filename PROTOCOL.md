@@ -160,15 +160,21 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending
 - `fs.read {projectId: string, path: string, maxBytes?: int}` → `{content: string, truncated: boolean, isBinary: boolean}` — default maxBytes 512 KiB, hard cap 4 MiB; binary files return `isBinary: true` with empty content
 
-### Git (all scoped to the project's repo)
-- `git.status {projectId: string}` → `{status: GitStatus}`
-- `git.diff {projectId: string, path?: string, staged?: boolean}` → `{diffs: GitDiff[]}` — patches are unified diffs for that file only
-- `git.branches {projectId: string}` → `{branches: Branch[]}`
-- `git.checkout {projectId: string, branch: string}` → `{}`
-- `git.createBranch {projectId: string, name: string, checkout?: boolean}` → `{}`
-- `git.commit {projectId: string, message: string, stageAll?: boolean}` → `{commitHash: string}`
-- `git.push {projectId: string, setUpstream?: boolean}` → `{}`
-- `git.createPullRequest {projectId: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated
+### Git (scoped to the project's repo, or to a session's worktree)
+
+Every `git.*` method accepts an optional `sessionId: string`. When given, the
+operation runs in that session's `cwd` instead of the project path — this is
+how worktree sessions (see `sessions.create` with `baseBranch`) are inspected
+and committed, since their worktree lives outside the project directory. The
+session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
+- `git.status {projectId: string, sessionId?: string}` → `{status: GitStatus}`
+- `git.diff {projectId: string, sessionId?: string, path?: string, staged?: boolean}` → `{diffs: GitDiff[]}` — patches are unified diffs for that file only
+- `git.branches {projectId: string, sessionId?: string}` → `{branches: Branch[]}`
+- `git.checkout {projectId: string, sessionId?: string, branch: string}` → `{}`
+- `git.createBranch {projectId: string, sessionId?: string, name: string, checkout?: boolean}` → `{}`
+- `git.commit {projectId: string, sessionId?: string, message: string, stageAll?: boolean}` → `{commitHash: string}`
+- `git.push {projectId: string, sessionId?: string, setUpstream?: boolean}` → `{}`
+- `git.createPullRequest {projectId: string, sessionId?: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated
 
 ## Notifications (daemon → all authenticated clients)
 

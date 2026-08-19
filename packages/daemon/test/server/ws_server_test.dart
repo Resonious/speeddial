@@ -574,6 +574,131 @@ void main() {
       );
       await client.close();
     });
+
+    test('git.* with sessionId operate on the session worktree', () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_gitwt_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      final session = Session.fromJson((j(await client.peer
+              .call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Worktree git',
+            'baseBranch': 'main',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+
+      // A change in the worktree is invisible at the project path…
+      File(p.join(session.cwd, 'a.txt')).writeAsStringSync('v2\n');
+      final projectStatus = GitStatus.fromJson((j(await client.peer
+              .call('git.status', <String, Object?>{'projectId': project.id}))[
+                  'status']! as Map)
+          .cast<String, Object?>());
+      expect(projectStatus.branch, 'main');
+      expect(projectStatus.files, isEmpty);
+
+      // …and fully visible through the session.
+      final sessionStatus = GitStatus.fromJson((j(await client.peer.call(
+              'git.status',
+              <String, Object?>{
+                'projectId': project.id,
+                'sessionId': session.id,
+              }))['status']! as Map)
+          .cast<String, Object?>());
+      expect(sessionStatus.branch, startsWith('speeddial/worktree-git-'));
+      expect(sessionStatus.files.single.path, 'a.txt');
+      expect(sessionStatus.files.single.worktreeStatus, 'M');
+
+      final diffs = (j(await client.peer.call('git.diff', <String, Object?>{
+        'projectId': project.id,
+        'sessionId': session.id,
+        'path': 'a.txt',
+      }))['diffs']! as List);
+      expect(diffs, hasLength(1));
+      expect((diffs.single! as Map)['patch'], contains('+v2'));
+
+      // Commits land on the worktree branch, not the main checkout.
+      final committed = j(await client.peer.call('git.commit',
+          <String, Object?>{
+            'projectId': project.id,
+            'sessionId': session.id,
+            'message': 'work in the worktree',
+            'stageAll': true,
+          }));
+      expect(committed['commitHash'], isA<String>());
+      expect(
+        await Process.run('git', ['log', '-1', '--format=%s'],
+                workingDirectory: session.cwd)
+            .then((r) => (r.stdout as String).trim()),
+        'work in the worktree',
+      );
+      expect(
+        await Process.run('git', ['log', '-1', '--format=%s'],
+                workingDirectory: repoPath)
+            .then((r) => (r.stdout as String).trim()),
+        'init',
+      );
+
+      // Validation: unknown session, and a session from another project.
+      await expectLater(
+        client.peer.call('git.status', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': 'nope',
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrNotFound)),
+      );
+      final otherDir = p.join(parent.path, 'other');
+      await git(parent.path, ['clone', originDir, otherDir]);
+      final otherProject = Project.fromJson((j(await client.peer.call(
+              'projects.add', <String, Object?>{'path': otherDir}))['project']!
+              as Map)
+          .cast<String, Object?>());
+      final otherSession = Session.fromJson((j(await client.peer.call(
+              'sessions.create', <String, Object?>{
+            'projectId': otherProject.id,
+            'providerId': 'fake',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+      await expectLater(
+        client.peer.call('git.status', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': otherSession.id,
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await client.close();
+    });
   });
 
   group('fs', () {

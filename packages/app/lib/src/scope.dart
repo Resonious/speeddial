@@ -486,7 +486,7 @@ AppData buildDemoAppData() {
     final session = sessions.first;
     data.selection.selectedSessionId = session.id;
     if (data.isDisposed) return;
-    unawaited(data.git.refresh('demo', project.id));
+    unawaited(data.git.refresh('demo', project.id, sessionId: session.id));
     unawaited(
       data.chat.send('demo', session.id, 'Add retry logic to the sync loop'),
     );

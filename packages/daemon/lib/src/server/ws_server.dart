@@ -583,18 +583,38 @@ class SpeedDialServer {
     return project;
   }
 
-  Future<Object?> _gitStatus(Map<String, Object?> params) async {
+  /// The directory git.* runs in: the session's working directory when
+  /// `sessionId` is given (worktree sessions live outside the project path),
+  /// otherwise the project path. The session must belong to the project.
+  String _gitRepoPath(Map<String, Object?> params) {
     final project = _requireProject(_requiredString(params, 'projectId'));
-    final status = await _git.status(project.path);
+    final rawSessionId = params['sessionId'];
+    if (rawSessionId == null) return project.path;
+    if (rawSessionId is! String || rawSessionId.isEmpty) {
+      throw DaemonError(
+          _kErrInvalidParams, 'sessionId must be a non-empty string');
+    }
+    final session = _store.getSession(rawSessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $rawSessionId');
+    }
+    if (session.projectId != project.id) {
+      throw DaemonError(_kErrInvalidParams,
+          'session $rawSessionId does not belong to project ${project.id}');
+    }
+    return session.cwd;
+  }
+
+  Future<Object?> _gitStatus(Map<String, Object?> params) async {
+    final status = await _git.status(_gitRepoPath(params));
     return <String, Object?>{'status': status.toJson()};
   }
 
   Future<Object?> _gitDiff(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
     final rawPath = params['path'];
     final rawStaged = params['staged'];
     final diffs = await _git.diff(
-      project.path,
+      _gitRepoPath(params),
       path: rawPath is String && rawPath.isNotEmpty ? rawPath : null,
       staged: rawStaged is bool ? rawStaged : false,
     );
@@ -604,24 +624,21 @@ class SpeedDialServer {
   }
 
   Future<Object?> _gitBranches(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
-    final branches = await _git.branches(project.path);
+    final branches = await _git.branches(_gitRepoPath(params));
     return <String, Object?>{
       'branches': branches.map((branch) => branch.toJson()).toList(growable: false),
     };
   }
 
   Future<Object?> _gitCheckout(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
-    await _git.checkout(project.path, _requiredString(params, 'branch'));
+    await _git.checkout(_gitRepoPath(params), _requiredString(params, 'branch'));
     return <String, Object?>{};
   }
 
   Future<Object?> _gitCreateBranch(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
     final rawCheckout = params['checkout'];
     await _git.createBranch(
-      project.path,
+      _gitRepoPath(params),
       _requiredString(params, 'name'),
       checkout: rawCheckout is bool ? rawCheckout : true,
     );
@@ -629,10 +646,9 @@ class SpeedDialServer {
   }
 
   Future<Object?> _gitCommit(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
     final rawStageAll = params['stageAll'];
     final commitHash = await _git.commit(
-      project.path,
+      _gitRepoPath(params),
       _requiredString(params, 'message'),
       stageAll: rawStageAll is bool ? rawStageAll : false,
     );
@@ -640,23 +656,21 @@ class SpeedDialServer {
   }
 
   Future<Object?> _gitPush(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
     final rawSetUpstream = params['setUpstream'];
     await _git.push(
-      project.path,
+      _gitRepoPath(params),
       setUpstream: rawSetUpstream is bool ? rawSetUpstream : false,
     );
     return <String, Object?>{};
   }
 
   Future<Object?> _gitCreatePullRequest(Map<String, Object?> params) async {
-    final project = _requireProject(_requiredString(params, 'projectId'));
     final rawTitle = params['title'];
     final rawBody = params['body'];
     final rawBase = params['base'];
     final rawDraft = params['draft'];
     final url = await _pr.createPullRequest(
-      project.path,
+      _gitRepoPath(params),
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
       body: rawBody is String ? rawBody : null,
       base: rawBase is String ? rawBase : null,

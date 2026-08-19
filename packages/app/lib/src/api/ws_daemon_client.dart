@@ -568,10 +568,10 @@ class WsDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
-  Future<GitStatus> gitStatus(String projectId) async {
+  Future<GitStatus> gitStatus(String projectId, {String? sessionId}) async {
     final Object? result = await _requirePeer().call(
       'git.status',
-      <String, Object?>{'projectId': projectId},
+      <String, Object?>{'projectId': projectId, 'sessionId': ?sessionId},
     );
     return GitStatus.fromJson(_resultMap(_resultField(result, 'status')));
   }
@@ -579,6 +579,7 @@ class WsDaemonClient implements DaemonClient {
   @override
   Future<List<GitDiff>> gitDiff(
     String projectId, {
+    String? sessionId,
     String? path,
     bool staged = false,
   }) async {
@@ -586,6 +587,7 @@ class WsDaemonClient implements DaemonClient {
       'git.diff',
       <String, Object?>{
         'projectId': projectId,
+        'sessionId': ?sessionId,
         'path': ?path,
         'staged': staged,
       },
@@ -594,19 +596,25 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<List<Branch>> gitBranches(String projectId) async {
+  Future<List<Branch>> gitBranches(String projectId,
+      {String? sessionId}) async {
     final Object? result = await _requirePeer().call(
       'git.branches',
-      <String, Object?>{'projectId': projectId},
+      <String, Object?>{'projectId': projectId, 'sessionId': ?sessionId},
     );
     return _decodeList(_resultField(result, 'branches'), Branch.fromJson);
   }
 
   @override
-  Future<void> gitCheckout(String projectId, String branch) async {
+  Future<void> gitCheckout(String projectId, String branch,
+      {String? sessionId}) async {
     await _requirePeer().call(
       'git.checkout',
-      <String, Object?>{'projectId': projectId, 'branch': branch},
+      <String, Object?>{
+        'projectId': projectId,
+        'sessionId': ?sessionId,
+        'branch': branch,
+      },
     );
   }
 
@@ -614,12 +622,14 @@ class WsDaemonClient implements DaemonClient {
   Future<String> gitCommit(
     String projectId,
     String message, {
+    String? sessionId,
     bool stageAll = false,
   }) async {
     final Object? result = await _requirePeer().call(
       'git.commit',
       <String, Object?>{
         'projectId': projectId,
+        'sessionId': ?sessionId,
         'message': message,
         'stageAll': stageAll,
       },
@@ -628,14 +638,16 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<void> gitPush(String projectId) async {
-    await _requirePeer()
-        .call('git.push', <String, Object?>{'projectId': projectId});
+  Future<void> gitPush(String projectId, {String? sessionId}) async {
+    await _requirePeer().call(
+        'git.push',
+        <String, Object?>{'projectId': projectId, 'sessionId': ?sessionId});
   }
 
   @override
   Future<String> gitCreatePr(
     String projectId, {
+    String? sessionId,
     String? title,
     String? body,
     String? base,
@@ -645,6 +657,7 @@ class WsDaemonClient implements DaemonClient {
       'git.createPullRequest',
       <String, Object?>{
         'projectId': projectId,
+        'sessionId': ?sessionId,
         'title': ?title,
         'body': ?body,
         'base': ?base,
