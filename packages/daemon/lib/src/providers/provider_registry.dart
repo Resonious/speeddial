@@ -33,6 +33,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../paths.dart';
+
 /// Runs a provider's model-listing command and returns the parsed ids.
 ///
 /// Implementations receive the full `modelsCommand` argv. The default runs
@@ -112,9 +114,8 @@ class ProviderRegistry {
 
   /// Path of the user config file (`~/.speeddial/config.json`).
   static String configFilePath() {
-    final home =
-        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-    if (home == null || home.isEmpty) return '.speeddial/config.json';
+    final home = homeDir();
+    if (home == null) return '.speeddial/config.json';
     return p.join(home, '.speeddial', 'config.json');
   }
 

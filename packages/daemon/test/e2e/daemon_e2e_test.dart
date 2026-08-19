@@ -241,6 +241,14 @@ void main() {
     final project = await client.addProject(projectDir);
     expect(project.path, projectDir);
 
+    // Tilde expansion: `~/…` resolves against the daemon's sandboxed $HOME
+    // (server-side, so wire clients get it for free).
+    final tildeDir = p.join(homeDir, 'tilde-proj');
+    Directory(tildeDir).createSync();
+    final tildeProject = await client.addProject('~/tilde-proj');
+    expect(tildeProject.path, tildeDir);
+    expect(tildeProject.name, 'tilde-proj');
+
     final session = await client.createSession(
       projectId: project.id,
       providerId: 'fake',
@@ -400,6 +408,14 @@ void main() {
     final statusMap = Map<String, Object?>.from(gitJson['status']! as Map);
     expect(statusMap['branch'], 'main');
     expect(statusMap['files'], isEmpty);
+
+    // `projects add` expands a verbatim `~` itself — Process.run invokes no
+    // shell, so nothing else would — before the daemon normalizes it.
+    Directory(p.join(homeDir, 'tilde-cli')).createSync();
+    final addJson =
+        await cliJson(['--json', 'projects', 'add', '~/tilde-cli']);
+    expect(Map<String, Object?>.from(addJson['project']! as Map)['path'],
+        p.join(homeDir, 'tilde-cli'));
 
     // ---------------------------------------------------------------------
     // `sessions attach` must exit with the daemon-unreachable code (2) when

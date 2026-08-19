@@ -4,6 +4,7 @@ library;
 import 'package:args/command_runner.dart';
 import 'package:path/path.dart' as p;
 
+import '../paths.dart';
 import 'cli_runner.dart';
 import 'output.dart';
 
@@ -73,7 +74,10 @@ class ProjectsAddCommand extends Command<int> {
     if (argResults!.rest.isEmpty) {
       throw UsageException('Missing <path> argument.', usage);
     }
-    final path = p.normalize(p.absolute(argResults!.rest.first));
+    // Expand `~` before absolutizing: an unexpanded tilde would otherwise
+    // turn into `$PWD/~/…` here and never reach the server-side expansion.
+    final path =
+        p.normalize(p.absolute(expandTilde(argResults!.rest.first)));
     final conn = resolveConnection(globalResults!);
     final output = Output(json: conn.json);
     return withDaemon(conn, (client) async {
