@@ -198,8 +198,8 @@ class GitService {
   /// fast-forward ref move is possible, anything else is `kErrConflict`.
   /// The session worktree must be clean (`kErrConflict`) — merging never
   /// carries uncommitted changes. Merge conflicts propagate as `kErrGit`
-  /// and leave the base checkout in MERGING state for manual resolution.
-  /// Neither the worktree nor its branch is removed afterwards.
+  /// after `git merge --abort` restores the base checkout to its pre-merge
+  /// state. Neither the worktree nor its branch is removed afterwards.
   Future<MergeResult> mergeIntoBase({
     required String projectPath,
     required String worktreePath,
@@ -269,8 +269,33 @@ class GitService {
     if (checkout != null) {
       // A real merge in the base checkout: fast-forwards when possible,
       // otherwise creates a merge commit with git's default message.
-      // --no-edit keeps the merge non-interactive either way.
-      await _run(checkout, ['merge', '--no-edit', sessionBranch]);
+      // --no-edit keeps the merge non-interactive either way. A conflicted
+      // merge is aborted, restoring the checkout to its pre-merge state.
+      try {
+        await _run(checkout, ['merge', '--no-edit', sessionBranch]);
+      } on DaemonError catch (error) {
+        // Nothing to abort when git never entered MERGING state (e.g. an
+        // untracked file would be overwritten): the checkout is untouched
+        // and the original error stands.
+        if (!await _isMerging(checkout)) rethrow;
+        try {
+          await _run(checkout, ['merge', '--abort']);
+        } on DaemonError catch (abortError) {
+          throw DaemonError(
+            kErrGit,
+            'merging $sessionBranch into $baseBranch conflicted; '
+                '`git merge --abort` failed too (${abortError.message}), '
+                'leaving $checkout in MERGING state. '
+                'Original error: ${error.message}',
+          );
+        }
+        throw DaemonError(
+          kErrGit,
+          'merging $sessionBranch into $baseBranch conflicted; the merge '
+              'was aborted and $baseBranch is unchanged: ${error.message}',
+          error.data,
+        );
+      }
     } else {
       if (!canFastForward) {
         throw DaemonError(
@@ -338,6 +363,16 @@ class GitService {
     );
   }
 
+  /// Whether [repoPath] is mid-merge (MERGE_HEAD exists).
+  Future<bool> _isMerging(String repoPath) async {
+    final result = await Process.run(
+      gitPath,
+      ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'],
+      workingDirectory: repoPath,
+    );
+    return result.exitCode == 0;
+  }
+
   Future<String> _revParse(String repoPath, String ref) async {
     final result = await _run(repoPath, ['rev-parse', ref]);
     return (result.stdout as String).trim();
@@ -375,9 +410,11 @@ class GitService {
   Future<ProcessResult> _run(String repoPath, List<String> args) async {
     final result = await Process.run(gitPath, args, workingDirectory: repoPath);
     if (result.exitCode != 0) {
+      // git reports some failures (e.g. merge conflicts) on stdout only.
+      final stderr = (result.stderr as String).trim();
       throw DaemonError(
         kErrGit,
-        (result.stderr as String).trim(),
+        stderr.isNotEmpty ? stderr : (result.stdout as String).trim(),
         {'exitCode': result.exitCode, 'args': args},
       );
     }
