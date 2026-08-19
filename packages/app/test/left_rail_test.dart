@@ -100,6 +100,33 @@ void main() {
     expect(app.selection.selectedProjectId, demo.id);
   });
 
+  testWidgets('a failed endpoint offers Retry now in its actions menu',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+
+    // A healthy endpoint has no retry entry.
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry now'), findsNothing);
+    expect(find.text('Edit'), findsOneWidget);
+    expect(find.text('Remove'), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10)); // dismiss the menu
+    await tester.pumpAndSettle();
+
+    // A failed one does, and tapping it triggers AppData.reconnect (a no-op
+    // for this registered fake, but the wiring must not throw).
+    app.connections.setStatus('fake', ConnectionStatus.failed);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('endpoint-action-retry')), findsOneWidget);
+    await tester.tap(find.text('Retry now'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry now'), findsNothing); // menu closed
+  });
+
   testWidgets('+ Project adds a project row; a project without sessions says so',
       (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);

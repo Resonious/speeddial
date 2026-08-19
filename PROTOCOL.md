@@ -157,7 +157,12 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     otherwise (local ahead, equal, or diverged). `baseBranch` and `cwd` are mutually exclusive
     (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
     worktree on disk.
-- `sessions.send {sessionId: string, text: string}` → `{}` — starts a turn; errors `-32003` if a turn is already running
+- `sessions.send {sessionId: string, text: string}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+  Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and resumes the
+  conversation via ACP `session/load` before starting the turn. Errors `-32003` when the session is closed or its
+  provider cannot resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
+  the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks the session
+  `error` and appends a `sessionError` event to its history; the session becomes usable again on the next send.
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`

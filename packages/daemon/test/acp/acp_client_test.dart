@@ -8,24 +8,27 @@ import 'package:speeddial_daemon/src/acp/acp_client.dart';
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
 import 'package:test/test.dart';
 
+/// Resolves the fake agent fixture whether the test runner's cwd is the
+/// package dir (`dart test` in packages/daemon) or the repo root
+/// (`dart test packages/daemon`).
+String fakeAgentScript() => <String>[
+      p.join(Directory.current.path, 'test', 'fixtures', 'fake_acp_agent.dart'),
+      p.join(Directory.current.path, 'packages', 'daemon', 'test', 'fixtures',
+          'fake_acp_agent.dart'),
+    ].firstWhere((path) => File(path).existsSync());
+
 /// Spawns the fake agent fixture as a real subprocess (via the current Dart
 /// VM) and wraps it in an [AcpClient].
 AcpClient spawnClient({
   String? targetPath,
+  String? cwd,
   AcpPermissionHandler? requestPermission,
   AcpReadTextFileHandler? readTextFile,
   AcpWriteTextFileHandler? writeTextFile,
 }) {
-  // Resolve the fixture whether the test runner's cwd is the package dir
-  // (`dart test` in packages/daemon) or the repo root (`dart test packages/daemon`).
-  final script = [
-    p.join(Directory.current.path, 'test', 'fixtures', 'fake_acp_agent.dart'),
-    p.join(Directory.current.path, 'packages', 'daemon', 'test', 'fixtures',
-        'fake_acp_agent.dart'),
-  ].firstWhere((path) => File(path).existsSync());
   return AcpClient.spawn(
-    <String>[Platform.resolvedExecutable, script],
-    cwd: Directory.current.path,
+    <String>[Platform.resolvedExecutable, fakeAgentScript()],
+    cwd: cwd ?? Directory.current.path,
     environment: <String, String>{'FAKE_ACP_TARGET': ?targetPath},
     requestPermission: requestPermission,
     readTextFile: readTextFile,
@@ -224,5 +227,46 @@ void main() {
     final sessionId = await client.newSession(cwd: tempDir.path);
     expect(sessionId, 's1');
     await client.setMode(sessionId, 'plan');
+  });
+
+  test('loadSession resumes a previously created session', () async {
+    final client = spawnClient(targetPath: targetPath);
+    addTearDown(client.dispose);
+
+    final info = await client.initialized;
+    expect(info.agentCapabilities['loadSession'], isTrue);
+
+    final sessionId = await client.newSession(cwd: tempDir.path);
+    await client.loadSession(sessionId: sessionId, cwd: tempDir.path);
+    // The resumed session accepts prompts.
+    final result = await client.prompt(sessionId, 'weird');
+    expect(result.stopReason, 'end_turn');
+  });
+
+  test('loadSession surfaces an agent error when the session is unknown',
+      () async {
+    // The fake answers session/load with an error when this signal file
+    // exists in its process cwd.
+    File(p.join(tempDir.path, 'agent.load_fails')).createSync();
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    final info = await client.initialized;
+    expect(info.agentCapabilities['loadSession'], isTrue);
+    await expectLater(
+      client.loadSession(sessionId: 'gone', cwd: tempDir.path),
+      throwsA(isA<AcpJsonRpcException>()
+          .having((e) => e.code, 'code', -32000)),
+    );
+  });
+
+  test('loadSession capability is absent when the agent declines it',
+      () async {
+    File(p.join(tempDir.path, 'agent.no_load_session')).createSync();
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    final info = await client.initialized;
+    expect(info.agentCapabilities['loadSession'], isFalse);
   });
 }

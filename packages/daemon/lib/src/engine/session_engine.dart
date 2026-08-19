@@ -12,6 +12,11 @@
 ///   * `cancel` cancels the running turn via the agent.
 ///   * `delete` kills the agent and removes the session (and its events).
 ///
+/// Daemon restarts: the ACP session id is persisted at creation, so after a
+/// restart `sendMessage` lazily respawns the provider's agent and resumes it
+/// with ACP `session/load` ([SessionEngine.restore] only flags sessions that
+/// were interrupted mid-turn).
+///
 /// fs/read+write requests from agents are served with paths confined to the
 /// session cwd; anything escaping it is rejected with a JSON-RPC error.
 library;
@@ -107,14 +112,33 @@ class SessionEngine {
   /// Session ids deleted (agent killed, rows removed).
   Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
 
-  /// Marks every non-closed session from the database as `error`: after a
-  /// daemon restart the agent processes are gone, so those sessions cannot
-  /// resume. Call once at startup.
+  /// Reconciles persisted sessions with a fresh process table after a daemon
+  /// restart. Agent processes are gone, but sessions persist them lazily:
+  /// [sendMessage] respawns the agent and resumes it via ACP `session/load`
+  /// (see [_resume]), so idle sessions keep their status. Only sessions
+  /// interrupted mid-turn ([SessionStatus.running]/[SessionStatus.waitingPermission]
+  /// at shutdown) are marked `error`, with a persisted note in their history
+  /// explaining the interruption. Call once at startup.
   Future<void> restore() async {
     for (final session in _store.listSessions(includeArchived: true)) {
-      if (session.status == SessionStatus.closed) continue;
+      if (session.status != SessionStatus.running &&
+          session.status != SessionStatus.waitingPermission) {
+        continue;
+      }
       final updated = _withStatus(session, SessionStatus.error);
       _store.updateSession(updated);
+      final int seq = _store.nextSeq(session.id);
+      final SessionEvent event = _store.appendEvent(
+        session.id,
+        seq,
+        SessionErrorEvent(
+          message: 'Daemon restarted before the turn completed',
+        ),
+      );
+      if (!_eventsController.isClosed) {
+        _eventsController
+            .add((sessionId: session.id, seq: seq, event: event));
+      }
       if (!_sessionChangesController.isClosed) {
         _sessionChangesController.add(updated);
       }
@@ -222,17 +246,7 @@ class SessionEngine {
       createdAt: now,
       updatedAt: now,
     );
-    final client = AcpClient.spawn(
-      spec.command,
-      cwd: workingDir,
-      // The closures capture our protocol sessionId, so the ACP session id
-      // (which collides across agents, e.g. "s1") never needs disambiguation.
-      requestPermission: (acpSessionId, toolCallId, requestTitle, options) =>
-          _onPermissionRequest(session.id, toolCallId, requestTitle, options),
-      readTextFile: (acpSessionId, path) => _readTextFile(session.id, path),
-      writeTextFile: (acpSessionId, path, content) =>
-          _writeTextFile(session.id, path, content),
-    );
+    final client = _spawnAgent(session);
     final String acpSessionId;
     try {
       final info = await client.initialized;
@@ -256,6 +270,9 @@ class SessionEngine {
       );
     }
     _store.insertSession(session);
+    // Persisted so [sendMessage] can resume the agent (ACP `session/load`)
+    // after a daemon restart.
+    _store.setAcpSessionId(session.id, acpSessionId);
     _live[session.id] = _LiveSession(
       session: session,
       client: client,
@@ -267,17 +284,41 @@ class SessionEngine {
     return session;
   }
 
-  /// Starts a turn for [text]. Errors `kErrConflict` when a turn is already
-  /// running or the session has no live agent process.
+  /// Spawns the ACP agent for [session]'s provider in its cwd, wired to this
+  /// engine's permission/fs handlers. Shared by [createSession] and the
+  /// restart-resume path in [sendMessage].
+  AcpClient _spawnAgent(Session session) {
+    final ProviderSpec spec = _providers.byId(session.providerId)!;
+    return AcpClient.spawn(
+      spec.command,
+      cwd: session.cwd,
+      // The closures capture our protocol sessionId, so the ACP session id
+      // (which collides across agents, e.g. "s1") never needs disambiguation.
+      requestPermission: (acpSessionId, toolCallId, requestTitle, options) =>
+          _onPermissionRequest(session.id, toolCallId, requestTitle, options),
+      readTextFile: (acpSessionId, path) => _readTextFile(session.id, path),
+      writeTextFile: (acpSessionId, path, content) =>
+          _writeTextFile(session.id, path, content),
+    );
+  }
+
+  /// Starts a turn for [text]. When the session's agent process is gone
+  /// (daemon restarted), the agent is first respawned and resumed via ACP
+  /// `session/load` — see [_resume]. Errors `kErrConflict` when a turn is
+  /// already running or the session cannot be resumed (closed, predates
+  /// resume support, or the provider lacks `session/load`).
   Future<void> sendMessage(String sessionId, String text) async {
-    final live = _live[sessionId];
-    if (live == null) {
-      throw DaemonError(
-        kErrConflict,
-        'Session "$sessionId" is not active (its agent process is gone; '
-        'create a new session)',
-      );
-    }
+    // Concurrent sends to the same not-live session share one resume.
+    _LiveSession? live = _live[sessionId];
+    live ??= await _resuming.putIfAbsent(
+      sessionId,
+      () => _resume(sessionId).whenComplete(() {
+        // Block body, not `=>`: Map.remove returns the removed value, and
+        // here that value is this very future — returning it would make
+        // whenComplete await itself and never complete.
+        _resuming.remove(sessionId);
+      }),
+    );
     if (live.turn != null) {
       throw DaemonError(
         kErrConflict,
@@ -291,6 +332,92 @@ class SessionEngine {
     } finally {
       live.turn = null;
     }
+  }
+
+  /// In-flight resume attempts, keyed by session id; prevents concurrent
+  /// [sendMessage] calls from each spawning their own agent process.
+  final Map<String, Future<_LiveSession>> _resuming = {};
+
+  /// Respawns the agent for a session whose process is gone and reloads its
+  /// ACP session, making persisted sessions usable across daemon restarts.
+  ///
+  /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
+  /// `DaemonError(kErrConflict)` when the session is closed, predates resume
+  /// support (no persisted ACP session id), or its provider cannot resume.
+  /// A provider/agent failure during resume marks the session `error` (its
+  /// agent-side state is presumed lost) and throws `kErrAgentProcess`.
+  Future<_LiveSession> _resume(String sessionId) async {
+    final Session? session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    if (session.status == SessionStatus.closed) {
+      throw DaemonError(
+        kErrConflict,
+        'Session "$sessionId" is closed; create a new session',
+      );
+    }
+    final String? acpSessionId = _store.acpSessionIdOf(sessionId);
+    if (acpSessionId == null) {
+      throw DaemonError(
+        kErrConflict,
+        'Session "$sessionId" predates resume support (its agent process '
+        'is gone; create a new session)',
+      );
+    }
+    final ProviderSpec? spec = _providers.byId(session.providerId);
+    if (spec == null || !_providers.isAvailable(session.providerId)) {
+      throw DaemonError(
+        kErrProviderUnavailable,
+        'Provider "${session.providerId}" is not available on this host',
+      );
+    }
+    final AcpClient client = _spawnAgent(session);
+    try {
+      final InitializeResult info = await client.initialized;
+      if (info.authMethods.isNotEmpty) {
+        await client.authenticate(info.authMethods.first);
+      }
+      if (info.agentCapabilities['loadSession'] != true) {
+        throw DaemonError(
+          kErrConflict,
+          'Provider "${session.providerId}" cannot resume sessions after a '
+          'restart (no ACP session/load support); create a new session',
+        );
+      }
+      await client.loadSession(sessionId: acpSessionId, cwd: session.cwd);
+    } on Object catch (error) {
+      await client.dispose();
+      if (error is DaemonError) rethrow;
+      // The agent lost its own persisted state (or died mid-load): the
+      // session's transcript is intact here, but the agent cannot continue
+      // it, so the error status is the honest one.
+      await _updateSession(
+        sessionId,
+        (Session s) => _withStatus(s, SessionStatus.error),
+      );
+      throw DaemonError(
+        kErrAgentProcess,
+        'Failed to resume session "$sessionId": $error',
+      );
+    }
+    final _LiveSession live = _LiveSession(
+      session: session,
+      client: client,
+      acpSessionId: acpSessionId,
+    );
+    _live[sessionId] = live;
+    // A setMode only persisted the
+    // choice; reapply it now. Advisory: a rejecting agent must not fail the
+    // resume — the next explicit setMode tries again.
+    if (session.mode != SessionMode.build) {
+      try {
+        await client.setMode(acpSessionId, session.mode.wire);
+      } on Object {
+        // Best-effort; see comment above.
+      }
+    }
+    return live;
   }
 
   /// Cancels the running turn of [sessionId] via the agent (resolves pending
@@ -330,8 +457,8 @@ class SessionEngine {
       _updateSession(sessionId, (session) => _withArchived(session, archived));
 
   /// Switches the agent's session mode and persists it. Sessions without a
-  /// live agent are persisted locally (mode changes on restore-marked
-  /// sessions apply to a future session).
+  /// live agent are persisted locally; [_resume] reapplies the persisted
+  /// mode when the agent is respawned.
   Future<Session> setMode(String sessionId, SessionMode mode) async {
     final live = _live[sessionId];
     if (live != null && live.turn == null) {

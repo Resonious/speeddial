@@ -11,10 +11,13 @@ enum DaemonConnectionState {
   /// Authenticated and receiving live notifications.
   connected,
 
-  /// The socket dropped; waiting to retry with exponential backoff.
+  /// The socket dropped (or a connect attempt failed); waiting to retry with
+  /// exponential backoff.
   reconnecting,
 
-  /// The initial connection (or auth) failed and was not retried.
+  /// The initial connection (or auth) failed. A backoff retry is armed and
+  /// flips the state to [reconnecting] when it starts, so this state is
+  /// transient unless the client is disposed.
   failed,
 }
 

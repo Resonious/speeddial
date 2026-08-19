@@ -428,6 +428,24 @@ class AcpClient {
     return sessionId;
   }
 
+  /// Resumes a previously created session (ACP `session/load`) so a session
+  /// survives an agent/daemon restart. Only agents advertising the
+  /// `loadSession` capability in [InitializeResult.agentCapabilities]
+  /// support it; others answer with a JSON-RPC error.
+  Future<void> loadSession({
+    required String sessionId,
+    required String cwd,
+  }) async {
+    await _request(
+      'session/load',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'cwd': cwd,
+        'mcpServers': const <Object?>[],
+      },
+    );
+  }
+
   /// Stream of updates emitted by the agent for the given session.
   ///
   /// A broadcast stream is created on first access; updates emitted before

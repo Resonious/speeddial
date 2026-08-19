@@ -13,6 +13,21 @@ import '../api/daemon_client.dart';
 /// resolved last-write-wins (see the resolution helpers in [ChatStore]).
 String _scopedKey(String daemonId, String id) => '$daemonId/$id';
 
+/// Load state of a watched session's persisted history, surfaced so the UI
+/// can distinguish "history still arriving" from "this session is empty"
+/// (and from "the fetch failed") instead of rendering a blank timeline.
+enum HistoryStatus {
+  /// The first `history()` fetch (or a [ChatStore.retryHistory]) is running.
+  loading,
+
+  /// History is fully loaded; live events apply directly.
+  ready,
+
+  /// The last fetch failed (e.g. daemon unreachable). Live events still
+  /// apply; the next resync or [ChatStore.retryHistory] retries the fetch.
+  failed,
+}
+
 /// Per-session event buffer plus its live subscription state.
 class _SessionBuffer {
   _SessionBuffer(this.sessionId, this.daemonId) : key = _scopedKey(daemonId, sessionId);
@@ -26,6 +41,10 @@ class _SessionBuffer {
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
   bool historyLoaded = false;
+
+  /// Error of the last failed history fetch; null when the last fetch (or
+  /// resync) succeeded. Only meaningful once [historyLoaded] is true.
+  Object? historyError;
 
   /// True while a resync history refetch is in flight; live events then park
   /// in [pending] so they can never overtake (and shadow) the refetch.
@@ -163,9 +182,44 @@ class ChatStore extends StoreBase {
     return key == null ? 0 : _revisions[key] ?? 0;
   }
 
+  /// History load state for [sessionId] (see [HistoryStatus]). Sessions that
+  /// were never watched report [HistoryStatus.ready]: there is nothing to
+  /// load until [watchSession] runs.
+  HistoryStatus historyStatusFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer == null) return HistoryStatus.ready;
+    if (!buffer.historyLoaded) return HistoryStatus.loading;
+    return buffer.historyError == null
+        ? HistoryStatus.ready
+        : HistoryStatus.failed;
+  }
+
+  /// The error the last history fetch for [sessionId] failed with; null when
+  /// loaded (or still loading).
+  Object? historyErrorFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer == null || !buffer.historyLoaded) return null;
+    return buffer.historyError;
+  }
+
+  /// Retries the persisted-history fetch for a session whose load failed.
+  /// No-op while a fetch is in flight or when there is nothing to retry.
+  void retryHistory(String daemonId, String sessionId) {
+    final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
+    if (buffer == null || !buffer.historyLoaded || buffer.historyError == null) {
+      return;
+    }
+    buffer.historyLoaded = false;
+    buffer.historyError = null;
+    _scheduleNotify();
+    unawaited(_loadHistory(_clientFor(daemonId), buffer));
+  }
+
   /// Starts buffering [sessionId]'s events. Idempotent per daemon; on first
   /// watch also backfills history, reconciles it with events that arrived
-  /// meanwhile, and seeds status/mode from a one-shot `listSessions`.
+  /// meanwhile, and seeds status/mode from a one-shot `listSessions`. The
+  /// backfill's progress is observable through [historyStatusFor]; a failed
+  /// fetch is retried by [retryHistory] or automatically on resync.
   void watchSession(String daemonId, String sessionId) {
     final String key = _scopedKey(daemonId, sessionId);
     _lastDaemonBySession[sessionId] = daemonId;
@@ -370,6 +424,8 @@ class ChatStore extends StoreBase {
       for (final _SessionBuffer buffer in buffers) {
         try {
           await _applyHistory(client, buffer, _applyLive);
+          // A previously failed (or stale) fetch just succeeded.
+          buffer.historyError = null;
         } on Object {
           // Live events still flow; the next resync (or reconnect) retries.
         }
@@ -442,8 +498,11 @@ class ChatStore extends StoreBase {
         final int? seq = event.seq;
         if (seq != null && seq > b.maxSeq) b.maxSeq = seq;
       });
-    } catch (_) {
-      // Live stream remains the source of truth; nothing to propagate.
+    } catch (error) {
+      // Surfaced via historyStatusFor/historyErrorFor: the UI offers a
+      // retry, and the next resync refetches automatically. Live events
+      // still apply meanwhile.
+      buffer.historyError = error;
     } finally {
       buffer.historyLoaded = true;
       for (final SessionEvent event in buffer.pending) {

@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/state/chat_store.dart';
 
 /// Polls until [condition] holds, failing the test after [timeout].
 Future<void> _waitUntil(
@@ -22,6 +23,47 @@ Future<void> _waitUntil(
 
 Future<void> _flushMicrotasks() =>
     Future<void>.delayed(Duration.zero);
+
+/// Fake whose listing/history calls are counted and whose history fetch can
+/// be failed on demand.
+class _InstrumentedFake extends FakeDaemonClient {
+  _InstrumentedFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  int listSessionsCalls = 0;
+  int listProjectsCalls = 0;
+  int historyCalls = 0;
+  bool failHistory = false;
+
+  @override
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  }) {
+    listSessionsCalls++;
+    return super.listSessions(
+        projectId: projectId, includeArchived: includeArchived);
+  }
+
+  @override
+  Future<List<Project>> listProjects() {
+    listProjectsCalls++;
+    return super.listProjects();
+  }
+
+  @override
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) {
+    historyCalls++;
+    if (failHistory) {
+      return Future<({List<SessionEvent> events, bool hasMore})>.error(
+          StateError('daemon unreachable'));
+    }
+    return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
+  }
+}
 
 void main() {
   late FakeDaemonClient fake;
@@ -415,6 +457,59 @@ void main() {
       await _flushMicrotasks();
       expect(app.chat.eventsFor(sessionId).first, isA<UserMessageEvent>());
       expect(app.chat.revisionFor(sessionId), fakeRevisions);
+    });
+  });
+
+  group('connection recovery', () {
+    test('failed history load reports failed; retryHistory recovers',
+        () async {
+      final _InstrumentedFake instrumented = _InstrumentedFake();
+      app.registerClient('inst', instrumented);
+      instrumented.seedHistory('sess-1', <SessionEvent>[
+        UserMessageEvent(text: 'earlier'),
+      ]);
+
+      // Daemon unreachable at watch time: the session must not read as
+      // empty; it reports a failed load instead.
+      instrumented.failHistory = true;
+      app.chat.watchSession('inst', 'sess-1');
+      await _waitUntil(() =>
+          app.chat.historyStatusFor('sess-1') == HistoryStatus.failed);
+      expect(app.chat.eventsFor('sess-1'), isEmpty);
+      expect(app.chat.historyErrorFor('sess-1'), isNotNull);
+
+      // Back up: the manual retry loads the persisted events.
+      instrumented.failHistory = false;
+      app.chat.retryHistory('inst', 'sess-1');
+      await _waitUntil(() =>
+          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+      expect(app.chat.eventsFor('sess-1'), hasLength(1));
+      expect(app.chat.historyErrorFor('sess-1'), isNull);
+    });
+
+    test('a resync refetches sessions, projects and watched history',
+        () async {
+      final _InstrumentedFake instrumented = _InstrumentedFake();
+      app.registerClient('inst', instrumented);
+
+      await app.projects.refresh('inst');
+      await app.sessions.refresh('inst');
+      app.chat.watchSession('inst', 'sess-1');
+      await _waitUntil(() =>
+          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+
+      final int sessionsBefore = instrumented.listSessionsCalls;
+      final int projectsBefore = instrumented.listProjectsCalls;
+      final int historyBefore = instrumented.historyCalls;
+
+      // Simulates the client reconnecting after the daemon restarted: each
+      // store must refetch what it could have missed while offline.
+      instrumented.triggerResync();
+
+      await _waitUntil(() =>
+          instrumented.listSessionsCalls > sessionsBefore &&
+          instrumented.listProjectsCalls > projectsBefore &&
+          instrumented.historyCalls > historyBefore);
     });
   });
 

@@ -10,6 +10,7 @@
 ///                      last_active_at
 ///   * `sessions`       id PK, project_id FK→projects, provider_id, title,
 ///                      status, mode, model NULL, cwd, base_branch NULL,
+///                      acp_session_id NULL (provider-side id for resume),
 ///                      archived INT, created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
@@ -62,13 +63,17 @@ class DaemonStore {
         updated_at INTEGER NOT NULL
       );
     ''');
-    // Pre-merge-back databases have no base_branch column.
+    // Pre-merge-back databases have no base_branch column; pre-resume
+    // databases have no acp_session_id column.
     final sessionColumns = _db
         .select('PRAGMA table_info(sessions)')
         .map((row) => row['name'] as String)
         .toSet();
     if (!sessionColumns.contains('base_branch')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN base_branch TEXT');
+    }
+    if (!sessionColumns.contains('acp_session_id')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN acp_session_id TEXT');
     }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
@@ -255,6 +260,30 @@ class DaemonStore {
   /// Permanently removes a session and (via cascade) its events.
   void deleteSession(String id) {
     _db.execute('DELETE FROM sessions WHERE id = ?', [id]);
+  }
+
+  /// Persists the provider-side ACP session id for [sessionId] so the
+  /// session can be resumed (ACP `session/load`) after a daemon restart.
+  /// Throws `DaemonError(kErrNotFound)` for an unknown id.
+  void setAcpSessionId(String sessionId, String acpSessionId) {
+    _db.execute(
+      'UPDATE sessions SET acp_session_id = ? WHERE id = ?',
+      [acpSessionId, sessionId],
+    );
+    if (_db.updatedRows == 0) {
+      throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
+    }
+  }
+
+  /// The stored ACP session id for [sessionId]; null for unknown sessions
+  /// and for sessions persisted before resume support existed.
+  String? acpSessionIdOf(String sessionId) {
+    final rows = _db.select(
+      'SELECT acp_session_id FROM sessions WHERE id = ?',
+      [sessionId],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['acp_session_id'] as String?;
   }
 
   // -------------------------------------------------------------------------

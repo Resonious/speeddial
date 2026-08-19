@@ -685,8 +685,19 @@ class FakeDaemonClient implements DaemonClient {
     return _projectsChangedController.stream;
   }
 
+  final StreamController<void> _resyncController =
+      StreamController<void>.broadcast();
+
   @override
-  Stream<void> get resynced => const Stream<void>.empty();
+  Stream<void> get resynced => _resyncController.stream;
+
+  /// Test hook: simulate a reconnect-driven resync. The real client emits
+  /// this after a successful reconnect that followed a failure; stores
+  /// refetch whatever they missed while "offline".
+  void triggerResync() {
+    if (_disposed) return;
+    _resyncController.add(null);
+  }
 
   @override
   bool get isConnected => !_disposed;
@@ -702,6 +713,7 @@ class FakeDaemonClient implements DaemonClient {
       await controller.close();
     }
     _eventControllers.clear();
+    await _resyncController.close();
     if (_seeded) {
       await _sessionUpdatesController.close();
       await _sessionRemovalsController.close();

@@ -31,6 +31,11 @@ class ProjectsStore extends StoreBase {
   final Map<String, StreamSubscription<void>> _projectSubs =
       <String, StreamSubscription<void>>{};
 
+  /// One `resynced` subscription per daemon, refetching the listing after a
+  /// reconnect.
+  final Map<String, StreamSubscription<void>> _resyncSubs =
+      <String, StreamSubscription<void>>{};
+
   final Set<String> _loading = <String>{};
   Object? _lastError;
 
@@ -93,11 +98,16 @@ class ProjectsStore extends StoreBase {
   }
 
   /// Subscribes to the daemon's `projectsChanged` notifications so
-  /// daemon-side add/rename/remove surface via a refetch.
+  /// daemon-side add/rename/remove surface via a refetch, and to `resynced`
+  /// so changes missed while the socket was down are refetched on reconnect
+  /// (refresh records its own failures in [lastError]).
   void _ensureDaemonSubscriptions(String daemonId) {
     if (_projectSubs.containsKey(daemonId)) return;
     final DaemonClient client = _clientFor(daemonId);
     _projectSubs[daemonId] = client.projectsChanged.listen((void _) {
+      unawaited(refresh(daemonId));
+    });
+    _resyncSubs[daemonId] = client.resynced.listen((void _) {
       unawaited(refresh(daemonId));
     });
   }
@@ -108,6 +118,10 @@ class ProjectsStore extends StoreBase {
       sub.cancel();
     }
     _projectSubs.clear();
+    for (final StreamSubscription<void> sub in _resyncSubs.values) {
+      sub.cancel();
+    }
+    _resyncSubs.clear();
     super.dispose();
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +14,39 @@ import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
+
+/// Fake whose `history()` can be held open (loading state) or failed
+/// (error state) on demand, so the pane's history-loading surfaces are
+/// testable.
+class _GatedFake extends FakeDaemonClient {
+  _GatedFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  bool blockHistory = false;
+  bool failHistory = false;
+  final List<Completer<void>> _gates = <Completer<void>>[];
+
+  @override
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) async {
+    if (failHistory) throw StateError('daemon unreachable');
+    if (blockHistory) {
+      final Completer<void> gate = Completer<void>();
+      _gates.add(gate);
+      await gate.future;
+    }
+    return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
+  }
+
+  void releaseHistory() {
+    for (final Completer<void> gate in _gates) {
+      if (!gate.isCompleted) gate.complete();
+    }
+    _gates.clear();
+  }
+}
 
 void main() {
   /// Pumps the chat pane at 1200x800 with a fake daemon registered (either
@@ -125,6 +160,66 @@ void main() {
     expect(find.text('Select or create a session'), findsOneWidget);
     expect(find.byType(ToolCallCard), findsNothing);
     expect(find.byType(PlanPanel), findsNothing);
+  });
+
+  testWidgets('history in flight shows a loading surface, never an empty '
+      'session', (WidgetTester tester) async {
+    final _GatedFake gated = _GatedFake();
+    final String sessionId =
+        (await gated.listSessions()).first.id;
+    gated.seedHistory(sessionId, <SessionEvent>[
+      UserMessageEvent(text: 'from disk'),
+    ]);
+    gated.blockHistory = true;
+
+    await pumpChat(tester, fake: gated);
+    await tester.pump();
+
+    // While the fetch is held open the pane must not render as empty.
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Loading history…'), findsOneWidget);
+
+    gated.blockHistory = false;
+    gated.releaseHistory();
+    await pumpUntil(
+      tester,
+      () => find.text('from disk').evaluate().isNotEmpty,
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('from disk'), findsOneWidget);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a failed history load offers a retry that recovers',
+      (WidgetTester tester) async {
+    final _GatedFake gated = _GatedFake();
+    final String sessionId =
+        (await gated.listSessions()).first.id;
+    gated.seedHistory(sessionId, <SessionEvent>[
+      UserMessageEvent(text: 'from disk'),
+    ]);
+    gated.failHistory = true;
+
+    await pumpChat(tester, fake: gated);
+    await pumpUntil(
+      tester,
+      () => find.text('Could not load history').evaluate().isNotEmpty,
+    );
+
+    expect(find.text('Could not load history'), findsOneWidget);
+    expect(find.byKey(const Key('history-retry')), findsOneWidget);
+    expect(find.text('from disk'), findsNothing);
+
+    // Daemon back: the retry button refetches and the content arrives.
+    gated.failHistory = false;
+    await tester.tap(find.byKey(const Key('history-retry')));
+    await pumpUntil(
+      tester,
+      () => find.text('from disk').evaluate().isNotEmpty,
+    );
+    expect(find.text('Could not load history'), findsNothing);
+    expect(find.text('from disk'), findsOneWidget);
+    await tester.pumpAndSettle();
   });
 
   testWidgets('streaming fake events render markdown, tool card and plan',

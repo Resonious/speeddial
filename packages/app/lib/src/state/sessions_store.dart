@@ -23,8 +23,9 @@ import '../api/daemon_client.dart';
 ///
 /// On first use of a daemon the store subscribes to its `sessionUpdates` /
 /// `sessionRemovals` notifications so external changes (including other
-/// devices) are reflected without a manual [refresh]; subscriptions live
-/// until the store is disposed.
+/// devices) are reflected without a manual [refresh], and to its `resynced`
+/// stream so changes missed while the socket was down are refetched on
+/// reconnect; subscriptions live until the store is disposed.
 class SessionsStore extends StoreBase {
   SessionsStore({required DaemonClient Function(String daemonId) clientFor})
       // ignore: prefer_initializing_formals
@@ -50,6 +51,13 @@ class SessionsStore extends StoreBase {
       <String, StreamSubscription<Session>>{};
   final Map<String, StreamSubscription<String>> _removalSubs =
       <String, StreamSubscription<String>>{};
+
+  /// One `resynced` subscription per daemon: after a reconnect the daemon
+  /// may have changed sessions while we were offline (a restart flags
+  /// interrupted turns, other devices rename/archive), so the cached
+  /// listings are refetched wholesale.
+  final Map<String, StreamSubscription<void>> _resyncSubs =
+      <String, StreamSubscription<void>>{};
 
   /// Active (non-archived) sessions for [projectId] on the most recently
   /// used daemon; empty until the first refresh. Archived sessions stay
@@ -183,6 +191,18 @@ class SessionsStore extends StoreBase {
         .listen((Session session) => _onSessionUpdate(daemonId, session));
     _removalSubs[daemonId] = client.sessionRemovals
         .listen((String sessionId) => _onSessionRemoved(daemonId, sessionId));
+    _resyncSubs[daemonId] =
+        client.resynced.listen((void _) => unawaited(_resync(daemonId)));
+  }
+
+  /// Refetch after a reconnect; a failure here races a fresh drop and is
+  /// healed by the next resync (or manual refresh).
+  Future<void> _resync(String daemonId) async {
+    try {
+      await refresh(daemonId);
+    } on Object {
+      // Healed by the next resync or manual refresh.
+    }
   }
 
   /// Upserts a session that changed daemon-side (created/updated) into the
@@ -261,6 +281,10 @@ class SessionsStore extends StoreBase {
       sub.cancel();
     }
     _removalSubs.clear();
+    for (final StreamSubscription<void> sub in _resyncSubs.values) {
+      sub.cancel();
+    }
+    _resyncSubs.clear();
     super.dispose();
   }
 }

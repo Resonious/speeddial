@@ -13,9 +13,12 @@ import 'state/git_store.dart';
 import 'state/projects_store.dart';
 import 'state/sessions_store.dart';
 
-/// Connection state of a daemon endpoint. In-memory only for now; later
-/// phases drive transitions from the WebSocket client.
-enum ConnectionStatus { disconnected, connecting, connected, failed }
+/// Connection state of a daemon endpoint. Driven live from each
+/// [WsDaemonClient]'s `connState`: [connecting] is the first attempt,
+/// [reconnecting] the armed backoff retry after a drop or failed attempt,
+/// [failed] a first connect that has not succeeded yet (the retry timer is
+/// still armed — the state is transient). In-memory only; never persisted.
+enum ConnectionStatus { disconnected, connecting, connected, reconnecting, failed }
 
 /// A configured daemon endpoint. UI-local model (the daemon itself reports a
 /// `DaemonInfo` over the wire); fields are `final`.
@@ -396,11 +399,25 @@ class AppData {
   static ConnectionStatus _mapClientState(DaemonConnectionState state) =>
       switch (state) {
         DaemonConnectionState.connected => ConnectionStatus.connected,
-        DaemonConnectionState.connecting ||
-        DaemonConnectionState.reconnecting =>
-          ConnectionStatus.connecting,
+        DaemonConnectionState.connecting => ConnectionStatus.connecting,
+        DaemonConnectionState.reconnecting => ConnectionStatus.reconnecting,
         DaemonConnectionState.failed => ConnectionStatus.failed,
       };
+
+  /// Manual reconnect hook for the UI ("Retry now" on a failed endpoint):
+  /// resets the live client's backoff and retries immediately, or starts the
+  /// first connect for a never-touched endpoint. Registered clients (tests,
+  /// demo mode) own their lifecycle; nothing happens for them.
+  void reconnect(String daemonId) {
+    if (_clients.containsKey(daemonId)) return;
+    final WsDaemonClient? live = _websocketClients[daemonId];
+    if (live != null) {
+      live.retryNow();
+      return;
+    }
+    if (!_connectedEndpointIds.add(daemonId)) return;
+    unawaited(_connectQuietly(daemonId));
+  }
 
   /// True after [dispose]; async startup work must check this between awaits.
   bool get isDisposed => _disposed;

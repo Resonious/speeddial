@@ -40,10 +40,10 @@ class TestDaemonServer {
   int connectionCount = 0;
   int seq = 0;
 
-  static Future<TestDaemonServer> start({String token = 'secret'}) async {
+  static Future<TestDaemonServer> start({String token = 'secret', int port = 0}) async {
     final HttpServer server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
-      0,
+      port,
     );
     final TestDaemonServer daemon = TestDaemonServer._(server);
     server.listen((HttpRequest request) => daemon._handle(request, token));
@@ -320,6 +320,101 @@ void main() {
     await expectLater(client.connect(), throwsA(anything));
     expect(client.connState.value, DaemonConnectionState.failed);
     expect(client.isConnected, isFalse);
+  });
+
+  test('a failed initial connect self-heals once the daemon comes up',
+      () async {
+    // A port that is guaranteed closed: bind, observe the port, release it.
+    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final int port = sink.port;
+    await sink.close(force: true);
+
+    final WsDaemonClient client = WsDaemonClient(
+      url: 'ws://127.0.0.1:$port/ws',
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(client.connect(), throwsA(anything));
+    expect(client.connState.value, DaemonConnectionState.failed);
+
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub =
+        client.resynced.listen((void _) => resyncCount++);
+    addTearDown(resyncSub.cancel);
+
+    // The daemon comes up later; the armed backoff retry must connect on its
+    // own (no restart of the app, no manual retry).
+    final TestDaemonServer server =
+        await TestDaemonServer.start(port: port);
+    addTearDown(server.close);
+    await waitFor(
+      () => client.connState.value == DaemonConnectionState.connected,
+    );
+    expect(client.isConnected, isTrue);
+    expect(
+      resyncCount,
+      1,
+      reason: 'stores must backfill what they missed while the daemon '
+          'was unreachable',
+    );
+  });
+
+  test('retryNow reconnects immediately instead of waiting out the backoff',
+      () async {
+    // A port that is guaranteed closed: bind, observe the port, release it.
+    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final int port = sink.port;
+    await sink.close(force: true);
+
+    // A backoff so slow the armed timer cannot fire within the test.
+    final WsDaemonClient client = WsDaemonClient(
+      url: 'ws://127.0.0.1:$port/ws',
+      token: 'secret',
+      reconnectBase: const Duration(seconds: 30),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(client.connect(), throwsA(anything));
+    expect(client.connState.value, DaemonConnectionState.failed);
+
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub =
+        client.resynced.listen((void _) => resyncCount++);
+    addTearDown(resyncSub.cancel);
+
+    final TestDaemonServer server =
+        await TestDaemonServer.start(port: port);
+    addTearDown(server.close);
+    client.retryNow();
+    await waitFor(
+      () => client.connState.value == DaemonConnectionState.connected,
+    );
+    expect(resyncCount, 1);
+  });
+
+  test('the first clean connect never emits resynced', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub =
+        client.resynced.listen((void _) => resyncCount++);
+    addTearDown(resyncSub.cancel);
+
+    await client.connect();
+    expect(client.isConnected, isTrue);
+    // Nothing was missed on a clean first connect; emitting anyway would
+    // make every store refetch for no reason.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(resyncCount, 0);
   });
 
   test('routes session.event / updated / removed notifications to streams',

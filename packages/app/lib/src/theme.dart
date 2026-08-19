@@ -96,6 +96,8 @@ Color connectionStatusColor(BuildContext context, ConnectionStatus status) {
     case ConnectionStatus.connecting:
     case ConnectionStatus.connected:
       return context.speedDialColors.running;
+    case ConnectionStatus.reconnecting:
+      return context.speedDialColors.waitingPermission;
     case ConnectionStatus.failed:
       return context.speedDialColors.error;
     case ConnectionStatus.disconnected:

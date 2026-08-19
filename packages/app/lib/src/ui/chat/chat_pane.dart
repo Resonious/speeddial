@@ -177,10 +177,25 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         final UsageInfo? usage = chat.usageOf(sessionId);
         final PermissionRequest? pending = _pending;
         final Session? session = data.sessions.byId(sessionId);
+        final HistoryStatus historyStatus = chat.historyStatusFor(sessionId);
+
+        // While the first fetch runs (or after it failed with nothing live
+        // to show), a bare timeline would read as an empty session.
+        final Widget surface;
+        if (events.isEmpty && historyStatus == HistoryStatus.loading) {
+          surface = const _HistoryLoading();
+        } else if (events.isEmpty && historyStatus == HistoryStatus.failed) {
+          surface = _HistoryError(
+            error: chat.historyErrorFor(sessionId),
+            onRetry: () => chat.retryHistory(daemonId, sessionId),
+          );
+        } else {
+          surface = Timeline(items: _items);
+        }
 
         return Column(
           children: <Widget>[
-            Expanded(child: Timeline(items: _items)),
+            Expanded(child: surface),
             if (pending != null)
               PermissionBanner(
                 request: pending,
@@ -285,6 +300,82 @@ class _EmptyState extends StatelessWidget {
             .textTheme
             .bodyMedium
             ?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+    );
+  }
+}
+
+/// Shown while a selected session's persisted history is being fetched, so a
+/// slow daemon never reads as an empty conversation.
+class _HistoryLoading extends StatelessWidget {
+  const _HistoryLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.5),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Loading history…',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when the history fetch failed before any event arrived (typically
+/// because the daemon was unreachable); [onRetry] re-runs the fetch.
+class _HistoryError extends StatelessWidget {
+  const _HistoryError({required this.error, required this.onRetry});
+
+  final Object? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            'Could not load history',
+            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '$error',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('history-retry'),
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('Retry'),
+          ),
+        ],
       ),
     );
   }

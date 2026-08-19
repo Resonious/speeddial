@@ -2,9 +2,13 @@
 //
 // Talks newline-delimited JSON-RPC 2.0 over stdio. Behavior:
 //
-//   * `initialize` answers with protocolVersion 1 and empty capabilities.
+//   * `initialize` answers with protocolVersion 1 and capabilities. The
+//     `loadSession` capability is advertised unless `<cwd>/agent.no_load_session`
+//     exists at initialize time.
 //   * `authenticate` answers with `{}`.
 //   * `session/new` answers with session id `s1`.
+//   * `session/load` answers with `{}` for any session id, unless
+//     `<cwd>/agent.load_fails` exists (answers with error -32000).
 //   * `session/set_mode` answers with `{}`.
 //   * `session/prompt` runs a scripted turn. The turn text selects behavior:
 //       - normal text: agent_message_chunk x2, tool_call, fs/read_text_file,
@@ -165,7 +169,9 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
       await _sendResponse(id!, <String, Object?>{
         'protocolVersion': 1,
         'agentCapabilities': <String, Object?>{
-          'loadSession': false,
+          'loadSession': !File(
+                  '${Directory.current.path}/agent.no_load_session')
+              .existsSync(),
           'promptCapabilities': <String, Object?>{
             'image': false,
             'audio': false,
@@ -195,6 +201,15 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
           ],
         },
       });
+    case 'session/load':
+      // The fake keeps no state of its own; like a real agent reloading its
+      // on-disk session, any id is accepted unless the test planted the
+      // failure signal.
+      if (File('${Directory.current.path}/agent.load_fails').existsSync()) {
+        await _sendError(id!, -32000, 'Unknown session');
+      } else {
+        await _sendResponse(id!, const <String, Object?>{});
+      }
     case 'session/set_mode':
       await _sendResponse(id!, const <String, Object?>{});
     case 'session/prompt':

@@ -217,6 +217,8 @@ void main() {
     expect(migrated.title, 'Legacy');
     expect(migrated.baseBranch, isNull,
         reason: 'legacy rows gain a null base branch');
+    expect(store.acpSessionIdOf('s1'), isNull,
+        reason: 'legacy rows have no resumable ACP session id');
 
     // New inserts carry the base branch.
     store.insertSession(session(id: 's2', baseBranch: 'main'));
@@ -225,6 +227,39 @@ void main() {
       store.listSessions().map((s) => s.baseBranch),
       <String?>[null, 'main'],
     );
+
+    // The migrated schema accepts ACP session ids.
+    store.setAcpSessionId('s2', 'acp-42');
+    expect(store.acpSessionIdOf('s2'), 'acp-42');
+  });
+
+  test('acp_session_id roundtrips and rejects unknown sessions', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 's1'));
+
+    expect(store.acpSessionIdOf('s1'), isNull);
+    expect(store.acpSessionIdOf('missing'), isNull);
+
+    store.setAcpSessionId('s1', 'acp-1');
+    expect(store.acpSessionIdOf('s1'), 'acp-1');
+
+    // Overwrite (a provider that re-issues ids on resume) works.
+    store.setAcpSessionId('s1', 'acp-2');
+    expect(store.acpSessionIdOf('s1'), 'acp-2');
+
+    // The wire-facing Session model never carries the id.
+    expect(store.getSession('s1')!.toJson().containsKey('acpSessionId'),
+        isFalse);
+
+    expect(
+      () => store.setAcpSessionId('missing', 'acp-x'),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+
+    // The value survives a reopen (it is the whole point of the column).
+    store.dispose();
+    store = openStore(tempDir);
+    expect(store.acpSessionIdOf('s1'), 'acp-2');
   });
 
   test('removeProject archives its sessions and removes the project', () {

@@ -13,10 +13,12 @@ import 'daemon_client.dart';
 ///
 /// [connect] must be called before use: the client authenticates first when a
 /// [token] is configured and then switches `connState` to connected. Socket
-/// drops (server close or network error) are retried with exponential backoff
-/// starting at [reconnectBase] (doubling per attempt, capped at 15s); after
-/// each successful reconnect the client re-authenticates and emits on
-/// [resynced] so stores can backfill history missed while offline.
+/// drops (server close or network error) and failed initial connects alike
+/// are retried with exponential backoff starting at [reconnectBase] (doubling
+/// per attempt, capped at 15s); after each successful connect that followed
+/// a failure the client re-authenticates and emits on [resynced] so stores
+/// can backfill history missed while offline. [retryNow] resets the backoff
+/// and retries immediately.
 ///
 /// Live notifications are broadcast without buffering: a session that nobody
 /// is watching simply loses its events (stores watch deliberately and recover
@@ -79,6 +81,11 @@ class WsDaemonClient implements DaemonClient {
   Future<void>? _inFlightConnect;
   bool _establishing = false;
   int _reconnectAttempt = 0;
+
+  /// Set by any connect failure or socket drop; the next successful
+  /// establish emits [resynced] (stores may have missed events meanwhile)
+  /// and clears it. Keeps the very first clean connect from emitting.
+  bool _resyncNeeded = false;
   bool _disposed = false;
 
   // ---------------------------------------------------------------------
@@ -89,7 +96,8 @@ class WsDaemonClient implements DaemonClient {
   /// [connState] to connected. Idempotent: a no-op while a connection attempt
   /// is in flight or the client is already connected. A failed auth (or any
   /// other initial-connect failure) propagates as a [DaemonError] and leaves
-  /// [connState] at [DaemonConnectionState.failed].
+  /// [connState] at [DaemonConnectionState.failed], with the backoff retry
+  /// armed — the state self-heals to connected once the daemon answers.
   Future<void> connect() {
     if (_disposed) return Future<void>.value();
     final Future<void>? inFlight = _inFlightConnect;
@@ -105,7 +113,9 @@ class WsDaemonClient implements DaemonClient {
 
   /// Establishes one connection. [initial] distinguishes the user-visible
   /// first connect (failures propagate, state ends `failed`) from automatic
-  /// reconnects (failures schedule another backoff retry).
+  /// reconnects (failures only schedule another backoff retry). Either way a
+  /// failure arms the backoff timer, so a `failed` initial connect still
+  /// self-heals once the daemon comes up.
   Future<void> _establish({required bool initial}) async {
     if (_disposed) return;
     _establishing = true;
@@ -125,26 +135,30 @@ class WsDaemonClient implements DaemonClient {
       if (_disposed) return;
       connState.value = DaemonConnectionState.connected;
       _reconnectAttempt = 0;
-      if (!initial) {
-        // Back on the wire: stores backfill what they missed while offline.
+      if (!initial || _resyncNeeded) {
+        // Back on the wire after a gap: stores backfill what they missed
+        // while offline (or while the first connect was failing).
+        _resyncNeeded = false;
         _resyncController.add(null);
       }
     } on DaemonError {
       if (_disposed) return;
+      _resyncNeeded = true;
       await _tearDownSocket();
+      _scheduleReconnect();
       if (initial) {
         connState.value = DaemonConnectionState.failed;
         rethrow;
       }
-      _scheduleReconnect();
     } on Object {
       if (_disposed) return;
+      _resyncNeeded = true;
       await _tearDownSocket();
+      _scheduleReconnect();
       if (initial) {
         connState.value = DaemonConnectionState.failed;
         rethrow;
       }
-      _scheduleReconnect();
     } finally {
       _establishing = false;
     }
@@ -249,13 +263,17 @@ class WsDaemonClient implements DaemonClient {
     _socketReady = false;
     unawaited(_peer?.close());
     if (_establishing) return;
+    _resyncNeeded = true;
+    connState.value = DaemonConnectionState.reconnecting;
     _scheduleReconnect();
   }
 
   /// Arms the exponential-backoff retry timer. base * 2^n, capped at 15s.
+  /// Touches no state: the caller owns the visible state (`reconnecting` for
+  /// a dropped socket, `failed` until the retry starts for an initial
+  /// connect), and the attempt itself flips to `reconnecting` when it runs.
   void _scheduleReconnect() {
     if (_disposed) return;
-    connState.value = DaemonConnectionState.reconnecting;
     final int attempt = _reconnectAttempt++;
     var ms = reconnectBase.inMilliseconds;
     for (var i = 0;
@@ -277,6 +295,17 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   bool get isConnected => connState.value == DaemonConnectionState.connected;
+
+  /// Manual retry hook for the UI: cancels any pending backoff attempt,
+  /// resets the backoff counter, and reconnects immediately. No-op when
+  /// disposed or already connected; an in-flight attempt is joined.
+  void retryNow() {
+    if (_disposed) return;
+    if (connState.value == DaemonConnectionState.connected) return;
+    _reconnectTimer?.cancel();
+    _reconnectAttempt = 0;
+    unawaited(connect());
+  }
 
   @override
   Future<void> dispose() async {

@@ -83,10 +83,11 @@ void main() {
     }
   });
 
-  /// Completes when the engine emits a PermissionRequestEvent.
-  Future<PermissionRequestEvent> waitForPermissionRequest() async {
+  /// Completes when [target] emits a PermissionRequestEvent.
+  Future<PermissionRequestEvent> waitForPermissionRequestOn(
+      SessionEngine target) async {
     final seen = Completer<PermissionRequestEvent>();
-    final sub = engine.events.listen((tuple) {
+    final sub = target.events.listen((tuple) {
       final event = tuple.event;
       if (event is PermissionRequestEvent && !seen.isCompleted) {
         seen.complete(event);
@@ -95,6 +96,24 @@ void main() {
     final request = await seen.future;
     await sub.cancel();
     return request;
+  }
+
+  /// Completes when the engine emits a PermissionRequestEvent.
+  Future<PermissionRequestEvent> waitForPermissionRequest() =>
+      waitForPermissionRequestOn(engine);
+
+  /// Polls until [condition] holds, failing the test after [timeout].
+  Future<void> waitFor(
+    bool Function() condition, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final DateTime deadline = DateTime.now().add(timeout);
+    while (!condition()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('condition did not become true within $timeout');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
   }
 
   test('createSession spawns an idle session and persists it', () async {
@@ -257,16 +276,178 @@ void main() {
     await fresh.dispose();
   });
 
-  test('restore marks non-closed sessions as error', () async {
+  test('restore keeps idle sessions idle and sendMessage resumes them',
+      () async {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
 
+    // Daemon restart: the agent process is gone, the row persists.
+    await engine.dispose();
     final restarted = SessionEngine(store: store, providers: fakeProviders());
     await restarted.restore();
+    final restored = store.getSession(session.id)!;
+    expect(restored.status, SessionStatus.idle);
+
+    // The next send respawns the agent and resumes the ACP session.
+    final permissionFuture = waitForPermissionRequestOn(restarted);
+    final send = restarted.sendMessage(session.id, 'please edit the file');
+    final request = await permissionFuture;
+    await restarted.respondPermission(session.id, request.request.requestId, 'allow');
+    await send;
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    final replayed = store.listEvents(session.id).events;
+    expect(replayed.first, isA<UserMessageEvent>());
+    expect(replayed.last, isA<TurnCompleteEvent>());
+    await restarted.dispose();
+  });
+
+  test('restore flags a turn interrupted by the restart; send resumes the '
+      'session anyway', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    final hung = engine.sendMessage(session.id, 'hang');
+    await waitFor(() => store.getSession(session.id)!.status ==
+        SessionStatus.running);
+
+    // The daemon dies mid-turn.
+    await engine.dispose();
+    await hung; // the killed agent's turn unwinds quietly
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+
+    // Interrupted: error status plus a persisted explanation in history.
+    expect(store.getSession(session.id)!.status, SessionStatus.error);
+    final note = store.listEvents(session.id).events.last;
+    expect(note, isA<SessionErrorEvent>());
+    expect((note as SessionErrorEvent).message,
+        contains('restarted'));
+
+    // …but usable: the next send resumes the agent and runs a normal turn.
+    final permissionFuture = waitForPermissionRequestOn(restarted);
+    final send = restarted.sendMessage(session.id, 'please edit the file');
+    final request = await permissionFuture;
+    await restarted.respondPermission(session.id, request.request.requestId, 'allow');
+    await send;
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    await restarted.dispose();
+  });
+
+  test('sendMessage after a restart reports unresumable sessions', () async {
+    final now = DateTime.now().toUtc();
+
+    // A session row persisted before resume support has no ACP session id.
+    store.insertSession(Session(
+      id: 'legacy',
+      projectId: 'p1',
+      providerId: 'fake',
+      title: 'Legacy',
+      status: SessionStatus.idle,
+      mode: SessionMode.build,
+      model: null,
+      cwd: tempDir.path,
+      baseBranch: null,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    ));
+    // A closed session is never resumed.
+    final closed =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    store.updateSession(Session(
+      id: closed.id,
+      projectId: closed.projectId,
+      providerId: closed.providerId,
+      title: closed.title,
+      status: SessionStatus.closed,
+      mode: closed.mode,
+      model: closed.model,
+      cwd: closed.cwd,
+      baseBranch: closed.baseBranch,
+      archived: closed.archived,
+      createdAt: closed.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+    ));
+    await engine.dispose();
+
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+    await expectLater(
+      restarted.sendMessage('legacy', 'hi'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrConflict)),
+    );
+    await expectLater(
+      restarted.sendMessage(closed.id, 'hi'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrConflict)),
+    );
+    await expectLater(
+      restarted.sendMessage('no-such-session', 'hi'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrNotFound)),
+    );
+    await restarted.dispose();
+  });
+
+  test('resume fails cleanly when the provider lacks session/load support',
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    await engine.dispose();
+    // The next agent the engine spawns advertises no loadSession capability.
+    File(p.join(tempDir.path, 'agent.no_load_session')).createSync();
+
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+    await expectLater(
+      restarted.sendMessage(session.id, 'hi'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrConflict)),
+    );
+    // The refusal says nothing about the agent's state: status untouched.
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    await restarted.dispose();
+  });
+
+  test('resume marks the session error when the agent lost its own state',
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    await engine.dispose();
+    // The next agent answers session/load with an error.
+    File(p.join(tempDir.path, 'agent.load_fails')).createSync();
+
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+    await expectLater(
+      restarted.sendMessage(session.id, 'hi'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrAgentProcess)),
+    );
     expect(store.getSession(session.id)!.status, SessionStatus.error);
     await restarted.dispose();
   });
+
+  test('concurrent sends after a restart share one resume; the second '
+      'conflicts', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    await engine.dispose();
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+
+    final first = restarted.sendMessage(session.id, 'weird');
+    await expectLater(
+      restarted.sendMessage(session.id, 'weird'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', kErrConflict)),
+    );
+    await first; // the resumed session completes its turn
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    await restarted.dispose();
+  });
+
 
   test('sendMessage conflicts while a turn is running, and cancel finishes it',
       () async {

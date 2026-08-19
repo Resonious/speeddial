@@ -63,6 +63,7 @@ class LeftRail extends StatelessWidget {
                         selected:
                             data.selection.selectedDaemonId == endpoint.id,
                         onTap: () => _selectDaemon(context, endpoint),
+                        onRetry: () => data.reconnect(endpoint.id),
                         onEdit: () => _showDaemonDialog(context, endpoint),
                         onRemove: () => _removeDaemon(context, endpoint),
                       );
@@ -544,7 +545,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
 }
 
 /// Menu entries on a daemon endpoint tile.
-enum _EndpointAction { edit, remove }
+enum _EndpointAction { retry, edit, remove }
 
 class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
@@ -552,6 +553,7 @@ class _EndpointTile extends StatelessWidget {
     required this.status,
     required this.selected,
     required this.onTap,
+    required this.onRetry,
     required this.onEdit,
     required this.onRemove,
   });
@@ -560,6 +562,9 @@ class _EndpointTile extends StatelessWidget {
   final ConnectionStatus status;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Resets the reconnect backoff and retries immediately ([AppData.reconnect]).
+  final VoidCallback onRetry;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
@@ -567,6 +572,10 @@ class _EndpointTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    // Retry matters while the endpoint is down or mid-retry; a connected
+    // endpoint has nothing to retry.
+    final bool canRetry = status == ConnectionStatus.failed ||
+        status == ConnectionStatus.reconnecting;
     return ListTile(
       dense: true,
       leading: SizedBox(
@@ -590,18 +599,24 @@ class _EndpointTile extends StatelessWidget {
         key: Key('endpoint-actions-${endpoint.id}'),
         tooltip: 'Daemon actions',
         icon: const Icon(Icons.more_vert, size: 18),
-        itemBuilder: (BuildContext context) =>
-            const <PopupMenuEntry<_EndpointAction>>[
-          PopupMenuItem<_EndpointAction>(
+        itemBuilder: (BuildContext context) => <PopupMenuEntry<_EndpointAction>>[
+          if (canRetry)
+            const PopupMenuItem<_EndpointAction>(
+              key: Key('endpoint-action-retry'),
+              value: _EndpointAction.retry,
+              child: Text('Retry now'),
+            ),
+          const PopupMenuItem<_EndpointAction>(
             value: _EndpointAction.edit,
             child: Text('Edit'),
           ),
-          PopupMenuItem<_EndpointAction>(
+          const PopupMenuItem<_EndpointAction>(
             value: _EndpointAction.remove,
             child: Text('Remove'),
           ),
         ],
         onSelected: (_EndpointAction action) => switch (action) {
+          _EndpointAction.retry => onRetry(),
           _EndpointAction.edit => onEdit(),
           _EndpointAction.remove => onRemove(),
         },
