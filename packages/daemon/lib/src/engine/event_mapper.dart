@@ -99,6 +99,33 @@ ToolCall mergeToolCallUpdate(
   );
 }
 
+/// Copy of a merged tool-call update for persisting/broadcasting, with
+/// `rawInput`/`rawOutput` dropped unless the call reached a terminal
+/// status (completed/failed).
+///
+/// Agents stream progress by re-sending their whole accumulated raw
+/// output with every `tool_call_update`. Persisting each snapshot
+/// full-size made update events dominate the database (and every history
+/// page and live broadcast re-copies them), while clients fold updates by
+/// `toolCall.id` and only ever render the final state. The terminal event
+/// always carries the full merged state, so folding is unaffected; a call
+/// that never settles loses only its intermediate raw snapshots.
+/// `content` is untouched — it is the live progress display.
+ToolCall trimToolCallUpdateForEmit(ToolCall merged) {
+  final bool terminal = merged.status == ToolCallStatus.completed ||
+      merged.status == ToolCallStatus.failed;
+  if (terminal) return merged;
+  if (merged.rawInput == null && merged.rawOutput == null) return merged;
+  return ToolCall(
+    id: merged.id,
+    title: merged.title,
+    kind: merged.kind,
+    status: merged.status,
+    content: merged.content,
+    locations: merged.locations,
+  );
+}
+
 /// Builds a protocol [ToolCall] from an update's fields when no prior state
 /// exists (defensive: updates should follow a `tool_call`).
 ToolCall toolCallFromAcpUpdate(

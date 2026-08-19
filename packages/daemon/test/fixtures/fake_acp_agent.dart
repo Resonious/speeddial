@@ -420,6 +420,40 @@ Future<void> _runTurn(
     return _resolvePrompt(promptId, 'end_turn');
   }
 
+  if (text == 'stream raw output') {
+    // Progressive raw output on running updates: the daemon must trim the
+    // raw fields from non-terminal snapshots while the terminal one keeps
+    // the full merged state.
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'tc1',
+      'title': 'Run job',
+      'kind': 'execute',
+      'status': 'in_progress',
+      'content': <Object?>[],
+      'rawInput': <String, Object?>{'cmd': 'job'},
+    });
+    if (_cancelled(promptId)) return;
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'tc1',
+      'rawOutput': <String, Object?>{'progress': 1},
+    });
+    if (_cancelled(promptId)) return;
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'tc1',
+      'rawOutput': <String, Object?>{'progress': 2},
+    });
+    if (_cancelled(promptId)) return;
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'tc1',
+      'status': 'completed',
+    });
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
   try {
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'agent_message_chunk',

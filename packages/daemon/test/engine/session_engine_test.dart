@@ -116,6 +116,48 @@ void main() {
     }
   }
 
+  test('tool_call_update snapshots drop raw fields until the call settles',
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    await engine.sendMessage(session.id, 'stream raw output');
+    await waitFor(
+        () => events.any((t) => t.event is TurnCompleteEvent));
+
+    final List<ToolCallEvent> toolEvents = events
+        .map((t) => t.event)
+        .whereType<ToolCallEvent>()
+        .toList(growable: false);
+    // Created + two running updates + terminal.
+    expect(toolEvents, hasLength(4));
+
+    // The create event keeps its rawInput.
+    expect((toolEvents[0].toolCall.rawInput! as Map)['cmd'], 'job');
+
+    // Running snapshots omit both raw fields: agents re-send the whole
+    // accumulated payload per progress tick, and persisting each one
+    // full-size is what bloated the event log.
+    for (var i = 1; i <= 2; i++) {
+      expect(toolEvents[i].toolCall.status, ToolCallStatus.running);
+      expect(toolEvents[i].toolCall.rawInput, isNull);
+      expect(toolEvents[i].toolCall.rawOutput, isNull);
+    }
+
+    // The terminal snapshot carries the full merged state (the last
+    // rawOutput, carried forward even though this update changed none).
+    final ToolCall terminal = toolEvents.last.toolCall;
+    expect(terminal.status, ToolCallStatus.completed);
+    expect((terminal.rawInput! as Map)['cmd'], 'job');
+    expect((terminal.rawOutput! as Map)['progress'], 2);
+
+    // The store persisted exactly what was broadcast.
+    final List<ToolCallEvent> persisted =
+        store.listEvents(session.id).events.whereType<ToolCallEvent>().toList();
+    expect(persisted, hasLength(4));
+    expect(persisted[1].toolCall.rawOutput, isNull);
+    expect((persisted.last.toolCall.rawOutput! as Map)['progress'], 2);
+  });
+
   test('createSession spawns an idle session and persists it', () async {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');

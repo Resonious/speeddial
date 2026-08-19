@@ -935,7 +935,11 @@ class SessionEngine {
                 toolCallId, toolCallUpdate.fields, cwd: live.cwd)
             : mergeToolCallUpdate(prior, toolCallUpdate, cwd: live.cwd);
         _toolCalls[sessionId]?[toolCallId] = merged;
-        return ToolCallEvent(toolCall: merged);
+        // The persisted/broadcast snapshot drops raw fields while the call
+        // is still running (they are re-sent in full on the terminal
+        // update); the in-memory merged state stays complete so the next
+        // update — and the terminal event — carry everything.
+        return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
       case final AcpPlan plan:
         return planEventFromAcp(plan);
       case final AcpUsageUpdate usage:

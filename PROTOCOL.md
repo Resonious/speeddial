@@ -159,8 +159,9 @@ ToolCall = {
   status: "pending" | "running" | "completed" | "failed",
   content: ToolCallContent[], // may be []
   locations: string[],        // file paths touched, may be []
-  rawInput: any | null,
-  rawOutput: any | null,
+  rawInput: any | null,      // structured payloads; update events carry these only when
+  rawOutput: any | null,     // the call is completed/failed — running updates omit them
+                              // (clients fold by id; the terminal event carries the full state)
 }
 ToolCallContent =
   | { type: "text", text: string }
