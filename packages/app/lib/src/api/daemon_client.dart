@@ -117,6 +117,12 @@ abstract class DaemonClient {
   Future<String> gitCommit(String projectId, String message,
       {String? sessionId, bool stageAll = false});
   Future<void> gitPush(String projectId, {String? sessionId});
+
+  /// Merges the session's worktree branch back into the base branch it was
+  /// created from; fast-forwards the local base to origin first when the
+  /// remote moved ahead.
+  Future<MergeResult> gitMergeToBase(String projectId,
+      {required String sessionId});
   Future<String> gitCreatePr(String projectId,
       {String? sessionId, String? title, String? body, String? base, bool draft = false});
 

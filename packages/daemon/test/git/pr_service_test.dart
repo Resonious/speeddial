@@ -70,8 +70,8 @@ void main() {
     ]));
   });
 
-  test('createPullRequest with base/draft but no title passes them '
-      'explicitly instead of --fill', () async {
+  test('createPullRequest with base/draft but no title combines --fill '
+      'with the explicit flags', () async {
     final dir = await Directory.systemTemp.createTemp('sd_gh_');
     await _writeGhShim(dir, 'echo "https://github.com/x/pull/3"');
     final service = PrService(ghPath: p.join(dir.path, 'gh'));
@@ -81,8 +81,7 @@ void main() {
 
     expect(url, 'https://github.com/x/pull/3');
     final args = await _capturedArgs(dir);
-    expect(args, isNot(contains('--fill')),
-        reason: '--fill alone would silently drop base and draft');
+    expect(args, containsAllInOrder(['pr', 'create', '--fill']));
     expect(args, containsAllInOrder(['--base', 'main']));
     expect(args, contains('--draft'));
   });

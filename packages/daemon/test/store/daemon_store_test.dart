@@ -32,6 +32,7 @@ Session session({
   SessionStatus status = SessionStatus.idle,
   SessionMode mode = SessionMode.build,
   String title = 'Test session',
+  String? baseBranch,
   bool archived = false,
 }) =>
     Session(
@@ -43,6 +44,7 @@ Session session({
       mode: mode,
       model: null,
       cwd: p.join(Directory.systemTemp.path, 'cwd'),
+      baseBranch: baseBranch,
       archived: archived,
       createdAt: DateTime.utc(2026, 1, 2),
       updatedAt: DateTime.utc(2026, 1, 2),
@@ -142,6 +144,7 @@ void main() {
       mode: SessionMode.plan,
       model: 'sonnet',
       cwd: '/cwd',
+      baseBranch: 'main',
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
       updatedAt: DateTime.utc(2026, 1, 3),
@@ -152,12 +155,75 @@ void main() {
     expect(reloaded.status, SessionStatus.waitingPermission);
     expect(reloaded.mode, SessionMode.plan);
     expect(reloaded.model, 'sonnet');
+    expect(reloaded.baseBranch, 'main');
     expect(reloaded.archived, isTrue);
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
 
     expect(
       () => store.updateSession(session(id: 'missing')),
       throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+  });
+
+  test('migrates pre-base_branch databases', () {
+    store.dispose();
+    final dbPath = p.join(tempDir.path, 'speeddial.db');
+    File(dbPath).deleteSync();
+    for (final suffix in const <String>['-wal', '-shm']) {
+      final sidecar = File('$dbPath$suffix');
+      if (sidecar.existsSync()) sidecar.deleteSync();
+    }
+    // Recreate the pre-merge-back schema: sessions without base_branch.
+    final raw = sqlite3.open(dbPath);
+    raw.execute('''
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        added_at INTEGER NOT NULL,
+        last_active_at INTEGER NOT NULL
+      );
+    ''');
+    raw.execute('''
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        provider_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        model TEXT,
+        cwd TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    ''');
+    raw.execute(
+      'INSERT INTO projects (id, name, path, added_at, last_active_at) '
+      'VALUES (?, ?, ?, ?, ?)',
+      ['p1', 'Project p1', '/tmp/proj-p1', 1, 1],
+    );
+    raw.execute(
+      'INSERT INTO sessions (id, project_id, provider_id, title, status, '
+      'mode, model, cwd, archived, created_at, updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ['s1', 'p1', 'fake', 'Legacy', 'idle', 'build', null, '/tmp/x', 0, 1, 1],
+    );
+    raw.dispose();
+
+    store = openStore(tempDir);
+    final migrated = store.getSession('s1')!;
+    expect(migrated.title, 'Legacy');
+    expect(migrated.baseBranch, isNull,
+        reason: 'legacy rows gain a null base branch');
+
+    // New inserts carry the base branch.
+    store.insertSession(session(id: 's2', baseBranch: 'main'));
+    expect(store.getSession('s2')!.baseBranch, 'main');
+    expect(
+      store.listSessions().map((s) => s.baseBranch),
+      <String?>[null, 'main'],
     );
   });
 

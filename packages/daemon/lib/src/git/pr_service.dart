@@ -23,18 +23,16 @@ class PrService {
 
   /// Creates a pull request for the current branch and returns its URL.
   ///
-  /// Uses `gh pr create --fill` (deriving title/body from the latest commit)
-  /// only when every field is absent — a provided [base] or [draft] must
-  /// reach `gh` explicitly, since `--fill` alone would drop them. Otherwise
-  /// each provided flag is passed individually.
+  /// Title/body derive from the latest commit via `--fill` when both are
+  /// absent — passing `--base` or `--draft` must never drop the fill, since
+  /// `gh` would otherwise prompt interactively and hang a non-tty daemon.
   Future<String> createPullRequest(String repoPath,
       {String? title,
       String? body,
       String? base,
       bool draft = false}) async {
     final args = <String>['pr', 'create'];
-    final useFill = title == null && body == null && base == null && !draft;
-    if (useFill) {
+    if (title == null && body == null) {
       args.add('--fill');
     } else {
       if (title != null) {
@@ -47,14 +45,14 @@ class PrService {
           ..add('--body')
           ..add(body);
       }
-      if (base != null) {
-        args
-          ..add('--base')
-          ..add(base);
-      }
-      if (draft) {
-        args.add('--draft');
-      }
+    }
+    if (base != null) {
+      args
+        ..add('--base')
+        ..add(base);
+    }
+    if (draft) {
+      args.add('--draft');
     }
 
     ProcessResult result;

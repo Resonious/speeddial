@@ -269,6 +269,60 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('git tab merges the session branch back into its base branch',
+      (WidgetTester tester) async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData app = await pumpRightPanel(tester, fake);
+
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+
+    // No session selected: the project checkout shows no merge-back action.
+    expect(find.textContaining('Merge into'), findsNothing);
+
+    // Load the seeded sessions and pick sess-1, whose base branch is 'main'.
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.pumpAndSettle();
+
+    expect(find.text('Merge into main'), findsOneWidget);
+
+    await tester.tap(find.text('Merge into main'));
+    await tester.pumpAndSettle();
+
+    // The fake resolves a fast-forward merge, which the snackbar announces.
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.textContaining('Merged'), findsOneWidget);
+
+    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('create PR prefills the base field from the session base branch',
+      (WidgetTester tester) async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData app = await pumpRightPanel(tester, fake);
+
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Create PR'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create Pull Request'), findsOneWidget);
+
+    final TextFormField base = tester.widget<TextFormField>(
+      find.widgetWithText(TextFormField, 'Base branch'),
+    );
+    expect((base.controller?.text), 'main');
+
+    // Cancel the dialog so nothing is left open.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('failed directory listing shows an error row; retry recovers',
       (WidgetTester tester) async {
     final _FlakyFilesFake fake = _FlakyFilesFake();

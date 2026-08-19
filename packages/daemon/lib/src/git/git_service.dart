@@ -142,14 +142,9 @@ class GitService {
     if (!hasLocal) return 'origin/$branch';
     if (!hasRemote) return branch;
 
-    final result = await _run(repoPath,
-        ['rev-list', '--left-right', '--count', '$branch...origin/$branch']);
-    final List<String> parts =
-        (result.stdout as String).trim().split(RegExp(r'\s+'));
-    final int ahead = int.parse(parts[0]);
-    final int behind = int.parse(parts[1]);
+    final counts = await _aheadBehind(repoPath, branch, 'origin/$branch');
     // Remote wins only when the local branch can fast-forward to it.
-    return behind > 0 && ahead == 0 ? 'origin/$branch' : branch;
+    return counts.behind > 0 && counts.ahead == 0 ? 'origin/$branch' : branch;
   }
 
   /// Whether [ref] (fully qualified, e.g. `refs/heads/main`) resolves.
@@ -187,6 +182,194 @@ class GitService {
       throw DaemonError(kErrGit, 'invalid worktree path: $path');
     }
     await _run(repoPath, ['worktree', 'remove', '--force', path]);
+  }
+
+  /// Merges the session worktree branch at [worktreePath] back into the
+  /// local [baseBranch] of the repository at [projectPath].
+  ///
+  /// The local base is first synchronized with `origin/<baseBranch>`: when
+  /// the (freshly fetched) remote-tracking ref is strictly ahead, the local
+  /// base fast-forwards to it — via `merge --ff-only` in the checkout that
+  /// has the base branch, or by moving the ref when the base is checked out
+  /// nowhere. Diverged local/remote bases throw [DaemonError] `kErrConflict`.
+  ///
+  /// The merge itself runs in the checkout holding the base branch (a real
+  /// merge: fast-forward or merge commit); with no such checkout only a
+  /// fast-forward ref move is possible, anything else is `kErrConflict`.
+  /// The session worktree must be clean (`kErrConflict`) — merging never
+  /// carries uncommitted changes. Merge conflicts propagate as `kErrGit`
+  /// and leave the base checkout in MERGING state for manual resolution.
+  /// Neither the worktree nor its branch is removed afterwards.
+  Future<MergeResult> mergeIntoBase({
+    required String projectPath,
+    required String worktreePath,
+    required String baseBranch,
+  }) async {
+    _validateBranchName(baseBranch);
+    final sessionBranch = await _currentBranch(worktreePath);
+    if (sessionBranch == null) {
+      throw DaemonError(
+          kErrGit, 'session worktree is on a detached HEAD: $worktreePath');
+    }
+    if (sessionBranch == baseBranch) {
+      throw DaemonError(
+          kErrGit, 'session is on the base branch itself: $baseBranch');
+    }
+    if (await _hasUncommittedChanges(worktreePath)) {
+      throw DaemonError(
+        kErrConflict,
+        'session worktree has uncommitted changes; commit or discard '
+            'them first',
+      );
+    }
+
+    // Sync the local base with origin when the remote moved ahead.
+    var hasRemote = false;
+    try {
+      await fetch(projectPath, baseBranch);
+      hasRemote = true;
+    } on DaemonError catch (e) {
+      // A missing remote branch is fine: the local base stands alone.
+      // Anything else (network, auth) still fails the merge.
+      if (!e.message.toLowerCase().contains("couldn't find remote ref")) {
+        rethrow;
+      }
+    }
+    var baseFastForwarded = false;
+    if (hasRemote) {
+      final counts =
+          await _aheadBehind(projectPath, baseBranch, 'origin/$baseBranch');
+      if (counts.behind > 0 && counts.ahead > 0) {
+        throw DaemonError(
+          kErrConflict,
+          'local $baseBranch and origin/$baseBranch have diverged; '
+              'reconcile them first',
+        );
+      }
+      if (counts.behind > 0) {
+        await _fastForwardRef(projectPath, baseBranch, 'origin/$baseBranch');
+        baseFastForwarded = true;
+      }
+    }
+
+    final baseTip = await _revParse(projectPath, 'refs/heads/$baseBranch');
+    if (await _isAncestor(projectPath, sessionBranch, baseBranch)) {
+      return MergeResult(
+        baseBranch: baseBranch,
+        sessionBranch: sessionBranch,
+        baseFastForwarded: baseFastForwarded,
+        alreadyUpToDate: true,
+        fastForward: false,
+        commit: baseTip,
+      );
+    }
+    final canFastForward =
+        await _isAncestor(projectPath, baseBranch, sessionBranch);
+    final checkout = await _worktreeForBranch(projectPath, baseBranch);
+    if (checkout != null) {
+      // A real merge in the base checkout: fast-forwards when possible,
+      // otherwise creates a merge commit with git's default message.
+      // --no-edit keeps the merge non-interactive either way.
+      await _run(checkout, ['merge', '--no-edit', sessionBranch]);
+    } else {
+      if (!canFastForward) {
+        throw DaemonError(
+          kErrConflict,
+          '$baseBranch is not checked out anywhere and the merge is not a '
+              'fast-forward; check out $baseBranch and retry',
+        );
+      }
+      // Safe away from any checkout: git branch -f refuses to move a branch
+      // that is checked out, which is exactly the case handled above.
+      await _run(projectPath, ['branch', '-f', baseBranch, sessionBranch]);
+    }
+    return MergeResult(
+      baseBranch: baseBranch,
+      sessionBranch: sessionBranch,
+      baseFastForwarded: baseFastForwarded,
+      alreadyUpToDate: false,
+      fastForward: canFastForward,
+      commit: await _revParse(projectPath, 'refs/heads/$baseBranch'),
+    );
+  }
+
+  /// The short name of the branch checked out at [repoPath], or null on a
+  /// detached HEAD.
+  Future<String?> _currentBranch(String repoPath) async {
+    final result = await Process.run(
+      gitPath,
+      ['symbolic-ref', '--short', '--quiet', 'HEAD'],
+      workingDirectory: repoPath,
+    );
+    if (result.exitCode != 0) return null;
+    return (result.stdout as String).trim();
+  }
+
+  /// Whether [repoPath] has staged or unstaged changes (incl. untracked).
+  Future<bool> _hasUncommittedChanges(String repoPath) async {
+    final result = await _run(repoPath, ['status', '--porcelain']);
+    return (result.stdout as String).trim().isNotEmpty;
+  }
+
+  /// Commits [left] leads/trails [right] by (`left...right`).
+  Future<({int ahead, int behind})> _aheadBehind(
+      String repoPath, String left, String right) async {
+    final result = await _run(
+        repoPath, ['rev-list', '--left-right', '--count', '$left...$right']);
+    final List<String> parts =
+        (result.stdout as String).trim().split(RegExp(r'\s+'));
+    return (ahead: int.parse(parts[0]), behind: int.parse(parts[1]));
+  }
+
+  /// Whether [ancestor] is an ancestor of (or equal to) [descendant].
+  Future<bool> _isAncestor(
+      String repoPath, String ancestor, String descendant) async {
+    final result = await Process.run(
+      gitPath,
+      ['merge-base', '--is-ancestor', ancestor, descendant],
+      workingDirectory: repoPath,
+    );
+    if (result.exitCode == 0) return true;
+    if (result.exitCode == 1) return false;
+    throw DaemonError(
+      kErrGit,
+      (result.stderr as String).trim(),
+      {'exitCode': result.exitCode},
+    );
+  }
+
+  Future<String> _revParse(String repoPath, String ref) async {
+    final result = await _run(repoPath, ['rev-parse', ref]);
+    return (result.stdout as String).trim();
+  }
+
+  /// Path of the worktree that has [branch] checked out, or null.
+  Future<String?> _worktreeForBranch(String repoPath, String branch) async {
+    final result = await _run(repoPath, ['worktree', 'list', '--porcelain']);
+    String? worktreePath;
+    for (final line in (result.stdout as String).split('\n')) {
+      if (line.startsWith('worktree ')) {
+        worktreePath = line.substring('worktree '.length);
+      } else if (line.isEmpty) {
+        worktreePath = null;
+      } else if (line == 'branch refs/heads/$branch' && worktreePath != null) {
+        return worktreePath;
+      }
+    }
+    return null;
+  }
+
+  /// Advances [branch] to [target], which must be a descendant: via
+  /// `merge --ff-only` where [branch] is checked out (protecting that
+  /// worktree's uncommitted changes), or a direct ref move otherwise.
+  Future<void> _fastForwardRef(
+      String repoPath, String branch, String target) async {
+    final checkout = await _worktreeForBranch(repoPath, branch);
+    if (checkout != null) {
+      await _run(checkout, ['merge', '--ff-only', target]);
+    } else {
+      await _run(repoPath, ['branch', '-f', branch, target]);
+    }
   }
 
   Future<ProcessResult> _run(String repoPath, List<String> args) async {

@@ -571,6 +571,7 @@ void main() {
         final worktreeDir =
             p.join(tempDir.path, '.speeddial-worktrees', 'repo-$shortId');
         expect(session.cwd, worktreeDir);
+        expect(session.baseBranch, 'main');
         expect(Directory(worktreeDir).existsSync(), isTrue);
         // Branched off the remote tip, not the local checkout.
         expect(
@@ -579,6 +580,7 @@ void main() {
             'speeddial/fix-the-login-bug-$shortId');
         // The persisted session carries the worktree cwd too.
         expect(store.getSession(session.id)!.cwd, worktreeDir);
+        expect(store.getSession(session.id)!.baseBranch, 'main');
       } finally {
         await gitEngine.dispose();
       }

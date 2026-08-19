@@ -9,8 +9,8 @@
 ///   * `projects`       id TEXT PK, name, path TEXT UNIQUE, added_at,
 ///                      last_active_at
 ///   * `sessions`       id PK, project_id FK→projects, provider_id, title,
-///                      status, mode, model NULL, cwd, archived INT,
-///                      created_at, updated_at
+///                      status, mode, model NULL, cwd, base_branch NULL,
+///                      archived INT, created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 library;
@@ -56,11 +56,20 @@ class DaemonStore {
         mode TEXT NOT NULL,
         model TEXT,
         cwd TEXT NOT NULL,
+        base_branch TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     ''');
+    // Pre-merge-back databases have no base_branch column.
+    final sessionColumns = _db
+        .select('PRAGMA table_info(sessions)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!sessionColumns.contains('base_branch')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN base_branch TEXT');
+    }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -171,8 +180,8 @@ class DaemonStore {
   void insertSession(Session session) {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
-      'mode, model, cwd, archived, created_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'mode, model, cwd, base_branch, archived, created_at, updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -182,6 +191,7 @@ class DaemonStore {
         session.mode.wire,
         session.model,
         session.cwd,
+        session.baseBranch,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.updatedAt),
@@ -197,7 +207,7 @@ class DaemonStore {
   }) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'archived, created_at, updated_at FROM sessions '
+      'base_branch, archived, created_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -209,7 +219,7 @@ class DaemonStore {
   Session? getSession(String id) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'archived, created_at, updated_at FROM sessions WHERE id = ?',
+      'base_branch, archived, created_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -220,8 +230,8 @@ class DaemonStore {
   void updateSession(Session session) {
     _db.execute(
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
-      'status = ?, mode = ?, model = ?, cwd = ?, archived = ?, '
-      'created_at = ?, updated_at = ? WHERE id = ?',
+      'status = ?, mode = ?, model = ?, cwd = ?, base_branch = ?, '
+      'archived = ?, created_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
         session.providerId,
@@ -230,6 +240,7 @@ class DaemonStore {
         session.mode.wire,
         session.model,
         session.cwd,
+        session.baseBranch,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.updatedAt),
@@ -325,6 +336,7 @@ class DaemonStore {
         mode: SessionMode.parse(row['mode'] as String),
         model: row['model'] as String?,
         cwd: row['cwd'] as String,
+        baseBranch: row['base_branch'] as String?,
         archived: (row['archived'] as int) != 0,
         createdAt: _fromTs(row['created_at'] as int),
         updatedAt: _fromTs(row['updated_at'] as int),

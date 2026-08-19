@@ -71,6 +71,7 @@ class FakeDaemonClient implements DaemonClient {
       mode: SessionMode.build,
       model: 'omp-default',
       cwd: project.path,
+      baseBranch: 'main',
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -84,6 +85,7 @@ class FakeDaemonClient implements DaemonClient {
       mode: SessionMode.plan,
       model: null,
       cwd: project.path,
+      baseBranch: null,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -274,6 +276,7 @@ class FakeDaemonClient implements DaemonClient {
           ? _project(projectId).path
           : '${_project(projectId).path}/../.speeddial-worktrees/'
               '${_project(projectId).name.toLowerCase()}-$id',
+      baseBranch: baseBranch,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -337,6 +340,7 @@ class FakeDaemonClient implements DaemonClient {
               mode: s.mode,
               model: s.model,
               cwd: s.cwd,
+              baseBranch: s.baseBranch,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -357,6 +361,7 @@ class FakeDaemonClient implements DaemonClient {
               mode: s.mode,
               model: s.model,
               cwd: s.cwd,
+              baseBranch: s.baseBranch,
               archived: archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -384,6 +389,7 @@ class FakeDaemonClient implements DaemonClient {
               mode: mode,
               model: s.model,
               cwd: s.cwd,
+              baseBranch: s.baseBranch,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -404,6 +410,7 @@ class FakeDaemonClient implements DaemonClient {
               mode: s.mode,
               model: model,
               cwd: s.cwd,
+              baseBranch: s.baseBranch,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -611,6 +618,25 @@ class FakeDaemonClient implements DaemonClient {
   Future<void> gitPush(String projectId, {String? sessionId}) async {
     _ensureSeeded();
     _gitRoot(projectId, sessionId);
+  }
+
+  @override
+  Future<MergeResult> gitMergeToBase(String projectId,
+      {required String sessionId}) async {
+    _ensureSeeded();
+    final String root = _gitRoot(projectId, sessionId);
+    final Session session = _sessions[sessionId]!;
+    if (session.baseBranch == null) {
+      throw const DaemonError(-32602, 'session has no base branch');
+    }
+    return MergeResult(
+      baseBranch: session.baseBranch!,
+      sessionBranch: _gitStatus[root]!.branch,
+      baseFastForwarded: false,
+      alreadyUpToDate: false,
+      fastForward: true,
+      commit: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    );
   }
 
   @override
@@ -836,6 +862,7 @@ class FakeDaemonClient implements DaemonClient {
       mode: current.mode,
       model: current.model,
       cwd: current.cwd,
+      baseBranch: current.baseBranch,
       archived: current.archived,
       createdAt: current.createdAt,
       updatedAt: now,
@@ -858,6 +885,7 @@ class FakeDaemonClient implements DaemonClient {
       mode: current.mode,
       model: current.model,
       cwd: current.cwd,
+      baseBranch: current.baseBranch,
       archived: current.archived,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),

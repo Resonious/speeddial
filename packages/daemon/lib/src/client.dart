@@ -588,4 +588,16 @@ class DaemonClient {
     }
     return url;
   }
+
+  /// `git.mergeToBase` — merges the session's worktree branch back into the
+  /// base branch the session was created from, fast-forwarding the local
+  /// base to `origin/<baseBranch>` first when the remote moved ahead.
+  Future<MergeResult> gitMergeToBase(String projectId, String sessionId) async {
+    final result = await _peer.call(
+      'git.mergeToBase',
+      <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
+    );
+    final map = _asMap(result, 'git.mergeToBase');
+    return MergeResult.fromJson(_asMap(map['merge'], 'git.mergeToBase'));
+  }
 }

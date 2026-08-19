@@ -154,6 +154,8 @@ void main() {
       expect(session.mode, SessionMode.plan);
       expect(session.model, isNull);
       expect(session.cwd, '/home/nigel/p/speeddial');
+      expect(session.baseBranch, isNull,
+          reason: 'baseBranch is absent on pre-merge-back daemons');
       expect(session.archived, isFalse);
       expect(session.createdAt.isUtc, isTrue);
 
@@ -175,6 +177,7 @@ void main() {
         mode: SessionMode.build,
         model: 'gpt-5',
         cwd: '/tmp/wt',
+        baseBranch: 'main',
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
         updatedAt: DateTime.utc(2026, 1, 2, 3, 4, 5, 678),
@@ -182,6 +185,7 @@ void main() {
       final decoded = Session.fromJson(model.toJson());
       expect(decoded.status, SessionStatus.running);
       expect(decoded.model, 'gpt-5');
+      expect(decoded.baseBranch, 'main');
       expect(decoded.archived, isTrue);
       expect(decoded.toJson(), model.toJson());
     });
@@ -291,6 +295,33 @@ void main() {
       final decoded2 = Branch.fromJson(noUpstream.toJson());
       expect(decoded2.upstream, isNull);
       expect(decoded2.toJson(), noUpstream.toJson());
+    });
+
+    test('MergeResult', () {
+      final model = MergeResult(
+        baseBranch: 'main',
+        sessionBranch: 'speeddial/fix-login-a1b2c3d4',
+        baseFastForwarded: true,
+        alreadyUpToDate: false,
+        fastForward: true,
+        commit: 'a' * 40,
+      );
+      expect(model.toJson(), {
+        'baseBranch': 'main',
+        'sessionBranch': 'speeddial/fix-login-a1b2c3d4',
+        'baseFastForwarded': true,
+        'alreadyUpToDate': false,
+        'fastForward': true,
+        'commit': 'a' * 40,
+      });
+      final decoded = MergeResult.fromJson(model.toJson());
+      expect(decoded.baseBranch, 'main');
+      expect(decoded.sessionBranch, 'speeddial/fix-login-a1b2c3d4');
+      expect(decoded.baseFastForwarded, isTrue);
+      expect(decoded.alreadyUpToDate, isFalse);
+      expect(decoded.fastForward, isTrue);
+      expect(decoded.commit, 'a' * 40);
+      expect(decoded.toJson(), model.toJson());
     });
 
     test('ToolCall with content, locations, and raw payloads', () {

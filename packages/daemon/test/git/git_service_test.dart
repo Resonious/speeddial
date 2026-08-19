@@ -484,6 +484,285 @@ void main() {
     });
   });
 
+  group('mergeIntoBase', () {
+    const sessionBranch = 'speeddial/s-1a2b3c4d';
+
+    /// Repo cloned from a local origin with one pushed commit, plus a
+    /// session worktree on [sessionBranch] branched off origin/main.
+    Future<({Directory repo, Directory origin, Directory worktree})>
+        setup() async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repo.path,
+        path: wtPath,
+        branch: sessionBranch,
+        baseRef: 'origin/main',
+      );
+      return (repo: repo, origin: repos.origin, worktree: Directory(wtPath));
+    }
+
+    Future<String> tip(Directory dir, String ref) async =>
+        ((await _git(dir, ['rev-parse', ref])).stdout as String).trim();
+
+    Future<void> commitIn(Directory dir, String file, String message) async {
+      await _write(dir, file, '$message\n');
+      await _git(dir, ['add', '-A']);
+      await _git(dir, ['commit', '-m', message]);
+    }
+
+    /// Advances origin/main through a second clone; the local main in
+    /// [repo] stays behind until something fetches/merges it.
+    Future<Directory> advanceOrigin(Directory origin) async {
+      final other = Directory(p.join(origin.parent.path, 'other'));
+      await Process.run('git', ['clone', origin.path, other.path]);
+      await _git(other, ['config', 'user.email', 'test@example.com']);
+      await _git(other, ['config', 'user.name', 'Test User']);
+      await commitIn(other, 'remote.txt', 'remote work');
+      await _git(other, ['push', 'origin', 'main']);
+      return other;
+    }
+
+    test('fast-forwards the checked-out base when the session is ahead',
+        () async {
+      final s = await setup();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      final sessionTip = await tip(s.worktree, 'HEAD');
+
+      final result = await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.baseBranch, 'main');
+      expect(result.sessionBranch, sessionBranch);
+      expect(result.baseFastForwarded, isFalse);
+      expect(result.alreadyUpToDate, isFalse);
+      expect(result.fastForward, isTrue);
+      expect(result.commit, sessionTip);
+      expect(await tip(s.repo, 'main'), sessionTip,
+          reason: 'main must move to the session tip');
+      expect(await tip(s.repo, 'HEAD'), sessionTip,
+          reason: 'the project checkout has main checked out');
+      expect(File(p.join(s.repo.path, 'feat.txt')).existsSync(), isTrue);
+    });
+
+    test('fast-forwards the local base to origin first when origin is ahead',
+        () async {
+      // Origin advances before the session worktree is created, so the
+      // whole merge can fast-forward once local main catches up.
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+      final other = await advanceOrigin(repos.origin);
+      final originTip = await tip(other, 'HEAD');
+      expect(await tip(repo, 'main'), isNot(originTip),
+          reason: 'local main must be behind origin');
+
+      // The daemon always fetches before branching a worktree; here that
+      // makes the stale remote-tracking ref visible for the branch point.
+      await service.fetch(repo.path, 'main');
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repo.path,
+        path: wtPath,
+        branch: sessionBranch,
+        baseRef: 'origin/main',
+      );
+      final worktree = Directory(wtPath);
+      await commitIn(worktree, 'feat.txt', 'session work');
+      final sessionTip = await tip(worktree, 'HEAD');
+
+      final result = await service.mergeIntoBase(
+        projectPath: repo.path,
+        worktreePath: worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.baseFastForwarded, isTrue,
+          reason: 'local main must first catch up to origin/main');
+      expect(result.fastForward, isTrue);
+      expect(result.alreadyUpToDate, isFalse);
+      expect(result.commit, sessionTip);
+      expect(await tip(repo, 'main'), sessionTip);
+      expect(File(p.join(repo.path, 'remote.txt')).existsSync(), isTrue,
+          reason: 'the remote work must land in the project checkout');
+      expect(File(p.join(repo.path, 'feat.txt')).existsSync(), isTrue);
+    });
+
+    test('merges (no ff) when both base and session moved since the worktree '
+        'was branched', () async {
+      final s = await setup();
+      // The session worktree branched off the old tip; then origin moved.
+      await advanceOrigin(s.origin);
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+
+      final result = await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.baseFastForwarded, isTrue);
+      expect(result.fastForward, isFalse,
+          reason: 'session and base both have unique commits');
+      expect(result.alreadyUpToDate, isFalse);
+      expect(await tip(s.repo, 'main'), result.commit);
+      // A real merge commit has two parents.
+      final secondParent =
+          await _git(s.repo, ['rev-parse', '--verify', '--quiet', 'main^2']);
+      expect(secondParent.exitCode, 0);
+      expect(File(p.join(s.repo.path, 'remote.txt')).existsSync(), isTrue);
+      expect(File(p.join(s.repo.path, 'feat.txt')).existsSync(), isTrue);
+    });
+
+    test('creates a merge commit when the local base has unpushed commits',
+        () async {
+      final s = await setup();
+      await commitIn(s.repo, 'local.txt', 'local work');
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+
+      final result = await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.baseFastForwarded, isFalse);
+      expect(result.fastForward, isFalse);
+      expect(await tip(s.repo, 'main'), result.commit);
+      final secondParent =
+          await _git(s.repo, ['rev-parse', '--verify', '--quiet', 'main^2']);
+      expect(secondParent.exitCode, 0);
+      expect(File(p.join(s.repo.path, 'local.txt')).existsSync(), isTrue);
+      expect(File(p.join(s.repo.path, 'feat.txt')).existsSync(), isTrue);
+    });
+
+    test('reports alreadyUpToDate when the base contains the session branch',
+        () async {
+      final s = await setup();
+      final baseTip = await tip(s.repo, 'main');
+
+      final result = await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.alreadyUpToDate, isTrue);
+      expect(result.fastForward, isFalse);
+      expect(result.baseFastForwarded, isFalse);
+      expect(result.commit, baseTip);
+      expect(await tip(s.repo, 'main'), baseTip);
+    });
+
+    test('rejects a dirty session worktree', () async {
+      final s = await setup();
+      await _write(s.worktree, 'dirty.txt', 'uncommitted\n');
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)
+            .having((e) => e.message, 'message', contains('uncommitted'))),
+      );
+      expect(await tip(s.repo, 'main'), await tip(s.origin, 'HEAD'),
+          reason: 'the base must not move when the merge is rejected');
+    });
+
+    test('rejects a local base diverged from origin', () async {
+      final s = await setup();
+      await commitIn(s.repo, 'local.txt', 'local work');
+      await advanceOrigin(s.origin);
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)
+            .having((e) => e.message, 'message', contains('diverged'))),
+      );
+    });
+
+    test('moves the base ref directly when it is checked out nowhere',
+        () async {
+      final s = await setup();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      final sessionTip = await tip(s.worktree, 'HEAD');
+      await _git(s.repo, ['checkout', '-b', 'topic']);
+
+      final result = await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.fastForward, isTrue);
+      expect(result.commit, sessionTip);
+      expect(await tip(s.repo, 'main'), sessionTip);
+      expect(
+          ((await _git(s.repo, ['branch', '--show-current'])).stdout as String)
+              .trim(),
+          'topic',
+          reason: 'the project checkout must stay on its branch');
+    });
+
+    test('rejects a non-fast-forward merge when the base is checked out '
+        'nowhere', () async {
+      final s = await setup();
+      await commitIn(s.repo, 'local.txt', 'local work');
+      await _git(s.repo, ['checkout', '-b', 'topic']);
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)
+            .having(
+                (e) => e.message, 'message', contains('not checked out'))),
+      );
+      // The session's commits must not have landed on main.
+      final merged = await Process.run('git',
+          ['merge-base', '--is-ancestor', sessionBranch, 'main'],
+          workingDirectory: s.repo.path);
+      expect(merged.exitCode, 1);
+    });
+
+    test('rejects a detached session worktree', () async {
+      final s = await setup();
+      await _git(s.worktree, ['checkout', '--detach', 'HEAD']);
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('detached'))),
+      );
+    });
+  });
+
   group('error handling', () {
     test('throws DaemonError kErrGit with exit code and args on failure',
         () async {

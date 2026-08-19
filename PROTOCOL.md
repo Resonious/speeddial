@@ -68,6 +68,7 @@ Session = {
   mode: SessionMode,
   model: string | null,
   cwd: string,                // working dir of the agent (project path or worktree)
+  baseBranch: string | null,  // base branch the session's worktree was created from
   archived: boolean,
   createdAt: string,
   updatedAt: string,
@@ -79,6 +80,14 @@ GitStatusFile = { path: string, indexStatus: string, worktreeStatus: string, sta
 GitStatus = { branch: string, ahead: int, behind: int, files: GitStatusFile[] }
 GitDiff = { path: string, patch: string, isNew: boolean, isDeleted: boolean, isBinary: boolean }
 Branch = { name: string, isCurrent: boolean, upstream: string | null }
+MergeResult = {
+  baseBranch: string,          // branch that received the merge
+  sessionBranch: string,       // worktree branch that was merged in
+  baseFastForwarded: boolean,  // local base first advanced to origin/<base>
+  alreadyUpToDate: boolean,    // base already contained every session commit
+  fastForward: boolean,        // merge resolved by moving the base ref (no merge commit)
+  commit: string,              // resulting tip of baseBranch
+}
 ```
 
 ### SessionEvent (discriminated union on `type`)
@@ -176,7 +185,8 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `git.createBranch {projectId: string, sessionId?: string, name: string, checkout?: boolean}` → `{}`
 - `git.commit {projectId: string, sessionId?: string, message: string, stageAll?: boolean}` → `{commitHash: string}`
 - `git.push {projectId: string, sessionId?: string, setUpstream?: boolean}` → `{}`
-- `git.createPullRequest {projectId: string, sessionId?: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated
+- `git.createPullRequest {projectId: string, sessionId?: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated. With `sessionId` given and `base` omitted, the PR targets the session's `baseBranch`; without either, `gh` picks the repo's default branch.
+- `git.mergeToBase {projectId: string, sessionId: string}` → `{merge: MergeResult}` — merges the session's worktree branch back into the `baseBranch` the session was created from (`sessionId` is required here and the session must have one, `-32602` otherwise). First fetches `origin/<baseBranch>`; when the remote-tracking ref is strictly ahead of the local base, the local base is fast-forwarded to it first (`baseFastForwarded: true`) — via `git merge --ff-only` in the checkout that has the base branch, or by moving the ref when the base is checked out nowhere. Diverged local/remote base branches error `-32003`. Then the session branch is merged into the (synced) local base: a regular merge (fast-forward or merge commit) in the checkout holding the base branch, or a ref move when the base is checked out nowhere and the merge is a fast-forward; a non-fast-forward merge with no base checkout errors `-32003`. The session worktree must be clean (`-32003` — commit or discard first). Merge conflicts surface as `-32020` and leave the base checkout in MERGING state for manual resolution. The session worktree and its branch are left in place.
 
 ## Notifications (daemon → all authenticated clients)
 

@@ -89,6 +89,30 @@ void main() {
     );
   });
 
+  test('gitMergeToBase merges into the session base branch', () async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final String projectId = (await fake.listProjects()).single.id;
+
+    // sess-1 is seeded with baseBranch 'main'.
+    final MergeResult merged =
+        await fake.gitMergeToBase(projectId, sessionId: 'sess-1');
+    expect(merged.baseBranch, 'main');
+    expect(merged.sessionBranch, 'main');
+    expect(merged.baseFastForwarded, isFalse);
+    expect(merged.alreadyUpToDate, isFalse);
+    expect(merged.fastForward, isTrue);
+    expect(merged.commit, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+
+    // sess-2 has no base branch: invalid-params DaemonError.
+    await expectLater(
+      fake.gitMergeToBase(projectId, sessionId: 'sess-2'),
+      throwsA(isA<DaemonError>()
+          .having((DaemonError e) => e.code, 'code', -32602)
+          .having(
+              (DaemonError e) => e.message, 'message', 'session has no base branch')),
+    );
+  });
+
   test('sendMessage streams the documented event sequence', () async {
     final FakeDaemonClient fake = FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
     final List<SessionEvent> events = <SessionEvent>[];

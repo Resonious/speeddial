@@ -1,6 +1,6 @@
-/// `git` command group: status/diff/branches/commit/push/pr against a
-/// project's repository on the daemon host. Every subcommand requires
-/// `--project <id>`.
+/// `git` command group: status/diff/branches/commit/push/pr/merge-base
+/// against a project's repository on the daemon host. Every subcommand
+/// requires `--project <id>`.
 library;
 
 import 'package:args/command_runner.dart';
@@ -16,6 +16,7 @@ class GitCommand extends Command<int> {
     addSubcommand(GitCommitCommand());
     addSubcommand(GitPushCommand());
     addSubcommand(GitPrCommand());
+    addSubcommand(GitMergeBaseCommand());
   }
 
   @override
@@ -277,6 +278,57 @@ class GitPrCommand extends Command<int> {
         output.raw(<String, Object?>{'url': url});
       } else {
         output.line(url);
+      }
+      return Exit.ok;
+    });
+  }
+}
+
+/// `speeddial git merge-base --project <id> --session <id>`
+class GitMergeBaseCommand extends Command<int> {
+  GitMergeBaseCommand() {
+    argParser
+      ..addOption('project', help: 'Project id (required).')
+      ..addOption('session',
+          help: 'Session id (required; must have a base branch).');
+  }
+
+  @override
+  final String name = 'merge-base';
+
+  @override
+  final String description =
+      'Merge a session branch back into its base branch.';
+
+  @override
+  bool get takesArguments => false;
+
+  @override
+  Future<int> run() async {
+    final project = _requireProject(this);
+    final session = argResults!['session'] as String?;
+    if (session == null || session.isEmpty) {
+      throw UsageException('Missing required option: --session.', usage);
+    }
+    final conn = resolveConnection(globalResults!);
+    final output = Output(json: conn.json);
+    return withDaemon(conn, (client) async {
+      final merge = await client.gitMergeToBase(project, session);
+      if (conn.json) {
+        output.raw(<String, Object?>{'merge': merge.toJson()});
+      } else if (merge.alreadyUpToDate) {
+        output.line(
+            '${merge.baseBranch} already contains ${merge.sessionBranch}.');
+      } else {
+        final how = merge.fastForward ? 'fast-forward' : 'merge commit';
+        final short = merge.commit.length > 8
+            ? merge.commit.substring(0, 8)
+            : merge.commit;
+        output.line(
+            'Merged ${merge.sessionBranch} into ${merge.baseBranch} '
+            '($how, $short)'
+            '${merge.baseFastForwarded ? ' — ${merge.baseBranch} first '
+                'fast-forwarded to origin/${merge.baseBranch}' : ''}');
       }
       return Exit.ok;
     });

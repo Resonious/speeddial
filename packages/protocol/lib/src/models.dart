@@ -421,6 +421,7 @@ class Session {
     required this.mode,
     required this.model,
     required this.cwd,
+    required this.baseBranch,
     required this.archived,
     required this.createdAt,
     required this.updatedAt,
@@ -439,6 +440,10 @@ class Session {
   /// Working dir of the agent (project path or worktree).
   final String cwd;
 
+  /// Base branch the session's worktree was created from; null for
+  /// non-worktree sessions.
+  final String? baseBranch;
+
   final bool archived;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -452,6 +457,7 @@ class Session {
         mode: SessionMode.parse(json['mode']! as String),
         model: json['model'] as String?,
         cwd: json['cwd']! as String,
+        baseBranch: json['baseBranch'] as String?,
         archived: json['archived']! as bool,
         createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
         updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
@@ -466,6 +472,7 @@ class Session {
         'mode': mode.wire,
         'model': model,
         'cwd': cwd,
+        'baseBranch': baseBranch,
         'archived': archived,
         'createdAt': createdAt.toUtc().toIso8601String(),
         'updatedAt': updatedAt.toUtc().toIso8601String(),
@@ -669,6 +676,56 @@ class Branch {
         'name': name,
         'isCurrent': isCurrent,
         'upstream': upstream,
+      };
+}
+
+/// Outcome of `git.mergeToBase`: the session's worktree branch merged back
+/// into the base branch the session was created from.
+class MergeResult {
+  const MergeResult({
+    required this.baseBranch,
+    required this.sessionBranch,
+    required this.baseFastForwarded,
+    required this.alreadyUpToDate,
+    required this.fastForward,
+    required this.commit,
+  });
+
+  /// Branch that received the merge.
+  final String baseBranch;
+
+  /// Worktree branch that was merged in.
+  final String sessionBranch;
+
+  /// Whether the local base was first fast-forwarded to `origin/<base>`
+  /// because the remote-tracking ref was strictly ahead.
+  final bool baseFastForwarded;
+
+  /// Whether the base already contained every session commit (no-op merge).
+  final bool alreadyUpToDate;
+
+  /// Whether the merge resolved by moving the base ref (no merge commit).
+  final bool fastForward;
+
+  /// Resulting tip commit of [baseBranch].
+  final String commit;
+
+  factory MergeResult.fromJson(Map<String, Object?> json) => MergeResult(
+        baseBranch: json['baseBranch']! as String,
+        sessionBranch: json['sessionBranch']! as String,
+        baseFastForwarded: json['baseFastForwarded']! as bool,
+        alreadyUpToDate: json['alreadyUpToDate']! as bool,
+        fastForward: json['fastForward']! as bool,
+        commit: json['commit']! as String,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'baseBranch': baseBranch,
+        'sessionBranch': sessionBranch,
+        'baseFastForwarded': baseFastForwarded,
+        'alreadyUpToDate': alreadyUpToDate,
+        'fastForward': fastForward,
+        'commit': commit,
       };
 }
 

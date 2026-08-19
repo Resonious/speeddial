@@ -645,6 +645,16 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<MergeResult> gitMergeToBase(String projectId,
+      {required String sessionId}) async {
+    final Object? result = await _requirePeer().call(
+      'git.mergeToBase',
+      <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
+    );
+    return MergeResult.fromJson(_resultMap(_resultField(result, 'merge')));
+  }
+
+  @override
   Future<String> gitCreatePr(
     String projectId, {
     String? sessionId,

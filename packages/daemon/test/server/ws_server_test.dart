@@ -706,6 +706,119 @@ void main() {
       );
       await client.close();
     });
+
+    test('git.mergeToBase merges the worktree branch into the base', () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_merge_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      final session = Session.fromJson((j(await client.peer
+              .call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Merge me',
+            'baseBranch': 'main',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+      expect(session.baseBranch, 'main',
+          reason: 'the wire Session must carry the base branch');
+
+      // Committing in the worktree, then merging, lands on main.
+      File(p.join(session.cwd, 'feat.txt')).writeAsStringSync('f\n');
+      await client.peer.call('git.commit', <String, Object?>{
+        'projectId': project.id,
+        'sessionId': session.id,
+        'message': 'session work',
+        'stageAll': true,
+      });
+      final merged = j(await client.peer.call('git.mergeToBase',
+          <String, Object?>{'projectId': project.id, 'sessionId': session.id}));
+      final merge =
+          MergeResult.fromJson((merged['merge']! as Map).cast<String, Object?>());
+      expect(merge.baseBranch, 'main');
+      expect(merge.sessionBranch, startsWith('speeddial/merge-me-'));
+      expect(merge.alreadyUpToDate, isFalse);
+      expect(merge.fastForward, isTrue);
+      expect(merge.baseFastForwarded, isFalse);
+      expect(
+        await Process.run('git', ['log', '-1', '--format=%s'],
+                workingDirectory: repoPath)
+            .then((r) => (r.stdout as String).trim()),
+        'session work',
+      );
+      expect(File(p.join(repoPath, 'feat.txt')).existsSync(), isTrue);
+
+      // A second merge is a no-op.
+      final again = MergeResult.fromJson((j(await client.peer.call(
+              'git.mergeToBase',
+              <String, Object?>{
+                'projectId': project.id,
+                'sessionId': session.id,
+              }))['merge']! as Map)
+          .cast<String, Object?>());
+      expect(again.alreadyUpToDate, isTrue);
+
+      // A dirty worktree is a conflict, and a session without a base branch
+      // is invalid params.
+      File(p.join(session.cwd, 'dirty.txt')).writeAsStringSync('x\n');
+      await expectLater(
+        client.peer.call('git.mergeToBase', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': session.id,
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)),
+      );
+      final plain = Session.fromJson((j(await client.peer.call(
+              'sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+      expect(plain.baseBranch, isNull);
+      await expectLater(
+        client.peer.call('git.mergeToBase', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': plain.id,
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('git.mergeToBase',
+            <String, Object?>{'projectId': project.id}),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await client.close();
+    });
   });
 
   group('fs', () {

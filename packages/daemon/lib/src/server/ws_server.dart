@@ -62,6 +62,7 @@ const List<String> _kProtocolMethods = <String>[
   'git.commit',
   'git.push',
   'git.createPullRequest',
+  'git.mergeToBase',
 ];
 
 /// One connected client: its peer, socket, and authentication state.
@@ -341,6 +342,7 @@ class SpeedDialServer {
       'git.commit' => _gitCommit(params),
       'git.push' => _gitPush(params),
       'git.createPullRequest' => _gitCreatePullRequest(params),
+      'git.mergeToBase' => _gitMergeToBase(params),
       _ => throw DaemonError(
           _kErrInvalidParams,
           'Unknown method: $method', // Unreachable: the peer answers -32601.
@@ -590,8 +592,14 @@ class SpeedDialServer {
   /// otherwise the project path. The session must belong to the project.
   String _gitRepoPath(Map<String, Object?> params) {
     final project = _requireProject(_requiredString(params, 'projectId'));
+    return _gitSession(params, project)?.cwd ?? project.path;
+  }
+
+  /// The session referenced by `sessionId` in [params], validated against
+  /// [project]; null when no `sessionId` was given.
+  Session? _gitSession(Map<String, Object?> params, Project project) {
     final rawSessionId = params['sessionId'];
-    if (rawSessionId == null) return project.path;
+    if (rawSessionId == null) return null;
     if (rawSessionId is! String || rawSessionId.isEmpty) {
       throw DaemonError(
           _kErrInvalidParams, 'sessionId must be a non-empty string');
@@ -604,7 +612,7 @@ class SpeedDialServer {
       throw DaemonError(_kErrInvalidParams,
           'session $rawSessionId does not belong to project ${project.id}');
     }
-    return session.cwd;
+    return session;
   }
 
   Future<Object?> _gitStatus(Map<String, Object?> params) async {
@@ -671,14 +679,42 @@ class SpeedDialServer {
     final rawBody = params['body'];
     final rawBase = params['base'];
     final rawDraft = params['draft'];
+    final project = _requireProject(_requiredString(params, 'projectId'));
+    final session = _gitSession(params, project);
+    // A worktree session's PR targets the branch it was created from unless
+    // the caller overrides it; only with neither does gh pick the default.
+    final explicitBase = rawBase is String && rawBase.isNotEmpty ? rawBase : null;
     final url = await _pr.createPullRequest(
-      _gitRepoPath(params),
+      session?.cwd ?? project.path,
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
       body: rawBody is String ? rawBody : null,
-      base: rawBase is String ? rawBase : null,
+      base: explicitBase ?? session?.baseBranch,
       draft: rawDraft is bool ? rawDraft : false,
     );
     return <String, Object?>{'url': url};
+  }
+
+  Future<Object?> _gitMergeToBase(Map<String, Object?> params) async {
+    final project = _requireProject(_requiredString(params, 'projectId'));
+    final session = _gitSession(params, project);
+    if (session == null) {
+      throw DaemonError(
+          _kErrInvalidParams, 'git.mergeToBase requires a sessionId');
+    }
+    final baseBranch = session.baseBranch;
+    if (baseBranch == null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'session ${session.id} has no base branch '
+            '(not created with baseBranch)',
+      );
+    }
+    final merge = await _git.mergeIntoBase(
+      projectPath: project.path,
+      worktreePath: session.cwd,
+      baseBranch: baseBranch,
+    );
+    return <String, Object?>{'merge': merge.toJson()};
   }
 
   // -------------------------------------------------------------------------
