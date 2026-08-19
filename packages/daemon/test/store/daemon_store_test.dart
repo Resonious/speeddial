@@ -34,6 +34,9 @@ Session session({
   SessionMode mode = SessionMode.build,
   String title = 'Test session',
   String? baseBranch,
+  String? thinkingLevel,
+  List<String> thinkingLevels = const <String>[],
+  List<String> models = const <String>[],
   bool yolo = false,
   bool archived = false,
 }) =>
@@ -45,8 +48,11 @@ Session session({
       status: status,
       mode: mode,
       model: null,
+      models: models,
       cwd: p.join(Directory.systemTemp.path, 'cwd'),
       baseBranch: baseBranch,
+      thinkingLevel: thinkingLevel,
+      thinkingLevels: thinkingLevels,
       yolo: yolo,
       archived: archived,
       createdAt: DateTime.utc(2026, 1, 2),
@@ -146,8 +152,11 @@ void main() {
       status: SessionStatus.waitingPermission,
       mode: SessionMode.plan,
       model: 'sonnet',
+      models: const <String>['fake-fast', 'fake-smart'],
       cwd: '/cwd',
       baseBranch: 'main',
+      thinkingLevel: 'high',
+      thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
       yolo: true,
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
@@ -159,7 +168,13 @@ void main() {
     expect(reloaded.status, SessionStatus.waitingPermission);
     expect(reloaded.mode, SessionMode.plan);
     expect(reloaded.model, 'sonnet');
+    expect(reloaded.models, <String>['fake-fast', 'fake-smart']);
     expect(reloaded.baseBranch, 'main');
+    expect(reloaded.thinkingLevel, 'high');
+    expect(
+      reloaded.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
     expect(reloaded.yolo, isTrue);
     expect(reloaded.archived, isTrue);
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
@@ -224,13 +239,36 @@ void main() {
         reason: 'legacy rows gain a null base branch');
     expect(migrated.yolo, isFalse,
         reason: 'legacy rows default to yolo off');
+    expect(migrated.thinkingLevel, isNull,
+        reason: 'legacy rows gain a null thinking level');
+    expect(migrated.thinkingLevels, isEmpty,
+        reason: 'legacy rows default to no thinking levels');
+    expect(migrated.models, isEmpty,
+        reason: 'legacy rows default to no advertised models');
     expect(store.acpSessionIdOf('s1'), isNull,
         reason: 'legacy rows have no resumable ACP session id');
 
-    // New inserts carry the base branch and the yolo flag.
-    store.insertSession(session(id: 's2', baseBranch: 'main', yolo: true));
+    // New inserts carry the base branch, the yolo flag, the thinking level
+    // fields, and the advertised models.
+    store.insertSession(session(
+      id: 's2',
+      baseBranch: 'main',
+      yolo: true,
+      thinkingLevel: 'auto',
+      thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
+      models: const <String>['fake-fast', 'fake-smart'],
+    ));
     expect(store.getSession('s2')!.baseBranch, 'main');
     expect(store.getSession('s2')!.yolo, isTrue);
+    expect(store.getSession('s2')!.thinkingLevel, 'auto');
+    expect(
+      store.getSession('s2')!.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+    expect(
+      store.getSession('s2')!.models,
+      <String>['fake-fast', 'fake-smart'],
+    );
     expect(
       store.listSessions().map((s) => s.baseBranch),
       <String?>[null, 'main'],

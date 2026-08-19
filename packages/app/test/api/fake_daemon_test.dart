@@ -489,8 +489,9 @@ void main() {
 
     final Session planned = await fake.setMode(created.id, SessionMode.plan);
     expect(planned.mode, SessionMode.plan);
-    final Session modelled = await fake.setModel(created.id, 'claude-sonnet');
-    expect(modelled.model, 'claude-sonnet');
+    // omp advertises its model list, so only listed ids are settable.
+    final Session modelled = await fake.setModel(created.id, 'kimi-k3');
+    expect(modelled.model, 'kimi-k3');
 
     final Session archived =
         await fake.archiveSession(created.id, true);
@@ -500,6 +501,70 @@ void main() {
 
     await fake.deleteSession(created.id);
     expect(await fake.listSessions(includeArchived: true), hasLength(2));
+  });
+
+  test('createSession seeds models for omp; setModel validates membership',
+      () async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final String projectId = (await fake.listProjects()).single.id;
+    const List<String> ompModels = <String>['omp-default', 'kimi-k3', 'gpt-5.2'];
+
+    // omp sessions advertise three models; a requested id inside the list
+    // sticks…
+    final Session adopted = await fake.createSession(
+      projectId: projectId,
+      providerId: 'omp',
+      model: 'kimi-k3',
+    );
+    expect(adopted.models, ompModels);
+    expect(adopted.model, 'kimi-k3');
+
+    // …anything else falls back to the omp default (best-effort adoption).
+    final Session fallback = await fake.createSession(
+      projectId: projectId,
+      providerId: 'omp',
+      model: 'some/unknown-model',
+    );
+    expect(fallback.model, 'omp-default');
+    expect(fallback.models, ompModels);
+
+    // No model passed: the default applies, matching the sheet's create.
+    final Session defaulted =
+        await fake.createSession(projectId: projectId, providerId: 'omp');
+    expect(defaulted.model, 'omp-default');
+    expect(defaulted.models, ompModels);
+
+    // Other providers advertise no models and keep the caller's id as-is.
+    final Session claude = await fake.createSession(
+      projectId: projectId,
+      providerId: 'claude',
+      model: 'claude-sonnet',
+    );
+    expect(claude.models, isEmpty);
+    expect(claude.model, 'claude-sonnet');
+    // Thinking levels still distinguish the same way.
+    expect(defaulted.thinkingLevels,
+        const <String>['off', 'auto', 'low', 'high', 'max']);
+    expect(claude.thinkingLevels, isEmpty);
+
+    // setModel rejects ids outside the advertised list with the raw -32602…
+    await expectLater(
+      fake.setModel(adopted.id, 'nope'),
+      throwsA(isA<DaemonError>()
+          .having((DaemonError e) => e.code, 'code', -32602)
+          .having((DaemonError e) => e.message, 'message',
+              'invalid model: nope; must be one of $ompModels')),
+    );
+    // …and adopts ids inside it, propagating the advertised list.
+    final Session switched = await fake.setModel(adopted.id, 'gpt-5.2');
+    expect(switched.model, 'gpt-5.2');
+    expect(switched.models, ompModels);
+
+    // A session with no advertised models accepts any id (a locally
+    // persisted preference, like the daemon's non-config providers).
+    final Session local = await fake.setModel(claude.id, 'other/claude-x');
+    expect(local.model, 'other/claude-x');
+    expect(local.models, isEmpty);
   });
 
   test('unknown resources fail with not-found DaemonErrors', () async {

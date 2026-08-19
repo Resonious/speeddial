@@ -6,9 +6,20 @@
 //     `loadSession` capability is advertised unless `<cwd>/agent.no_load_session`
 //     exists at initialize time.
 //   * `authenticate` answers with `{}`.
-//   * `session/new` answers with session id `s1`.
-//   * `session/load` answers with `{}` for any session id, unless
-//     `<cwd>/agent.load_fails` exists (answers with error -32000).
+//   * `session/new` answers with session id `s1` and a `configOptions` list
+//     carrying the model select option (omitted when `<cwd>/agent.no_model`
+//     exists at initialize time) and the thinking select option (omitted
+//     when `<cwd>/agent.no_thinking` exists at initialize time).
+//   * `session/load` answers with the same `configOptions` for any session
+//     id, unless `<cwd>/agent.load_fails` exists (answers with error
+//     -32000).
+//   * `session/set_config_option` with configId 'model' accepts ANY
+//     non-empty string (lenient, like omp's fuzzy model ids), updates the
+//     model option's currentValue, and records it to `<cwd>/agent.model`
+//     (outside git trees); configId 'thinking' accepts only the advertised
+//     levels and records to `<cwd>/agent.thinking`; unknown config ids or
+//     values answer with error -32602. Both answer with the full updated
+//     `configOptions` list.
 //   * `session/set_mode` answers with `{}`.
 //   * `session/prompt` runs a scripted turn. The turn text selects behavior:
 //       - normal text: agent_message_chunk x2, tool_call, fs/read_text_file,
@@ -37,6 +48,25 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 const String sessionId = 's1';
+
+/// The thinking level values the fake advertises, in order.
+const List<String> _thinkingValues = <String>['off', 'auto', 'low', 'high', 'max'];
+
+/// The fake's in-memory current thinking level, reported as the thinking
+/// config option's currentValue and updated by `session/set_config_option`.
+String _thinkingCurrent = 'auto';
+
+/// The fake's in-memory current model, reported as the model config
+/// option's currentValue and updated by `session/set_config_option`.
+String _modelCurrent = 'fake-fast';
+
+/// Whether the model config option is advertised; set once at `initialize`
+/// from the `<cwd>/agent.no_model` marker.
+bool _modelEnabled = true;
+
+/// Whether the thinking config option is advertised; set once at
+/// `initialize` from the `<cwd>/agent.no_thinking` marker.
+bool _thinkingEnabled = true;
 
 final Map<int, Completer<Map<String, Object?>>> _agentRequests =
     <int, Completer<Map<String, Object?>>>{};
@@ -168,6 +198,10 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
 
   switch (method) {
     case 'initialize':
+      _modelEnabled =
+          !File('${Directory.current.path}/agent.no_model').existsSync();
+      _thinkingEnabled =
+          !File('${Directory.current.path}/agent.no_thinking').existsSync();
       await _sendResponse(id!, <String, Object?>{
         'protocolVersion': 1,
         'agentCapabilities': <String, Object?>{
@@ -202,6 +236,7 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
             <String, Object?>{'id': 'plan', 'name': 'Plan'},
           ],
         },
+        'configOptions': _configOptions(),
       });
     case 'session/load':
       // The fake keeps no state of its own; like a real agent reloading its
@@ -210,7 +245,48 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
       if (File('${Directory.current.path}/agent.load_fails').existsSync()) {
         await _sendError(id!, -32000, 'Unknown session');
       } else {
-        await _sendResponse(id!, const <String, Object?>{});
+        await _sendResponse(id!, <String, Object?>{
+          'configOptions': _configOptions(),
+        });
+      }
+    case 'session/set_config_option':
+      final configParams = params(message);
+      final configId = configParams['configId'];
+      final value = configParams['value'];
+      if (configId == 'model' &&
+          _modelEnabled &&
+          value is String &&
+          value.isNotEmpty) {
+        // Model ids are deliberately lenient (omp accepts fuzzy ids); any
+        // non-empty string is applied.
+        _modelCurrent = value;
+        final cwd = Directory.current.path;
+        if (!Directory(p.join(cwd, '.git')).existsSync() &&
+            !File(p.join(cwd, '.git')).existsSync()) {
+          // Recorded so tests can observe that the agent really applied the
+          // value (e.g. a resumption reapplying a persisted choice).
+          File(p.join(cwd, 'agent.model')).writeAsStringSync(_modelCurrent);
+        }
+        await _sendResponse(id!, <String, Object?>{
+          'configOptions': _configOptions(),
+        });
+      } else if (configId == 'thinking' &&
+          _thinkingEnabled &&
+          value is String &&
+          _thinkingValues.contains(value)) {
+        _thinkingCurrent = value;
+        final cwd = Directory.current.path;
+        if (!Directory(p.join(cwd, '.git')).existsSync() &&
+            !File(p.join(cwd, '.git')).existsSync()) {
+          // Recorded so tests can observe that the agent really applied the
+          // value (e.g. a resumption reapplying a persisted choice).
+          File(p.join(cwd, 'agent.thinking')).writeAsStringSync(_thinkingCurrent);
+        }
+        await _sendResponse(id!, <String, Object?>{
+          'configOptions': _configOptions(),
+        });
+      } else {
+        await _sendError(id!, -32602, 'Unknown config option or value');
       }
     case 'session/set_mode':
       await _sendResponse(id!, const <String, Object?>{});
@@ -230,6 +306,44 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
 Map<String, Object?> params(Map<String, Object?> message) {
   final raw = message['params'];
   return raw is Map ? raw.cast<String, Object?>() : const <String, Object?>{};
+}
+
+/// The config options advertised by `session/new`, `session/load`, and
+/// `session/set_config_option`: the model select option unless the
+/// `agent.no_model` marker was present at initialize, and the thinking
+/// select option unless the `agent.no_thinking` marker was present.
+List<Object?> _configOptions() {
+  final options = <Object?>[];
+  if (_modelEnabled) {
+    options.add(<String, Object?>{
+      'id': 'model',
+      'name': 'Model',
+      'category': 'model',
+      'type': 'select',
+      'currentValue': _modelCurrent,
+      'options': <Object?>[
+        <String, Object?>{'value': 'fake-fast', 'name': 'Fake Fast'},
+        <String, Object?>{'value': 'fake-smart', 'name': 'Fake Smart'},
+      ],
+    });
+  }
+  if (_thinkingEnabled) {
+    options.add(<String, Object?>{
+      'id': 'thinking',
+      'name': 'Thinking',
+      'category': 'thought_level',
+      'type': 'select',
+      'currentValue': _thinkingCurrent,
+      'options': <Object?>[
+        for (final value in _thinkingValues)
+          <String, Object?>{
+            'value': value,
+            'name': value[0].toUpperCase() + value.substring(1),
+          },
+      ],
+    });
+  }
+  return options;
 }
 
 Future<void> _runTurn(

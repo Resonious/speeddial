@@ -293,6 +293,84 @@ class AcpAvailableCommand {
   final Map<String, Object?>? input;
 }
 
+/// A single selectable value of an agent config option.
+class AcpConfigOptionValue {
+  const AcpConfigOptionValue({
+    required this.value,
+    required this.name,
+    this.description,
+  });
+
+  factory AcpConfigOptionValue.fromJson(Map<String, Object?> json) {
+    return AcpConfigOptionValue(
+      value: json['value'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+    );
+  }
+
+  final String value;
+  final String name;
+  final String? description;
+}
+
+/// A config option advertised by the agent — carried by the `session/new`,
+/// `session/load`, and `session/set_config_option` results. Parsing is
+/// defensive: malformed or missing fields degrade to empty values instead of
+/// throwing.
+class AcpConfigOption {
+  const AcpConfigOption({
+    required this.id,
+    required this.name,
+    this.category,
+    required this.type,
+    required this.currentValue,
+    required this.options,
+  });
+
+  factory AcpConfigOption.fromJson(Map<String, Object?> json) {
+    final rawOptions = json['options'];
+    final options = <AcpConfigOptionValue>[];
+    if (rawOptions is List) {
+      for (final entry in rawOptions) {
+        if (entry is Map) {
+          options.add(
+            AcpConfigOptionValue.fromJson(Map<String, Object?>.from(entry)),
+          );
+        }
+      }
+    }
+    return AcpConfigOption(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      category: json['category'] as String?,
+      type: json['type'] as String? ?? '',
+      currentValue: json['currentValue'] as String? ?? '',
+      options: options,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String? category;
+  final String type;
+  final String currentValue;
+  final List<AcpConfigOptionValue> options;
+
+  /// Parses a `configOptions` list field; non-list or non-map entries are
+  /// dropped.
+  static List<AcpConfigOption> listFrom(Object? value) {
+    if (value is! List) return const <AcpConfigOption>[];
+    final out = <AcpConfigOption>[];
+    for (final entry in value) {
+      if (entry is Map) {
+        out.add(AcpConfigOption.fromJson(Map<String, Object?>.from(entry)));
+      }
+    }
+    return out;
+  }
+}
+
 /// Session cost information.
 class AcpCost {
   const AcpCost({required this.amount, required this.currency});

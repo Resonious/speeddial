@@ -370,6 +370,16 @@ class DaemonClient {
     return Session.fromJson(_asMap(map['session'], 'sessions.setModel'));
   }
 
+  /// `sessions.setThinkingLevel` — switches the session thinking level.
+  Future<Session> setThinkingLevel(String sessionId, String level) async {
+    final result = await _peer.call(
+      'sessions.setThinkingLevel',
+      <String, Object?>{'sessionId': sessionId, 'level': level},
+    );
+    final map = _asMap(result, 'sessions.setThinkingLevel');
+    return Session.fromJson(_asMap(map['session'], 'sessions.setThinkingLevel'));
+  }
+
   /// `sessions.history` — persisted events of [sessionId] ascending by `seq`.
   ///
   /// Default [limit] is 200 (protocol cap 1000); [beforeSeq] pages further

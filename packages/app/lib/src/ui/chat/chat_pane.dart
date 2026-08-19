@@ -225,6 +225,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 mode: mode,
                 usage: usage,
                 model: session?.model,
+                models: session?.models ?? const <String>[],
+                onModelChanged: (String model) {
+                  unawaited(_setModel(model));
+                },
+                thinkingLevel: session?.thinkingLevel,
+                thinkingLevels: session?.thinkingLevels ?? const <String>[],
+                onThinkingChanged: (String level) {
+                  unawaited(_setThinkingLevel(level));
+                },
                 onSend: (String text, List<OutgoingAttachment> attachments) {
                   if (status == SessionStatus.running) {
                     return Future<void>.value();
@@ -274,6 +283,23 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     try {
       await widget.data.sessions
           .setMode(widget.daemonId, widget.sessionId, next);
+    } on DaemonError catch (error) {
+      await _showError(error);
+    }
+  }
+
+  Future<void> _setThinkingLevel(String level) async {
+    try {
+      await widget.data.sessions
+          .setThinkingLevel(widget.daemonId, widget.sessionId, level);
+    } on DaemonError catch (error) {
+      await _showError(error);
+    }
+  }
+
+  Future<void> _setModel(String model) async {
+    try {
+      await widget.data.sessions.setModel(widget.daemonId, widget.sessionId, model);
     } on DaemonError catch (error) {
       await _showError(error);
     }

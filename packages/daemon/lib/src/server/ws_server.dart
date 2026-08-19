@@ -52,6 +52,7 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.delete',
   'sessions.setMode',
   'sessions.setModel',
+  'sessions.setThinkingLevel',
   'sessions.history',
   'sessions.respondPermission',
   'fs.list',
@@ -335,6 +336,7 @@ class SpeedDialServer {
       'sessions.delete' => _sessionsDelete(params),
       'sessions.setMode' => _sessionsSetMode(params),
       'sessions.setModel' => _sessionsSetModel(params),
+      'sessions.setThinkingLevel' => _sessionsSetThinkingLevel(params),
       'sessions.history' => _sessionsHistory(params),
       'sessions.respondPermission' => _sessionsRespondPermission(params),
       'fs.list' => _fsList(params),
@@ -622,6 +624,15 @@ class SpeedDialServer {
     final sessionId = _requiredString(params, 'sessionId');
     final model = _requiredString(params, 'model');
     final session = await _engine.setModel(sessionId, model);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsSetThinkingLevel(
+    Map<String, Object?> params,
+  ) async {
+    final sessionId = _requiredString(params, 'sessionId');
+    final level = _requiredString(params, 'level');
+    final session = await _engine.setThinkingLevel(sessionId, level);
     return <String, Object?>{'session': session.toJson()};
   }
 

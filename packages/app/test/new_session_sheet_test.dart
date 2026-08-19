@@ -6,18 +6,13 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
-import 'package:speeddial_app/src/ui/daemon_error_text.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/new_session_sheet.dart';
 
 /// Pumps a host scaffold that opens [NewSessionSheet] as a real modal
-/// bottom-sheet route (mirroring the left rail: caller-captured
-/// [ScaffoldMessenger], scroll-controlled, safe-area) against a fake daemon
-/// (either [fake] or a fresh scripted one) whose `omp` provider offers two
-/// models. The sheet is already open when this returns.
-///
-/// A real route matters: submit pops the sheet, and the host survives
-/// underneath — so post-create send failures can land in a snackbar.
+/// bottom-sheet route (mirroring the left rail: scroll-controlled,
+/// safe-area) against a fake daemon (either [fake] or a fresh scripted one).
+/// The sheet is already open when this returns.
 Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
     {FakeDaemonClient? fake}) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -26,6 +21,10 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
   final AppData app = AppData()..registerClient('fake', fakeClient);
   addTearDown(app.dispose);
   final String projectId = (await fakeClient.listProjects()).single.id;
+  // Mirror what the rail does on load: seed the store caches so tests can
+  // read them back without going through a create.
+  await app.projects.refresh('fake');
+  await app.sessions.refresh('fake');
 
   await tester.pumpWidget(
     MaterialApp(
@@ -37,8 +36,6 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
             builder: (BuildContext context) => Center(
               child: ElevatedButton(
                 onPressed: () {
-                  final ScaffoldMessengerState messenger =
-                      ScaffoldMessenger.of(context);
                   showModalBottomSheet<void>(
                     context: context,
                     isScrollControlled: true,
@@ -50,7 +47,6 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
                         data: app,
                         daemonId: 'fake',
                         projectId: projectId,
-                        messenger: messenger,
                       ),
                     ),
                   );
@@ -69,28 +65,63 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
 }
 
 /// The session most recently created through the fake, found by exclusion:
-/// the two seeded sessions carry models 'omp-default' and null.
+/// the two seeded sessions are 'sess-1' and 'sess-2'.
 Session createdSession(AppData app, String projectId) {
   final List<Session> sessions = app.sessions.sessionsFor(projectId);
   return sessions.singleWhere(
       (Session s) => s.id != 'sess-1' && s.id != 'sess-2');
 }
 
-/// A fake whose sends always fail with [error], driving the sheet's
-/// post-create send-failure snackbar path.
-class _SendFailingFake extends FakeDaemonClient {
-  _SendFailingFake(this.error);
-
-  final Object error;
-
-  @override
-  Future<void> sendMessage(String sessionId, String text,
-      {List<OutgoingAttachment>? attachments}) async {
-    throw error;
-  }
-}
-
 void main() {
+  testWidgets('the form asks only for provider, worktree and yolo — no '
+      'prompt, model or mode', (WidgetTester tester) async {
+    await pumpSheet(tester);
+
+    // Ask-ahead removed: no initial prompt, model autocomplete or mode
+    // selector. What remains is provider, worktree/default-branch and yolo.
+    expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-yolo')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-prompt')), findsNothing);
+    expect(find.byKey(const Key('new-session-model')), findsNothing);
+    expect(find.byKey(const Key('new-session-mode')), findsNothing);
+    // The provider defaults to the daemon's first available provider.
+    expect(find.text('OMP Agent'), findsOneWidget);
+  });
+
+  testWidgets('submit creates the session, selects it and pops — no turn '
+      'starts', (WidgetTester tester) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    // Sheet closed and the new session selected in the rail's selection.
+    expect(find.byKey(const Key('new-session-submit')), findsNothing);
+    final Session created = createdSession(app, projectId);
+    expect(app.selection.selectedProjectId, projectId);
+    expect(app.selection.selectedSessionId, created.id);
+
+    // Provider/baseBranch defaults honored; model was NOT passed, so the
+    // daemon's default applies (agent-side adoption happens later from the
+    // composer).
+    expect(created.providerId, 'omp');
+    expect(created.baseBranch, 'main');
+    expect(created.cwd, contains('.speeddial-worktrees'));
+    expect(created.model, 'omp-default');
+
+    // Nothing was sent: the new session's history and event stream are
+    // empty and no turn was ever started.
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    expect((await fake.history(created.id)).events, isEmpty);
+    expect(app.chat.statusOf(created.id), SessionStatus.idle);
+    expect(
+      app.chat.eventsFor(created.id).whereType<UserMessageEvent>(),
+      isEmpty,
+    );
+  });
+
   testWidgets('yolo mode is off by default and sent when checked',
       (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
@@ -147,96 +178,34 @@ void main() {
     expect(yoloTile().value, isFalse);
   });
 
-  testWidgets('model field offers provider models; selection is sent on '
-      'create', (WidgetTester tester) async {
+  testWidgets('unchecking the worktree box hides the base branch and keeps '
+      'the project cwd', (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
-    // Focusing the field opens the provider's model list.
-    await tester.tap(find.byKey(const Key('new-session-model')));
+    await tester.tap(find.byKey(const Key('new-session-worktree')));
     await tester.pumpAndSettle();
-    expect(find.text('omp-default'), findsOneWidget);
-    expect(find.text('omp-fast'), findsOneWidget);
-
-    await tester.tap(find.text('omp-fast'));
-    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-session-base-branch')), findsNothing);
 
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
-    expect(createdSession(app, projectId).model, 'omp-fast');
+    final Session created = createdSession(app, projectId);
+    expect(created.baseBranch, isNull);
+    expect(created.cwd, app.projects.projectsFor('fake').single.path);
   });
 
-  testWidgets('model list filters as you type', (WidgetTester tester) async {
-    await pumpSheet(tester);
-
-    await tester.enterText(
-        find.byKey(const Key('new-session-model')), 'fast');
-    await tester.pumpAndSettle();
-    expect(find.text('omp-fast'), findsOneWidget);
-    expect(find.text('omp-default'), findsNothing);
-  });
-
-  testWidgets('a hand-typed model id is sent as-is',
+  testWidgets('Cancel closes the sheet without creating a session',
       (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
-    await tester.enterText(
-        find.byKey(const Key('new-session-model')), 'some/custom-id');
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('new-session-submit')));
-    await tester.pumpAndSettle();
-    expect(createdSession(app, projectId).model, 'some/custom-id');
+    expect(find.byKey(const Key('new-session-submit')), findsNothing);
+    expect(app.sessions.sessionsFor(projectId), hasLength(2));
   });
 
-  testWidgets('a connection drop while sending the initial prompt shows a '
-      'soft reconnecting notice, not a raw error',
+  testWidgets('the action row stays clear of the system navigation bar',
       (WidgetTester tester) async {
-    await pumpSheet(
-      tester,
-      fake: _SendFailingFake(const DaemonConnectionError('peer closed')),
-    );
-
-    await tester.enterText(find.byKey(const Key('new-session-prompt')),
-        'Fix the login redirect');
-    await tester.tap(find.byKey(const Key('new-session-submit')));
-    await tester.pumpAndSettle();
-
-    // The drop self-heals (auto-reconnect + resync), so no raw socket
-    // error and no "failed to send" framing reaches the user.
-    expect(find.text(kConnectionLostMessage), findsOneWidget);
-    expect(find.textContaining('Failed to send the initial prompt'),
-        findsNothing);
-    expect(find.textContaining('peer closed'), findsNothing);
-
-    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
-    await tester.pump(const Duration(seconds: 6));
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('a genuine rejection of the initial prompt still shows the '
-      'raw error', (WidgetTester tester) async {
-    await pumpSheet(
-      tester,
-      fake: _SendFailingFake(
-          const DaemonError(kErrConflict, 'a turn is already running')),
-    );
-
-    await tester.enterText(find.byKey(const Key('new-session-prompt')),
-        'Fix the login redirect');
-    await tester.tap(find.byKey(const Key('new-session-submit')));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('Failed to send the initial prompt'),
-        findsOneWidget);
-    expect(find.textContaining('a turn is already running'), findsOneWidget);
-
-    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
-    await tester.pump(const Duration(seconds: 6));
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('keyboard dismissal keeps Cancel/Create session clear of the '
-      'system navigation bar', (WidgetTester tester) async {
     // Phone viewport with Android-15-style edge-to-edge bars: status bar on
     // top, gesture/navigation bar at the bottom (see safe_area_test.dart).
     const Size phone = Size(390, 844);
@@ -272,19 +241,6 @@ void main() {
     await tester.tap(find.text('Fake daemon'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('New session'));
-    await tester.pumpAndSettle();
-
-    // The autofocused prompt opens the keyboard: Android reports the
-    // keyboard as viewInsets and consumes the bottom system padding.
-    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
-    tester.view.padding = const FakeViewPadding(top: statusBar);
-    await tester.pumpAndSettle();
-
-    // Dismissing the keyboard sinks the sheet back to the screen's bottom
-    // edge, where the nav bar overlays it.
-    tester.view.viewInsets = const FakeViewPadding(bottom: 0);
-    tester.view.padding =
-        const FakeViewPadding(top: statusBar, bottom: navBar);
     await tester.pumpAndSettle();
 
     // The action row must stay tappable above the gesture/navigation area.

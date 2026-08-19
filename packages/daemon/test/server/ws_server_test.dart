@@ -477,6 +477,22 @@ void main() {
             .having((e) => e.code, 'code', -32602)),
       );
 
+      final thinkingChanged = j(await client.peer.call(
+          'sessions.setThinkingLevel',
+          <String, Object?>{'sessionId': session.id, 'level': 'high'}));
+      expect(
+        Session.fromJson(
+                (thinkingChanged['session']! as Map).cast<String, Object?>())
+            .thinkingLevel,
+        'high',
+      );
+      await expectLater(
+        client.peer.call('sessions.setThinkingLevel',
+            <String, Object?>{'sessionId': session.id, 'level': 'bogus'}),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+
       // Archiving hides the session from the default list.
       expect(
         (j(await client.peer

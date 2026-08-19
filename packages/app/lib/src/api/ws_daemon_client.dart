@@ -553,6 +553,15 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<Session> setThinkingLevel(String sessionId, String level) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.setThinkingLevel',
+      <String, Object?>{'sessionId': sessionId, 'level': level},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
   Future<({List<SessionEvent> events, bool hasMore})> history(
     String sessionId, {
     int limit = 200,

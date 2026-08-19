@@ -90,7 +90,7 @@ void main() {
     expect(info.agentCapabilities, isNotEmpty);
     expect(info.authMethods, isEmpty);
 
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
     expect(sessionId, 's1');
 
     final updates = <AcpSessionUpdate>[];
@@ -168,7 +168,7 @@ void main() {
     addTearDown(client.dispose);
 
     await client.initialized;
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
 
     final promptFuture = client.prompt(sessionId, textBlocks('cancel'));
     await client.cancel(sessionId);
@@ -187,7 +187,7 @@ void main() {
     });
 
     await client.initialized;
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
 
     final pending = client.prompt(sessionId, textBlocks('hang'));
     // Attach the matcher before dispose() so the pending future's error has a
@@ -209,7 +209,7 @@ void main() {
     addTearDown(client.dispose);
 
     await client.initialized;
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
 
     final updates = <AcpSessionUpdate>[];
     final subscription = client.sessionUpdates(sessionId).listen(updates.add);
@@ -229,7 +229,7 @@ void main() {
 
     await client.initialized;
     await client.authenticate('token');
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
     expect(sessionId, 's1');
     await client.setMode(sessionId, 'plan');
   });
@@ -241,7 +241,7 @@ void main() {
     final info = await client.initialized;
     expect(info.agentCapabilities['loadSession'], isTrue);
 
-    final sessionId = await client.newSession(cwd: tempDir.path);
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
     await client.loadSession(sessionId: sessionId, cwd: tempDir.path);
     // The resumed session accepts prompts.
     final result = await client.prompt(sessionId, textBlocks('weird'));
@@ -273,5 +273,129 @@ void main() {
 
     final info = await client.initialized;
     expect(info.agentCapabilities['loadSession'], isFalse);
+  });
+
+  test('newSession and loadSession report configOptions; setConfigOption '
+      'updates the agent and returns the full list', () async {
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    await client.initialized;
+    final created = await client.newSession(cwd: tempDir.path);
+    expect(created.sessionId, 's1');
+    final model = created.configOptions
+        .firstWhere((option) => option.id == 'model');
+    expect(model.name, 'Model');
+    expect(model.category, 'model');
+    expect(model.type, 'select');
+    expect(model.currentValue, 'fake-fast');
+    expect(
+      model.options.map((option) => option.value),
+      <String>['fake-fast', 'fake-smart'],
+    );
+    final thinking = created.configOptions
+        .firstWhere((option) => option.id == 'thinking');
+    expect(thinking.name, 'Thinking');
+    expect(thinking.category, 'thought_level');
+    expect(thinking.type, 'select');
+    expect(thinking.currentValue, 'auto');
+    expect(
+      thinking.options.map((option) => option.value),
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+
+    // Resuming advertises the same options.
+    final loaded =
+        await client.loadSession(sessionId: created.sessionId, cwd: tempDir.path);
+    expect(
+      loaded.map((option) => option.id),
+      <String>['model', 'thinking'],
+    );
+    expect(
+      loaded.firstWhere((option) => option.id == 'thinking').currentValue,
+      'auto',
+    );
+
+    // A model choice (any non-empty string, like omp's fuzzy ids) is
+    // applied and recorded.
+    final changedModel = await client.setConfigOption(
+        created.sessionId, 'model', 'claude-sonnet');
+    expect(
+      changedModel.firstWhere((option) => option.id == 'model').currentValue,
+      'claude-sonnet',
+    );
+    expect(
+      File(p.join(tempDir.path, 'agent.model')).readAsStringSync(),
+      'claude-sonnet',
+    );
+
+    // Setting the thinking option updates the agent and returns the full
+    // list.
+    final updated =
+        await client.setConfigOption(created.sessionId, 'thinking', 'max');
+    expect(
+      updated.firstWhere((option) => option.id == 'thinking').currentValue,
+      'max',
+    );
+    expect(
+      updated
+          .firstWhere((option) => option.id == 'thinking')
+          .options
+          .map((option) => option.value),
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+    expect(
+      File(p.join(tempDir.path, 'agent.thinking')).readAsStringSync(),
+      'max',
+    );
+
+    // An unknown value is a JSON-RPC error.
+    await expectLater(
+      client.setConfigOption(created.sessionId, 'thinking', 'bogus'),
+      throwsA(isA<AcpJsonRpcException>()
+          .having((e) => e.code, 'code', -32602)),
+    );
+  });
+
+  test('configOptions omit the thinking option and reject its config id '
+      'behind agent.no_thinking', () async {
+    File(p.join(tempDir.path, 'agent.no_thinking')).createSync();
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    await client.initialized;
+    final created = await client.newSession(cwd: tempDir.path);
+    expect(created.sessionId, 's1');
+    // The thinking option is gone, but the model option stays advertised.
+    expect(
+      created.configOptions.map((option) => option.id),
+      <String>['model'],
+    );
+    await expectLater(
+      client.setConfigOption(created.sessionId, 'thinking', 'auto'),
+      throwsA(isA<AcpJsonRpcException>()
+          .having((e) => e.code, 'code', -32602)),
+    );
+  });
+
+  test('configOptions omit the model option and reject its config id '
+      'behind agent.no_model', () async {
+    File(p.join(tempDir.path, 'agent.no_model')).createSync();
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    await client.initialized;
+    final created = await client.newSession(cwd: tempDir.path);
+    expect(created.sessionId, 's1');
+    // The model option is gone, but the thinking option stays advertised.
+    expect(
+      created.configOptions.map((option) => option.id),
+      <String>['thinking'],
+    );
+    await expectLater(
+      client.setConfigOption(created.sessionId, 'model', 'fake-fast'),
+      throwsA(isA<AcpJsonRpcException>()
+          .having((e) => e.code, 'code', -32602)),
+    );
   });
 }

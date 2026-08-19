@@ -66,9 +66,16 @@ Session = {
   title: string,
   status: SessionStatus,
   mode: SessionMode,
-  model: string | null,
+  model: string | null,       // current model id — agent-reported when the provider
+                              // advertises a model config option, else a local preference
+  models: string[],           // selectable model ids advertised by the agent (ACP config
+                              // option); empty when the provider has none
   cwd: string,                // working dir of the agent (project path or worktree)
   baseBranch: string | null,  // base branch the session's worktree was created from
+  thinkingLevel: string | null,   // current agent thinking level (e.g. omp's "auto");
+                              // null when the provider exposes no thinking-level option
+  thinkingLevels: string[],   // selectable levels advertised by the agent (ACP config
+                              // option); empty when the provider has none
   yolo: boolean,              // daemon auto-approves the agent's permission requests
   archived: boolean,
   createdAt: string,
@@ -197,6 +204,12 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     to the first `allow_once`), emits the `permissionRequest` and `permissionResolved` events
     back-to-back (the session never enters `waitingPermission`), and the turn continues
     uninterrupted. A request offering no allow option still parks for a client response.
+  — the daemon adopts the agent's ACP `configOptions` at creation: `models`/`thinkingLevels`
+    carry the advertised options and `model`/`thinkingLevel` the agent-reported current values.
+    A `model` argument is applied best-effort via `session/set_config_option` when the agent
+    advertises a model option (the returned session reflects the agent-reported model, which
+    may differ when the agent rejects it); when the agent advertises none, `model` stays a
+    local label as before.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
   attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon
@@ -215,7 +228,19 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
 - `sessions.delete {sessionId: string}` → `{}` — kills the agent process if alive
 - `sessions.setMode {sessionId: string, mode: SessionMode}` → `{session: Session}`
-- `sessions.setModel {sessionId: string, model: string}` → `{session: Session}`
+- `sessions.setModel {sessionId: string, model: string}` → `{session: Session}` — when the
+  provider advertises selectable models (`Session.models`), the daemon validates against them
+  (`-32602` when not listed) and forwards the change to a live idle agent via ACP
+  `session/set_config_option`, persisting the agent-reported state (which also carries the
+  current thinking level/levels, since those can be model-dependent); without a live agent the
+  choice is persisted and reapplied on resume. Providers without a model option keep the legacy
+  local-preference behavior (any string is stored verbatim).
+- `sessions.setThinkingLevel {sessionId: string, level: string}` → `{session: Session}` — sets the
+  agent's thinking level (forwarded to a live agent via ACP `session/set_config_option`; otherwise
+  persisted and reapplied on resume). `level` must be one of the session's `thinkingLevels`;
+  `-32602` when it is not or when the session's provider advertises no thinking-level option. The
+  returned session reflects the agent-reported state, which may differ from the requested level
+  when the agent clamps it.
 - `sessions.history {sessionId: string, limit?: int, beforeSeq?: int}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page
 - `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
 

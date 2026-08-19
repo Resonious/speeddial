@@ -9,10 +9,12 @@
 ///   * `projects`       id TEXT PK, name, path TEXT UNIQUE, added_at,
 ///                      last_active_at
 ///   * `sessions`       id PK, project_id FK→projects, provider_id, title,
-///                      status, mode, model NULL, cwd, base_branch NULL,
+///                      status, mode, model NULL, models TEXT JSON-array
+///                      (default '[]'), cwd, base_branch NULL,
 ///                      acp_session_id NULL (provider-side id for resume),
-///                      yolo INT (auto-approve permissions), archived INT,
-///                      created_at, updated_at
+///                      thinking_level NULL, thinking_levels TEXT JSON-array
+///                      (default '[]'), yolo INT (auto-approve permissions),
+///                      archived INT, created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
@@ -59,6 +61,7 @@ class DaemonStore {
         status TEXT NOT NULL,
         mode TEXT NOT NULL,
         model TEXT,
+        models TEXT NOT NULL DEFAULT '[]',
         cwd TEXT NOT NULL,
         base_branch TEXT,
         archived INTEGER NOT NULL DEFAULT 0,
@@ -68,7 +71,8 @@ class DaemonStore {
     ''');
     // Pre-merge-back databases have no base_branch column; pre-resume
     // databases have no acp_session_id column; pre-yolo databases have no
-    // yolo column.
+    // yolo column; pre-thinking-level databases have no thinking columns;
+    // pre-config-option databases have no models column.
     final sessionColumns = _db
         .select('PRAGMA table_info(sessions)')
         .map((row) => row['name'] as String)
@@ -78,6 +82,20 @@ class DaemonStore {
     }
     if (!sessionColumns.contains('acp_session_id')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN acp_session_id TEXT');
+    }
+    if (!sessionColumns.contains('thinking_level')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN thinking_level TEXT');
+    }
+    if (!sessionColumns.contains('thinking_levels')) {
+      _db.execute(
+        "ALTER TABLE sessions ADD COLUMN thinking_levels TEXT NOT NULL "
+        "DEFAULT '[]'",
+      );
+    }
+    if (!sessionColumns.contains('models')) {
+      _db.execute(
+        "ALTER TABLE sessions ADD COLUMN models TEXT NOT NULL DEFAULT '[]'",
+      );
     }
     if (!sessionColumns.contains('yolo')) {
       _db.execute(
@@ -204,8 +222,9 @@ class DaemonStore {
   void insertSession(Session session) {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
-      'mode, model, cwd, base_branch, yolo, archived, created_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'mode, model, models, cwd, base_branch, thinking_level, '
+      'thinking_levels, yolo, archived, created_at, updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -214,8 +233,11 @@ class DaemonStore {
         session.status.wire,
         session.mode.wire,
         session.model,
+        jsonEncode(session.models),
         session.cwd,
         session.baseBranch,
+        session.thinkingLevel,
+        jsonEncode(session.thinkingLevels),
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
@@ -231,8 +253,9 @@ class DaemonStore {
     bool includeArchived = false,
   }) {
     final rows = _db.select(
-      'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'base_branch, yolo, archived, created_at, updated_at FROM sessions '
+      'SELECT id, project_id, provider_id, title, status, mode, model, '
+      'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
+      'archived, created_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -243,8 +266,9 @@ class DaemonStore {
   /// The session with [id], or null when unknown.
   Session? getSession(String id) {
     final rows = _db.select(
-      'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'base_branch, yolo, archived, created_at, updated_at FROM sessions WHERE id = ?',
+      'SELECT id, project_id, provider_id, title, status, mode, model, '
+      'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
+      'archived, created_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -255,7 +279,8 @@ class DaemonStore {
   void updateSession(Session session) {
     _db.execute(
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
-      'status = ?, mode = ?, model = ?, cwd = ?, base_branch = ?, '
+      'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
+      'thinking_level = ?, thinking_levels = ?, '
       'yolo = ?, archived = ?, created_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
@@ -264,8 +289,11 @@ class DaemonStore {
         session.status.wire,
         session.mode.wire,
         session.model,
+        jsonEncode(session.models),
         session.cwd,
         session.baseBranch,
+        session.thinkingLevel,
+        jsonEncode(session.thinkingLevels),
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
@@ -428,13 +456,46 @@ class DaemonStore {
         status: SessionStatus.parse(row['status'] as String),
         mode: SessionMode.parse(row['mode'] as String),
         model: row['model'] as String?,
+        models: _models(row['models'] as String?),
         cwd: row['cwd'] as String,
         baseBranch: row['base_branch'] as String?,
+        thinkingLevel: row['thinking_level'] as String?,
+        thinkingLevels: _thinkingLevels(row['thinking_levels'] as String?),
         yolo: (row['yolo'] as int? ?? 0) != 0,
         archived: (row['archived'] as int) != 0,
         createdAt: _fromTs(row['created_at'] as int),
         updatedAt: _fromTs(row['updated_at'] as int),
       );
+
+  /// Decodes a stored `models` JSON-array string; anything malformed
+  /// degrades to an empty list.
+  static List<String> _models(String? raw) {
+    if (raw == null) return const <String>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.whereType<String>().toList(growable: false);
+      }
+    } on FormatException {
+      // Malformed row; fall through to the empty list.
+    }
+    return const <String>[];
+  }
+
+  /// Decodes a stored `thinking_levels` JSON-array string; anything
+  /// malformed degrades to an empty list.
+  static List<String> _thinkingLevels(String? raw) {
+    if (raw == null) return const <String>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded.whereType<String>().toList(growable: false);
+      }
+    } on FormatException {
+      // Malformed row; fall through to the empty list.
+    }
+    return const <String>[];
+  }
 
   static int _ts(DateTime value) => value.toUtc().microsecondsSinceEpoch;
 

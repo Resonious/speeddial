@@ -420,8 +420,11 @@ class Session {
     required this.status,
     required this.mode,
     required this.model,
+    this.models = const <String>[],
     required this.cwd,
     required this.baseBranch,
+    this.thinkingLevel,
+    this.thinkingLevels = const <String>[],
     required this.yolo,
     required this.archived,
     required this.createdAt,
@@ -435,8 +438,14 @@ class Session {
   final SessionStatus status;
   final SessionMode mode;
 
-  /// Selected model id, null while unset/auto.
+  /// Current model id — agent-reported when the provider advertises a model
+  /// config option (ACP), otherwise a locally persisted preference; null
+  /// while unset.
   final String? model;
+
+  /// Selectable model ids advertised by the agent (ACP config option);
+  /// empty when the provider has no model option.
+  final List<String> models;
 
   /// Working dir of the agent (project path or worktree).
   final String cwd;
@@ -444,6 +453,14 @@ class Session {
   /// Base branch the session's worktree was created from; null for
   /// non-worktree sessions.
   final String? baseBranch;
+
+  /// Current agent thinking level (e.g. omp's `auto`); null when the
+  /// provider exposes no thinking-level option.
+  final String? thinkingLevel;
+
+  /// Selectable thinking levels advertised by the agent (ACP config
+  /// option); empty when the provider has no thinking-level option.
+  final List<String> thinkingLevels;
 
   /// Yolo mode: the daemon auto-approves the agent's permission requests.
   final bool yolo;
@@ -460,8 +477,19 @@ class Session {
         status: SessionStatus.parse(json['status']! as String),
         mode: SessionMode.parse(json['mode']! as String),
         model: json['model'] as String?,
+        // Absent on pre-config-option daemons.
+        models: (json['models'] as List?)
+                ?.whereType<String>()
+                .toList(growable: false) ??
+            const <String>[],
         cwd: json['cwd']! as String,
         baseBranch: json['baseBranch'] as String?,
+        // Absent on pre-thinking-level daemons.
+        thinkingLevel: json['thinkingLevel'] as String?,
+        thinkingLevels: (json['thinkingLevels'] as List?)
+                ?.whereType<String>()
+                .toList(growable: false) ??
+            const <String>[],
         // Absent on pre-yolo daemons.
         yolo: json['yolo'] as bool? ?? false,
         archived: json['archived']! as bool,
@@ -477,8 +505,11 @@ class Session {
         'status': status.wire,
         'mode': mode.wire,
         'model': model,
+        'models': models,
         'cwd': cwd,
         'baseBranch': baseBranch,
+        'thinkingLevel': thinkingLevel,
+        'thinkingLevels': thinkingLevels,
         'yolo': yolo,
         'archived': archived,
         'createdAt': createdAt.toUtc().toIso8601String(),

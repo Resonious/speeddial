@@ -106,14 +106,17 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
 lib/src/ui/left/             daemon/project/session rail: connection status dot, project
                              groups, session rows (title, status chip, provider badge),
-                             new-session sheet, rename/archive/delete menus
+                             new-session sheet (provider, worktree branch, yolo only —
+                             model/thinking are picked in the composer on the live
+                             session), rename/archive/delete menus
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              markdown + syntax-highlighted code blocks, collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
-                             via file_picker with image thumbnails + file chips, model + mode
-                             selectors, stop button while running), usage footer
+                             via file_picker with image thumbnails + file chips, mode
+                             selector, model + thinking-level selectors fed by the agent's
+                             ACP config options, stop button while running), usage footer
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
                              highlight) and Git (branch picker, staged/unstaged lists,
                              per-file diff view, commit field + button, push, create PR)

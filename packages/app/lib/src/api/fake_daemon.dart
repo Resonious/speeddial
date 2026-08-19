@@ -86,6 +86,12 @@ class FakeDaemonClient implements DaemonClient {
       status: SessionStatus.idle,
       mode: SessionMode.build,
       model: 'omp-default',
+      // omp advertises its selectable models; the current one is contained.
+      models: const <String>['omp-default', 'kimi-k3', 'gpt-5.2'],
+      // omp advertises its five thinking levels; demo starts at `max` so the
+      // selector has a non-null current value (mirrors the real agent).
+      thinkingLevel: 'max',
+      thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
       cwd: project.path,
       baseBranch: 'main',
       yolo: false,
@@ -294,6 +300,10 @@ class FakeDaemonClient implements DaemonClient {
     _project(projectId);
     final DateTime now = DateTime.now().toUtc();
     final String id = 'sess-${_sessionCounter++}';
+    // omp advertises its selectable models; other providers expose none.
+    final List<String> models = providerId == 'omp'
+        ? const <String>['omp-default', 'kimi-k3', 'gpt-5.2']
+        : const <String>[];
     final Session session = Session(
       id: id,
       projectId: projectId,
@@ -301,7 +311,13 @@ class FakeDaemonClient implements DaemonClient {
       title: title ?? 'New session',
       status: SessionStatus.idle,
       mode: mode ?? SessionMode.build,
-      model: model,
+      // A requested id inside the advertised list sticks; anything else
+      // falls back to the omp default (mirrors the agent's best-effort
+      // adoption of an unlisted model id). Providers without a model option
+      // keep the caller's id as a locally persisted preference.
+      model:
+          models.isEmpty ? model : (models.contains(model) ? model : 'omp-default'),
+      models: models,
       // No real git here: a base branch just moves the cwd to a plausible
       // worktree path, mirroring the daemon's layout.
       cwd: baseBranch == null
@@ -309,6 +325,12 @@ class FakeDaemonClient implements DaemonClient {
           : '${_project(projectId).path}/../.speeddial-worktrees/'
               '${_project(projectId).name.toLowerCase()}-$id',
       baseBranch: baseBranch,
+      // omp advertises its five thinking levels (current `max`); other
+      // providers expose none.
+      thinkingLevel: providerId == 'omp' ? 'max' : null,
+      thinkingLevels: providerId == 'omp'
+          ? const <String>['off', 'auto', 'low', 'high', 'max']
+          : const <String>[],
       yolo: yolo,
       archived: false,
       createdAt: now,
@@ -418,8 +440,11 @@ class FakeDaemonClient implements DaemonClient {
               status: s.status,
               mode: s.mode,
               model: s.model,
+              models: s.models,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              thinkingLevel: s.thinkingLevel,
+              thinkingLevels: s.thinkingLevels,
               yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
@@ -440,8 +465,11 @@ class FakeDaemonClient implements DaemonClient {
               status: s.status,
               mode: s.mode,
               model: s.model,
+              models: s.models,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              thinkingLevel: s.thinkingLevel,
+              thinkingLevels: s.thinkingLevels,
               yolo: s.yolo,
               archived: archived,
               createdAt: s.createdAt,
@@ -469,8 +497,11 @@ class FakeDaemonClient implements DaemonClient {
               status: s.status,
               mode: mode,
               model: s.model,
+              models: s.models,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              thinkingLevel: s.thinkingLevel,
+              thinkingLevels: s.thinkingLevels,
               yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
@@ -482,6 +513,12 @@ class FakeDaemonClient implements DaemonClient {
   @override
   Future<Session> setModel(String sessionId, String model) async {
     _ensureSeeded();
+    _requireSession(sessionId);
+    final Session current = _sessions[sessionId]!;
+    if (current.models.isNotEmpty && !current.models.contains(model)) {
+      throw DaemonError(-32602,
+          'invalid model: $model; must be one of ${current.models}');
+    }
     final Session session = _updateSession(sessionId,
         (Session s) => Session(
               id: s.id,
@@ -491,8 +528,43 @@ class FakeDaemonClient implements DaemonClient {
               status: s.status,
               mode: s.mode,
               model: model,
+              models: s.models,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              thinkingLevel: s.thinkingLevel,
+              thinkingLevels: s.thinkingLevels,
+              yolo: s.yolo,
+              archived: s.archived,
+              createdAt: s.createdAt,
+              updatedAt: s.updatedAt,
+            ));
+    return session;
+  }
+
+  @override
+  Future<Session> setThinkingLevel(String sessionId, String level) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final Session current = _sessions[sessionId]!;
+    if (current.thinkingLevels.isEmpty ||
+        !current.thinkingLevels.contains(level)) {
+      throw DaemonError(-32602,
+          'invalid thinking level: $level; must be one of ${current.thinkingLevels}');
+    }
+    final Session session = _updateSession(sessionId,
+        (Session s) => Session(
+              id: s.id,
+              projectId: s.projectId,
+              providerId: s.providerId,
+              title: s.title,
+              status: s.status,
+              mode: s.mode,
+              model: s.model,
+              models: s.models,
+              cwd: s.cwd,
+              baseBranch: s.baseBranch,
+              thinkingLevel: level,
+              thinkingLevels: s.thinkingLevels,
               yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
@@ -1012,8 +1084,11 @@ class FakeDaemonClient implements DaemonClient {
       status: current.status,
       mode: current.mode,
       model: current.model,
+      models: current.models,
       cwd: current.cwd,
       baseBranch: current.baseBranch,
+      thinkingLevel: current.thinkingLevel,
+      thinkingLevels: current.thinkingLevels,
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
@@ -1036,8 +1111,11 @@ class FakeDaemonClient implements DaemonClient {
       status: status,
       mode: current.mode,
       model: current.model,
+      models: current.models,
       cwd: current.cwd,
       baseBranch: current.baseBranch,
+      thinkingLevel: current.thinkingLevel,
+      thinkingLevels: current.thinkingLevels,
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,

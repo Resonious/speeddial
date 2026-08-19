@@ -412,8 +412,11 @@ class AcpClient {
     await _request('authenticate', <String, Object?>{'methodId': methodId});
   }
 
-  /// Creates a new session and returns its id.
-  Future<String> newSession({required String cwd}) async {
+  /// Creates a new session, returning its id plus the session config options
+  /// the agent advertised (empty when the agent reports none).
+  Future<({String sessionId, List<AcpConfigOption> configOptions})> newSession({
+    required String cwd,
+  }) async {
     final result = await _request(
       'session/new',
       <String, Object?>{
@@ -425,18 +428,24 @@ class AcpClient {
     if (sessionId is! String || sessionId.isEmpty) {
       throw const FormatException('session/new response missing sessionId');
     }
-    return sessionId;
+    return (
+      sessionId: sessionId,
+      configOptions: AcpConfigOption.listFrom(result['configOptions']),
+    );
   }
 
   /// Resumes a previously created session (ACP `session/load`) so a session
   /// survives an agent/daemon restart. Only agents advertising the
   /// `loadSession` capability in [InitializeResult.agentCapabilities]
   /// support it; others answer with a JSON-RPC error.
-  Future<void> loadSession({
+  ///
+  /// Returns the session config options the agent advertised (empty when
+  /// the agent reports none).
+  Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
   }) async {
-    await _request(
+    final result = await _request(
       'session/load',
       <String, Object?>{
         'sessionId': sessionId,
@@ -444,6 +453,26 @@ class AcpClient {
         'mcpServers': const <Object?>[],
       },
     );
+    return AcpConfigOption.listFrom(result['configOptions']);
+  }
+
+  /// Sets the value of a session config option (ACP
+  /// `session/set_config_option`), returning the agent's full updated
+  /// config options list (empty when the agent reports none).
+  Future<List<AcpConfigOption>> setConfigOption(
+    String sessionId,
+    String configId,
+    String value,
+  ) async {
+    final result = await _request(
+      'session/set_config_option',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'configId': configId,
+        'value': value,
+      },
+    );
+    return AcpConfigOption.listFrom(result['configOptions']);
   }
 
   /// Stream of updates emitted by the agent for the given session.

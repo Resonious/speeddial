@@ -123,7 +123,9 @@ void main() {
     expect(session.title, 'New session');
     expect(session.status, SessionStatus.idle);
     expect(session.mode, SessionMode.build);
-    expect(session.model, isNull);
+    // The model is agent-reported: no explicit model was passed, so the
+    // fake's current model is adopted.
+    expect(session.model, 'fake-fast');
     expect(session.cwd, tempDir.path);
     expect(session.projectId, 'p1');
     expect(session.archived, isFalse);
@@ -562,14 +564,18 @@ void main() {
     final planned = await engine.setMode(session.id, SessionMode.plan);
     expect(planned.mode, SessionMode.plan);
 
-    final withModel = await engine.setModel(session.id, 'claude-sonnet-4-5');
-    expect(withModel.model, 'claude-sonnet-4-5');
+    // The fake advertises the model option; setModel validates against it.
+    final withModel = await engine.setModel(session.id, 'fake-smart');
+    expect(withModel.model, 'fake-smart');
 
     final reloaded = store.getSession(session.id)!;
     expect(reloaded.title, 'My Session');
     expect(reloaded.archived, isTrue);
     expect(reloaded.mode, SessionMode.plan);
-    expect(reloaded.model, 'claude-sonnet-4-5');
+    expect(reloaded.model, 'fake-smart');
+    // The advertised models survive every copy helper (rename/archive/
+    // setMode/setModel) — the constructor default would silently wipe them.
+    expect(reloaded.models, <String>['fake-fast', 'fake-smart']);
 
     // Metadata changes surfaced on sessionChanges.
     expect(changes.where((s) => s.id == session.id).last.title, 'My Session');
@@ -583,6 +589,317 @@ void main() {
     expect(
       store.listSessions(includeArchived: true).map((s) => s.id),
       contains(session.id),
+    );
+  });
+
+  test("createSession adopts the agent's advertised thinking level and "
+      'options', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    expect(session.thinkingLevel, 'auto');
+    expect(
+      session.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+
+    // Persisted, and survived the copy helpers used by status changes and
+    // metadata updates.
+    final stored = store.getSession(session.id)!;
+    expect(stored.thinkingLevel, 'auto');
+    expect(
+      stored.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+  });
+
+  test('setThinkingLevel forwards the choice to the agent and persists the '
+      'agent-reported state', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    final updated = await engine.setThinkingLevel(session.id, 'high');
+    expect(updated.thinkingLevel, 'high');
+    expect(
+      updated.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+
+    final stored = store.getSession(session.id)!;
+    expect(stored.thinkingLevel, 'high');
+    expect(
+      stored.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+    // The fake agent recorded the applied value.
+    expect(
+      File(p.join(tempDir.path, 'agent.thinking')).readAsStringSync(),
+      'high',
+    );
+    // The change surfaced on sessionChanges.
+    expect(
+      changes.where((s) => s.id == session.id).last.thinkingLevel,
+      'high',
+    );
+  });
+
+  test('setThinkingLevel rejects invalid levels, unsupported providers, and '
+      'unknown sessions', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    await expectLater(
+      engine.setThinkingLevel(session.id, 'nope'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', -32602)
+          .having((e) => e.message, 'message', contains('valid levels'))),
+    );
+
+    // A provider without a thinking option accepts no level at all.
+    File(p.join(tempDir.path, 'agent.no_thinking')).createSync();
+    final plain = await engine.createSession(
+        projectId: 'p1', providerId: 'fake');
+    expect(plain.thinkingLevel, isNull);
+    expect(plain.thinkingLevels, isEmpty);
+    await expectLater(
+      engine.setThinkingLevel(plain.id, 'auto'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', -32602)
+          .having((e) => e.message, 'message',
+              contains('does not expose a thinking level option'))),
+    );
+
+    // Unknown session → kErrNotFound.
+    await expectLater(
+      engine.setThinkingLevel('nope', 'auto'),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+  });
+
+  test('offline setThinkingLevel persists locally; the resume reapplies it',
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    // Daemon restart: the agent process is gone, the row persists.
+    await engine.dispose();
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+    // No live agent: the choice is persisted locally.
+    final offline = await restarted.setThinkingLevel(session.id, 'low');
+    expect(offline.thinkingLevel, 'low');
+    expect(store.getSession(session.id)!.thinkingLevel, 'low');
+
+    // The next send respawns the agent and reapplies the persisted level.
+    final permissionFuture = waitForPermissionRequestOn(restarted);
+    final send = restarted.sendMessage(session.id, 'please edit the file');
+    final request = await permissionFuture;
+    await restarted.respondPermission(
+        session.id, request.request.requestId, 'allow');
+    await send;
+    expect(
+      File(p.join(tempDir.path, 'agent.thinking')).readAsStringSync(),
+      'low',
+      reason: 'the resumed agent must have received the persisted level',
+    );
+    expect(store.getSession(session.id)!.thinkingLevel, 'low');
+    await restarted.dispose();
+  });
+
+  test('resume adopts the agent-reported level when the persisted choice is '
+      'no longer offered', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    // A persisted choice the agent no longer advertises must not be
+    // reapplied; the load-reported state wins instead.
+    await engine.dispose();
+    final stored = store.getSession(session.id)!;
+    store.updateSession(Session(
+      id: stored.id,
+      projectId: stored.projectId,
+      providerId: stored.providerId,
+      title: stored.title,
+      status: stored.status,
+      mode: stored.mode,
+      model: stored.model,
+      cwd: stored.cwd,
+      baseBranch: stored.baseBranch,
+      thinkingLevel: 'turbo',
+      thinkingLevels: stored.thinkingLevels,
+      yolo: stored.yolo,
+      archived: stored.archived,
+      createdAt: stored.createdAt,
+      updatedAt: stored.updatedAt,
+    ));
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+
+    final permissionFuture = waitForPermissionRequestOn(restarted);
+    final send = restarted.sendMessage(session.id, 'please edit the file');
+    final request = await permissionFuture;
+    await restarted.respondPermission(
+        session.id, request.request.requestId, 'allow');
+    await send;
+
+    expect(
+      store.getSession(session.id)!.thinkingLevel,
+      'auto',
+      reason: 'the stale persisted level is replaced by the load state',
+    );
+    expect(
+      File(p.join(tempDir.path, 'agent.thinking')).existsSync(),
+      isFalse,
+      reason: 'a level the agent does not offer is never sent',
+    );
+    await restarted.dispose();
+  });
+
+  test("createSession adopts the agent's advertised model and models list",
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    expect(session.model, 'fake-fast');
+    expect(session.models, <String>['fake-fast', 'fake-smart']);
+
+    // Persisted, and survived the copy helpers used by status changes and
+    // metadata updates.
+    final stored = store.getSession(session.id)!;
+    expect(stored.model, 'fake-fast');
+    expect(
+      stored.models,
+      <String>['fake-fast', 'fake-smart'],
+    );
+  });
+
+  test('createSession applies an explicitly requested listed model', () async {
+    final session = await engine.createSession(
+        projectId: 'p1', providerId: 'fake', model: 'fake-smart');
+    expect(session.model, 'fake-smart');
+    expect(session.models, <String>['fake-fast', 'fake-smart']);
+    expect(store.getSession(session.id)!.model, 'fake-smart');
+  });
+
+  test('setModel forwards the choice to the agent and persists the '
+      'agent-reported state', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    final updated = await engine.setModel(session.id, 'fake-smart');
+    expect(updated.model, 'fake-smart');
+    expect(updated.models, <String>['fake-fast', 'fake-smart']);
+
+    final stored = store.getSession(session.id)!;
+    expect(stored.model, 'fake-smart');
+    expect(stored.models, <String>['fake-fast', 'fake-smart']);
+    // The fake agent recorded the applied value.
+    expect(
+      File(p.join(tempDir.path, 'agent.model')).readAsStringSync(),
+      'fake-smart',
+    );
+    // The change surfaced on sessionChanges.
+    expect(
+      changes.where((s) => s.id == session.id).last.model,
+      'fake-smart',
+    );
+  });
+
+  test('setModel rejects unlisted models; behind agent.no_model any string '
+      'is a local preference', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    await expectLater(
+      engine.setModel(session.id, 'nope'),
+      throwsA(isA<DaemonError>()
+          .having((e) => e.code, 'code', -32602)
+          .having((e) => e.message, 'message', contains('2 models advertised'))),
+    );
+
+    // A provider without a model option accepts any string as a plain
+    // local preference, with no validation and no forwarding.
+    File(p.join(tempDir.path, 'agent.no_model')).createSync();
+    final plain = await engine.createSession(
+        projectId: 'p1', providerId: 'fake');
+    expect(plain.model, isNull);
+    expect(plain.models, isEmpty);
+    final legacy = await engine.setModel(plain.id, 'claude-sonnet');
+    expect(legacy.model, 'claude-sonnet');
+    expect(legacy.models, isEmpty);
+    expect(store.getSession(plain.id)!.model, 'claude-sonnet');
+    // Never forwarded: the agent recorded no model.
+    expect(
+      File(p.join(tempDir.path, 'agent.model')).existsSync(),
+      isFalse,
+    );
+
+    // Unknown session → kErrNotFound.
+    await expectLater(
+      engine.setModel('nope', 'fake-fast'),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+  });
+
+  test('offline setModel persists locally; the resume reapplies it',
+      () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+
+    // Daemon restart: the agent process is gone, the row persists.
+    await engine.dispose();
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+    // No live agent: the choice is persisted locally. A fresh agent process
+    // reports 'fake-fast' as current, so the persisted 'fake-smart' differs
+    // and must be reapplied on resume.
+    final offline = await restarted.setModel(session.id, 'fake-smart');
+    expect(offline.model, 'fake-smart');
+    expect(store.getSession(session.id)!.model, 'fake-smart');
+
+    // The next send respawns the agent and reapplies the persisted model.
+    final permissionFuture = waitForPermissionRequestOn(restarted);
+    final send = restarted.sendMessage(session.id, 'please edit the file');
+    final request = await permissionFuture;
+    await restarted.respondPermission(
+        session.id, request.request.requestId, 'allow');
+    await send;
+    expect(
+      File(p.join(tempDir.path, 'agent.model')).readAsStringSync(),
+      'fake-smart',
+      reason: 'the resumed agent must have received the persisted model',
+    );
+    expect(store.getSession(session.id)!.model, 'fake-smart');
+    expect(
+      store.getSession(session.id)!.models,
+      <String>['fake-fast', 'fake-smart'],
+    );
+    await restarted.dispose();
+  });
+
+  test('setModel adoption is total: thinking fields keep the agent-reported '
+      'state', () async {
+    final session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    await engine.setThinkingLevel(session.id, 'high');
+
+    // The set_config_option response is authoritative for ALL config-backed
+    // fields: a model switch re-adopts the thinking fields from the same
+    // response — neither wiped nor left stale.
+    final updated = await engine.setModel(session.id, 'fake-smart');
+    expect(updated.model, 'fake-smart');
+    expect(updated.thinkingLevel, 'high');
+    expect(
+      updated.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
+    );
+
+    final stored = store.getSession(session.id)!;
+    expect(stored.model, 'fake-smart');
+    expect(stored.thinkingLevel, 'high');
+    expect(
+      stored.thinkingLevels,
+      <String>['off', 'auto', 'low', 'high', 'max'],
     );
   });
 

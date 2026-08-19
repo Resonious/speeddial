@@ -24,6 +24,11 @@ class Composer extends StatefulWidget {
     required this.mode,
     this.usage,
     this.model,
+    this.models = const <String>[],
+    this.onModelChanged,
+    this.thinkingLevel,
+    this.thinkingLevels = const <String>[],
+    this.onThinkingChanged,
     this.attachmentPicker,
     required this.onSend,
     required this.onStop,
@@ -39,8 +44,27 @@ class Composer extends StatefulWidget {
   /// Latest turn usage, shown in the footer when non-null.
   final UsageInfo? usage;
 
-  /// Model id label (static text) when the session has one.
+  /// Current model id: the selector's value when contained in [models],
+  /// otherwise shown as static text (or as the dropdown's hint).
   final String? model;
+
+  /// Selectable model ids advertised by the agent (ACP config option);
+  /// empty when the provider has no model option.
+  final List<String> models;
+
+  /// Fires with the newly selected model id. When non-null (and [models] is
+  /// non-empty) a selector renders in place of the static model text.
+  final ValueChanged<String>? onModelChanged;
+
+  /// Current thinking level; shown only when [thinkingLevels] is non-empty.
+  final String? thinkingLevel;
+
+  /// Advertised thinking levels; when non-empty (and [onThinkingChanged] is
+  /// given) a selector renders between the mode control and the model label.
+  final List<String> thinkingLevels;
+
+  /// Fires with the newly selected thinking level.
+  final ValueChanged<String>? onThinkingChanged;
 
   /// Injectable file picker for tests; defaults to [FilePicker.platform]
   /// with `withData: true` when null. Files whose bytes come back null are
@@ -206,6 +230,11 @@ class _ComposerState extends State<Composer> {
           _ControlsRow(
             mode: widget.mode,
             model: widget.model,
+            models: widget.models,
+            onModelChanged: widget.onModelChanged,
+            thinkingLevel: widget.thinkingLevel,
+            thinkingLevels: widget.thinkingLevels,
+            onThinkingChanged: widget.onThinkingChanged,
             onModeChanged: widget.onModeChanged,
           ),
           Padding(
@@ -287,17 +316,33 @@ class _ControlsRow extends StatelessWidget {
   const _ControlsRow({
     required this.mode,
     required this.model,
+    required this.models,
+    required this.onModelChanged,
+    required this.thinkingLevel,
+    required this.thinkingLevels,
+    required this.onThinkingChanged,
     required this.onModeChanged,
   });
 
   final SessionMode mode;
   final String? model;
+  final List<String> models;
+  final ValueChanged<String>? onModelChanged;
+  final String? thinkingLevel;
+  final List<String> thinkingLevels;
+  final ValueChanged<String>? onThinkingChanged;
   final ValueChanged<SessionMode> onModeChanged;
+
+  /// "auto" → "Auto"; any advertised level is labeled capitalized here.
+  String _label(String level) =>
+      level.isEmpty ? level : level[0].toUpperCase() + level.substring(1);
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Color muted = theme.colorScheme.onSurfaceVariant;
+    final ValueChanged<String>? onThinking = onThinkingChanged;
+    final ValueChanged<String>? onModel = onModelChanged;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
@@ -328,14 +373,82 @@ class _ControlsRow extends StatelessWidget {
             },
           ),
           const SizedBox(width: 10),
-          if (model != null)
+          if (thinkingLevels.isNotEmpty && onThinking != null) ...<Widget>[
+            Tooltip(
+              message: 'Thinking level',
+              child: DropdownButton<String>(
+                value: thinkingLevels.contains(thinkingLevel)
+                    ? thinkingLevel
+                    : null,
+                hint: const Text('Thinking'),
+                underline: const SizedBox.shrink(),
+                isDense: true,
+                iconSize: 16,
+                style: context.speedDialColors.mono
+                    .copyWith(fontSize: 11, color: muted),
+                items: <DropdownMenuItem<String>>[
+                  for (final String level in thinkingLevels)
+                    DropdownMenuItem<String>(
+                      value: level,
+                      child: Text(_label(level)),
+                    ),
+                ],
+                onChanged: (String? value) {
+                  if (value != null) onThinking(value);
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          if (models.isNotEmpty && onModel != null)
+            Flexible(
+              // Raw model ids as labels: they are the agent's config values,
+              // not display names. IntrinsicWidth keeps the button compact
+              // (its natural width) yet lets it shrink to the row's
+              // remaining space, where `isExpanded` bounds the item so it
+              // ellipsizes instead of overflowing the row.
+              child: Tooltip(
+                message: 'Model',
+                child: IntrinsicWidth(
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: models.contains(model) ? model : null,
+                    hint: Text(
+                      model ?? 'Model',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    underline: const SizedBox.shrink(),
+                    isDense: true,
+                    iconSize: 16,
+                    style: context.speedDialColors.mono
+                        .copyWith(fontSize: 11, color: muted),
+                    items: <DropdownMenuItem<String>>[
+                      for (final String id in models)
+                        DropdownMenuItem<String>(
+                          value: id,
+                          child: Text(
+                            id,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (String? value) {
+                      if (value != null) onModel(value);
+                    },
+                  ),
+                ),
+              ),
+            )
+          else if (model != null)
             Flexible(
               child: Text(
                 model!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style:
-                    context.speedDialColors.mono.copyWith(fontSize: 11, color: muted),
+                style: context.speedDialColors.mono
+                    .copyWith(fontSize: 11, color: muted),
               ),
             ),
         ],

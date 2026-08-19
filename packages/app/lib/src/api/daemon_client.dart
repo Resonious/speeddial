@@ -97,6 +97,10 @@ abstract class DaemonClient {
   Future<Session> setMode(String sessionId, SessionMode mode);
   Future<Session> setModel(String sessionId, String model);
 
+  /// Sets the session's thinking level. Valid levels come from
+  /// `Session.thinkingLevels`; the current selection is `Session.thinkingLevel`.
+  Future<Session> setThinkingLevel(String sessionId, String level);
+
   /// A page of persisted events for a session, ordered by `seq` ascending.
   /// Without [beforeSeq] the latest page (up to [limit]) is returned;
   /// [hasMore] reports whether an older page exists (callers page backwards

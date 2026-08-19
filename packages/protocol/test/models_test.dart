@@ -178,8 +178,11 @@ void main() {
         status: SessionStatus.running,
         mode: SessionMode.build,
         model: 'gpt-5',
+        models: const <String>['gpt-5', 'gpt-5-mini'],
         cwd: '/tmp/wt',
         baseBranch: 'main',
+        thinkingLevel: 'auto',
+        thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
         yolo: true,
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
@@ -188,10 +191,39 @@ void main() {
       final decoded = Session.fromJson(model.toJson());
       expect(decoded.status, SessionStatus.running);
       expect(decoded.model, 'gpt-5');
+      expect(decoded.models, <String>['gpt-5', 'gpt-5-mini']);
       expect(decoded.baseBranch, 'main');
+      expect(decoded.thinkingLevel, 'auto');
+      expect(decoded.thinkingLevels, <String>['off', 'auto', 'low', 'high', 'max']);
       expect(decoded.yolo, isTrue);
       expect(decoded.archived, isTrue);
       expect(decoded.toJson(), model.toJson());
+    });
+
+    test('Session defaults to no thinking levels on older daemons', () {
+      final json = <String, Object?>{
+        'id': 's1',
+        'projectId': 'p1',
+        'providerId': 'claude',
+        'title': 'T',
+        'status': 'idle',
+        'mode': 'build',
+        'model': null,
+        'cwd': '/tmp',
+        'baseBranch': null,
+        'yolo': false,
+        'archived': false,
+        'createdAt': '2026-01-01T00:00:00Z',
+        'updatedAt': '2026-01-01T00:00:00Z',
+      };
+      final session = Session.fromJson(json);
+      expect(session.models, isEmpty,
+          reason: 'models is absent on pre-config-option daemons');
+      expect(session.thinkingLevel, isNull,
+          reason: 'thinkingLevel is absent on pre-thinking-level daemons');
+      expect(session.thinkingLevels, isEmpty,
+          reason: 'thinkingLevels is absent on pre-thinking-level daemons');
+      expect(session.toJson()['thinkingLevels'], isEmpty);
     });
 
     test('FileEntry', () {

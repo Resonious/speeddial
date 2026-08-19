@@ -182,6 +182,20 @@ class SessionsStore extends StoreBase {
     _replace(daemonId, await _clientFor(daemonId).setMode(sessionId, mode));
   }
 
+  Future<void> setThinkingLevel(
+      String daemonId, String sessionId, String level) async {
+    _ensureDaemonSubscriptions(daemonId);
+    _replace(
+        daemonId, await _clientFor(daemonId).setThinkingLevel(sessionId, level));
+  }
+
+  /// Sets the session's model. Valid ids come from `Session.models`; the
+  /// current selection is `Session.model`.
+  Future<void> setModel(String daemonId, String sessionId, String model) async {
+    _ensureDaemonSubscriptions(daemonId);
+    _replace(daemonId, await _clientFor(daemonId).setModel(sessionId, model));
+  }
+
   // ---------------------------------------------------------------------
   // Notifications
   // ---------------------------------------------------------------------

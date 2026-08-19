@@ -104,6 +104,20 @@ void main() {
     }
   }
 
+  /// The thinking-level selector: [DropdownButton] under the 'Thinking
+  /// level' tooltip. sess-1 also has a model selector now, so bare
+  /// `find.byType(DropdownButton<String>)` matches both.
+  Finder thinkingDropdown() => find.descendant(
+        of: find.byTooltip('Thinking level'),
+        matching: find.byType(DropdownButton<String>),
+      );
+
+  /// The model selector: [DropdownButton] under the 'Model' tooltip.
+  Finder modelDropdown() => find.descendant(
+        of: find.byTooltip('Model'),
+        matching: find.byType(DropdownButton<String>),
+      );
+
   /// Pumps a bare [Composer] (no pane) with an injected [AttachmentPicker]
   /// and a recorded send callback, so attachment staging is testable without
   /// the real platform picker.
@@ -751,6 +765,121 @@ void main() {
     // Drain stream + settle timers so the test ends clean.
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 350));
+  });
+
+  testWidgets('a session with thinking levels lists exactly the advertised '
+      'options', (WidgetTester tester) async {
+    // Default pumpChat selects sess-1, which advertises the five omp levels.
+    await pumpChat(tester);
+
+    // The selector starts showing the current level (max), capitalized.
+    expect(thinkingDropdown(), findsOneWidget);
+    expect(find.text('Max'), findsOneWidget);
+
+    // Open the selector: every advertised level appears, and nothing else.
+    await tester.tap(thinkingDropdown());
+    await tester.pumpAndSettle();
+    for (final String label in <String>[
+      'Off',
+      'Auto',
+      'Low',
+      'High',
+      'Max',
+    ]) {
+      expect(find.text(label).evaluate(), isNotEmpty,
+          reason: 'expected "$label" in the thinking dropdown');
+    }
+    expect(find.text('Thinking'), findsNothing);
+
+    // Close the menu so the test ends clean.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('selecting a thinking level calls through and updates the UI',
+      (WidgetTester tester) async {
+    final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
+
+    await tester.tap(thinkingDropdown());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Low').last);
+    await tester.pumpAndSettle();
+
+    // The fake client's session reflects the choice…
+    final Session updated =
+        (await fake.listSessions()).firstWhere((Session s) => s.id == 'sess-1');
+    expect(updated.thinkingLevel, 'low');
+    expect(updated.thinkingLevels,
+        const <String>['off', 'auto', 'low', 'high', 'max']);
+
+    // …and the closed dropdown button now shows the new level.
+    expect(thinkingDropdown(), findsOneWidget);
+    expect(find.text('Low'), findsOneWidget);
+    expect(find.text('Max'), findsNothing);
+  });
+
+  testWidgets('a session without advertised options renders no selectors',
+      (WidgetTester tester) async {
+    final (AppData app, _) = await pumpChat(tester);
+
+    // sess-2 keeps the defaults (no advertised thinking levels or models).
+    app.selection
+      ..selectedProjectId = 'proj-demo'
+      ..selectedSessionId = 'sess-2';
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(DropdownButton<String>), findsNothing);
+    expect(find.byTooltip('Model'), findsNothing);
+    expect(find.text('omp-default'), findsNothing,
+        reason: 'no static model text either — model is null');
+  });
+
+  testWidgets('a session with models lists exactly the advertised ids',
+      (WidgetTester tester) async {
+    // Default pumpChat selects sess-1, which advertises three omp models.
+    await pumpChat(tester);
+
+    // The selector starts showing the current id, raw (no capitalization).
+    expect(modelDropdown(), findsOneWidget);
+    expect(find.text('omp-default'), findsOneWidget);
+
+    // Open the selector: every advertised id appears, and nothing else.
+    await tester.tap(modelDropdown());
+    await tester.pumpAndSettle();
+    for (final String id in <String>['omp-default', 'kimi-k3', 'gpt-5.2']) {
+      expect(find.text(id).evaluate(), isNotEmpty,
+          reason: 'expected "$id" in the model dropdown');
+    }
+    expect(find.text('omp-fast'), findsNothing,
+        reason: 'only advertised ids, not the provider\'s full list');
+    expect(find.text('claude-sonnet'), findsNothing);
+
+    // Close the menu so the test ends clean.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('selecting a model calls through and updates the UI',
+      (WidgetTester tester) async {
+    final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
+
+    await tester.tap(modelDropdown());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('kimi-k3').last);
+    await tester.pumpAndSettle();
+
+    // The fake client's session reflects the choice…
+    final Session updated =
+        (await fake.listSessions()).firstWhere((Session s) => s.id == 'sess-1');
+    expect(updated.model, 'kimi-k3');
+    expect(updated.models,
+        const <String>['omp-default', 'kimi-k3', 'gpt-5.2']);
+
+    // …and the closed dropdown button now shows the new id.
+    expect(modelDropdown(), findsOneWidget);
+    expect(find.text('kimi-k3'), findsOneWidget);
+    expect(find.text('omp-default'), findsNothing);
   });
 }
 

@@ -348,9 +348,6 @@ class _ProjectTileState extends State<_ProjectTile> {
     // Resolve the store graph on the rail's context; the sheet route's own
     // context sits above [AppScope], so AppScope.of must not run in it.
     final AppData data = AppScope.of(context);
-    // Captured for reporting a failed initial-prompt send after the sheet
-    // route (and its context) is gone.
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -362,7 +359,6 @@ class _ProjectTileState extends State<_ProjectTile> {
           data: data,
           daemonId: daemonId,
           projectId: project.id,
-          messenger: messenger,
         ),
       ),
     );

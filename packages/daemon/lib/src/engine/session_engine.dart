@@ -41,17 +41,38 @@ import 'event_mapper.dart';
 /// `sessions.create` cwd confinement rejects.
 const int _kErrInvalidParams = -32602;
 
+/// The four protocol session fields backed by ACP config options, as
+/// reported by one configOptions snapshot: the current model + advertised
+/// models, and the current thinking level + advertised levels. Providers
+/// exposing neither option report null/empty.
+typedef _ConfigSnapshot = ({
+  String? model,
+  List<String> models,
+  String? thinkingLevel,
+  List<String> thinkingLevels,
+});
+
 /// One live engine session: its agent client plus in-memory turn state.
 class _LiveSession {
   _LiveSession({
     required this.session,
     required this.client,
     required this.acpSessionId,
+    this.modelConfigId,
+    this.thinkingConfigId,
   });
 
   Session session;
   final AcpClient client;
   final String acpSessionId;
+
+  /// The config option id of the provider's model (for ACP
+  /// `session/set_config_option`), null when the provider exposes none.
+  final String? modelConfigId;
+
+  /// The config option id of the provider's thinking level (for ACP
+  /// `session/set_config_option`), null when the provider exposes none.
+  final String? thinkingConfigId;
 
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
@@ -247,7 +268,7 @@ class SessionEngine {
       workingDir = cwd ?? project.path;
     }
     final now = DateTime.now().toUtc();
-    final session = Session(
+    final baseSession = Session(
       id: sessionId,
       projectId: projectId,
       providerId: providerId,
@@ -262,14 +283,48 @@ class SessionEngine {
       createdAt: now,
       updatedAt: now,
     );
-    final client = _spawnAgent(session);
+    final client = _spawnAgent(baseSession);
     final String acpSessionId;
+    final Session session;
+    ({String configId, String? current, List<String> levels})? modelOption;
+    ({String configId, String? current, List<String> levels})? thinking;
     try {
       final info = await client.initialized;
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
-      acpSessionId = await client.newSession(cwd: workingDir);
+      final created = await client.newSession(cwd: workingDir);
+      acpSessionId = created.sessionId;
+      modelOption = _modelOptionOf(created.configOptions);
+      thinking = _thinkingOptionOf(created.configOptions);
+      // An explicitly requested model is applied best-effort — the agent
+      // may reject a fuzzy id, which must never fail creation; the
+      // response is then the authoritative snapshot for all config-backed
+      // fields.
+      var adoptedOptions = created.configOptions;
+      if (modelOption != null && model != null) {
+        try {
+          adoptedOptions = await client.setConfigOption(
+            acpSessionId,
+            modelOption.configId,
+            model,
+          );
+        } on Object {
+          // Fall through to the pre-call reported state.
+        }
+      }
+      var snapshot = _configSnapshotOf(adoptedOptions);
+      if (modelOption == null) {
+        // No model option advertised: keep the legacy behavior — the
+        // requested model stays a plain local label and models stay empty.
+        snapshot = (
+          model: model,
+          models: const <String>[],
+          thinkingLevel: snapshot.thinkingLevel,
+          thinkingLevels: snapshot.thinkingLevels,
+        );
+      }
+      session = _withConfigOptions(baseSession, snapshot);
     } on Object catch (error) {
       // Never leak a half-initialized agent process or its worktree.
       await client.dispose();
@@ -293,6 +348,8 @@ class SessionEngine {
       session: session,
       client: client,
       acpSessionId: acpSessionId,
+      modelConfigId: modelOption?.configId,
+      thinkingConfigId: thinking?.configId,
     );
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(session);
@@ -420,6 +477,7 @@ class SessionEngine {
       );
     }
     final AcpClient client = _spawnAgent(session);
+    final List<AcpConfigOption> configOptions;
     try {
       final InitializeResult info = await client.initialized;
       if (info.authMethods.isNotEmpty) {
@@ -432,7 +490,8 @@ class SessionEngine {
           'restart (no ACP session/load support); create a new session',
         );
       }
-      await client.loadSession(sessionId: acpSessionId, cwd: session.cwd);
+      configOptions =
+          await client.loadSession(sessionId: acpSessionId, cwd: session.cwd);
     } on Object catch (error) {
       await client.dispose();
       if (error is DaemonError) rethrow;
@@ -448,10 +507,27 @@ class SessionEngine {
         'Failed to resume session "$sessionId": $error',
       );
     }
+    final modelOption = _modelOptionOf(configOptions);
+    final thinkingOption = _thinkingOptionOf(configOptions);
+    var currentOptions = configOptions;
+    var reported = _configSnapshotOf(configOptions);
+    if (modelOption == null) {
+      // No model option: the persisted model is a plain local preference,
+      // not agent state — keep it (and the empty models list) across
+      // resumes.
+      reported = (
+        model: session.model,
+        models: session.models,
+        thinkingLevel: reported.thinkingLevel,
+        thinkingLevels: reported.thinkingLevels,
+      );
+    }
     final _LiveSession live = _LiveSession(
       session: session,
       client: client,
       acpSessionId: acpSessionId,
+      modelConfigId: modelOption?.configId,
+      thinkingConfigId: thinkingOption?.configId,
     );
     _live[sessionId] = live;
     // A setMode only persisted the
@@ -463,6 +539,56 @@ class SessionEngine {
       } on Object {
         // Best-effort; see comment above.
       }
+    }
+    // A setModel/setThinkingLevel only persisted the choice too; reconcile
+    // both with the freshly loaded agent. Model first: a model switch may
+    // change the thinking levels, so each step re-derives the snapshot from
+    // the previous step's response. Advisory: a rejecting agent must not
+    // fail the resume — the next explicit call tries again. The store is
+    // only touched when model/models/thinkingLevel/thinkingLevels actually
+    // changed, so a resume does not spam session.updated.
+    final String? persistedModel = session.model;
+    if (persistedModel != null &&
+        persistedModel != reported.model &&
+        reported.models.contains(persistedModel) &&
+        modelOption != null) {
+      try {
+        currentOptions = await client.setConfigOption(
+          acpSessionId,
+          modelOption.configId,
+          persistedModel,
+        );
+      } on Object {
+        // Best-effort; keep the load-reported state.
+      }
+      reported = _configSnapshotOf(currentOptions);
+    }
+    final String? persistedLevel = session.thinkingLevel;
+    if (persistedLevel != null &&
+        persistedLevel != reported.thinkingLevel &&
+        reported.thinkingLevels.contains(persistedLevel)) {
+      final thinking = _thinkingOptionOf(currentOptions);
+      if (thinking != null) {
+        try {
+          currentOptions = await client.setConfigOption(
+            acpSessionId,
+            thinking.configId,
+            persistedLevel,
+          );
+        } on Object {
+          // Best-effort; keep the reported state.
+        }
+        reported = _configSnapshotOf(currentOptions);
+      }
+    }
+    if (session.model != reported.model ||
+        !_sameStringLists(session.models, reported.models) ||
+        session.thinkingLevel != reported.thinkingLevel ||
+        !_sameStringLists(session.thinkingLevels, reported.thinkingLevels)) {
+      await _updateSession(
+        sessionId,
+        (s) => _withConfigOptions(s, reported),
+      );
     }
     return live;
   }
@@ -493,8 +619,11 @@ class SessionEngine {
             status: session.status,
             mode: session.mode,
             model: session.model,
+            models: session.models,
             cwd: session.cwd,
             baseBranch: session.baseBranch,
+            thinkingLevel: session.thinkingLevel,
+            thinkingLevels: session.thinkingLevels,
             yolo: session.yolo,
             archived: session.archived,
             createdAt: session.createdAt,
@@ -515,11 +644,103 @@ class SessionEngine {
     return _updateSession(sessionId, (session) => _withMode(session, mode));
   }
 
-  /// Persists the selected model. ACP has no universal `session/set_model`
-  /// method, so the model stays a local preference applied on future turns;
-  /// providers that support it can honor it at session creation/provisioning.
-  Future<Session> setModel(String sessionId, String model) =>
-      _updateSession(sessionId, (session) => _withModel(session, model));
+  /// Sets the session's model. When the provider advertises a model option
+  /// (ACP), the choice is validated against the advertised models and, with
+  /// a live idle agent, forwarded (`session/set_config_option`); the
+  /// response — authoritative for ALL config-backed fields — is adopted.
+  /// Sessions without a live agent persist the requested model locally and
+  /// [_resume] reapplies it. When the provider advertises no model option,
+  /// any string is accepted as a local preference and never forwarded.
+  ///
+  /// Errors `-32602` when the provider advertises a model option but
+  /// [model] is not among the advertised models.
+  Future<Session> setModel(String sessionId, String model) async {
+    final session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final models = session.models;
+    if (models.isNotEmpty && !models.contains(model)) {
+      // No enumeration of the valid ids: providers like omp advertise
+      // hundreds of models, which would flood the error message.
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Unknown model "$model" for provider "${session.providerId}" '
+            '(${models.length} models advertised)',
+      );
+    }
+    final live = _live[sessionId];
+    if (models.isNotEmpty &&
+        live != null &&
+        live.turn == null &&
+        live.modelConfigId != null) {
+      final configOptions = await live.client.setConfigOption(
+        live.acpSessionId,
+        live.modelConfigId!,
+        model,
+      );
+      // The agent may adjust more than the requested option (a model switch
+      // can carry new thinking levels); its report is adopted wholesale.
+      return _updateSession(
+        sessionId,
+        (current) => _withConfigOptions(current, _configSnapshotOf(configOptions)),
+      );
+    }
+    // No live agent (or no model option): a local preference, models
+    // unchanged; [_resume] reapplies model choices to a resumed agent.
+    return _updateSession(sessionId, (current) => _withModel(current, model));
+  }
+
+  /// Switches the session's thinking level and persists the agent-reported
+  /// state. When a live agent is idle and exposes the thinking option, the
+  /// choice is forwarded (`session/set_config_option`) and the response —
+  /// authoritative for ALL config-backed fields — is adopted wholesale;
+  /// sessions without a live agent persist the requested level locally and
+  /// [_resume] reapplies it.
+  ///
+  /// Errors `-32602` when the provider exposes no thinking level option or
+  /// [level] is not among the advertised levels.
+  Future<Session> setThinkingLevel(String sessionId, String level) async {
+    final session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final levels = session.thinkingLevels;
+    if (levels.isEmpty) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Provider "${session.providerId}" does not expose a thinking level '
+        'option',
+      );
+    }
+    if (!levels.contains(level)) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Unknown thinking level "$level" for provider '
+        '"${session.providerId}": valid levels are ${levels.join(', ')}',
+      );
+    }
+    final live = _live[sessionId];
+    if (live != null && live.turn == null && live.thinkingConfigId != null) {
+      final configOptions = await live.client.setConfigOption(
+        live.acpSessionId,
+        live.thinkingConfigId!,
+        level,
+      );
+      // The agent may clamp the requested value or revise any other
+      // config-backed field; its report is adopted wholesale.
+      return _updateSession(
+        sessionId,
+        (current) => _withConfigOptions(current, _configSnapshotOf(configOptions)),
+      );
+    }
+    // No live agent: persist the requested level locally (levels unchanged);
+    // [_resume] reapplies it.
+    return _updateSession(
+      sessionId,
+      (current) => _withThinking(current, level, levels),
+    );
+  }
 
   /// Resolves a parked permission request. Unknown/expired requests error
   /// `kErrNotFound` (per PROTOCOL.md `sessions.respondPermission`).
@@ -928,8 +1149,11 @@ class SessionEngine {
         status: status,
         mode: session.mode,
         model: session.model,
+        models: session.models,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        thinkingLevel: session.thinkingLevel,
+        thinkingLevels: session.thinkingLevels,
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
@@ -944,8 +1168,11 @@ class SessionEngine {
         status: session.status,
         mode: session.mode,
         model: session.model,
+        models: session.models,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        thinkingLevel: session.thinkingLevel,
+        thinkingLevels: session.thinkingLevels,
         yolo: session.yolo,
         archived: archived,
         createdAt: session.createdAt,
@@ -960,8 +1187,11 @@ class SessionEngine {
         status: session.status,
         mode: mode,
         model: session.model,
+        models: session.models,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        thinkingLevel: session.thinkingLevel,
+        thinkingLevels: session.thinkingLevels,
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
@@ -976,11 +1206,148 @@ class SessionEngine {
         status: session.status,
         mode: session.mode,
         model: model,
+        models: session.models,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        thinkingLevel: session.thinkingLevel,
+        thinkingLevels: session.thinkingLevels,
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
         updatedAt: DateTime.now().toUtc(),
       );
+
+  Session _withThinking(Session session, String? level, List<String> levels) =>
+      Session(
+        id: session.id,
+        projectId: session.projectId,
+        providerId: session.providerId,
+        title: session.title,
+        status: session.status,
+        mode: session.mode,
+        model: session.model,
+        models: session.models,
+        cwd: session.cwd,
+        baseBranch: session.baseBranch,
+        thinkingLevel: level,
+        thinkingLevels: levels,
+        yolo: session.yolo,
+        archived: session.archived,
+        createdAt: session.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+      );
+
+  /// Copies [session] adopting [snapshot]'s model/thinking state wholesale:
+  /// a `session/set_config_option` response is authoritative for ALL
+  /// config-backed fields (a model switch may carry new thinking levels).
+  Session _withConfigOptions(Session session, _ConfigSnapshot snapshot) =>
+      Session(
+        id: session.id,
+        projectId: session.projectId,
+        providerId: session.providerId,
+        title: session.title,
+        status: session.status,
+        mode: session.mode,
+        model: snapshot.model,
+        models: snapshot.models,
+        cwd: session.cwd,
+        baseBranch: session.baseBranch,
+        thinkingLevel: snapshot.thinkingLevel,
+        thinkingLevels: snapshot.thinkingLevels,
+        yolo: session.yolo,
+        archived: session.archived,
+        createdAt: session.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+      );
+
+  /// The thinking-level config option among [options], per the protocol
+  /// contract: the first select-type option whose category is
+  /// `thought_level`, else the first whose id is `thinking`, else null for
+  /// unsupported providers. Only select-type options with a non-empty
+  /// options list count. [current] is the option's currentValue (null when
+  /// empty); [levels] are the option values in order.
+  static ({String configId, String? current, List<String> levels})?
+      _thinkingOptionOf(List<AcpConfigOption> options) {
+    AcpConfigOption? thinking;
+    for (final option in options) {
+      if (option.type == 'select' &&
+          option.options.isNotEmpty &&
+          option.category == 'thought_level') {
+        thinking = option;
+        break;
+      }
+    }
+    if (thinking == null) {
+      for (final option in options) {
+        if (option.type == 'select' &&
+            option.options.isNotEmpty &&
+            option.id == 'thinking') {
+          thinking = option;
+          break;
+        }
+      }
+    }
+    if (thinking == null) return null;
+    return (
+      configId: thinking.id,
+      current: thinking.currentValue.isEmpty ? null : thinking.currentValue,
+      levels: <String>[for (final value in thinking.options) value.value],
+    );
+  }
+
+  /// The model config option among [options], per the protocol contract:
+  /// the first select-type option whose category is `model`, else the first
+  /// whose id is `model`, else null for providers that advertise none. Only
+  /// select-type options with a non-empty options list count. [current] is
+  /// the option's currentValue (null when empty); [levels] are the option
+  /// values in order.
+  static ({String configId, String? current, List<String> levels})?
+      _modelOptionOf(List<AcpConfigOption> options) {
+    AcpConfigOption? model;
+    for (final option in options) {
+      if (option.type == 'select' &&
+          option.options.isNotEmpty &&
+          option.category == 'model') {
+        model = option;
+        break;
+      }
+    }
+    if (model == null) {
+      for (final option in options) {
+        if (option.type == 'select' &&
+            option.options.isNotEmpty &&
+            option.id == 'model') {
+          model = option;
+          break;
+        }
+      }
+    }
+    if (model == null) return null;
+    return (
+      configId: model.id,
+      current: model.currentValue.isEmpty ? null : model.currentValue,
+      levels: <String>[for (final value in model.options) value.value],
+    );
+  }
+
+  static bool _sameStringLists(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Maps [options] to the config-backed session fields: the model and
+  /// thinking current values plus their advertised option lists.
+  static _ConfigSnapshot _configSnapshotOf(List<AcpConfigOption> options) {
+    final model = _modelOptionOf(options);
+    final thinking = _thinkingOptionOf(options);
+    return (
+      model: model?.current,
+      models: model?.levels ?? const <String>[],
+      thinkingLevel: thinking?.current,
+      thinkingLevels: thinking?.levels ?? const <String>[],
+    );
+  }
 }
