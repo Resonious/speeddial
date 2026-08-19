@@ -729,6 +729,51 @@ class MergeResult {
       };
 }
 
+/// Outcome of `git.rebaseOntoBase`: the session's worktree branch rebased
+/// onto the base branch the session was created from.
+class RebaseResult {
+  const RebaseResult({
+    required this.baseBranch,
+    required this.sessionBranch,
+    required this.baseFastForwarded,
+    required this.alreadyUpToDate,
+    required this.commit,
+  });
+
+  /// Branch the session branch was rebased onto.
+  final String baseBranch;
+
+  /// Worktree branch that was rebased.
+  final String sessionBranch;
+
+  /// Whether the local base was first fast-forwarded to `origin/<base>`
+  /// because the remote-tracking ref was strictly ahead.
+  final bool baseFastForwarded;
+
+  /// Whether the session branch already contained the base tip (no-op
+  /// rebase).
+  final bool alreadyUpToDate;
+
+  /// Resulting tip commit of [sessionBranch].
+  final String commit;
+
+  factory RebaseResult.fromJson(Map<String, Object?> json) => RebaseResult(
+        baseBranch: json['baseBranch']! as String,
+        sessionBranch: json['sessionBranch']! as String,
+        baseFastForwarded: json['baseFastForwarded']! as bool,
+        alreadyUpToDate: json['alreadyUpToDate']! as bool,
+        commit: json['commit']! as String,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'baseBranch': baseBranch,
+        'sessionBranch': sessionBranch,
+        'baseFastForwarded': baseFastForwarded,
+        'alreadyUpToDate': alreadyUpToDate,
+        'commit': commit,
+      };
+}
+
 /// An added project on the daemon host.
 class Project {
   const Project({

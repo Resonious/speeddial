@@ -684,6 +684,16 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<RebaseResult> gitRebaseOntoBase(String projectId,
+      {required String sessionId}) async {
+    final Object? result = await _requirePeer().call(
+      'git.rebaseOntoBase',
+      <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
+    );
+    return RebaseResult.fromJson(_resultMap(_resultField(result, 'rebase')));
+  }
+
+  @override
   Future<String> gitCreatePr(
     String projectId, {
     String? sessionId,

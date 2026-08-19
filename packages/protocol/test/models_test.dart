@@ -324,6 +324,30 @@ void main() {
       expect(decoded.toJson(), model.toJson());
     });
 
+    test('RebaseResult', () {
+      final model = RebaseResult(
+        baseBranch: 'main',
+        sessionBranch: 'speeddial/fix-login-a1b2c3d4',
+        baseFastForwarded: true,
+        alreadyUpToDate: false,
+        commit: 'b' * 40,
+      );
+      expect(model.toJson(), {
+        'baseBranch': 'main',
+        'sessionBranch': 'speeddial/fix-login-a1b2c3d4',
+        'baseFastForwarded': true,
+        'alreadyUpToDate': false,
+        'commit': 'b' * 40,
+      });
+      final decoded = RebaseResult.fromJson(model.toJson());
+      expect(decoded.baseBranch, 'main');
+      expect(decoded.sessionBranch, 'speeddial/fix-login-a1b2c3d4');
+      expect(decoded.baseFastForwarded, isTrue);
+      expect(decoded.alreadyUpToDate, isFalse);
+      expect(decoded.commit, 'b' * 40);
+      expect(decoded.toJson(), model.toJson());
+    });
+
     test('ToolCall with content, locations, and raw payloads', () {
       final model = ToolCall(
         id: 'tc_1234567890abcde',

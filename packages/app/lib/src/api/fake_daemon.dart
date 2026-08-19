@@ -640,6 +640,24 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<RebaseResult> gitRebaseOntoBase(String projectId,
+      {required String sessionId}) async {
+    _ensureSeeded();
+    final String root = _gitRoot(projectId, sessionId);
+    final Session session = _sessions[sessionId]!;
+    if (session.baseBranch == null) {
+      throw const DaemonError(-32602, 'session has no base branch');
+    }
+    return RebaseResult(
+      baseBranch: session.baseBranch!,
+      sessionBranch: _gitStatus[root]!.branch,
+      baseFastForwarded: false,
+      alreadyUpToDate: false,
+      commit: 'feedfacefeedfacefeedfacefeedfacefeedface',
+    );
+  }
+
+  @override
   Future<String> gitCreatePr(
     String projectId, {
     String? sessionId,

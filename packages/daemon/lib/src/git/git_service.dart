@@ -224,33 +224,8 @@ class GitService {
     }
 
     // Sync the local base with origin when the remote moved ahead.
-    var hasRemote = false;
-    try {
-      await fetch(projectPath, baseBranch);
-      hasRemote = true;
-    } on DaemonError catch (e) {
-      // A missing remote branch is fine: the local base stands alone.
-      // Anything else (network, auth) still fails the merge.
-      if (!e.message.toLowerCase().contains("couldn't find remote ref")) {
-        rethrow;
-      }
-    }
-    var baseFastForwarded = false;
-    if (hasRemote) {
-      final counts =
-          await _aheadBehind(projectPath, baseBranch, 'origin/$baseBranch');
-      if (counts.behind > 0 && counts.ahead > 0) {
-        throw DaemonError(
-          kErrConflict,
-          'local $baseBranch and origin/$baseBranch have diverged; '
-              'reconcile them first',
-        );
-      }
-      if (counts.behind > 0) {
-        await _fastForwardRef(projectPath, baseBranch, 'origin/$baseBranch');
-        baseFastForwarded = true;
-      }
-    }
+    final baseFastForwarded =
+        await _syncBaseWithOrigin(projectPath, baseBranch);
 
     final baseTip = await _revParse(projectPath, 'refs/heads/$baseBranch');
     if (await _isAncestor(projectPath, sessionBranch, baseBranch)) {
@@ -318,6 +293,129 @@ class GitService {
     );
   }
 
+  /// Rebases the session worktree branch at [worktreePath] onto the local
+  /// [baseBranch] of the repository at [projectPath].
+  ///
+  /// The local base is first synchronized with `origin/<baseBranch>` exactly
+  /// like [mergeIntoBase]. When the session branch already contains the base
+  /// tip the rebase is a no-op (`alreadyUpToDate`). Otherwise
+  /// `git rebase <baseBranch>` runs in the session worktree: the session's
+  /// commits are replayed onto the base tip (a pure fast-forward when the
+  /// session branched off the base tip and never moved). Unlike a merge this
+  /// needs no checkout of the base branch, so diverged histories rebase fine
+  /// regardless of where the base is checked out.
+  ///
+  /// The session worktree must be clean ([DaemonError] `kErrConflict`).
+  /// Rebase conflicts propagate as `kErrGit` after `git rebase --abort`
+  /// restores the session branch to its pre-rebase tip. The base branch and
+  /// the project checkout are never touched by the rebase itself.
+  Future<RebaseResult> rebaseOntoBase({
+    required String projectPath,
+    required String worktreePath,
+    required String baseBranch,
+  }) async {
+    _validateBranchName(baseBranch);
+    final sessionBranch = await _currentBranch(worktreePath);
+    if (sessionBranch == null) {
+      throw DaemonError(
+          kErrGit, 'session worktree is on a detached HEAD: $worktreePath');
+    }
+    if (sessionBranch == baseBranch) {
+      throw DaemonError(
+          kErrGit, 'session is on the base branch itself: $baseBranch');
+    }
+    if (await _hasUncommittedChanges(worktreePath)) {
+      throw DaemonError(
+        kErrConflict,
+        'session worktree has uncommitted changes; commit or discard '
+            'them first',
+      );
+    }
+
+    // Sync the local base with origin when the remote moved ahead.
+    final baseFastForwarded =
+        await _syncBaseWithOrigin(projectPath, baseBranch);
+
+    if (await _isAncestor(projectPath, baseBranch, sessionBranch)) {
+      return RebaseResult(
+        baseBranch: baseBranch,
+        sessionBranch: sessionBranch,
+        baseFastForwarded: baseFastForwarded,
+        alreadyUpToDate: true,
+        commit: await _revParse(worktreePath, 'HEAD'),
+      );
+    }
+    // A conflicted rebase is aborted, restoring the session branch to its
+    // pre-rebase tip and the worktree to a clean state.
+    try {
+      await _run(worktreePath, ['rebase', baseBranch]);
+    } on DaemonError catch (error) {
+      // Nothing to abort when git never started the rebase (e.g. an
+      // untracked file would be overwritten): the worktree is untouched and
+      // the original error stands.
+      if (!await _isRebasing(worktreePath)) rethrow;
+      try {
+        await _run(worktreePath, ['rebase', '--abort']);
+      } on DaemonError catch (abortError) {
+        throw DaemonError(
+          kErrGit,
+          'rebasing $sessionBranch onto $baseBranch conflicted; '
+              '`git rebase --abort` failed too (${abortError.message}), '
+              'leaving $worktreePath mid-rebase. '
+              'Original error: ${error.message}',
+        );
+      }
+      throw DaemonError(
+        kErrGit,
+        'rebasing $sessionBranch onto $baseBranch conflicted; the rebase '
+            'was aborted and $sessionBranch is unchanged: ${error.message}',
+        error.data,
+      );
+    }
+    return RebaseResult(
+      baseBranch: baseBranch,
+      sessionBranch: sessionBranch,
+      baseFastForwarded: baseFastForwarded,
+      alreadyUpToDate: false,
+      commit: await _revParse(worktreePath, 'HEAD'),
+    );
+  }
+
+  /// Synchronizes the local [baseBranch] with `origin/<baseBranch>`: fetches
+  /// and, when the remote-tracking ref is strictly ahead, fast-forwards the
+  /// local base to it, returning whether that happened. A base branch that
+  /// exists only locally stands alone; diverged local/remote bases throw
+  /// [DaemonError] `kErrConflict`.
+  Future<bool> _syncBaseWithOrigin(
+      String projectPath, String baseBranch) async {
+    var hasRemote = false;
+    try {
+      await fetch(projectPath, baseBranch);
+      hasRemote = true;
+    } on DaemonError catch (e) {
+      // A missing remote branch is fine: the local base stands alone.
+      // Anything else (network, auth) still fails the operation.
+      if (!e.message.toLowerCase().contains("couldn't find remote ref")) {
+        rethrow;
+      }
+    }
+    if (!hasRemote) return false;
+    final counts =
+        await _aheadBehind(projectPath, baseBranch, 'origin/$baseBranch');
+    if (counts.behind > 0 && counts.ahead > 0) {
+      throw DaemonError(
+        kErrConflict,
+        'local $baseBranch and origin/$baseBranch have diverged; '
+            'reconcile them first',
+      );
+    }
+    if (counts.behind > 0) {
+      await _fastForwardRef(projectPath, baseBranch, 'origin/$baseBranch');
+      return true;
+    }
+    return false;
+  }
+
   /// The short name of the branch checked out at [repoPath], or null on a
   /// detached HEAD.
   Future<String?> _currentBranch(String repoPath) async {
@@ -368,6 +466,16 @@ class GitService {
     final result = await Process.run(
       gitPath,
       ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'],
+      workingDirectory: repoPath,
+    );
+    return result.exitCode == 0;
+  }
+
+  /// Whether [repoPath] is mid-rebase (REBASE_HEAD exists).
+  Future<bool> _isRebasing(String repoPath) async {
+    final result = await Process.run(
+      gitPath,
+      ['rev-parse', '--verify', '--quiet', 'REBASE_HEAD'],
       workingDirectory: repoPath,
     );
     return result.exitCode == 0;

@@ -63,6 +63,7 @@ const List<String> _kProtocolMethods = <String>[
   'git.push',
   'git.createPullRequest',
   'git.mergeToBase',
+  'git.rebaseOntoBase',
 ];
 
 /// One connected client: its peer, socket, and authentication state.
@@ -343,6 +344,7 @@ class SpeedDialServer {
       'git.push' => _gitPush(params),
       'git.createPullRequest' => _gitCreatePullRequest(params),
       'git.mergeToBase' => _gitMergeToBase(params),
+      'git.rebaseOntoBase' => _gitRebaseOntoBase(params),
       _ => throw DaemonError(
           _kErrInvalidParams,
           'Unknown method: $method', // Unreachable: the peer answers -32601.
@@ -715,6 +717,29 @@ class SpeedDialServer {
       baseBranch: baseBranch,
     );
     return <String, Object?>{'merge': merge.toJson()};
+  }
+
+  Future<Object?> _gitRebaseOntoBase(Map<String, Object?> params) async {
+    final project = _requireProject(_requiredString(params, 'projectId'));
+    final session = _gitSession(params, project);
+    if (session == null) {
+      throw DaemonError(
+          _kErrInvalidParams, 'git.rebaseOntoBase requires a sessionId');
+    }
+    final baseBranch = session.baseBranch;
+    if (baseBranch == null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'session ${session.id} has no base branch '
+            '(not created with baseBranch)',
+      );
+    }
+    final rebase = await _git.rebaseOntoBase(
+      projectPath: project.path,
+      worktreePath: session.cwd,
+      baseBranch: baseBranch,
+    );
+    return <String, Object?>{'rebase': rebase.toJson()};
   }
 
   // -------------------------------------------------------------------------
