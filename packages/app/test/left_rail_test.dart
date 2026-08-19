@@ -301,4 +301,80 @@ void main() {
       isNot(ConnectionStatus.connected),
     );
   });
+
+  testWidgets('endpoint menu edits a daemon in place', (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+
+    // Prefilled with the stored (normalized) values.
+    expect(find.text('Edit daemon'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('add-daemon-name')))
+          .controller!
+          .text,
+      'Fake daemon',
+    );
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('add-daemon-url')))
+          .controller!
+          .text,
+      'fake://local/ws',
+    );
+
+    await tester.enterText(
+        find.byKey(const Key('add-daemon-name')), 'Renamed daemon');
+    await tester.tap(find.byKey(const Key('add-daemon-submit')));
+    await tester.pumpAndSettle();
+
+    // Same endpoint, new name — the id is stable so the registered client
+    // and the selection survive the edit.
+    expect(app.connections.endpoints.single.id, 'fake');
+    expect(app.connections.endpoints.single.name, 'Renamed daemon');
+    expect(find.text('Renamed daemon'), findsOneWidget);
+    expect(app.selection.selectedDaemonId, 'fake');
+  });
+
+  testWidgets('endpoint menu removes a daemon after confirmation',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    expect(app.selection.selectedDaemonId, 'fake');
+
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+
+    // Confirmation names the endpoint; cancelling keeps it.
+    expect(find.text('Remove daemon'), findsOneWidget);
+    expect(
+        find.textContaining(
+            'Its sessions and projects stay on the daemon'),
+        findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(app.connections.endpoints, hasLength(1));
+
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('daemon-remove-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(app.connections.endpoints, isEmpty);
+    expect(find.text('Fake daemon'), findsNothing);
+    expect(find.text('No daemons yet'), findsOneWidget);
+    // The selected daemon vanished: selection is cleared with it.
+    expect(app.selection.selectedDaemonId, isNull);
+    expect(app.selection.selectedProjectId, isNull);
+    expect(app.selection.selectedSessionId, isNull);
+  });
 }

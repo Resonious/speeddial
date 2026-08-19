@@ -127,6 +127,32 @@ void main() {
     expect(store.endpoints[4].url, 'ws://host:1/ws'); // trimmed
   });
 
+  test('updateEndpoint replaces fields in place, normalizes, and persists',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final ConnectionsStore store = ConnectionsStore();
+    await store.addEndpoint(name: 'a', url: 'localhost:1', token: 't1');
+    final String id = store.endpoints.single.id;
+
+    await store.updateEndpoint(
+        id: id, name: 'B', url: 'example:9000', token: 't2');
+    expect(store.endpoints.single.id, id);
+    expect(store.endpoints.single.name, 'B');
+    expect(store.endpoints.single.url, 'ws://example:9000/ws');
+    expect(store.endpoints.single.token, 't2');
+
+    // Persisted: a fresh store over the same prefs sees the edit.
+    final ConnectionsStore reloaded = ConnectionsStore();
+    await reloaded.init();
+    expect(reloaded.endpoints.single.name, 'B');
+    expect(reloaded.endpoints.single.url, 'ws://example:9000/ws');
+
+    // Unknown ids are a no-op.
+    await store.updateEndpoint(id: 'nope', name: 'x', url: 'y', token: '');
+    expect(store.endpoints, hasLength(1));
+    expect(store.endpoints.single.name, 'B');
+  });
+
   testWidgets('demo mode: buildDemoAppData populates the tree without taps',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});

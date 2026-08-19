@@ -188,21 +188,27 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                   );
                 },
               ),
-            Composer(
-              status: status,
-              mode: mode,
-              usage: usage,
-              model: session?.model,
-              onSend: (String text) {
-                if (status == SessionStatus.running) {
-                  return Future<void>.value();
-                }
-                return _sendMessage(text);
-              },
-              onStop: () => unawaited(_cancelTurn()),
-              onModeChanged: (SessionMode next) {
-                unawaited(_switchMode(next));
-              },
+            Padding(
+              // Keep the composer above the system navigation area on
+              // edge-to-edge Android; the chat surface extends behind it.
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewPaddingOf(context).bottom),
+              child: Composer(
+                status: status,
+                mode: mode,
+                usage: usage,
+                model: session?.model,
+                onSend: (String text) {
+                  if (status == SessionStatus.running) {
+                    return Future<void>.value();
+                  }
+                  return _sendMessage(text);
+                },
+                onStop: () => unawaited(_cancelTurn()),
+                onModeChanged: (SessionMode next) {
+                  unawaited(_switchMode(next));
+                },
+              ),
             ),
           ],
         );

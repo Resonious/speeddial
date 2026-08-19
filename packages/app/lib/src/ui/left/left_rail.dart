@@ -63,6 +63,8 @@ class LeftRail extends StatelessWidget {
                         selected:
                             data.selection.selectedDaemonId == endpoint.id,
                         onTap: () => _selectDaemon(context, endpoint),
+                        onEdit: () => _showDaemonDialog(context, endpoint),
+                        onRemove: () => _removeDaemon(context, endpoint),
                       );
                     },
                   ),
@@ -70,7 +72,10 @@ class LeftRail extends StatelessWidget {
               const Divider(height: 1),
               const Expanded(child: _ProjectTree()),
               Padding(
-                padding: const EdgeInsets.all(12),
+                // Keep the button above the system navigation area on
+                // edge-to-edge Android; the rail surface extends behind it.
+                padding: EdgeInsets.fromLTRB(
+                    12, 12, 12, 12 + MediaQuery.viewPaddingOf(context).bottom),
                 child: OutlinedButton.icon(
                   onPressed: () => _showAddDaemonDialog(context),
                   icon: const Icon(Icons.add, size: 18),
@@ -105,15 +110,56 @@ class LeftRail extends StatelessWidget {
     }
   }
 
-  Future<void> _showAddDaemonDialog(BuildContext context) {
+  Future<void> _showAddDaemonDialog(BuildContext context) =>
+      _showDaemonDialog(context, null);
+
+  /// Shows the add/edit dialog; [existing] prefills the fields and switches
+  /// the submit path to [ConnectionsStore.updateEndpoint].
+  Future<void> _showDaemonDialog(BuildContext context,
+      [DaemonEndpoint? existing]) {
     // Resolve the store graph on the rail's context; the dialog route's own
     // context sits above [AppScope], so AppScope.of must not run in it.
     final ConnectionsStore connections = AppScope.of(context).connections;
     return showDialog<void>(
       context: context,
       builder: (BuildContext context) =>
-          _AddDaemonDialog(connections: connections),
+          _DaemonDialog(connections: connections, existing: existing),
     );
+  }
+
+  Future<void> _removeDaemon(
+      BuildContext context, DaemonEndpoint endpoint) async {
+    final AppData data = AppScope.of(context);
+    final bool confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('Remove daemon'),
+            content: Text(
+                'Remove "${endpoint.name}" (${endpoint.url})? Its sessions and '
+                'projects stay on the daemon.'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const Key('daemon-remove-confirm'),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Remove'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed) return;
+    // Clearing the selection first: the panes key off the selected daemon
+    // id, which is about to lose its client.
+    if (data.selection.selectedDaemonId == endpoint.id) {
+      data.selection.selectedSessionId = null;
+      data.selection.selectedProjectId = null;
+      data.selection.selectedDaemonId = null;
+    }
+    await data.connections.removeEndpoint(endpoint.id);
   }
 }
 
@@ -497,18 +543,25 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
   }
 }
 
+/// Menu entries on a daemon endpoint tile.
+enum _EndpointAction { edit, remove }
+
 class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
     required this.endpoint,
     required this.status,
     required this.selected,
     required this.onTap,
+    required this.onEdit,
+    required this.onRemove,
   });
 
   final DaemonEndpoint endpoint;
   final ConnectionStatus status;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -532,6 +585,26 @@ class _EndpointTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+      trailing: PopupMenuButton<_EndpointAction>(
+        key: Key('endpoint-actions-${endpoint.id}'),
+        tooltip: 'Daemon actions',
+        icon: const Icon(Icons.more_vert, size: 18),
+        itemBuilder: (BuildContext context) =>
+            const <PopupMenuEntry<_EndpointAction>>[
+          PopupMenuItem<_EndpointAction>(
+            value: _EndpointAction.edit,
+            child: Text('Edit'),
+          ),
+          PopupMenuItem<_EndpointAction>(
+            value: _EndpointAction.remove,
+            child: Text('Remove'),
+          ),
+        ],
+        onSelected: (_EndpointAction action) => switch (action) {
+          _EndpointAction.edit => onEdit(),
+          _EndpointAction.remove => onRemove(),
+        },
       ),
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
@@ -557,21 +630,37 @@ class _StatusDot extends StatelessWidget {
   }
 }
 
-class _AddDaemonDialog extends StatefulWidget {
-  const _AddDaemonDialog({required this.connections});
+/// Add-or-edit daemon dialog: with [existing] set, the fields are prefilled
+/// and submitting updates the endpoint in place.
+class _DaemonDialog extends StatefulWidget {
+  const _DaemonDialog({required this.connections, this.existing});
 
   final ConnectionsStore connections;
 
+  /// The endpoint being edited; null for "add".
+  final DaemonEndpoint? existing;
+
   @override
-  State<_AddDaemonDialog> createState() => _AddDaemonDialogState();
+  State<_DaemonDialog> createState() => _DaemonDialogState();
 }
 
-class _AddDaemonDialogState extends State<_AddDaemonDialog> {
+class _DaemonDialogState extends State<_DaemonDialog> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _name = TextEditingController();
   final TextEditingController _url = TextEditingController();
   final TextEditingController _token = TextEditingController();
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final DaemonEndpoint? existing = widget.existing;
+    if (existing != null) {
+      _name.text = existing.name;
+      _url.text = existing.url;
+      _token.text = existing.token;
+    }
+  }
 
   @override
   void dispose() {
@@ -586,19 +675,30 @@ class _AddDaemonDialogState extends State<_AddDaemonDialog> {
     final String url = _url.text.trim();
     final String name = _name.text.trim().isEmpty ? url : _name.text.trim();
     setState(() => _submitting = true);
-    await widget.connections.addEndpoint(
-      name: name,
-      url: url,
-      token: _token.text.trim(),
-    );
+    final DaemonEndpoint? existing = widget.existing;
+    if (existing == null) {
+      await widget.connections.addEndpoint(
+        name: name,
+        url: url,
+        token: _token.text.trim(),
+      );
+    } else {
+      await widget.connections.updateEndpoint(
+        id: existing.id,
+        name: name,
+        url: url,
+        token: _token.text.trim(),
+      );
+    }
     if (!mounted) return;
     Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool editing = widget.existing != null;
     return AlertDialog(
-      title: const Text('Add daemon'),
+      title: Text(editing ? 'Edit daemon' : 'Add daemon'),
       content: Form(
         key: _formKey,
         child: Column(
@@ -644,7 +744,7 @@ class _AddDaemonDialogState extends State<_AddDaemonDialog> {
         FilledButton(
           key: const Key('add-daemon-submit'),
           onPressed: _submitting ? null : _submit,
-          child: const Text('Add'),
+          child: Text(editing ? 'Save' : 'Add'),
         ),
       ],
     );

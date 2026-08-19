@@ -11,20 +11,28 @@ class RightPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: const <Widget>[
-          TabBar(
-            tabs: <Widget>[Tab(text: 'Files'), Tab(text: 'Git')],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: <Widget>[FilesTab(), GitTab()],
+    // Bottom-only: the panel's tab content must clear the system navigation
+    // area on edge-to-edge Android. The narrow layout's bottom sheet already
+    // applies a SafeArea, so this is a no-op there.
+    return SafeArea(
+      top: false,
+      left: false,
+      right: false,
+      child: DefaultTabController(
+        length: 2,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: const <Widget>[
+            TabBar(
+              tabs: <Widget>[Tab(text: 'Files'), Tab(text: 'Git')],
             ),
-          ),
-        ],
+            Expanded(
+              child: TabBarView(
+                children: <Widget>[FilesTab(), GitTab()],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../scope.dart';
 import '../theme.dart';
@@ -13,11 +14,30 @@ const double kDesktopBreakpoint = 1000;
 /// left rail + chat + right panel in a row; narrow layouts get chat
 /// full-screen with the rail in a drawer and the right panel in a bottom
 /// sheet.
+///
+/// Android 15+ enforces edge-to-edge, so system bars overlay the app: pane
+/// backgrounds deliberately extend under them (the drawer sliding under the
+/// status bar is part of the look) while interactive content is padded off
+/// the top/bottom insets — here for the bars/top bar, and inside the panes
+/// ([LeftRail]'s bottom action, [ChatPane]'s composer, [RightPanel]'s root)
+/// for everything that touches the bottom edge.
 class SpeedDialShell extends StatelessWidget {
   const SpeedDialShell({super.key});
 
   @override
-  Widget build(BuildContext context) => const _Shell();
+  Widget build(BuildContext context) {
+    // Dark app on transparent system bars: light status/nav icons. The
+    // narrow AppBar sets this for itself, but the wide layout has no AppBar.
+    return const AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+      child: _Shell(),
+    );
+  }
 }
 
 class _Shell extends StatefulWidget {
@@ -55,15 +75,21 @@ class _ShellState extends State<_Shell> {
                   onToggleRight: () => setState(() => _rightOpen = !_rightOpen),
                 ),
                 Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      if (_leftOpen) const SizedBox(width: 280, child: LeftRail()),
-                      if (_leftOpen) const VerticalDivider(width: 1, thickness: 1),
-                      Expanded(child: ChatPane(key: _chatPaneKey)),
-                      if (_rightOpen) const VerticalDivider(width: 1, thickness: 1),
-                      if (_rightOpen) const SizedBox(width: 360, child: RightPanel()),
-                    ],
+                  // Side insets only (landscape cutouts); the top bar handles
+                  // the top inset itself and the panes pad their own bottoms.
+                  child: SafeArea(
+                    top: false,
+                    bottom: false,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        if (_leftOpen) const SizedBox(width: 280, child: LeftRail()),
+                        if (_leftOpen) const VerticalDivider(width: 1, thickness: 1),
+                        Expanded(child: ChatPane(key: _chatPaneKey)),
+                        if (_rightOpen) const VerticalDivider(width: 1, thickness: 1),
+                        if (_rightOpen) const SizedBox(width: 360, child: RightPanel()),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -89,7 +115,16 @@ class _ShellState extends State<_Shell> {
               ),
             ],
           ),
-          drawer: const Drawer(child: LeftRail()),
+          // The drawer surface extends under the status bar; only its
+          // content is padded down.
+          drawer: const Drawer(
+            child: SafeArea(
+              bottom: false,
+              left: false,
+              right: false,
+              child: LeftRail(),
+            ),
+          ),
           body: ChatPane(key: _chatPaneKey),
         );
       },
@@ -126,35 +161,42 @@ class _DesktopTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
     return Container(
-      height: 48,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         border: Border(
           bottom: BorderSide(color: context.speedDialColors.border),
         ),
       ),
-      child: Row(
-        children: <Widget>[
-          IconButton(
-            tooltip: 'Toggle left rail',
-            icon: Icon(leftOpen ? Icons.menu_open : Icons.menu),
-            onPressed: onToggleLeft,
+      // The bar's surface extends under the status bar (edge-to-edge); the
+      // content sits below it.
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: <Widget>[
+              IconButton(
+                tooltip: 'Toggle left rail',
+                icon: Icon(leftOpen ? Icons.menu_open : Icons.menu),
+                onPressed: onToggleLeft,
+              ),
+              Text(
+                'SpeedDial',
+                style: textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const Spacer(),
+              const _DaemonStatusChip(),
+              const SizedBox(width: 4),
+              IconButton(
+                tooltip: 'Toggle right panel',
+                icon: Icon(rightOpen ? Icons.chevron_right : Icons.tune),
+                onPressed: onToggleRight,
+              ),
+              const SizedBox(width: 4),
+            ],
           ),
-          Text(
-            'SpeedDial',
-            style: textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const Spacer(),
-          const _DaemonStatusChip(),
-          const SizedBox(width: 4),
-          IconButton(
-            tooltip: 'Toggle right panel',
-            icon: Icon(rightOpen ? Icons.chevron_right : Icons.tune),
-            onPressed: onToggleRight,
-          ),
-          const SizedBox(width: 4),
-        ],
+        ),
       ),
     );
   }

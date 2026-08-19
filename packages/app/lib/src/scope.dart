@@ -160,6 +160,28 @@ class ConnectionsStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// Replaces the endpoint [id] in place (same id, normalized [url]).
+  /// Unknown ids are a no-op. Listeners diff url/token to decide whether a
+  /// live client must be reconnected.
+  Future<void> updateEndpoint({
+    required String id,
+    required String name,
+    required String url,
+    required String token,
+  }) async {
+    final int index =
+        _endpoints.indexWhere((DaemonEndpoint e) => e.id == id);
+    if (index < 0) return;
+    _endpoints[index] = DaemonEndpoint(
+      id: id,
+      name: name,
+      url: normalizeEndpointUrl(url),
+      token: token,
+    );
+    notifyListeners();
+    await _persist();
+  }
+
   Future<void> _persist() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -305,6 +327,18 @@ class AppData {
     };
     for (final String id in known) {
       if (_clients.containsKey(id)) continue; // registered fake: leave alone
+      // An edited endpoint (url/token changed) invalidates its live client:
+      // drop it so the reconnect below builds a fresh one with the new
+      // parameters.
+      final WsDaemonClient? live = _websocketClients[id];
+      if (live != null) {
+        final DaemonEndpoint endpoint = _endpointFor(id)!;
+        if (live.url != endpoint.url ||
+            (live.token ?? '') != endpoint.token) {
+          _connectedEndpointIds.remove(id);
+          _disposeWebSocketClient(id);
+        }
+      }
       if (!_connectedEndpointIds.add(id)) continue; // already connecting
       unawaited(_connectQuietly(id));
     }

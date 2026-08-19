@@ -52,6 +52,37 @@ void main() {
     expect(() => data.clientFor('nope'), throwsStateError);
   });
 
+  test('editing an endpoint recycles its websocket client when url/token '
+      'change', () async {
+    final AppData data = AppData();
+    addTearDown(data.dispose);
+    await data.connections.addEndpoint(
+      id: 'ep1',
+      name: 'Endpoint one',
+      url: 'ws://127.0.0.1:1/ws',
+      token: 't1',
+    );
+
+    final DaemonClient first = data.clientFor('ep1');
+    expect(first, isA<WsDaemonClient>());
+    await waitFor(() =>
+        data.connections.statusOf('ep1') == ConnectionStatus.failed);
+
+    // A name-only edit keeps the live client.
+    await data.connections.updateEndpoint(
+        id: 'ep1', name: 'Renamed', url: 'ws://127.0.0.1:1/ws', token: 't1');
+    expect(identical(data.clientFor('ep1'), first), isTrue);
+
+    // Changing url/token disposes the stale client; the next touch builds a
+    // fresh one with the edited parameters.
+    await data.connections.updateEndpoint(
+        id: 'ep1', name: 'Renamed', url: 'ws://127.0.0.1:2/ws', token: 't2');
+    final DaemonClient second = data.clientFor('ep1');
+    expect(identical(second, first), isFalse);
+    expect((second as WsDaemonClient).url, 'ws://127.0.0.1:2/ws');
+    expect(second.token, 't2');
+  });
+
   test('clientFor lazily creates and caches a WsDaemonClient per endpoint',
       () async {
     final AppData data = AppData();
