@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/chat_store.dart';
+import '../daemon_error_text.dart';
 import 'composer.dart';
 import 'permission_banner.dart';
 import 'timeline.dart';
@@ -267,8 +268,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   Future<void> _showError(DaemonError error) async {
     if (!mounted) return;
+    // A connection drop (device sleep, network flap) self-heals via
+    // auto-reconnect + resync: show a transient notice, not the raw error.
+    final String text = error is DaemonConnectionError
+        ? kConnectionLostMessage
+        : error.message;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(error.message)));
+        .showSnackBar(SnackBar(content: Text(text)));
   }
 
   static PermissionRequest? _resolveLatest(List<SessionEvent> events) {

@@ -712,11 +712,11 @@ class WsDaemonClient implements DaemonClient {
 
   RpcPeer _requirePeer() {
     if (_disposed) {
-      throw DaemonError(kErrInternal, 'daemon client disposed');
+      throw const DaemonConnectionError('daemon client disposed');
     }
     final RpcPeer? peer = _peer;
     if (peer == null || connState.value != DaemonConnectionState.connected) {
-      throw DaemonError(kErrInternal, 'daemon client is not connected');
+      throw const DaemonConnectionError('daemon client is not connected');
     }
     return peer;
   }
