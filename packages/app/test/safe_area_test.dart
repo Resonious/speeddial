@@ -70,7 +70,7 @@ void main() {
     await pumpShell(tester, size);
 
     // AppBar content sits below the status bar; its background extends up.
-    expect(tester.getTopLeft(find.text('SpeedDial')).dy,
+    expect(tester.getTopLeft(find.byKey(const Key('top-bar-title'))).dy,
         greaterThanOrEqualTo(kPhoneInsets.top));
 
     // The composer (and its usage footer) clears the gesture area.
@@ -93,7 +93,7 @@ void main() {
 
     // Desktop top bar: content padded down, background extends (the bar's
     // own top edge is still at y=0).
-    expect(tester.getTopLeft(find.text('SpeedDial')).dy,
+    expect(tester.getTopLeft(find.byKey(const Key('top-bar-title'))).dy,
         greaterThanOrEqualTo(kPhoneInsets.top));
 
     // Left rail's bottom action and the chat composer clear the nav area.

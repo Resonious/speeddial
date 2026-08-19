@@ -221,10 +221,61 @@ void main() {
     await tester.tap(find.text('Build the feature'));
     await tester.pumpAndSettle();
 
-    // The session was selected and the drawer dismissed.
+    // The session was selected and the drawer dismissed; the AppBar title
+    // now shows the session title instead of the rail row.
     expect(data.selection.selectedSessionId, 'sess-1');
     expect(find.text('Daemons'), findsNothing);
-    expect(find.text('Build the feature'), findsNothing);
+    expect(find.text('Build the feature'), findsOneWidget);
+  });
+
+  testWidgets('top bar shows the selected session title and follows renames',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final AppData data = AppData()..registerClient('fake', fake);
+    await data.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    await data.projects.refresh('fake');
+    await data.sessions.refresh('fake');
+    data.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = 'proj-demo';
+    addTearDown(data.dispose);
+
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pump();
+
+    Text topBarTitle() =>
+        tester.widget<Text>(find.byKey(const Key('top-bar-title')));
+
+    // No session selected: the app name is the fallback.
+    expect(topBarTitle().data, 'SpeedDial');
+
+    data.selection.selectedSessionId = 'sess-1';
+    await tester.pump();
+    expect(topBarTitle().data, 'Build the feature');
+
+    // A rename propagates through the store into the title.
+    await data.sessions.rename('fake', 'sess-1', 'Ship it');
+    await tester.pump();
+    expect(topBarTitle().data, 'Ship it');
+    // Drain the fake's delayed sessionUpdates broadcast so no timer
+    // outlives the test.
+    await tester.pump(const Duration(milliseconds: 5));
+
+    // Deselecting falls back to the app name.
+    data.selection.selectedSessionId = null;
+    await tester.pump();
+    expect(topBarTitle().data, 'SpeedDial');
   });
 
   testWidgets('narrow layout with a session already selected keeps the timeline',
