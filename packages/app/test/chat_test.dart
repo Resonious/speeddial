@@ -222,6 +222,63 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('timeline text is selectable and copyable',
+      (WidgetTester tester) async {
+    await pumpChat(tester);
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => find
+          .textContaining('Working on it', findRichText: true)
+          .evaluate()
+          .isNotEmpty,
+    );
+    // Let the markdown settle/highlight pass finish, then pump once more so
+    // the re-parsed rows' selection containers have registered (selectAll in
+    // the same frame as the rebuild would miss the code block's container).
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump();
+
+    final List<MethodCall> clipboardCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        clipboardCalls.add(call);
+        return null;
+      },
+    );
+
+    // The timeline wraps its ListView in one SelectionArea; the composer's
+    // EditableText manages its own selection, so this is the only region.
+    final SelectableRegionState region = tester.state<SelectableRegionState>(
+      find.byType(SelectableRegion),
+    );
+    region.selectAll();
+    // Copy the way SelectionArea's own Ctrl+C handling does: the region
+    // registers a CopySelectionTextIntent action.
+    final BuildContext textContext = tester.element(
+      find.textContaining('Working on it', findRichText: true),
+    );
+    Actions.invoke(textContext, CopySelectionTextIntent.copy);
+
+    final Iterable<MethodCall> writes = clipboardCalls.where(
+      (MethodCall call) => call.method == 'Clipboard.setData',
+    );
+    expect(writes, hasLength(1));
+    final String copied =
+        (writes.single.arguments! as Map<Object?, Object?>)['text']!
+            as String;
+    expect(copied, contains('hello'));
+    expect(copied, contains('Working on it'));
+    expect(copied, contains('void main()'));
+    expect(copied, contains('Done.'));
+  });
+
   testWidgets('typing and Enter sends a message; user bubble appears',
       (WidgetTester tester) async {
     await pumpChat(tester);

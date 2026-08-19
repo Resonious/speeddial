@@ -63,17 +63,20 @@ class DiffView extends StatelessWidget {
         ),
         const Divider(height: 1, thickness: 1),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                for (final String line in lines)
-                  Text(
-                    line,
-                    style: colors.mono.copyWith(color: _lineColor(line, scheme)),
-                  ),
-              ],
+          child: SelectionArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  for (final String line in lines)
+                    Text(
+                      line,
+                      style:
+                          colors.mono.copyWith(color: _lineColor(line, scheme)),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
