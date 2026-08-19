@@ -58,6 +58,14 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Sticky across sheet opens: seed from the last choice (kept on
+    // AppData) instead of always starting unchecked.
+    _yolo = widget.data.newSessionYolo;
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _data ??= _load();
@@ -293,7 +301,12 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
               const Text('Auto-approve every permission request from the agent'),
           onChanged: _submitting
               ? null
-              : (bool? value) => setState(() => _yolo = value ?? false),
+              : (bool? value) => setState(() {
+                    _yolo = value ?? false;
+                    // Sticky even when the sheet is cancelled: the next
+                    // sheet seeds from this.
+                    widget.data.newSessionYolo = _yolo;
+                  }),
         ),
         if (branches.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),

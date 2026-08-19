@@ -262,6 +262,13 @@ class AppData {
   late final FilesStore files;
   late final GitStore git;
 
+  /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
+  /// sheet seeds its toggle from here and writes back on change, so the
+  /// choice carries over to the next sheet. In-memory only — deliberately
+  /// not persisted across launches, since yolo auto-approves every
+  /// permission request.
+  bool newSessionYolo = false;
+
   final Map<String, DaemonClient> _clients = <String, DaemonClient>{};
 
   /// Lazily created WebSocket clients, one per endpoint id.

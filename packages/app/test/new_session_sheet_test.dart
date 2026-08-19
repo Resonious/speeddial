@@ -116,6 +116,37 @@ void main() {
     expect(second.yolo, isTrue);
   });
 
+  testWidgets('yolo mode checkbox is sticky across sheet opens',
+      (WidgetTester tester) async {
+    await pumpSheet(tester);
+
+    CheckboxListTile yoloTile() =>
+        tester.widget<CheckboxListTile>(find.byKey(const Key('new-session-yolo')));
+
+    // Check it, then cancel without submitting.
+    final Finder toggle = find.byKey(const Key('new-session-yolo'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // Reopen: still checked.
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    expect(yoloTile().value, isTrue);
+
+    // Unchecking sticks the same way.
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    expect(yoloTile().value, isFalse);
+  });
+
   testWidgets('model field offers provider models; selection is sent on '
       'create', (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
