@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- INTERNET is required by the app itself (WebSocket to daemons); the
+         debug/profile manifests only carry it for the Flutter tooling. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="speeddial_app"
         android:name="${applicationName}"
