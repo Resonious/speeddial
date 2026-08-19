@@ -349,8 +349,15 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   @override
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
+    // Keep the action row above the system navigation bar on edge-to-edge
+    // Android: the sheet's background extends to the screen's bottom edge,
+    // which the nav bar overlays. The route adds the keyboard's viewInsets
+    // below, but those collapse when the keyboard dismisses — `padding`
+    // (already consumed to zero while the keyboard is up) covers exactly the
+    // remaining nav-bar case without adding a dead gap above the keyboard.
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+      padding: EdgeInsets.fromLTRB(
+          20, 16, 20, 20 + MediaQuery.paddingOf(context).bottom),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
