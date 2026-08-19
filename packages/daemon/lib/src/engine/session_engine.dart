@@ -166,6 +166,9 @@ class SessionEngine {
   /// divergence — see [GitService.worktreeBaseRef]). The worktree becomes
   /// the session cwd; [cwd] and [baseBranch] are mutually exclusive. The
   /// worktree is rolled back if the agent fails to start.
+  ///
+  /// With [yolo], the engine resolves the agent's permission requests itself
+  /// (see [_onPermissionRequest]) instead of parking them for a client.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -174,6 +177,7 @@ class SessionEngine {
     String? title,
     String? cwd,
     String? baseBranch,
+    bool yolo = false,
   }) async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
@@ -253,6 +257,7 @@ class SessionEngine {
       model: model,
       cwd: workingDir,
       baseBranch: baseBranch,
+      yolo: yolo,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -490,6 +495,7 @@ class SessionEngine {
             model: session.model,
             cwd: session.cwd,
             baseBranch: session.baseBranch,
+            yolo: session.yolo,
             archived: session.archived,
             createdAt: session.createdAt,
             updatedAt: DateTime.now().toUtc(),
@@ -737,6 +743,45 @@ class SessionEngine {
       throw StateError('Permission request for unknown session: $sessionId');
     }
     final requestId = _uuid.v4();
+    final mapped = permissionOptionsFromAcp(options);
+    // Yolo sessions resolve the request themselves: the first allow_always
+    // option wins, then the first allow_once. The request/resolved events are
+    // still emitted (back-to-back, without the waitingPermission status) so
+    // the transcript records what was auto-approved. A request with no allow
+    // option falls through to the normal parked flow.
+    if (live.session.yolo) {
+      PermissionOption? allow;
+      for (final option in mapped) {
+        if (option.kind == PermissionKind.allowAlways) {
+          allow = option;
+          break;
+        }
+        if (option.kind == PermissionKind.allowOnce && allow == null) {
+          allow = option;
+        }
+      }
+      if (allow != null) {
+        _emit(
+          live,
+          PermissionRequestEvent(
+            request: PermissionRequest(
+              requestId: requestId,
+              toolCallId: toolCallId,
+              title: title,
+              options: mapped,
+            ),
+          ),
+        );
+        _emit(
+          live,
+          PermissionResolvedEvent(
+            requestId: requestId,
+            optionId: allow.optionId,
+          ),
+        );
+        return allow.optionId;
+      }
+    }
     final completer = Completer<String>();
     live.pendingPermissions[requestId] = completer;
     _emit(
@@ -746,7 +791,7 @@ class SessionEngine {
           requestId: requestId,
           toolCallId: toolCallId,
           title: title,
-          options: permissionOptionsFromAcp(options),
+          options: mapped,
         ),
       ),
     );
@@ -885,6 +930,7 @@ class SessionEngine {
         model: session.model,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
         updatedAt: DateTime.now().toUtc(),
@@ -900,6 +946,7 @@ class SessionEngine {
         model: session.model,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        yolo: session.yolo,
         archived: archived,
         createdAt: session.createdAt,
         updatedAt: DateTime.now().toUtc(),
@@ -915,6 +962,7 @@ class SessionEngine {
         model: session.model,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
         updatedAt: DateTime.now().toUtc(),
@@ -930,6 +978,7 @@ class SessionEngine {
         model: model,
         cwd: session.cwd,
         baseBranch: session.baseBranch,
+        yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
         updatedAt: DateTime.now().toUtc(),

@@ -456,6 +456,7 @@ class SpeedDialServer {
     final rawTitle = params['title'];
     final rawCwd = params['cwd'];
     final rawBaseBranch = params['baseBranch'];
+    final rawYolo = params['yolo'];
     final session = await _engine.createSession(
       projectId: projectId,
       providerId: providerId,
@@ -465,6 +466,7 @@ class SpeedDialServer {
       cwd: rawCwd is String && rawCwd.isNotEmpty ? rawCwd : null,
       baseBranch:
           rawBaseBranch is String && rawBaseBranch.isNotEmpty ? rawBaseBranch : null,
+      yolo: rawYolo is bool && rawYolo,
     );
     // The engine already published `session.updated` (suppressed by the
     // created-set while `sessions.create` is in flight); PROTOCOL.md wants an

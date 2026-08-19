@@ -77,7 +77,7 @@ WebSocket except `serve` and `token`:
   Writes PID + port + token to `~/.speeddial/daemon.json` for discovery.
 - `token` — prints/rotates the auth token.
 - `projects list|add <path>|remove <id>`
-- `sessions list [--project <id>]|create --project <id> --provider <id> [--model m] [--mode plan] [--title t] [--base b]|send <id> <text>|cancel <id>|archive <id>|delete <id>|history <id>|attach <id>` (attach = stream session.event notifications to stdout)
+- `sessions list [--project <id>]|create --project <id> --provider <id> [--model m] [--mode plan] [--title t] [--base b] [--yolo]|send <id> <text>|cancel <id>|archive <id>|delete <id>|history <id>|attach <id>` (attach = stream session.event notifications to stdout)
 - `git status|diff [--staged]|commit -m <msg> [--all]|push|pr [--title t] [--base b]|merge-base --session <id>` — all take `--project <id>`
 - Global flags: `--host`, `--port`, `--token` override discovery file.
 

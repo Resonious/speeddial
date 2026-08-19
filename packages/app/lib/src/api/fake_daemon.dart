@@ -88,6 +88,7 @@ class FakeDaemonClient implements DaemonClient {
       model: 'omp-default',
       cwd: project.path,
       baseBranch: 'main',
+      yolo: false,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -102,6 +103,7 @@ class FakeDaemonClient implements DaemonClient {
       model: null,
       cwd: project.path,
       baseBranch: null,
+      yolo: false,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -286,6 +288,7 @@ class FakeDaemonClient implements DaemonClient {
     SessionMode? mode,
     String? title,
     String? baseBranch,
+    bool yolo = false,
   }) async {
     _ensureSeeded();
     _project(projectId);
@@ -306,6 +309,7 @@ class FakeDaemonClient implements DaemonClient {
           : '${_project(projectId).path}/../.speeddial-worktrees/'
               '${_project(projectId).name.toLowerCase()}-$id',
       baseBranch: baseBranch,
+      yolo: yolo,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -416,6 +420,7 @@ class FakeDaemonClient implements DaemonClient {
               model: s.model,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -437,6 +442,7 @@ class FakeDaemonClient implements DaemonClient {
               model: s.model,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              yolo: s.yolo,
               archived: archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -465,6 +471,7 @@ class FakeDaemonClient implements DaemonClient {
               model: s.model,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -486,6 +493,7 @@ class FakeDaemonClient implements DaemonClient {
               model: model,
               cwd: s.cwd,
               baseBranch: s.baseBranch,
+              yolo: s.yolo,
               archived: s.archived,
               createdAt: s.createdAt,
               updatedAt: s.updatedAt,
@@ -883,11 +891,30 @@ class FakeDaemonClient implements DaemonClient {
       if (_isCancelled(sessionId)) return;
       final PermissionRequest request = _permissionRequest();
       _emit(sessionId, PermissionRequestEvent(request: request));
-      _pendingPermissions[sessionId] = request.requestId;
-      _setStatus(sessionId, SessionStatus.waitingPermission);
-      // Parked: the turn stays "running" until respondPermission's tail
-      // clears it, so a second send conflicts and cancel works.
-      return;
+      if (_sessions[sessionId]!.yolo) {
+        // Yolo mirrors the daemon: resolve immediately with the first allow
+        // option, never entering waitingPermission, and continue the turn.
+        _emit(
+          sessionId,
+          PermissionResolvedEvent(
+            requestId: request.requestId,
+            optionId: request.options
+                .firstWhere(
+                  (PermissionOption o) => o.kind == PermissionKind.allowAlways,
+                  orElse: () => request.options.firstWhere(
+                    (PermissionOption o) => o.kind == PermissionKind.allowOnce,
+                  ),
+                )
+                .optionId,
+          ),
+        );
+      } else {
+        _pendingPermissions[sessionId] = request.requestId;
+        _setStatus(sessionId, SessionStatus.waitingPermission);
+        // Parked: the turn stays "running" until respondPermission's tail
+        // clears it, so a second send conflicts and cancel works.
+        return;
+      }
     }
 
     await _emitTurnTail(sessionId);
@@ -987,6 +1014,7 @@ class FakeDaemonClient implements DaemonClient {
       model: current.model,
       cwd: current.cwd,
       baseBranch: current.baseBranch,
+      yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
       updatedAt: now,
@@ -1010,6 +1038,7 @@ class FakeDaemonClient implements DaemonClient {
       model: current.model,
       cwd: current.cwd,
       baseBranch: current.baseBranch,
+      yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),

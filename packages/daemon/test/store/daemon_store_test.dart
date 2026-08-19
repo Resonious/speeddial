@@ -34,6 +34,7 @@ Session session({
   SessionMode mode = SessionMode.build,
   String title = 'Test session',
   String? baseBranch,
+  bool yolo = false,
   bool archived = false,
 }) =>
     Session(
@@ -46,6 +47,7 @@ Session session({
       model: null,
       cwd: p.join(Directory.systemTemp.path, 'cwd'),
       baseBranch: baseBranch,
+      yolo: yolo,
       archived: archived,
       createdAt: DateTime.utc(2026, 1, 2),
       updatedAt: DateTime.utc(2026, 1, 2),
@@ -146,6 +148,7 @@ void main() {
       model: 'sonnet',
       cwd: '/cwd',
       baseBranch: 'main',
+      yolo: true,
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
       updatedAt: DateTime.utc(2026, 1, 3),
@@ -157,6 +160,7 @@ void main() {
     expect(reloaded.mode, SessionMode.plan);
     expect(reloaded.model, 'sonnet');
     expect(reloaded.baseBranch, 'main');
+    expect(reloaded.yolo, isTrue);
     expect(reloaded.archived, isTrue);
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
 
@@ -218,12 +222,15 @@ void main() {
     expect(migrated.title, 'Legacy');
     expect(migrated.baseBranch, isNull,
         reason: 'legacy rows gain a null base branch');
+    expect(migrated.yolo, isFalse,
+        reason: 'legacy rows default to yolo off');
     expect(store.acpSessionIdOf('s1'), isNull,
         reason: 'legacy rows have no resumable ACP session id');
 
-    // New inserts carry the base branch.
-    store.insertSession(session(id: 's2', baseBranch: 'main'));
+    // New inserts carry the base branch and the yolo flag.
+    store.insertSession(session(id: 's2', baseBranch: 'main', yolo: true));
     expect(store.getSession('s2')!.baseBranch, 'main');
+    expect(store.getSession('s2')!.yolo, isTrue);
     expect(
       store.listSessions().map((s) => s.baseBranch),
       <String?>[null, 'main'],

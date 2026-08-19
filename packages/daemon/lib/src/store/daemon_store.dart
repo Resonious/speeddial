@@ -11,7 +11,8 @@
 ///   * `sessions`       id PK, project_id FK→projects, provider_id, title,
 ///                      status, mode, model NULL, cwd, base_branch NULL,
 ///                      acp_session_id NULL (provider-side id for resume),
-///                      archived INT, created_at, updated_at
+///                      yolo INT (auto-approve permissions), archived INT,
+///                      created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
@@ -66,7 +67,8 @@ class DaemonStore {
       );
     ''');
     // Pre-merge-back databases have no base_branch column; pre-resume
-    // databases have no acp_session_id column.
+    // databases have no acp_session_id column; pre-yolo databases have no
+    // yolo column.
     final sessionColumns = _db
         .select('PRAGMA table_info(sessions)')
         .map((row) => row['name'] as String)
@@ -76,6 +78,11 @@ class DaemonStore {
     }
     if (!sessionColumns.contains('acp_session_id')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN acp_session_id TEXT');
+    }
+    if (!sessionColumns.contains('yolo')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0',
+      );
     }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
@@ -197,8 +204,8 @@ class DaemonStore {
   void insertSession(Session session) {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
-      'mode, model, cwd, base_branch, archived, created_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'mode, model, cwd, base_branch, yolo, archived, created_at, updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -209,6 +216,7 @@ class DaemonStore {
         session.model,
         session.cwd,
         session.baseBranch,
+        session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.updatedAt),
@@ -224,7 +232,7 @@ class DaemonStore {
   }) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'base_branch, archived, created_at, updated_at FROM sessions '
+      'base_branch, yolo, archived, created_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -236,7 +244,7 @@ class DaemonStore {
   Session? getSession(String id) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, cwd, '
-      'base_branch, archived, created_at, updated_at FROM sessions WHERE id = ?',
+      'base_branch, yolo, archived, created_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -248,7 +256,7 @@ class DaemonStore {
     _db.execute(
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, cwd = ?, base_branch = ?, '
-      'archived = ?, created_at = ?, updated_at = ? WHERE id = ?',
+      'yolo = ?, archived = ?, created_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
         session.providerId,
@@ -258,6 +266,7 @@ class DaemonStore {
         session.model,
         session.cwd,
         session.baseBranch,
+        session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.updatedAt),
@@ -421,6 +430,7 @@ class DaemonStore {
         model: row['model'] as String?,
         cwd: row['cwd'] as String,
         baseBranch: row['base_branch'] as String?,
+        yolo: (row['yolo'] as int? ?? 0) != 0,
         archived: (row['archived'] as int) != 0,
         createdAt: _fromTs(row['created_at'] as int),
         updatedAt: _fromTs(row['updated_at'] as int),

@@ -422,6 +422,7 @@ class Session {
     required this.model,
     required this.cwd,
     required this.baseBranch,
+    required this.yolo,
     required this.archived,
     required this.createdAt,
     required this.updatedAt,
@@ -444,6 +445,9 @@ class Session {
   /// non-worktree sessions.
   final String? baseBranch;
 
+  /// Yolo mode: the daemon auto-approves the agent's permission requests.
+  final bool yolo;
+
   final bool archived;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -458,6 +462,8 @@ class Session {
         model: json['model'] as String?,
         cwd: json['cwd']! as String,
         baseBranch: json['baseBranch'] as String?,
+        // Absent on pre-yolo daemons.
+        yolo: json['yolo'] as bool? ?? false,
         archived: json['archived']! as bool,
         createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
         updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
@@ -473,6 +479,7 @@ class Session {
         'model': model,
         'cwd': cwd,
         'baseBranch': baseBranch,
+        'yolo': yolo,
         'archived': archived,
         'createdAt': createdAt.toUtc().toIso8601String(),
         'updatedAt': updatedAt.toUtc().toIso8601String(),

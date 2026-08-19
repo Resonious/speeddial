@@ -156,6 +156,8 @@ void main() {
       expect(session.cwd, '/home/nigel/p/speeddial');
       expect(session.baseBranch, isNull,
           reason: 'baseBranch is absent on pre-merge-back daemons');
+      expect(session.yolo, isFalse,
+          reason: 'yolo is absent on pre-yolo daemons');
       expect(session.archived, isFalse);
       expect(session.createdAt.isUtc, isTrue);
 
@@ -178,6 +180,7 @@ void main() {
         model: 'gpt-5',
         cwd: '/tmp/wt',
         baseBranch: 'main',
+        yolo: true,
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
         updatedAt: DateTime.utc(2026, 1, 2, 3, 4, 5, 678),
@@ -186,6 +189,7 @@ void main() {
       expect(decoded.status, SessionStatus.running);
       expect(decoded.model, 'gpt-5');
       expect(decoded.baseBranch, 'main');
+      expect(decoded.yolo, isTrue);
       expect(decoded.archived, isTrue);
       expect(decoded.toJson(), model.toJson());
     });

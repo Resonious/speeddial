@@ -53,6 +53,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   String? _providerId;
   String? _baseBranch;
   bool _useWorktree = true;
+  bool _yolo = false;
   bool _submitting = false;
   String? _error;
 
@@ -105,6 +106,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         mode: _mode,
         title: prompt.isEmpty ? null : _titleFromPrompt(prompt),
         baseBranch: _useWorktree ? _baseBranch : null,
+        yolo: _yolo,
       );
       data.selection.selectedProjectId = session.projectId;
       data.selection.selectedSessionId = session.id;
@@ -278,6 +280,20 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                         setState(() => _mode = selection.single),
             ),
           ),
+        ),
+        const SizedBox(height: 4),
+        CheckboxListTile(
+          key: const Key('new-session-yolo'),
+          value: _yolo,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text('Yolo mode'),
+          subtitle:
+              const Text('Auto-approve every permission request from the agent'),
+          onChanged: _submitting
+              ? null
+              : (bool? value) => setState(() => _yolo = value ?? false),
         ),
         if (branches.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),

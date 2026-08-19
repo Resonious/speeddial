@@ -89,7 +89,7 @@ class SessionsListCommand extends Command<int> {
 }
 
 /// `speeddial sessions create --project <id> --provider <id>` plus optional
-/// `[--model m] [--mode plan] [--title t] [--base b]`
+/// `[--model m] [--mode plan] [--title t] [--base b] [--yolo]`
 class SessionsCreateCommand extends Command<int> {
   SessionsCreateCommand() {
     argParser
@@ -103,7 +103,9 @@ class SessionsCreateCommand extends Command<int> {
       ..addOption('base',
           help: 'Base branch for a new session worktree: fetches '
               'origin/<base> and runs the agent in a worktree branched off '
-              'the remote tip.');
+              'the remote tip.')
+      ..addFlag('yolo',
+          help: 'Auto-approve every permission request from the agent.');
   }
 
   @override
@@ -133,6 +135,7 @@ class SessionsCreateCommand extends Command<int> {
         mode: modeRaw == null ? null : SessionMode.parse(modeRaw),
         title: argResults!['title'] as String?,
         baseBranch: argResults!['base'] as String?,
+        yolo: argResults!['yolo'] as bool,
       );
       if (conn.json) {
         output.raw(<String, Object?>{'session': session.toJson()});

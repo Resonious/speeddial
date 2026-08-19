@@ -69,6 +69,7 @@ Session = {
   model: string | null,
   cwd: string,                // working dir of the agent (project path or worktree)
   baseBranch: string | null,  // base branch the session's worktree was created from
+  yolo: boolean,              // daemon auto-approves the agent's permission requests
   archived: boolean,
   createdAt: string,
   updatedAt: string,
@@ -183,7 +184,7 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
-- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string}` → `{session: Session}`
+- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, yolo?: boolean}` → `{session: Session}`
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is
@@ -191,6 +192,11 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     otherwise (local ahead, equal, or diverged). `baseBranch` and `cwd` are mutually exclusive
     (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
     worktree on disk.
+  — with `yolo: true` (default `false`), the daemon resolves every permission request itself
+    instead of parking it for a client: it picks the first `allow_always` option (falling back
+    to the first `allow_once`), emits the `permissionRequest` and `permissionResolved` events
+    back-to-back (the session never enters `waitingPermission`), and the turn continues
+    uninterrupted. A request offering no allow option still parks for a client response.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
   attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon

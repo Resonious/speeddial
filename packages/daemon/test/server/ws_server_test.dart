@@ -359,6 +359,7 @@ void main() {
       expect(session.status, SessionStatus.idle);
       expect(session.title, 'Lifecycle');
       expect(session.mode, SessionMode.build);
+      expect(session.yolo, isFalse, reason: 'yolo defaults off');
       await untilRecorded(client, 'session.created', 1);
       expect(client.of('session.created'), hasLength(1));
 
@@ -512,6 +513,55 @@ void main() {
 
       await client.close();
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('sessions.create with yolo auto-approves permission requests',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_yolo_');
+      File(p.join(dir.path, 'example.txt'))
+          .writeAsStringSync('hello from file\n');
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': dir.path}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+
+      final created = j(await client.peer.call('sessions.create',
+          <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'yolo': true,
+          }));
+      final session = Session.fromJson(
+          (created['session']! as Map).cast<String, Object?>());
+      expect(session.yolo, isTrue);
+
+      // The turn runs to completion with no respondPermission: the request
+      // and its resolution arrive back-to-back and the session never parks.
+      await client.peer.call('sessions.send',
+          <String, Object?>{'sessionId': session.id, 'text': 'inspect'});
+      await untilRecorded(client, 'session.event', 10);
+      final events = client
+          .of('session.event')
+          .map((n) => SessionEvent.fromJson(
+              (n.params['event']! as Map).cast<String, Object?>()))
+          .toList();
+      final request = events.whereType<PermissionRequestEvent>().single;
+      final resolved = events.whereType<PermissionResolvedEvent>().single;
+      expect(resolved.requestId, request.request.requestId);
+      expect(resolved.optionId, 'allow');
+      expect(events.last, isA<TurnCompleteEvent>());
+      final updates = client
+          .of('session.updated')
+          .map((n) => Session.fromJson(
+              (n.params['session']! as Map).cast<String, Object?>()))
+          .toList();
+      expect(
+        updates.map((s) => s.status),
+        isNot(contains(SessionStatus.waitingPermission)),
+        reason: 'a yolo session never enters waitingPermission',
+      );
+    });
 
     test('sessions.create with baseBranch runs the session in a worktree',
         () async {

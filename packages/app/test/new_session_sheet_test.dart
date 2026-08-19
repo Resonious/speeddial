@@ -91,6 +91,31 @@ class _SendFailingFake extends FakeDaemonClient {
 }
 
 void main() {
+  testWidgets('yolo mode is off by default and sent when checked',
+      (WidgetTester tester) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    // Default: no yolo.
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    expect(createdSession(app, projectId).yolo, isFalse);
+
+    // Reopen and check the toggle.
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    final Finder toggle = find.byKey(const Key('new-session-yolo'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    final List<Session> sessions = app.sessions.sessionsFor(projectId);
+    final Session second = sessions.singleWhere((Session s) =>
+        s.id != 'sess-1' && s.id != 'sess-2' && s.yolo);
+    expect(second.yolo, isTrue);
+  });
+
   testWidgets('model field offers provider models; selection is sent on '
       'create', (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);

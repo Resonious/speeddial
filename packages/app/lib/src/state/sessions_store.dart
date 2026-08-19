@@ -123,6 +123,7 @@ class SessionsStore extends StoreBase {
     SessionMode? mode,
     String? title,
     String? baseBranch,
+    bool yolo = false,
   }) async {
     _ensureDaemonSubscriptions(daemonId);
     final Session session = await _clientFor(daemonId).createSession(
@@ -132,6 +133,7 @@ class SessionsStore extends StoreBase {
       mode: mode,
       title: title,
       baseBranch: baseBranch,
+      yolo: yolo,
     );
     // Upsert rather than blind-add: daemons surface the created session on
     // `sessionUpdates`, and a live listener (running synchronously inside

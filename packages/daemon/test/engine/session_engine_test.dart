@@ -251,6 +251,46 @@ void main() {
     expect((events[9].event as TurnCompleteEvent).stopReason, 'end_turn');
   });
 
+  test('yolo sessions auto-approve permission requests', () async {
+    final session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+      yolo: true,
+    );
+    expect(session.yolo, isTrue);
+    expect(store.getSession(session.id)!.yolo, isTrue,
+        reason: 'the flag must persist for restarts/resume');
+
+    // The turn completes without respondPermission: the engine resolves the
+    // agent's request itself with the allow_always option.
+    await engine.sendMessage(session.id, 'please edit the file');
+
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    expect(
+      changes.map((s) => s.status),
+      isNot(contains(SessionStatus.waitingPermission)),
+      reason: 'yolo resolution never parks the session',
+    );
+
+    final request = events
+        .firstWhere((e) => e.event is PermissionRequestEvent)
+        .event as PermissionRequestEvent;
+    final resolved = events
+        .firstWhere((e) => e.event is PermissionResolvedEvent)
+        .event as PermissionResolvedEvent;
+    expect(resolved.requestId, request.request.requestId);
+    expect(resolved.optionId, 'allow',
+        reason: 'the allow_always option wins');
+
+    // The auto-resolved request was never parked: a late respondPermission
+    // is not-found, not a conflict or a no-op success.
+    await expectLater(
+      engine.respondPermission(session.id, request.request.requestId, 'reject'),
+      throwsA(
+          isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+  });
+
   test('events are persisted and replayable from the store', () async {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');
@@ -347,6 +387,7 @@ void main() {
       model: null,
       cwd: tempDir.path,
       baseBranch: null,
+      yolo: false,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -364,6 +405,7 @@ void main() {
       model: closed.model,
       cwd: closed.cwd,
       baseBranch: closed.baseBranch,
+      yolo: closed.yolo,
       archived: closed.archived,
       createdAt: closed.createdAt,
       updatedAt: DateTime.now().toUtc(),

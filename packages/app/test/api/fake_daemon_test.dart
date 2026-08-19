@@ -246,6 +246,44 @@ void main() {
     await updateSub.cancel();
   });
 
+  test('yolo sessions auto-resolve the permission script', () async {
+    final FakeDaemonClient fake = FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final Session session = await fake.createSession(
+      projectId: (await fake.listProjects()).single.id,
+      providerId: 'omp',
+      yolo: true,
+    );
+    expect(session.yolo, isTrue);
+
+    final List<SessionEvent> events = <SessionEvent>[];
+    final List<Session> updates = <Session>[];
+    final StreamSubscription<SessionEvent> eventSub =
+        fake.sessionEvents(session.id).listen(events.add);
+    final StreamSubscription<Session> updateSub =
+        fake.sessionUpdates.listen(updates.add);
+
+    // The turn completes without respondPermission: the fake resolves the
+    // request with the allow option, mirroring the daemon's yolo mode.
+    await fake.sendMessage(session.id, 'please grant permission');
+    await _waitUntil(() => Future<bool>.value(
+        events.any((SessionEvent e) => e is TurnCompleteEvent)));
+
+    final PermissionRequestEvent request =
+        events.whereType<PermissionRequestEvent>().single;
+    final PermissionResolvedEvent resolved =
+        events.whereType<PermissionResolvedEvent>().single;
+    expect(resolved.requestId, request.request.requestId);
+    expect(resolved.optionId, 'allow-once');
+    expect(
+      updates.map((Session s) => s.status),
+      isNot(contains(SessionStatus.waitingPermission)),
+      reason: 'a yolo session never parks on the request',
+    );
+
+    await eventSub.cancel();
+    await updateSub.cancel();
+  });
+
   test('history backfill shows a completed turn without a live listener', () async {
     final FakeDaemonClient fake = FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
 
