@@ -65,6 +65,47 @@ class _InstrumentedFake extends FakeDaemonClient {
   }
 }
 
+/// Fake whose `history()` serves the newest page normally and can hold
+/// older pages behind a gate or fail them, so tests can observe the
+/// store's incremental page application and mid-backfill retries.
+class _GatedPageFake extends FakeDaemonClient {
+  _GatedPageFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  Completer<void>? _gate;
+  bool _open = false;
+  bool failOlderPages = false;
+
+  /// Lets the held page (and all future pages) through.
+  void releaseNextPage() {
+    _open = true;
+    final Completer<void>? gate = _gate;
+    _gate = null;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  @override
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) {
+    if (beforeSeq != null) {
+      if (failOlderPages) {
+        return Future<({List<SessionEvent> events, bool hasMore})>.error(
+            StateError('daemon unreachable mid-backfill'));
+      }
+      if (!_open) {
+        _gate ??= Completer<void>();
+        final Completer<void> gate = _gate!;
+        return gate.future.then(
+          (_) => super.history(sessionId, limit: limit, beforeSeq: beforeSeq),
+        );
+      }
+    }
+    return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
+  }
+}
+
 void main() {
   late FakeDaemonClient fake;
   late AppData app;
@@ -344,25 +385,25 @@ void main() {
     });
 
     test('watch backfills multi-page history by paging backwards', () async {
-      // Seed more than one page (default history limit is 200).
+      // Seed more than one page (the store pages at the protocol cap, 1000).
       fake.seedHistory('sess-1', <SessionEvent>[
-        for (var i = 1; i <= 450; i++) UserMessageEvent(text: 'm$i'),
+        for (var i = 1; i <= 1001; i++) UserMessageEvent(text: 'm$i'),
       ]);
 
       app.chat.watchSession('fake', 'sess-1');
-      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 450);
+      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1001);
 
       final List<SessionEvent> events = app.chat.eventsFor('sess-1');
-      // All three pages arrived, in ascending seq order, with no overlap.
+      // Both pages arrived, in ascending seq order, with no overlap.
       expect(events.map((SessionEvent e) => e.seq).toList(),
-          List<int?>.generate(450, (int i) => i + 1));
+          List<int?>.generate(1001, (int i) => i + 1));
       expect(
         (events.first as UserMessageEvent).text,
         'm1',
       );
       expect(
         (events.last as UserMessageEvent).text,
-        'm450',
+        'm1001',
       );
 
       // A live event after the backfill continues from the known max seq.
@@ -370,14 +411,14 @@ void main() {
       await _waitUntil(() => app.chat
           .eventsFor('sess-1')
           .any((SessionEvent e) => e is TurnCompleteEvent));
-      // The turn appends 11 raw events, but the 2 thought deltas (452-453)
-      // and 3 chunk deltas (454-456) each merge into one buffered record:
-      // 450 + 8 = 458.
-      expect(app.chat.eventsFor('sess-1'), hasLength(458));
+      // The turn appends 11 raw events, but the 2 thought deltas (1003-1004)
+      // and 3 chunk deltas (1005-1007) each merge into one buffered record:
+      // 1001 + 8 = 1009.
+      expect(app.chat.eventsFor('sess-1'), hasLength(1009));
       // Merged chunk records the last delta's seq; the tail is contiguous.
       expect(
-        app.chat.eventsFor('sess-1').sublist(450).map((SessionEvent e) => e.seq),
-        <int>[451, 453, 456, 457, 458, 459, 460, 461],
+        app.chat.eventsFor('sess-1').sublist(1001).map((SessionEvent e) => e.seq),
+        <int>[1002, 1004, 1007, 1008, 1009, 1010, 1011, 1012],
       );
       expect(
         (app.chat.eventsFor('sess-1').lastWhere((SessionEvent e) =>
@@ -385,6 +426,59 @@ void main() {
             .text,
         'after backfill',
       );
+    });
+
+    test('first history page renders before older pages finish loading',
+        () async {
+      // A gated client holds the SECOND page back, proving the store
+      // applies (and reports ready) after the newest page alone.
+      final _GatedPageFake gated = _GatedPageFake();
+      app.registerClient('gated', gated);
+      gated.seedHistory('sess-1', <SessionEvent>[
+        for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+      ]);
+
+      app.chat.watchSession('gated', 'sess-1');
+      await _waitUntil(() =>
+          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+
+      // Only the newest page (m501..m1500) has arrived; the buffer is
+      // already usable and live events apply directly.
+      expect(app.chat.eventsFor('sess-1'), hasLength(1000));
+      expect(
+        (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
+        'm501',
+      );
+
+      gated.releaseNextPage();
+      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
+      // The older page prepended in seq order, above nothing, below all.
+      expect(app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList(),
+          List<int?>.generate(1500, (int i) => i + 1));
+    });
+
+    test('retrying a partially loaded history does not duplicate events',
+        () async {
+      final _GatedPageFake gated = _GatedPageFake()..failOlderPages = true;
+      app.registerClient('gated', gated);
+      gated.seedHistory('sess-1', <SessionEvent>[
+        for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+      ]);
+
+      app.chat.watchSession('gated', 'sess-1');
+      // Page one lands; the second page fetch throws.
+      await _waitUntil(() =>
+          app.chat.historyStatusFor('sess-1') == HistoryStatus.failed);
+      expect(app.chat.eventsFor('sess-1'), hasLength(1000));
+
+      gated.failOlderPages = false;
+      gated.releaseNextPage(); // Unblocks the retry's second page.
+      app.chat.retryHistory('gated', 'sess-1');
+      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
+      final List<int?> seqs =
+          app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList();
+      expect(seqs.toSet().length, 1500, reason: 'no duplicated seqs');
+      expect(seqs, List<int?>.generate(1500, (int i) => i + 1));
     });
 
     test('revisionFor increments on every buffer mutation', () async {

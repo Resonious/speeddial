@@ -433,8 +433,8 @@ class ChatStore extends StoreBase {
   /// advance [maxSeq] past the gap and make the refetch drop it as a
   /// duplicate.
   ///
-  /// Backfill pages backwards (see [_applyHistory]): each page is fetched
-  /// with `beforeSeq` = the oldest seq of the page before it until
+  /// Backfill pages backwards (see [_fetchHistoryPages]): each page is
+  /// fetched with `beforeSeq` = the oldest seq of the page before it until
   /// [DaemonClient.history] reports no older page.
   Future<void> _resyncDaemon(String daemonId) async {
     final DaemonClient client = _clientFor(daemonId);
@@ -449,7 +449,17 @@ class ChatStore extends StoreBase {
     try {
       for (final _SessionBuffer buffer in buffers) {
         try {
-          await _applyHistory(client, buffer, _applyLive);
+          // Collect all pages first, then apply oldest→newest: events
+          // missed offline can span a page boundary, and applying pages
+          // as they arrive (newest-first) would append a newer page before
+          // an older one it overlaps.
+          final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
+          await _fetchHistoryPages(client, buffer, pages.add);
+          for (final List<SessionEvent> page in pages.reversed) {
+            for (final SessionEvent event in page) {
+              _applyLive(buffer, event);
+            }
+          }
           // A previously failed (or stale) fetch just succeeded.
           buffer.historyError = null;
         } on Object {
@@ -485,44 +495,61 @@ class ChatStore extends StoreBase {
     _scheduleNotify();
   }
 
+  /// Page size for history backfills — the protocol's per-request cap.
+  /// Larger pages mean fewer round trips (and fewer page-boundary waits)
+  /// when loading long sessions.
+  static const int _historyPageSize = 1000;
+
   /// Fetches persisted history for [buffer], paging backwards through older
-  /// pages until none remain, and feeds each event through [apply].
+  /// pages until none remain, and hands each page to [onPage] as it arrives
+  /// (newest page first).
   ///
   /// The daemon's pages are strict (`seq < beforeSeq`), so the next page is
   /// requested with [beforeSeq] equal to the oldest seq of the last page —
   /// PROTOCOL.md: "refetch history with beforeSeq of the oldest known gap".
-  /// Pages arrive newest-first but are fed to [apply] oldest-first so the
-  /// buffer stays ascending by `seq` (and dedupe in [_applyLive] keeps its
-  /// monotone max quickly).
-  Future<void> _applyHistory(
+  Future<void> _fetchHistoryPages(
     DaemonClient client,
     _SessionBuffer buffer,
-    void Function(_SessionBuffer, SessionEvent) apply,
+    void Function(List<SessionEvent> page) onPage,
   ) async {
-    final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
     int? beforeSeq; // null → the latest page first.
     while (true) {
       final ({List<SessionEvent> events, bool hasMore}) page =
-          await client.history(buffer.sessionId, beforeSeq: beforeSeq);
-      pages.add(page.events);
+          await client.history(
+        buffer.sessionId,
+        limit: _historyPageSize,
+        beforeSeq: beforeSeq,
+      );
+      onPage(page.events);
       if (!page.hasMore || page.events.isEmpty) break;
       final int? oldest = page.events.first.seq;
       if (oldest == null) break; // no seqs: cannot page further.
       beforeSeq = oldest;
     }
-    for (final List<SessionEvent> page in pages.reversed) {
-      for (final SessionEvent event in page) {
-        apply(buffer, event);
-      }
-    }
   }
 
+  /// Loads [buffer]'s persisted history: the newest page applies right away
+  /// (the timeline renders while older pages are still streaming in), and
+  /// each older page is then prepended above it.
+  ///
+  /// Pages arrive newest-first and are strictly below everything already
+  /// buffered, so prepending keeps the buffer ascending by `seq`; live
+  /// events meanwhile append at the tail above the newest page. The load is
+  /// total: a retry (see [retryHistory]) after a mid-backfill failure drops
+  /// the partially applied pages before refetching, so nothing duplicates.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
+    buffer.events.clear();
+    buffer.chunkRun = null;
+    buffer.maxSeq = 0;
+    bool latestPageApplied = false;
     try {
-      await _applyHistory(client, buffer, (b, event) {
-        _append(b, event);
-        final int? seq = event.seq;
-        if (seq != null && seq > b.maxSeq) b.maxSeq = seq;
+      await _fetchHistoryPages(client, buffer, (List<SessionEvent> page) {
+        if (!latestPageApplied) {
+          latestPageApplied = true;
+          _applyLatestHistoryPage(buffer, page);
+        } else {
+          _prependHistoryPage(buffer, page);
+        }
       });
     } catch (error) {
       // Surfaced via historyStatusFor/historyErrorFor: the UI offers a
@@ -538,6 +565,40 @@ class ChatStore extends StoreBase {
       _scheduleNotify();
     }
   }
+
+  /// Appends the newest history page (the first one fetched) oldest-first
+  /// and immediately publishes the buffer as loaded, so live events stop
+  /// parking and the UI can render while older pages stream in.
+  void _applyLatestHistoryPage(
+    _SessionBuffer buffer,
+    List<SessionEvent> page,
+  ) {
+    for (final SessionEvent event in page) {
+      _append(buffer, event);
+      final int? seq = event.seq;
+      if (seq != null && seq > buffer.maxSeq) buffer.maxSeq = seq;
+    }
+    buffer.historyLoaded = true;
+    for (final SessionEvent event in buffer.pending) {
+      _applyLive(buffer, event);
+    }
+    buffer.pending.clear();
+    _scheduleNotify();
+  }
+
+  /// Prepends an older history page at the head of the buffer. The page is
+  /// strictly older than everything buffered, so no event derivation runs
+  /// (newer events already established status/usage — see [_noteEvent])
+  /// and the tail's open chunk-merge run is untouched. Adjacent same-family
+  /// chunks across the page boundary stay separate buffer events; the
+  /// timeline still renders them as one merged item.
+  void _prependHistoryPage(_SessionBuffer buffer, List<SessionEvent> page) {
+    if (page.isEmpty) return;
+    buffer.events.insertAll(0, page);
+    _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + page.length;
+    _scheduleNotify();
+  }
+
 
   /// Appends [event], merging consecutive chunk deltas of the same kind into
   /// one buffered event, and records any derived state it carries. Every
