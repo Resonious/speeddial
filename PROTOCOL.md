@@ -88,6 +88,19 @@ MergeResult = {
   fastForward: boolean,        // merge resolved by moving the base ref (no merge commit)
   commit: string,              // resulting tip of baseBranch
 }
+
+SessionGitSummary = {
+  sessionId: string,
+  dirty: boolean | null,       // uncommitted changes (staged, unstaged, untracked) in the
+                               // session's cwd; null when unknown (cwd gone / not a repo)
+  aheadOfBase: int | null,     // commits on the session branch contained in neither the local
+                               // base branch nor its origin ref; null when the session has no
+                               // baseBranch or the count could not be determined
+  mergedIntoBase: boolean | null, // every commit the session branch gained since its creation
+                               // is contained in the base branch (local or origin); false while
+                               // any commit is unmerged, and false while the branch never gained
+                               // a commit of its own (nothing to merge); null like aheadOfBase
+}
 ```
 
 ### SessionEvent (discriminated union on `type`)
@@ -192,6 +205,7 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `git.push {projectId: string, sessionId?: string, setUpstream?: boolean}` → `{}`
 - `git.createPullRequest {projectId: string, sessionId?: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated. With `sessionId` given and `base` omitted, the PR targets the session's `baseBranch`; without either, `gh` picks the repo's default branch.
 - `git.mergeToBase {projectId: string, sessionId: string}` → `{merge: MergeResult}` — merges the session's worktree branch back into the `baseBranch` the session was created from (`sessionId` is required here and the session must have one, `-32602` otherwise). First fetches `origin/<baseBranch>`; when the remote-tracking ref is strictly ahead of the local base, the local base is fast-forwarded to it first (`baseFastForwarded: true`) — via `git merge --ff-only` in the checkout that has the base branch, or by moving the ref when the base is checked out nowhere. Diverged local/remote base branches error `-32003`. Then the session branch is merged into the (synced) local base: a regular merge (fast-forward or merge commit) in the checkout holding the base branch, or a ref move when the base is checked out nowhere and the merge is a fast-forward; a non-fast-forward merge with no base checkout errors `-32003`. The session worktree must be clean (`-32003` — commit or discard first). Merge conflicts surface as `-32020`; the merge is aborted (`git merge --abort`) and the base checkout returns to its pre-merge state. The session worktree and its branch are left in place.
+- `git.sessionSummaries {projectId: string}` → `{summaries: SessionGitSummary[]}` — one entry per non-archived session of the project, for the left-rail badges. Computed from local git state only (no fetch): each session's `cwd` is checked for uncommitted changes, and sessions with a `baseBranch` additionally get `aheadOfBase`/`mergedIntoBase` against the local base branch and the (possibly stale) `origin/<baseBranch>` ref. A per-session failure (e.g. a deleted worktree) yields null fields in that session's entry, not a request error.
 
 ## Notifications (daemon → all authenticated clients)
 

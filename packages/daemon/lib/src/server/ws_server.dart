@@ -63,6 +63,7 @@ const List<String> _kProtocolMethods = <String>[
   'git.push',
   'git.createPullRequest',
   'git.mergeToBase',
+  'git.sessionSummaries',
 ];
 
 /// One connected client: its peer, socket, and authentication state.
@@ -343,6 +344,7 @@ class SpeedDialServer {
       'git.push' => _gitPush(params),
       'git.createPullRequest' => _gitCreatePullRequest(params),
       'git.mergeToBase' => _gitMergeToBase(params),
+      'git.sessionSummaries' => _gitSessionSummaries(params),
       _ => throw DaemonError(
           _kErrInvalidParams,
           'Unknown method: $method', // Unreachable: the peer answers -32601.
@@ -715,6 +717,29 @@ class SpeedDialServer {
       baseBranch: baseBranch,
     );
     return <String, Object?>{'merge': merge.toJson()};
+  }
+
+  /// One [SessionGitSummary] per non-archived session of the project, for
+  /// the left-rail badges. All sessions are probed concurrently; per-session
+  /// failures degrade to null fields inside [GitService.sessionSummary].
+  Future<Object?> _gitSessionSummaries(Map<String, Object?> params) async {
+    final project = _requireProject(_requiredString(params, 'projectId'));
+    final List<Session> sessions =
+        _store.listSessions(projectId: project.id);
+    final List<SessionGitSummary> summaries =
+        await Future.wait(<Future<SessionGitSummary>>[
+      for (final Session session in sessions)
+        _git.sessionSummary(
+          sessionId: session.id,
+          repoPath: session.cwd,
+          baseBranch: session.baseBranch,
+          createdAt: session.createdAt,
+        ),
+    ]);
+    return <String, Object?>{
+      'summaries':
+          summaries.map((summary) => summary.toJson()).toList(growable: false),
+    };
   }
 
   // -------------------------------------------------------------------------

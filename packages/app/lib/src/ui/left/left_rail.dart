@@ -458,7 +458,13 @@ class _ProjectTileState extends State<_ProjectTile> {
         style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
       onExpansionChanged: (bool expanded) {
-        if (expanded) data.selection.selectedProjectId = project.id;
+        if (expanded) {
+          data.selection.selectedProjectId = project.id;
+          // Fetch the git badges for this project's sessions. Fires for
+          // selection-driven expansion too (ExpansibleController.expand
+          // routes through onExpansionChanged), so this is the single kick.
+          data.git.refreshSessionSummaries(daemonId, project.id);
+        }
       },
       children: <Widget>[
         SessionList(

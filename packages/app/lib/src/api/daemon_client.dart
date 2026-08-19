@@ -129,6 +129,10 @@ abstract class DaemonClient {
   Future<String> gitCreatePr(String projectId,
       {String? sessionId, String? title, String? body, String? base, bool draft = false});
 
+  /// Per-session git summaries (dirty / ahead-of-base / merged-into-base)
+  /// for every non-archived session of [projectId] — the left-rail badges.
+  Future<List<SessionGitSummary>> gitSessionSummaries(String projectId);
+
   // ---------------------------------------------------------------------
   // Live streams
   // ---------------------------------------------------------------------

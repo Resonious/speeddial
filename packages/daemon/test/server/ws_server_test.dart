@@ -819,6 +819,136 @@ void main() {
       );
       await client.close();
     });
+
+    test('git.sessionSummaries reports dirty/ahead/merged per session',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_summaries_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      final worktree = Session.fromJson((j(await client.peer
+              .call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Worktree session',
+            'baseBranch': 'main',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+      final plain = Session.fromJson((j(await client.peer.call(
+              'sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Plain session',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+
+      Future<Map<String, SessionGitSummary>> summaries() async {
+        final result = j(await client.peer.call('git.sessionSummaries',
+            <String, Object?>{'projectId': project.id}));
+        final list = (result['summaries']! as List)
+            .map((e) => SessionGitSummary.fromJson(
+                (e! as Map).cast<String, Object?>()))
+            .toList();
+        return <String, SessionGitSummary>{
+          for (final s in list) s.sessionId: s,
+        };
+      }
+
+      // Fresh: worktree session is clean/ahead 0/not merged; the plain
+      // session only carries dirty (it has no base branch).
+      var map = await summaries();
+      expect(map, hasLength(2));
+      expect(map[worktree.id]!.dirty, isFalse);
+      expect(map[worktree.id]!.aheadOfBase, 0);
+      expect(map[worktree.id]!.mergedIntoBase, isFalse);
+      expect(map[plain.id]!.dirty, isFalse);
+      expect(map[plain.id]!.aheadOfBase, isNull);
+      expect(map[plain.id]!.mergedIntoBase, isNull);
+
+      // A commit in the worktree reads as ahead-of-base; an edit in the
+      // project checkout flags the plain session dirty. The commit is made
+      // directly (not via git.commit) with a future committer date: the
+      // merged check compares the tip's committer time against the session's
+      // createdAt, and both would otherwise land in the same wall-clock
+      // second, making the merged assertion racy.
+      File(p.join(worktree.cwd, 'feat.txt')).writeAsStringSync('f\n');
+      await git(worktree.cwd, ['add', '-A']);
+      final future =
+          '@${(DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600} +0000';
+      await Process.run(
+        'git',
+        ['commit', '-m', 'session work'],
+        workingDirectory: worktree.cwd,
+        environment: <String, String>{'GIT_COMMITTER_DATE': future},
+      );
+      File(p.join(worktree.cwd, 'wip.txt')).writeAsStringSync('x\n');
+      File(p.join(repoPath, 'wip.txt')).writeAsStringSync('x\n');
+
+      map = await summaries();
+      expect(map[worktree.id]!.aheadOfBase, 1);
+      expect(map[worktree.id]!.mergedIntoBase, isFalse);
+      expect(map[worktree.id]!.dirty, isTrue);
+      expect(map[plain.id]!.dirty, isTrue);
+
+      // Undo the worktree edit, merge, and the session reads merged.
+      File(p.join(worktree.cwd, 'wip.txt')).deleteSync();
+      await client.peer.call('git.mergeToBase', <String, Object?>{
+        'projectId': project.id,
+        'sessionId': worktree.id,
+      });
+
+      map = await summaries();
+      expect(map[worktree.id]!.aheadOfBase, 0);
+      expect(map[worktree.id]!.mergedIntoBase, isTrue);
+      expect(map[worktree.id]!.dirty, isFalse);
+
+      // Archived sessions drop out of the batch.
+      await client.peer.call('sessions.archive', <String, Object?>{
+        'sessionId': plain.id,
+        'archived': true,
+      });
+      map = await summaries();
+      expect(map, hasLength(1));
+      expect(map.containsKey(worktree.id), isTrue);
+
+      // Unknown project → kErrNotFound.
+      await expectLater(
+        client.peer.call(
+            'git.sessionSummaries', <String, Object?>{'projectId': 'nope'}),
+        throwsA(
+            isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+      );
+      await client.close();
+    });
   });
 
   group('fs', () {

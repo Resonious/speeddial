@@ -706,6 +706,16 @@ class WsDaemonClient implements DaemonClient {
     return _resultField(result, 'url')! as String;
   }
 
+  @override
+  Future<List<SessionGitSummary>> gitSessionSummaries(String projectId) async {
+    final Object? result = await _requirePeer().call(
+      'git.sessionSummaries',
+      <String, Object?>{'projectId': projectId},
+    );
+    return _decodeList(
+        _resultField(result, 'summaries'), SessionGitSummary.fromJson);
+  }
+
   // ---------------------------------------------------------------------
   // Result decoding helpers
   // ---------------------------------------------------------------------

@@ -729,6 +729,55 @@ class MergeResult {
       };
 }
 
+/// Per-session git summary for the left rail (see `git.sessionSummaries`):
+/// uncommitted changes in the session's cwd, plus — for sessions created
+/// with a `baseBranch` — how the session branch relates to its base.
+///
+/// Computed from local git state only (no fetch): `origin` refs are used
+/// as-is, however stale. Every field is nullable: null means "unknown"
+/// (e.g. the session's cwd is gone or is not a git repository) or, for
+/// [aheadOfBase]/[mergedIntoBase], "not applicable" (no base branch).
+class SessionGitSummary {
+  const SessionGitSummary({
+    required this.sessionId,
+    required this.dirty,
+    required this.aheadOfBase,
+    required this.mergedIntoBase,
+  });
+
+  final String sessionId;
+
+  /// Whether the session's cwd has uncommitted changes (staged, unstaged or
+  /// untracked). Null when the directory could not be queried.
+  final bool? dirty;
+
+  /// Commits on the session branch contained in neither the local base
+  /// branch nor its `origin` ref. Null when the session has no base branch
+  /// or the count could not be determined.
+  final int? aheadOfBase;
+
+  /// Whether every commit the session branch gained since its creation is
+  /// contained in the base branch (local or `origin`). False while any
+  /// commit is unmerged, and false while the branch never gained a commit
+  /// of its own (nothing to merge). Null like [aheadOfBase].
+  final bool? mergedIntoBase;
+
+  factory SessionGitSummary.fromJson(Map<String, Object?> json) =>
+      SessionGitSummary(
+        sessionId: json['sessionId']! as String,
+        dirty: json['dirty'] as bool?,
+        aheadOfBase: json['aheadOfBase'] as int?,
+        mergedIntoBase: json['mergedIntoBase'] as bool?,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'sessionId': sessionId,
+        'dirty': dirty,
+        'aheadOfBase': aheadOfBase,
+        'mergedIntoBase': mergedIntoBase,
+      };
+}
+
 /// An added project on the daemon host.
 class Project {
   const Project({
