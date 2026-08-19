@@ -829,6 +829,239 @@ void main() {
     });
   });
 
+  group('rebaseOntoBase', () {
+    const sessionBranch = 'speeddial/s-1a2b3c4d';
+
+    /// Repo cloned from a local origin with one pushed commit, plus a
+    /// session worktree on [sessionBranch] branched off origin/main.
+    Future<({Directory repo, Directory origin, Directory worktree})>
+        setup() async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repo.path,
+        path: wtPath,
+        branch: sessionBranch,
+        baseRef: 'origin/main',
+      );
+      return (repo: repo, origin: repos.origin, worktree: Directory(wtPath));
+    }
+
+    Future<String> tip(Directory dir, String ref) async =>
+        ((await _git(dir, ['rev-parse', ref])).stdout as String).trim();
+
+    Future<void> commitIn(Directory dir, String file, String message) async {
+      await _write(dir, file, '$message\n');
+      await _git(dir, ['add', '-A']);
+      await _git(dir, ['commit', '-m', message]);
+    }
+
+    /// Advances origin/main through a second clone; the local main in
+    /// [repo] stays behind until something fetches it.
+    Future<Directory> advanceOrigin(Directory origin) async {
+      final other = Directory(p.join(origin.parent.path, 'other'));
+      await Process.run('git', ['clone', origin.path, other.path]);
+      await _git(other, ['config', 'user.email', 'test@example.com']);
+      await _git(other, ['config', 'user.name', 'Test User']);
+      await commitIn(other, 'remote.txt', 'remote work');
+      await _git(other, ['push', 'origin', 'main']);
+      return other;
+    }
+
+    test('replays session commits onto the base when origin moved ahead',
+        () async {
+      final s = await setup();
+      // The session worktree branched off the old tip; then origin moved.
+      final other = await advanceOrigin(s.origin);
+      final originTip = await tip(other, 'HEAD');
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      final oldTip = await tip(s.worktree, 'HEAD');
+
+      final result = await service.rebaseOntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.baseBranch, 'main');
+      expect(result.sessionBranch, sessionBranch);
+      expect(result.baseFastForwarded, isTrue,
+          reason: 'local main must first catch up to origin/main');
+      expect(result.alreadyUpToDate, isFalse);
+      expect(result.commit, isNot(oldTip),
+          reason: 'the session commit was replayed, not merged');
+      expect(await tip(s.worktree, 'HEAD'), result.commit);
+      expect(await tip(s.repo, 'main'), originTip,
+          reason: 'the rebase must not move the base past origin');
+      // Linear history: the base tip is now the session tip's parent.
+      expect(await tip(s.worktree, 'HEAD^'), originTip);
+      final secondParent = await _git(
+          s.worktree, ['rev-parse', '--verify', '--quiet', 'HEAD^2']);
+      expect(secondParent.exitCode, isNot(0),
+          reason: 'a rebased branch has no merge commit');
+      expect(
+          File(p.join(s.worktree.path, 'remote.txt')).existsSync(), isTrue);
+      expect(File(p.join(s.worktree.path, 'feat.txt')).existsSync(), isTrue);
+    });
+
+    test('fast-forwards the session branch when it is strictly behind',
+        () async {
+      final s = await setup();
+      final other = await advanceOrigin(s.origin);
+      final originTip = await tip(other, 'HEAD');
+
+      final result = await service.rebaseOntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.alreadyUpToDate, isFalse);
+      expect(result.baseFastForwarded, isTrue);
+      expect(result.commit, originTip,
+          reason: 'no session commits: the branch moves to the base tip');
+      expect(await tip(s.worktree, 'HEAD'), originTip);
+    });
+
+    test('reports alreadyUpToDate when the session contains the base tip',
+        () async {
+      final s = await setup();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      final sessionTip = await tip(s.worktree, 'HEAD');
+      final baseTip = await tip(s.repo, 'main');
+
+      final result = await service.rebaseOntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.alreadyUpToDate, isTrue);
+      expect(result.baseFastForwarded, isFalse);
+      expect(result.commit, sessionTip);
+      expect(await tip(s.worktree, 'HEAD'), sessionTip,
+          reason: 'a no-op rebase must not rewrite the session branch');
+      expect(await tip(s.repo, 'main'), baseTip);
+    });
+
+    test('rebases a diverged session even when the base is checked out '
+        'nowhere', () async {
+      final s = await setup();
+      await advanceOrigin(s.origin);
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      await _git(s.repo, ['checkout', '-b', 'topic']);
+
+      final result = await service.rebaseOntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      expect(result.alreadyUpToDate, isFalse);
+      expect(await tip(s.worktree, 'HEAD'), result.commit);
+      expect(
+          ((await _git(s.repo, ['branch', '--show-current'])).stdout as String)
+              .trim(),
+          'topic',
+          reason: 'the project checkout must stay on its branch');
+      final baseContained = await Process.run('git',
+          ['merge-base', '--is-ancestor', 'main', sessionBranch],
+          workingDirectory: s.repo.path);
+      expect(baseContained.exitCode, 0,
+          reason: 'the rebased session branch contains the base tip');
+    });
+
+    test('aborts a conflicted rebase and restores the session branch',
+        () async {
+      final s = await setup();
+      // Both sides edit the same file since the branch point → conflict.
+      await commitIn(s.repo, 'a.txt', 'base edit');
+      final baseTip = await tip(s.repo, 'main');
+      await commitIn(s.worktree, 'a.txt', 'session edit');
+      final sessionTip = await tip(s.worktree, 'HEAD');
+
+      await expectLater(
+        service.rebaseOntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('aborted'))),
+      );
+
+      final rebasing = await _git(
+          s.worktree, ['rev-parse', '--verify', '--quiet', 'REBASE_HEAD']);
+      expect(rebasing.exitCode, isNot(0),
+          reason: 'the worktree must not stay mid-rebase');
+      expect(await tip(s.worktree, 'HEAD'), sessionTip,
+          reason: 'the session branch ref must not move');
+      expect(
+          File(p.join(s.worktree.path, 'a.txt')).readAsStringSync(),
+          'session edit\n',
+          reason: 'no conflict markers may remain');
+      final status = await _git(s.worktree, ['status', '--porcelain']);
+      expect((status.stdout as String).trim(), isEmpty,
+          reason: 'the worktree must be clean after the abort');
+      expect(await tip(s.repo, 'main'), baseTip,
+          reason: 'the base branch is left untouched');
+    });
+
+    test('rejects a dirty session worktree', () async {
+      final s = await setup();
+      await _write(s.worktree, 'dirty.txt', 'uncommitted\n');
+
+      await expectLater(
+        service.rebaseOntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)
+            .having((e) => e.message, 'message', contains('uncommitted'))),
+      );
+    });
+
+    test('rejects a local base diverged from origin', () async {
+      final s = await setup();
+      await commitIn(s.repo, 'local.txt', 'local work');
+      await advanceOrigin(s.origin);
+
+      await expectLater(
+        service.rebaseOntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)
+            .having((e) => e.message, 'message', contains('diverged'))),
+      );
+    });
+
+    test('rejects a detached session worktree', () async {
+      final s = await setup();
+      await _git(s.worktree, ['checkout', '--detach', 'HEAD']);
+
+      await expectLater(
+        service.rebaseOntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('detached'))),
+      );
+    });
+  });
+
   group('error handling', () {
     test('throws DaemonError kErrGit with exit code and args on failure',
         () async {

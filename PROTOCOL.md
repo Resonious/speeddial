@@ -88,6 +88,13 @@ MergeResult = {
   fastForward: boolean,        // merge resolved by moving the base ref (no merge commit)
   commit: string,              // resulting tip of baseBranch
 }
+RebaseResult = {
+  baseBranch: string,          // branch the session branch was rebased onto
+  sessionBranch: string,       // worktree branch that was rebased
+  baseFastForwarded: boolean,  // local base first advanced to origin/<base>
+  alreadyUpToDate: boolean,    // session branch already contained the base tip
+  commit: string,              // resulting tip of sessionBranch
+}
 ```
 
 ### SessionEvent (discriminated union on `type`)
@@ -192,6 +199,7 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `git.push {projectId: string, sessionId?: string, setUpstream?: boolean}` → `{}`
 - `git.createPullRequest {projectId: string, sessionId?: string, title?: string, body?: string, base?: string, draft?: boolean}` → `{url: string}` — uses `gh`; errors `-32020` if `gh` missing/unauthenticated. With `sessionId` given and `base` omitted, the PR targets the session's `baseBranch`; without either, `gh` picks the repo's default branch.
 - `git.mergeToBase {projectId: string, sessionId: string}` → `{merge: MergeResult}` — merges the session's worktree branch back into the `baseBranch` the session was created from (`sessionId` is required here and the session must have one, `-32602` otherwise). First fetches `origin/<baseBranch>`; when the remote-tracking ref is strictly ahead of the local base, the local base is fast-forwarded to it first (`baseFastForwarded: true`) — via `git merge --ff-only` in the checkout that has the base branch, or by moving the ref when the base is checked out nowhere. Diverged local/remote base branches error `-32003`. Then the session branch is merged into the (synced) local base: a regular merge (fast-forward or merge commit) in the checkout holding the base branch, or a ref move when the base is checked out nowhere and the merge is a fast-forward; a non-fast-forward merge with no base checkout errors `-32003`. The session worktree must be clean (`-32003` — commit or discard first). Merge conflicts surface as `-32020`; the merge is aborted (`git merge --abort`) and the base checkout returns to its pre-merge state. The session worktree and its branch are left in place.
+- `git.rebaseOntoBase {projectId: string, sessionId: string}` → `{rebase: RebaseResult}` — rebases the session's worktree branch onto the `baseBranch` the session was created from (`sessionId` is required here and the session must have one, `-32602` otherwise). The local base is first synchronized with `origin/<baseBranch>` exactly like `git.mergeToBase` (fetch, fast-forward when strictly behind with `baseFastForwarded: true`, `-32003` on divergence). When the session branch already contains the base tip, nothing moves and `alreadyUpToDate` is `true`. Otherwise `git rebase <baseBranch>` runs in the session worktree — unlike a merge this needs no checkout of the base branch, so it works for diverged histories regardless of where the base is checked out. The session worktree must be clean (`-32003` — commit or discard first). Rebase conflicts surface as `-32020`; the rebase is aborted (`git rebase --abort`) and the session branch returns to its pre-rebase tip. `commit` is the new tip of the session branch.
 
 ## Notifications (daemon → all authenticated clients)
 

@@ -111,6 +111,12 @@ class GitStore extends StoreBase {
           () => _clientFor(daemonId)
               .gitMergeToBase(projectId, sessionId: sessionId));
 
+  Future<RebaseResult> rebaseOntoBase(String daemonId, String projectId,
+          {required String sessionId}) =>
+      _runMutating(daemonId, _key(projectId, sessionId),
+          () => _clientFor(daemonId)
+              .gitRebaseOntoBase(projectId, sessionId: sessionId));
+
   Future<String> createPr(String daemonId, String projectId,
           {String? sessionId,
           String? title,

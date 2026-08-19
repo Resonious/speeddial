@@ -126,6 +126,12 @@ abstract class DaemonClient {
   /// remote moved ahead.
   Future<MergeResult> gitMergeToBase(String projectId,
       {required String sessionId});
+
+  /// Rebases the session's worktree branch onto the base branch it was
+  /// created from; fast-forwards the local base to origin first when the
+  /// remote moved ahead.
+  Future<RebaseResult> gitRebaseOntoBase(String projectId,
+      {required String sessionId});
   Future<String> gitCreatePr(String projectId,
       {String? sessionId, String? title, String? body, String? base, bool draft = false});
 

@@ -819,6 +819,129 @@ void main() {
       );
       await client.close();
     });
+
+    test('git.rebaseOntoBase rebases the worktree branch onto the base',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_rebase_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      final session = Session.fromJson((j(await client.peer
+              .call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Rebase me',
+            'baseBranch': 'main',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+
+      // The session branch and the base both move since the branch point.
+      File(p.join(session.cwd, 'feat.txt')).writeAsStringSync('f\n');
+      await client.peer.call('git.commit', <String, Object?>{
+        'projectId': project.id,
+        'sessionId': session.id,
+        'message': 'session work',
+        'stageAll': true,
+      });
+      File(p.join(repoPath, 'base.txt')).writeAsStringSync('b\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'base work']);
+      final baseTip = await Process.run(
+              'git', ['rev-parse', 'main'], workingDirectory: repoPath)
+          .then((r) => (r.stdout as String).trim());
+
+      final result = j(await client.peer.call('git.rebaseOntoBase',
+          <String, Object?>{'projectId': project.id, 'sessionId': session.id}));
+      final rebase = RebaseResult.fromJson(
+          (result['rebase']! as Map).cast<String, Object?>());
+      expect(rebase.baseBranch, 'main');
+      expect(rebase.sessionBranch, startsWith('speeddial/rebase-me-'));
+      expect(rebase.alreadyUpToDate, isFalse);
+      expect(rebase.baseFastForwarded, isFalse);
+      // Linear history: the base tip is the parent of the replayed commit.
+      expect(
+        await Process.run('git', ['rev-parse', 'HEAD^'],
+                workingDirectory: session.cwd)
+            .then((r) => (r.stdout as String).trim()),
+        baseTip,
+      );
+      expect(await Process.run('git', ['rev-parse', 'HEAD'],
+              workingDirectory: session.cwd)
+          .then((r) => (r.stdout as String).trim()), rebase.commit);
+      expect(File(p.join(session.cwd, 'base.txt')).existsSync(), isTrue);
+      expect(File(p.join(session.cwd, 'feat.txt')).existsSync(), isTrue);
+
+      // A second rebase is a no-op.
+      final again = RebaseResult.fromJson((j(await client.peer.call(
+              'git.rebaseOntoBase',
+              <String, Object?>{
+                'projectId': project.id,
+                'sessionId': session.id,
+              }))['rebase']! as Map)
+          .cast<String, Object?>());
+      expect(again.alreadyUpToDate, isTrue);
+      expect(again.commit, rebase.commit);
+
+      // A dirty worktree is a conflict, and a session without a base branch
+      // is invalid params.
+      File(p.join(session.cwd, 'dirty.txt')).writeAsStringSync('x\n');
+      await expectLater(
+        client.peer.call('git.rebaseOntoBase', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': session.id,
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrConflict)),
+      );
+      final plain = Session.fromJson((j(await client.peer.call(
+              'sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+      await expectLater(
+        client.peer.call('git.rebaseOntoBase', <String, Object?>{
+          'projectId': project.id,
+          'sessionId': plain.id,
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('git.rebaseOntoBase',
+            <String, Object?>{'projectId': project.id}),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await client.close();
+    });
   });
 
   group('fs', () {

@@ -279,6 +279,7 @@ void main() {
 
     // No session selected: the project checkout shows no merge-back action.
     expect(find.textContaining('Merge into'), findsNothing);
+    expect(find.textContaining('Rebase onto'), findsNothing);
 
     // Load the seeded sessions and pick sess-1, whose base branch is 'main'.
     await app.sessions.refresh('fake');
@@ -293,6 +294,31 @@ void main() {
     // The fake resolves a fast-forward merge, which the snackbar announces.
     expect(find.byType(SnackBar), findsOneWidget);
     expect(find.textContaining('Merged'), findsOneWidget);
+
+    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('git tab rebases the session branch onto its base branch',
+      (WidgetTester tester) async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData app = await pumpRightPanel(tester, fake);
+
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+
+    // sess-1's base branch is 'main'.
+    expect(find.text('Rebase onto main'), findsOneWidget);
+
+    await tester.tap(find.text('Rebase onto main'));
+    await tester.pumpAndSettle();
+
+    // The fake resolves a rebase, which the snackbar announces.
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.textContaining('Rebased'), findsOneWidget);
 
     // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 6));
