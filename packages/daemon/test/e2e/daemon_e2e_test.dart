@@ -404,10 +404,23 @@ void main() {
     // ---------------------------------------------------------------------
     // `sessions attach` must exit with the daemon-unreachable code (2) when
     // the daemon dies, instead of hanging on its event stream.
+    //
+    // Explicit --host/--port/--token: the daemon deletes daemon.json on
+    // shutdown, and this process (slow JIT startup) may only resolve its
+    // connection after that. With discovery gone the CLI falls back to the
+    // default 127.0.0.1:7331, where a developer's real daemon may be
+    // listening — the test must never depend on that port.
     // ---------------------------------------------------------------------
     final attach = await Process.start(
       Platform.resolvedExecutable,
-      [binScript, '--json', 'sessions', 'attach', session.id],
+      [
+        binScript,
+        '--json',
+        '--host', '127.0.0.1',
+        '--port', '$port',
+        '--token', token,
+        'sessions', 'attach', session.id,
+      ],
       workingDirectory: daemonPkg,
       environment: env,
     );
