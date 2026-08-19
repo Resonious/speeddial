@@ -40,6 +40,13 @@ class FakeDaemonClient implements DaemonClient {
   final Map<String, GitStatus> _gitStatus = <String, GitStatus>{};
   final Map<String, List<Branch>> _gitBranches = <String, List<Branch>>{};
   final Map<String, List<GitDiff>> _gitDiffs = <String, List<GitDiff>>{};
+
+  /// Scripted per-session git summaries for the left-rail badges
+  /// (`gitSessionSummaries`), keyed by session id; seeded for the two demo
+  /// sessions. Tests overwrite entries to drive the badges; the real daemon
+  /// computes these from git state.
+  final Map<String, SessionGitSummary> sessionGitSummaries =
+      <String, SessionGitSummary>{};
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
   late final StreamController<void> _projectsChangedController;
@@ -133,6 +140,19 @@ class FakeDaemonClient implements DaemonClient {
         isBinary: false,
       ),
     ];
+    // Left-rail badges: sess-1 has uncommitted work and two unmerged commits;
+    // sess-2 shares the (dirty) project checkout and has no base branch.
+    sessionGitSummaries
+      ..['sess-1'] = const SessionGitSummary(
+          sessionId: 'sess-1',
+          dirty: true,
+          aheadOfBase: 2,
+          mergedIntoBase: false)
+      ..['sess-2'] = const SessionGitSummary(
+          sessionId: 'sess-2',
+          dirty: true,
+          aheadOfBase: null,
+          mergedIntoBase: null);
     _sessionUpdatesController = StreamController<Session>.broadcast();
     _sessionRemovalsController = StreamController<String>.broadcast();
     _projectsChangedController = StreamController<void>.broadcast();
@@ -669,6 +689,25 @@ class FakeDaemonClient implements DaemonClient {
     _ensureSeeded();
     _gitRoot(projectId, sessionId);
     return 'https://github.com/speeddial/demo/pull/1';
+  }
+
+  @override
+  Future<List<SessionGitSummary>> gitSessionSummaries(String projectId) async {
+    _ensureSeeded();
+    final Project project = _project(projectId);
+    // One entry per non-archived session, like the daemon; sessions without
+    // a scripted entry report all-unknown.
+    return <SessionGitSummary>[
+      for (final Session session in _sessions.values)
+        if (session.projectId == project.id && !session.archived)
+          sessionGitSummaries[session.id] ??
+              SessionGitSummary(
+                sessionId: session.id,
+                dirty: null,
+                aheadOfBase: null,
+                mergedIntoBase: null,
+              ),
+    ];
   }
 
   // ---------------------------------------------------------------------

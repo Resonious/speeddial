@@ -509,6 +509,8 @@ class _GitPaneState extends State<_GitPane> {
     _commitController.clear();
     await git.refresh(widget.daemonId, widget.projectId,
         sessionId: widget.sessionId);
+    // The rail badges (dirty/ahead) just moved.
+    await git.refreshSessionSummaries(widget.daemonId, widget.projectId);
   }
 
   Future<void> _push() async {
@@ -541,6 +543,8 @@ class _GitPaneState extends State<_GitPane> {
           sessionId: widget.sessionId);
       // The merge landed on the base branch in the project checkout.
       await _app.git.refresh(widget.daemonId, widget.projectId);
+      // The rail badges (ahead → merged) just moved.
+      await _app.git.refreshSessionSummaries(widget.daemonId, widget.projectId);
     } catch (_) {
       // Reflected through errorFor.
     }
@@ -577,6 +581,8 @@ class _GitPaneState extends State<_GitPane> {
           sessionId: widget.sessionId);
       await _app.git.refresh(widget.daemonId, widget.projectId,
           sessionId: widget.sessionId);
+      await _app.git
+          .refreshSessionSummaries(widget.daemonId, widget.projectId);
     } catch (_) {
       // Reflected through errorFor.
     }

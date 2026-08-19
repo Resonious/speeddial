@@ -1062,6 +1062,225 @@ void main() {
     });
   });
 
+  group('sessionSummary', () {
+    const sessionBranch = 'speeddial/s-1a2b3c4d';
+
+    /// Repo cloned from a local origin with one pushed commit, plus a
+    /// session worktree on [sessionBranch] branched off origin/main.
+    Future<({Directory repo, Directory origin, Directory worktree})>
+        setup() async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+      final wtPath = p.join(repos.origin.parent.path, 'wt');
+      await service.addWorktree(
+        repo.path,
+        path: wtPath,
+        branch: sessionBranch,
+        baseRef: 'origin/main',
+      );
+      return (repo: repo, origin: repos.origin, worktree: Directory(wtPath));
+    }
+
+    Future<void> commitIn(Directory dir, String file, String message) async {
+      await _write(dir, file, '$message\n');
+      await _git(dir, ['add', '-A']);
+      await _git(dir, ['commit', '-m', message]);
+    }
+
+    /// "The session was created just before the test's commits": safely
+    /// before them despite git's one-second committer-time granularity.
+    DateTime createdBeforeCommits() =>
+        DateTime.now().toUtc().subtract(const Duration(seconds: 2));
+
+    test('fresh worktree: clean, ahead 0, not merged', () async {
+      final s = await setup();
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      expect(summary.sessionId, 's1');
+      expect(summary.dirty, isFalse);
+      expect(summary.aheadOfBase, 0);
+      expect(summary.mergedIntoBase, isFalse,
+          reason: 'a branch that never gained a commit is not "merged"');
+    });
+
+    test('uncommitted changes in the worktree flag dirty', () async {
+      final s = await setup();
+      await _write(s.worktree, 'new.txt', 'uncommitted\n');
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      expect(summary.dirty, isTrue);
+      expect(summary.aheadOfBase, 0);
+      expect(summary.mergedIntoBase, isFalse);
+    });
+
+    test('uncommitted changes in a plain project path flag dirty', () async {
+      final repo = await _initRepo();
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _write(repo, 'a.txt', 'v2\n');
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: repo.path,
+      );
+
+      expect(summary.dirty, isTrue);
+      expect(summary.aheadOfBase, isNull,
+          reason: 'no baseBranch: ahead/merged do not apply');
+      expect(summary.mergedIntoBase, isNull);
+    });
+
+    test('commits on the session branch count as ahead, not merged',
+        () async {
+      final s = await setup();
+      final createdAt = createdBeforeCommits();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      await commitIn(s.worktree, 'feat2.txt', 'more session work');
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: createdAt,
+      );
+
+      expect(summary.dirty, isFalse);
+      expect(summary.aheadOfBase, 2);
+      expect(summary.mergedIntoBase, isFalse);
+    });
+
+    test('after mergeIntoBase the session reads merged with ahead 0',
+        () async {
+      final s = await setup();
+      final createdAt = createdBeforeCommits();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      await service.mergeIntoBase(
+        projectPath: s.repo.path,
+        worktreePath: s.worktree.path,
+        baseBranch: 'main',
+      );
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: createdAt,
+      );
+
+      expect(summary.aheadOfBase, 0);
+      expect(summary.mergedIntoBase, isTrue);
+    });
+
+    test('a merge that landed only on origin (stale local base) still reads '
+        'merged once the origin ref is known', () async {
+      final s = await setup();
+      final createdAt = createdBeforeCommits();
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+      final sessionTip = ((await _git(s.worktree, ['rev-parse', 'HEAD']))
+              .stdout as String)
+          .trim();
+
+      // Merge the session branch into main through a second clone and push,
+      // so only origin/main contains the session commits; then refresh the
+      // repo's remote-tracking ref without touching the local main.
+      await _git(s.worktree, ['push', 'origin', sessionBranch]);
+      final other = Directory(p.join(s.origin.parent.path, 'other'));
+      await Process.run('git', ['clone', s.origin.path, other.path]);
+      await _git(other, ['config', 'user.email', 'test@example.com']);
+      await _git(other, ['config', 'user.name', 'Test User']);
+      await _git(other, ['merge', '--no-edit', 'origin/$sessionBranch']);
+      await _git(other, ['push', 'origin', 'main']);
+      await _git(s.repo, ['fetch', 'origin', 'main']);
+
+      final localMain = ((await _git(s.repo, ['rev-parse', 'main'])).stdout
+              as String)
+          .trim();
+      expect(localMain, isNot(sessionTip),
+          reason: 'the local base must not contain the merge for this test');
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: createdAt,
+      );
+
+      expect(summary.aheadOfBase, 0);
+      expect(summary.mergedIntoBase, isTrue);
+    });
+
+    test('a worktree the base moved away from is neither ahead nor merged',
+        () async {
+      final s = await setup();
+      // The session never commits; the base gains its own commit meanwhile.
+      await commitIn(s.repo, 'base.txt', 'base moved on');
+
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: s.worktree.path,
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      expect(summary.aheadOfBase, 0);
+      expect(summary.mergedIntoBase, isFalse);
+    });
+
+    test('a missing directory yields all-null fields, not an error',
+        () async {
+      final summary = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: p.join(Directory.systemTemp.path, 'sd_no_such_dir_xyz'),
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      expect(summary.dirty, isNull);
+      expect(summary.aheadOfBase, isNull);
+      expect(summary.mergedIntoBase, isNull);
+    });
+
+    test('an unborn HEAD (empty repo) still reports dirty, ahead stays null',
+        () async {
+      final repo = await _initRepo(); // no commits yet
+
+      final clean = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: repo.path,
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+      expect(clean.dirty, isFalse);
+      expect(clean.aheadOfBase, isNull);
+      expect(clean.mergedIntoBase, isNull);
+
+      await _write(repo, 'untracked.txt', 'x\n');
+      final dirty = await service.sessionSummary(
+        sessionId: 's1',
+        repoPath: repo.path,
+        baseBranch: 'main',
+        createdAt: DateTime.now().toUtc(),
+      );
+      expect(dirty.dirty, isTrue);
+      expect(dirty.aheadOfBase, isNull);
+    });
+  });
+
   group('error handling', () {
     test('throws DaemonError kErrGit with exit code and args on failure',
         () async {

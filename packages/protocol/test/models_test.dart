@@ -348,6 +348,46 @@ void main() {
       expect(decoded.toJson(), model.toJson());
     });
 
+    test('SessionGitSummary, fully populated and all-null', () {
+      final model = SessionGitSummary(
+        sessionId: 'sess-1',
+        dirty: true,
+        aheadOfBase: 3,
+        mergedIntoBase: false,
+      );
+      expect(model.toJson(), {
+        'sessionId': 'sess-1',
+        'dirty': true,
+        'aheadOfBase': 3,
+        'mergedIntoBase': false,
+      });
+      final decoded = SessionGitSummary.fromJson(model.toJson());
+      expect(decoded.sessionId, 'sess-1');
+      expect(decoded.dirty, isTrue);
+      expect(decoded.aheadOfBase, 3);
+      expect(decoded.mergedIntoBase, isFalse);
+      expect(decoded.toJson(), model.toJson());
+
+      // Unknown/not-applicable fields travel as explicit nulls.
+      const empty = SessionGitSummary(
+        sessionId: 'sess-2',
+        dirty: null,
+        aheadOfBase: null,
+        mergedIntoBase: null,
+      );
+      expect(empty.toJson(), {
+        'sessionId': 'sess-2',
+        'dirty': null,
+        'aheadOfBase': null,
+        'mergedIntoBase': null,
+      });
+      final decodedEmpty = SessionGitSummary.fromJson(empty.toJson());
+      expect(decodedEmpty.dirty, isNull);
+      expect(decodedEmpty.aheadOfBase, isNull);
+      expect(decodedEmpty.mergedIntoBase, isNull);
+      expect(decodedEmpty.toJson(), empty.toJson());
+    });
+
     test('ToolCall with content, locations, and raw payloads', () {
       final model = ToolCall(
         id: 'tc_1234567890abcde',

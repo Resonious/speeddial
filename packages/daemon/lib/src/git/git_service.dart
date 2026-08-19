@@ -21,6 +21,75 @@ class GitService {
     return _parseStatus(result.stdout as String);
   }
 
+  /// A compact per-session summary for the left-rail badges (see
+  /// `git.sessionSummaries` in PROTOCOL.md).
+  ///
+  /// [repoPath] is the session's cwd (its worktree, or the project checkout
+  /// for sessions without one). [baseBranch] and [createdAt] come from the
+  /// session record; [createdAt] is required to tell a merged branch apart
+  /// from one that never gained a commit of its own (both read "ahead 0").
+  ///
+  /// Every field fails soft: a missing/invalid directory or an unborn HEAD
+  /// yields nulls, never an exception, so one broken worktree cannot sink
+  /// the whole batch.
+  Future<SessionGitSummary> sessionSummary({
+    required String sessionId,
+    required String repoPath,
+    String? baseBranch,
+    DateTime? createdAt,
+  }) async {
+    bool? dirty;
+    try {
+      dirty = await _hasUncommittedChanges(repoPath);
+    } on DaemonError {
+      dirty = null;
+    } on ProcessException {
+      // The directory itself is gone (deleted worktree).
+      dirty = null;
+    }
+
+    int? aheadOfBase;
+    bool? mergedIntoBase;
+    if (baseBranch != null) {
+      try {
+        _validateBranchName(baseBranch);
+        // Worktrees share the project's refs, so the base branch and its
+        // remote-tracking ref are visible from the session's cwd. A commit
+        // that landed in either one counts as merged; no fetch is run here,
+        // so the origin ref may be stale.
+        final List<String> exclusions = <String>['refs/heads/$baseBranch'];
+        if (await _refExists(repoPath, 'refs/remotes/origin/$baseBranch')) {
+          exclusions.add('refs/remotes/origin/$baseBranch');
+        }
+        aheadOfBase = await _countAhead(repoPath, exclusions);
+        if (aheadOfBase == 0) {
+          // HEAD is an ancestor of a base ref. That is trivially true for a
+          // branch that never moved off its creation point (fresh worktree),
+          // so only report "merged" once the branch gained a commit of its
+          // own, approximated by the tip's committer time postdating the
+          // session creation.
+          mergedIntoBase =
+              createdAt != null && await _tipCommittedAfter(repoPath, createdAt);
+        } else {
+          mergedIntoBase = false;
+        }
+      } on DaemonError {
+        aheadOfBase = null;
+        mergedIntoBase = null;
+      } on ProcessException {
+        aheadOfBase = null;
+        mergedIntoBase = null;
+      }
+    }
+
+    return SessionGitSummary(
+      sessionId: sessionId,
+      dirty: dirty,
+      aheadOfBase: aheadOfBase,
+      mergedIntoBase: mergedIntoBase,
+    );
+  }
+
   /// Unified diffs, one [GitDiff] per touched file.
   Future<List<GitDiff>> diff(String repoPath,
       {String? path, bool staged = false}) async {
@@ -442,6 +511,28 @@ class GitService {
     final List<String> parts =
         (result.stdout as String).trim().split(RegExp(r'\s+'));
     return (ahead: int.parse(parts[0]), behind: int.parse(parts[1]));
+  }
+
+  /// Commits reachable from HEAD but not from any of [excludeRefs]
+  /// (`git rev-list --count HEAD ^a ^b …`).
+  Future<int> _countAhead(String repoPath, List<String> excludeRefs) async {
+    final result = await _run(repoPath, <String>[
+      'rev-list',
+      '--count',
+      'HEAD',
+      for (final String ref in excludeRefs) '^$ref',
+    ]);
+    return int.parse((result.stdout as String).trim());
+  }
+
+  /// Whether HEAD's tip commit has a committer time later than [since].
+  /// Used to tell a branch that gained (and then merged) its own commits
+  /// apart from one still pointing at its creation-time commit.
+  Future<bool> _tipCommittedAfter(String repoPath, DateTime since) async {
+    final result = await _run(repoPath, ['log', '-1', '--format=%ct', 'HEAD']);
+    final int? seconds = int.tryParse((result.stdout as String).trim());
+    if (seconds == null) return false;
+    return seconds * 1000 > since.millisecondsSinceEpoch;
   }
 
   /// Whether [ancestor] is an ancestor of (or equal to) [descendant].

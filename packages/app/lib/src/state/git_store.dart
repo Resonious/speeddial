@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'store_base.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -26,6 +28,24 @@ class GitStore extends StoreBase {
   final Map<String, Object> _errors = <String, Object>{};
   final Set<String> _busy = <String>{};
 
+  /// Left-rail badges: sessionId → summary. Session ids are globally unique
+  /// (uuid), so the flat map cannot collide across daemons/projects.
+  final Map<String, SessionGitSummary> _summaryBySession =
+      <String, SessionGitSummary>{};
+
+  /// `daemonId/projectId` → the session ids the last batch returned for that
+  /// project, so the next batch replaces (not merges with) stale entries.
+  final Map<String, Set<String>> _summarySessionIds =
+      <String, Set<String>>{};
+  final Map<String, Object> _summaryErrors = <String, Object>{};
+
+  /// One `sessionUpdates`/`resynced` subscription per daemon, armed on the
+  /// first [refreshSessionSummaries] for that daemon; alive until [dispose].
+  final Map<String, StreamSubscription<Session>> _sessionUpdateSubs =
+      <String, StreamSubscription<Session>>{};
+  final Map<String, StreamSubscription<void>> _summaryResyncSubs =
+      <String, StreamSubscription<void>>{};
+
   /// Session ids are globally unique (uuid), so `sessionId ?? projectId`
   /// cannot collide with a plain project id.
   String _key(String projectId, String? sessionId) => sessionId ?? projectId;
@@ -43,6 +63,83 @@ class GitStore extends StoreBase {
 
   Object? errorFor(String projectId, {String? sessionId}) =>
       _errors[_key(projectId, sessionId)];
+
+  /// The last known git summary (left-rail badges) for [sessionId]; null
+  /// until the first [refreshSessionSummaries] for its project.
+  SessionGitSummary? sessionSummaryFor(String sessionId) =>
+      _summaryBySession[sessionId];
+
+  /// Refetches the per-session git summaries for [projectId], replacing the
+  /// project's previous set wholesale (sessions that dropped out — archived,
+  /// deleted — lose their badges).
+  ///
+  /// Fire-and-forget like [refresh]: failures are recorded (see
+  /// [sessionSummaryErrorFor]) and swallowed — badges just stay stale.
+  Future<void> refreshSessionSummaries(String daemonId, String projectId) async {
+    _ensureDaemonSubscriptions(daemonId);
+    final String projectKey = '$daemonId/$projectId';
+    try {
+      final List<SessionGitSummary> summaries =
+          await _clientFor(daemonId).gitSessionSummaries(projectId);
+      final Set<String> previous =
+          _summarySessionIds[projectKey] ?? const <String>{};
+      for (final String id in previous) {
+        _summaryBySession.remove(id);
+      }
+      final Set<String> next = <String>{};
+      for (final SessionGitSummary summary in summaries) {
+        _summaryBySession[summary.sessionId] = summary;
+        next.add(summary.sessionId);
+      }
+      _summarySessionIds[projectKey] = next;
+      _summaryErrors.remove(projectKey);
+    } catch (error) {
+      _summaryErrors[projectKey] = error;
+    }
+    notifyListeners();
+  }
+
+  /// The last refresh failure for [projectId]'s summaries, if any.
+  Object? sessionSummaryErrorFor(String daemonId, String projectId) =>
+      _summaryErrors['$daemonId/$projectId'];
+
+  /// Arms the per-daemon subscriptions that keep badges fresh without
+  /// polling:
+  /// - a session landing on `idle`/`error` means a turn just ended (agents
+  ///   commit mid-turn) → refetch that project's summaries;
+  /// - a resync after reconnect means the daemon's state may have moved
+  ///   while the socket was down → refetch every known project.
+  ///
+  /// Refreshes are gated on the project having been fetched once (the rail
+  /// fetches on expansion), so projects nobody is looking at cost nothing.
+  void _ensureDaemonSubscriptions(String daemonId) {
+    if (_sessionUpdateSubs.containsKey(daemonId)) return;
+    final DaemonClient client = _clientFor(daemonId);
+    _sessionUpdateSubs[daemonId] = client.sessionUpdates.listen(
+        (Session session) => _onSessionUpdate(daemonId, session));
+    _summaryResyncSubs[daemonId] =
+        client.resynced.listen((void _) => _onResync(daemonId));
+  }
+
+  void _onSessionUpdate(String daemonId, Session session) {
+    if (session.status != SessionStatus.idle &&
+        session.status != SessionStatus.error) {
+      return;
+    }
+    if (!_summarySessionIds.containsKey('$daemonId/${session.projectId}')) {
+      return;
+    }
+    unawaited(refreshSessionSummaries(daemonId, session.projectId));
+  }
+
+  void _onResync(String daemonId) {
+    final String prefix = '$daemonId/';
+    for (final String key in _summarySessionIds.keys.toList()) {
+      if (key.startsWith(prefix)) {
+        unawaited(refreshSessionSummaries(daemonId, key.substring(prefix.length)));
+      }
+    }
+  }
 
   Future<void> refresh(String daemonId, String projectId,
       {String? sessionId}) async {
@@ -151,5 +248,18 @@ class GitStore extends StoreBase {
       _busy.remove(key);
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    for (final StreamSubscription<Session> sub in _sessionUpdateSubs.values) {
+      sub.cancel();
+    }
+    _sessionUpdateSubs.clear();
+    for (final StreamSubscription<void> sub in _summaryResyncSubs.values) {
+      sub.cancel();
+    }
+    _summaryResyncSubs.clear();
+    super.dispose();
   }
 }

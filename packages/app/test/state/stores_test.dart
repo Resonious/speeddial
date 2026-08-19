@@ -659,5 +659,66 @@ void main() {
       expect(app.git.statusFor(projectId, sessionId: otherSession.id),
           isNull);
     });
+
+    test('refreshSessionSummaries populates badges and replaces stale entries',
+        () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      expect(app.git.sessionSummaryFor('sess-1'), isNull);
+
+      await app.git.refreshSessionSummaries('fake', projectId);
+      final SessionGitSummary first = app.git.sessionSummaryFor('sess-1')!;
+      expect(first.dirty, isTrue);
+      expect(first.aheadOfBase, 2);
+      expect(first.mergedIntoBase, isFalse);
+      expect(app.git.sessionSummaryFor('sess-2')!.dirty, isTrue);
+      expect(app.git.sessionSummaryFor('sess-2')!.aheadOfBase, isNull);
+      expect(app.git.sessionSummaryErrorFor('fake', projectId), isNull);
+
+      // The daemon drops archived sessions from the batch; the store must
+      // drop their cached summaries rather than keep stale badges.
+      await fake.archiveSession('sess-2', true);
+      // The archive notification itself triggers a refresh (idle session);
+      // wait for the replacement to settle, then assert.
+      await _waitUntil(() => app.git.sessionSummaryFor('sess-2') == null);
+      expect(app.git.sessionSummaryFor('sess-1'), isNotNull);
+
+      // Scripted change lands on the next refresh.
+      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+        sessionId: 'sess-1',
+        dirty: false,
+        aheadOfBase: 0,
+        mergedIntoBase: true,
+      );
+      await app.git.refreshSessionSummaries('fake', projectId);
+      final SessionGitSummary merged = app.git.sessionSummaryFor('sess-1')!;
+      expect(merged.dirty, isFalse);
+      expect(merged.mergedIntoBase, isTrue);
+    });
+
+    test('refreshSessionSummaries records failures without throwing',
+        () async {
+      await app.git.refreshSessionSummaries('fake', 'nope');
+      expect(app.git.sessionSummaryErrorFor('fake', 'nope'),
+          isA<DaemonError>());
+    });
+
+    test('an idle session update refetches summaries for a known project',
+        () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.git.refreshSessionSummaries('fake', projectId);
+      expect(app.git.sessionSummaryFor('sess-1')!.mergedIntoBase, isFalse);
+
+      // The turn ended daemon-side (agents commit mid-turn): the next idle
+      // session update must pull the fresh summaries on its own.
+      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+        sessionId: 'sess-1',
+        dirty: false,
+        aheadOfBase: 0,
+        mergedIntoBase: true,
+      );
+      await fake.renameSession('sess-1', 'Renamed (idle update)');
+      await _waitUntil(() =>
+          app.git.sessionSummaryFor('sess-1')?.mergedIntoBase == true);
+    });
   });
 }

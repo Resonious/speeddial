@@ -100,6 +100,38 @@ void main() {
     expect(app.selection.selectedProjectId, demo.id);
   });
 
+  testWidgets('session rows show git badges from the daemon summaries',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    // Seeded fake: sess-1 is dirty and two commits ahead of main; sess-2
+    // shares the dirty project checkout and has no base branch.
+    expect(find.text('changes'), findsNWidgets(2));
+    expect(find.text('↑2'), findsOneWidget);
+    expect(find.text('merged'), findsNothing);
+
+    // New scripted state lands on the next refresh: sess-1 merged, sess-2
+    // reports all-unknown and renders no badges.
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      mergedIntoBase: true,
+    );
+    fake.sessionGitSummaries.remove('sess-2');
+    await app.git.refreshSessionSummaries('fake', 'proj-demo');
+    await tester.pumpAndSettle();
+
+    expect(find.text('changes'), findsNothing);
+    expect(find.text('↑2'), findsNothing);
+    expect(find.text('merged'), findsOneWidget);
+  });
+
   testWidgets('a failed endpoint offers Retry now in its actions menu',
       (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);
