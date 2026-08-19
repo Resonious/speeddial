@@ -272,6 +272,39 @@ void main() {
     expect(created.cwd, demo.path);
   });
 
+  testWidgets('base branch selector filters the branch list by text',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('new-session-proj-demo')),
+    );
+    await tester.pumpAndSettle();
+
+    // Typing filters the entries; non-matching branches leave the menu.
+    await tester.tap(find.byKey(const Key('new-session-base-branch')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const Key('new-session-base-branch')), 'feat');
+    await tester.pumpAndSettle();
+    expect(find.text('feature/x'), findsOneWidget);
+    expect(find.text('main'), findsNothing);
+
+    await tester.tap(find.text('feature/x'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    final Project demo = app.projects.projectsFor('fake').single;
+    final Session created = app.sessions
+        .sessionsFor(demo.id)
+        .lastWhere((Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+    expect(created.baseBranch, 'feature/x');
+    expect(created.cwd, contains('.speeddial-worktrees'));
+  });
+
   testWidgets('deleting the selected session clears the selection',
       (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);
