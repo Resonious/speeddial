@@ -121,15 +121,31 @@ void main() {
       sessionId: 'sess-1',
       dirty: false,
       aheadOfBase: 0,
+      behindBase: 0,
       mergedIntoBase: true,
     );
     fake.sessionGitSummaries.remove('sess-2');
     await app.git.refreshSessionSummaries('fake', 'proj-demo');
     await tester.pumpAndSettle();
-
     expect(find.text('changes'), findsNothing);
     expect(find.text('↑2'), findsNothing);
     expect(find.text('merged'), findsOneWidget);
+
+    // The daemon's watcher reports the base moving on: the notification
+    // alone — no manual refresh, no turn having ended — must update the
+    // rail. sess-1 is now 3 commits behind main.
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      behindBase: 3,
+      mergedIntoBase: false,
+    );
+    fake.gitChangedController.add('proj-demo');
+    await tester.pumpAndSettle();
+
+    expect(find.text('merged'), findsNothing);
+    expect(find.text('↓3'), findsOneWidget);
   });
 
   testWidgets('a failed endpoint offers Retry now in its actions menu',

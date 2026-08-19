@@ -822,16 +822,18 @@ class RebaseResult {
 /// uncommitted changes in the session's cwd, plus — for sessions created
 /// with a `baseBranch` — how the session branch relates to its base.
 ///
-/// Computed from local git state only (no fetch): `origin` refs are used
-/// as-is, however stale. Every field is nullable: null means "unknown"
-/// (e.g. the session's cwd is gone or is not a git repository) or, for
-/// [aheadOfBase]/[mergedIntoBase], "not applicable" (no base branch).
+/// Computed from local git state only (no fetch happens as part of the
+/// request): `origin` refs are used as-is, however stale. Every field is
+/// nullable: null means "unknown" (e.g. the session's cwd is gone or is not
+/// a git repository) or, for the base-branch fields, "not applicable" (no
+/// base branch).
 class SessionGitSummary {
   const SessionGitSummary({
     required this.sessionId,
     required this.dirty,
     required this.aheadOfBase,
     required this.mergedIntoBase,
+    required this.behindBase,
   });
 
   final String sessionId;
@@ -845,6 +847,10 @@ class SessionGitSummary {
   /// or the count could not be determined.
   final int? aheadOfBase;
 
+  /// Commits reachable from the base branch (local or `origin`) but not
+  /// from the session branch. Null like [aheadOfBase].
+  final int? behindBase;
+
   /// Whether every commit the session branch gained since its creation is
   /// contained in the base branch (local or `origin`). False while any
   /// commit is unmerged, and false while the branch never gained a commit
@@ -856,6 +862,7 @@ class SessionGitSummary {
         sessionId: json['sessionId']! as String,
         dirty: json['dirty'] as bool?,
         aheadOfBase: json['aheadOfBase'] as int?,
+        behindBase: json['behindBase'] as int?,
         mergedIntoBase: json['mergedIntoBase'] as bool?,
       );
 
@@ -863,6 +870,7 @@ class SessionGitSummary {
         'sessionId': sessionId,
         'dirty': dirty,
         'aheadOfBase': aheadOfBase,
+        'behindBase': behindBase,
         'mergedIntoBase': mergedIntoBase,
       };
 }

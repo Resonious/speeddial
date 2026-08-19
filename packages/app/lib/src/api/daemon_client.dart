@@ -171,6 +171,12 @@ abstract class DaemonClient {
   /// Ids of sessions that were removed.
   Stream<String> get sessionRemovals;
 
+  /// Project ids whose session git summaries moved daemon-side (the
+  /// watcher noticed commits, dirty-state changes, or a periodic fetch
+  /// advancing the base branch); consumers refetch
+  /// `gitSessionSummaries(projectId)`.
+  Stream<String> get gitChanged;
+
   /// Emits whenever the daemon announces `projects.changed` (a project was
   /// added, renamed, or removed on the daemon side); consumers refetch
   /// `listProjects()`.

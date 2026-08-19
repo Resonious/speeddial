@@ -389,18 +389,21 @@ void main() {
         sessionId: 'sess-1',
         dirty: true,
         aheadOfBase: 3,
+        behindBase: 1,
         mergedIntoBase: false,
       );
       expect(model.toJson(), {
         'sessionId': 'sess-1',
         'dirty': true,
         'aheadOfBase': 3,
+        'behindBase': 1,
         'mergedIntoBase': false,
       });
       final decoded = SessionGitSummary.fromJson(model.toJson());
       expect(decoded.sessionId, 'sess-1');
       expect(decoded.dirty, isTrue);
       expect(decoded.aheadOfBase, 3);
+      expect(decoded.behindBase, 1);
       expect(decoded.mergedIntoBase, isFalse);
       expect(decoded.toJson(), model.toJson());
 
@@ -409,17 +412,20 @@ void main() {
         sessionId: 'sess-2',
         dirty: null,
         aheadOfBase: null,
+        behindBase: null,
         mergedIntoBase: null,
       );
       expect(empty.toJson(), {
         'sessionId': 'sess-2',
         'dirty': null,
         'aheadOfBase': null,
+        'behindBase': null,
         'mergedIntoBase': null,
       });
       final decodedEmpty = SessionGitSummary.fromJson(empty.toJson());
       expect(decodedEmpty.dirty, isNull);
       expect(decodedEmpty.aheadOfBase, isNull);
+      expect(decodedEmpty.behindBase, isNull);
       expect(decodedEmpty.mergedIntoBase, isNull);
       expect(decodedEmpty.toJson(), empty.toJson());
     });

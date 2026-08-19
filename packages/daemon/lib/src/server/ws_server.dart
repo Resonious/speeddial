@@ -20,6 +20,7 @@ import '../engine/session_engine.dart';
 import '../git/git_service.dart';
 import '../git/pr_service.dart';
 import '../paths.dart';
+import '../git/summary_watcher.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'fs_service.dart';
@@ -88,6 +89,8 @@ class SpeedDialServer {
     GitService? git,
     PrService? pr,
     String? authToken,
+    this.gitPollInterval = const Duration(seconds: 15),
+    this.gitFetchInterval = const Duration(minutes: 2),
   })  : _engine = engine, // ignore: prefer_initializing_formals — public API name
         _store = store, // ignore: prefer_initializing_formals — public API name
         _providers = providers, // ignore: prefer_initializing_formals — public API name
@@ -107,6 +110,8 @@ class SpeedDialServer {
     String? authToken,
     GitService? git,
     PrService? pr,
+    Duration gitPollInterval = const Duration(seconds: 15),
+    Duration gitFetchInterval = const Duration(minutes: 2),
   }) async {
     final server = SpeedDialServer(
       engine: engine,
@@ -115,6 +120,8 @@ class SpeedDialServer {
       authToken: authToken,
       git: git,
       pr: pr,
+      gitPollInterval: gitPollInterval,
+      gitFetchInterval: gitFetchInterval,
     );
     await server._bind(host, port);
     return server;
@@ -128,6 +135,13 @@ class SpeedDialServer {
   final PrService _pr;
   final FsService _fs = FsService();
   final Uuid _uuid = const Uuid();
+
+  /// How often the summary watcher recomputes session summaries, and how
+  /// often it refetches a project's base branches. Injectable for tests.
+  final Duration gitPollInterval;
+  final Duration gitFetchInterval;
+  late final SummaryWatcher _summaryWatcher;
+
 
   HttpServer? _httpServer;
   final List<_Client> _clients = <_Client>[];
@@ -153,6 +167,7 @@ class SpeedDialServer {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _summaryWatcher.close();
     await _eventsSub.cancel();
     await _changesSub.cancel();
     await _removalsSub.cancel();
@@ -169,8 +184,20 @@ class SpeedDialServer {
   // -------------------------------------------------------------------------
   // Startup wiring
   // -------------------------------------------------------------------------
-
   void _init() {
+    _summaryWatcher = SummaryWatcher(
+      store: _store,
+      git: _git,
+      hasClients: () =>
+          _clients.any((_Client client) => client.authenticated),
+      pollInterval: gitPollInterval,
+      fetchInterval: gitFetchInterval,
+      onChanged: (String projectId) => _broadcast(
+        'git.changed',
+        <String, Object?>{'projectId': projectId},
+      ),
+    )..start();
+
     // Broadcast every engine emission as a PROTOCOL.md notification. The
     // events stream carries persisted events (seq + timestamp already
     // stamped by the engine), so they are forwarded verbatim.
@@ -863,15 +890,7 @@ class SpeedDialServer {
     final List<Session> sessions =
         _store.listSessions(projectId: project.id);
     final List<SessionGitSummary> summaries =
-        await Future.wait(<Future<SessionGitSummary>>[
-      for (final Session session in sessions)
-        _git.sessionSummary(
-          sessionId: session.id,
-          repoPath: session.cwd,
-          baseBranch: session.baseBranch,
-          createdAt: session.createdAt,
-        ),
-    ]);
+        await _git.sessionSummaries(sessions);
     return <String, Object?>{
       'summaries':
           summaries.map((summary) => summary.toJson()).toList(growable: false),

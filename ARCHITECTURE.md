@@ -64,7 +64,11 @@ lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porc
                     worktree add/remove back per-session worktrees. mergeIntoBase
                     merges a session branch back into its base branch (fast-forwarding
                     the local base to origin first when the remote moved ahead).
-                    PrService uses `gh pr create`. All ops take an absolute repo path.
+                    SummaryWatcher recomputes per-session git summaries every ~15s
+                    while clients are connected (fetching base branches every ~2min)
+                    and reports changed projects so the server broadcasts
+                    `git.changed`. PrService uses `gh pr create`. All ops take an
+                    absolute repo path.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing.
 lib/src/client.dart DaemonClient: Dart client for the same protocol (used by the CLI

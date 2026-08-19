@@ -176,7 +176,11 @@ void main() {
     }
   });
 
-  Future<SpeedDialServer> startServer({String? authToken}) async {
+  Future<SpeedDialServer> startServer({
+    String? authToken,
+    Duration gitPollInterval = const Duration(seconds: 15),
+    Duration gitFetchInterval = const Duration(minutes: 2),
+  }) async {
     engine = SessionEngine(store: store, providers: providers,
         git: GitService());
     await engine!.restore();
@@ -187,6 +191,8 @@ void main() {
       store: store,
       providers: providers,
       authToken: authToken,
+      gitPollInterval: gitPollInterval,
+      gitFetchInterval: gitFetchInterval,
     );
     return server!;
   }
@@ -949,15 +955,17 @@ void main() {
         };
       }
 
-      // Fresh: worktree session is clean/ahead 0/not merged; the plain
-      // session only carries dirty (it has no base branch).
+      // Fresh: worktree session is clean/ahead 0/behind 0/not merged; the
+      // plain session only carries dirty (it has no base branch).
       var map = await summaries();
       expect(map, hasLength(2));
       expect(map[worktree.id]!.dirty, isFalse);
       expect(map[worktree.id]!.aheadOfBase, 0);
+      expect(map[worktree.id]!.behindBase, 0);
       expect(map[worktree.id]!.mergedIntoBase, isFalse);
       expect(map[plain.id]!.dirty, isFalse);
       expect(map[plain.id]!.aheadOfBase, isNull);
+      expect(map[plain.id]!.behindBase, isNull);
       expect(map[plain.id]!.mergedIntoBase, isNull);
 
       // A commit in the worktree reads as ahead-of-base; an edit in the
@@ -981,6 +989,7 @@ void main() {
 
       map = await summaries();
       expect(map[worktree.id]!.aheadOfBase, 1);
+      expect(map[worktree.id]!.behindBase, 0);
       expect(map[worktree.id]!.mergedIntoBase, isFalse);
       expect(map[worktree.id]!.dirty, isTrue);
       expect(map[plain.id]!.dirty, isTrue);
@@ -994,8 +1003,19 @@ void main() {
 
       map = await summaries();
       expect(map[worktree.id]!.aheadOfBase, 0);
+      expect(map[worktree.id]!.behindBase, 0);
       expect(map[worktree.id]!.mergedIntoBase, isTrue);
       expect(map[worktree.id]!.dirty, isFalse);
+
+      // A commit landing on the base branch itself (local side is enough —
+      // behindBase counts both base refs) leaves the session behind.
+      File(p.join(repoPath, 'base2.txt')).writeAsStringSync('b\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'base moves on']);
+      map = await summaries();
+      expect(map[worktree.id]!.aheadOfBase, 0);
+      expect(map[worktree.id]!.behindBase, 1);
+      expect(map[worktree.id]!.mergedIntoBase, isTrue);
 
       // Archived sessions drop out of the batch.
       await client.peer.call('sessions.archive', <String, Object?>{
@@ -1013,6 +1033,190 @@ void main() {
         throwsA(
             isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
       );
+      await client.close();
+    });
+
+    test('a merge into the base marks sibling worktree sessions behind',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_siblings_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      Future<Session> mkWorktree(String title) async => Session.fromJson(
+          (j(await client.peer.call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': title,
+            'baseBranch': 'main',
+          }))['session']! as Map)
+              .cast<String, Object?>());
+      final Session first = await mkWorktree('First');
+      final Session second = await mkWorktree('Second');
+
+      // `first` gains a commit (future-dated so the merged-into-base check
+      // is not same-second racy, like the summaries test) and is merged.
+      File(p.join(first.cwd, 'feat.txt')).writeAsStringSync('f\n');
+      await git(first.cwd, ['add', '-A']);
+      final future =
+          '@${(DateTime.now().millisecondsSinceEpoch ~/ 1000) + 3600} +0000';
+      await Process.run(
+        'git',
+        ['commit', '-m', 'first session work'],
+        workingDirectory: first.cwd,
+        environment: <String, String>{'GIT_COMMITTER_DATE': future},
+      );
+      await client.peer.call('git.mergeToBase', <String, Object?>{
+        'projectId': project.id,
+        'sessionId': first.id,
+      });
+
+      final result = j(await client.peer.call('git.sessionSummaries',
+          <String, Object?>{'projectId': project.id}));
+      final Map<String, SessionGitSummary> map = <String, SessionGitSummary>{
+        for (final entry in (result['summaries']! as List))
+          (entry! as Map)['sessionId']! as String:
+              SessionGitSummary.fromJson(entry.cast<String, Object?>()),
+      };
+
+      // The merged session: its work landed on the base.
+      expect(map[first.id]!.aheadOfBase, 0);
+      expect(map[first.id]!.behindBase, 0);
+      expect(map[first.id]!.mergedIntoBase, isTrue);
+      // The sibling: the merge advanced the LOCAL base ref — no fetch, no
+      // remote movement involved — so it reads one behind immediately.
+      expect(map[second.id]!.aheadOfBase, 0);
+      expect(map[second.id]!.behindBase, 1);
+      expect(map[second.id]!.mergedIntoBase, isFalse);
+      await client.close();
+    });
+
+    test('git.changed notifies when the watcher notices summaries move',
+        () async {
+      await startServer(
+        gitPollInterval: const Duration(milliseconds: 150),
+        gitFetchInterval: const Duration(milliseconds: 300),
+      );
+      final client = await connect(server!.port);
+
+      final parent = await Directory.systemTemp.createTemp('sd_ws_watch_');
+      addTearDown(() async {
+        try {
+          await parent.delete(recursive: true);
+        } on Object {
+          // Cleanup failure is not a test failure.
+        }
+      });
+      Future<void> git(String cwd, List<String> args) async {
+        final result = await Process.run('git', args, workingDirectory: cwd);
+        if (result.exitCode != 0) {
+          throw StateError('git ${args.join(' ')} failed: ${result.stderr}');
+        }
+      }
+
+      final originDir = p.join(parent.path, 'origin.git');
+      await git(parent.path, ['init', '--bare', '-b', 'main', originDir]);
+      final repoPath = p.join(parent.path, 'repo');
+      await git(parent.path, ['clone', originDir, repoPath]);
+      await git(repoPath, ['config', 'user.email', 'test@example.com']);
+      await git(repoPath, ['config', 'user.name', 'Test User']);
+      File(p.join(repoPath, 'a.txt')).writeAsStringSync('v1\n');
+      await git(repoPath, ['add', '-A']);
+      await git(repoPath, ['commit', '-m', 'init']);
+      await git(repoPath, ['push', '-u', 'origin', 'main']);
+
+      final project = Project.fromJson((j(await client.peer
+              .call('projects.add', <String, Object?>{'path': repoPath}))[
+                  'project']! as Map)
+          .cast<String, Object?>());
+      final worktree = Session.fromJson((j(await client.peer
+              .call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+            'title': 'Worktree session',
+            'baseBranch': 'main',
+          }))['session']! as Map)
+          .cast<String, Object?>());
+
+      Future<SessionGitSummary> summary() async {
+        final result = j(await client.peer.call('git.sessionSummaries',
+            <String, Object?>{'projectId': project.id}));
+        return SessionGitSummary.fromJson(((result['summaries']! as List)
+                .single! as Map)
+            .cast<String, Object?>());
+      }
+
+      /// Waits for the watcher to settle its baseline, then asserts a quiet
+      /// window produces no notification: events mean movement, not passes.
+      Future<void> quietFor(int ms) async {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final int count = client.of('git.changed').length;
+        await Future<void>.delayed(Duration(milliseconds: ms));
+        expect(client.of('git.changed').length, count,
+            reason: 'nothing moved, so no git.changed was due');
+      }
+
+      await quietFor(600);
+
+      // A commit in the session worktree — what an agent does mid-turn,
+      // with no session.updated to piggyback on — must surface on its own.
+      // The wait is relative to the pre-commit count: baseline settling can
+      // legitimately emit earlier notifications (e.g. the session appearing
+      // between passes), so absolute counts would be racy.
+      final int beforeCommit = client.of('git.changed').length;
+      File(p.join(worktree.cwd, 'feat.txt')).writeAsStringSync('f\n');
+      await git(worktree.cwd, ['add', '-A']);
+      await git(worktree.cwd, ['commit', '-m', 'session work']);
+      await untilRecorded(client, 'git.changed', beforeCommit + 1);
+      expect(client.of('git.changed').last.params['projectId'], project.id);
+      expect((await summary()).aheadOfBase, 1);
+      await quietFor(600);
+
+      // The base moving on the remote must surface too: the watcher's
+      // periodic fetch advances origin/main and flips behindBase to 1. The
+      // notification is emitted after the summaries moved, so by the time it
+      // arrives the RPC must observe the new counts.
+      final int beforePush = client.of('git.changed').length;
+      final otherPath = p.join(parent.path, 'other');
+      await git(parent.path, ['clone', originDir, otherPath]);
+      await git(otherPath, ['config', 'user.email', 'test@example.com']);
+      await git(otherPath, ['config', 'user.name', 'Test User']);
+      File(p.join(otherPath, 'remote.txt')).writeAsStringSync('r\n');
+      await git(otherPath, ['add', '-A']);
+      await git(otherPath, ['commit', '-m', 'remote moves base']);
+      await git(otherPath, ['push', 'origin', 'main']);
+      await untilRecorded(client, 'git.changed', beforePush + 1);
+      final SessionGitSummary moved = await summary();
+      expect(moved.aheadOfBase, 1);
+      expect(moved.behindBase, 1);
       await client.close();
     });
 

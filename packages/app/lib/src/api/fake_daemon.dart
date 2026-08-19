@@ -56,6 +56,11 @@ class FakeDaemonClient implements DaemonClient {
   /// computes these from git state.
   final Map<String, SessionGitSummary> sessionGitSummaries =
       <String, SessionGitSummary>{};
+
+  /// Demo/scripting hook: emitting a project id here is what the real
+  /// daemon's `git.changed` notification does; tests use it to drive
+  /// GitStore's watcher-driven refresh.
+  late final StreamController<String> gitChangedController;
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
   late final StreamController<void> _projectsChangedController;
@@ -164,15 +169,18 @@ class FakeDaemonClient implements DaemonClient {
           sessionId: 'sess-1',
           dirty: true,
           aheadOfBase: 2,
+          behindBase: 0,
           mergedIntoBase: false)
       ..['sess-2'] = const SessionGitSummary(
           sessionId: 'sess-2',
           dirty: true,
           aheadOfBase: null,
+          behindBase: null,
           mergedIntoBase: null);
     _sessionUpdatesController = StreamController<Session>.broadcast();
     _sessionRemovalsController = StreamController<String>.broadcast();
     _projectsChangedController = StreamController<void>.broadcast();
+    gitChangedController = StreamController<String>.broadcast();
   }
 
   Project _project(String id) {
@@ -848,6 +856,7 @@ class FakeDaemonClient implements DaemonClient {
                 sessionId: session.id,
                 dirty: null,
                 aheadOfBase: null,
+                behindBase: null,
                 mergedIntoBase: null,
               ),
     ];
@@ -877,6 +886,12 @@ class FakeDaemonClient implements DaemonClient {
   Stream<String> get sessionRemovals {
     _ensureSeeded();
     return _sessionRemovalsController.stream;
+  }
+
+  @override
+  Stream<String> get gitChanged {
+    _ensureSeeded();
+    return gitChangedController.stream;
   }
 
   @override
@@ -918,6 +933,7 @@ class FakeDaemonClient implements DaemonClient {
       await _sessionUpdatesController.close();
       await _sessionRemovalsController.close();
       await _projectsChangedController.close();
+      await gitChangedController.close();
     }
   }
 

@@ -74,14 +74,15 @@ class ProviderBadge extends StatelessWidget {
 }
 
 /// Git-state badges for a session row: "changes" (uncommitted work in the
-/// session's cwd), "↑N" (N commits not yet in the base branch), and
+/// session's cwd), "↑N" (N commits not yet in the base branch), "↓N" (N
+/// commits on the base branch the session lacks — its base moved on), and
 /// "merged" (all of the session branch's commits are in the base branch).
 ///
 /// Subscribes to [GitStore] itself — summaries refresh on their own
-/// schedule (project expansion, turn end, git mutations), so the strip
-/// rebuilds without remounting the whole rail. Renders nothing until the
-/// first summary for the session arrives, and nothing ever for a session
-/// whose git state is all-unknown.
+/// schedule (project expansion, turn end, git mutations, the daemon's
+/// `git.changed` notifications), so the strip rebuilds without remounting
+/// the whole rail. Renders nothing until the first summary for the session
+/// arrives, and nothing ever for a session whose git state is all-unknown.
 class SessionGitBadges extends StatelessWidget {
   const SessionGitBadges({super.key, required this.session});
 
@@ -100,6 +101,7 @@ class SessionGitBadges extends StatelessWidget {
         final ColorScheme scheme = Theme.of(context).colorScheme;
         final String base = session.baseBranch ?? 'base';
         final int ahead = summary.aheadOfBase ?? 0;
+        final int behind = summary.behindBase ?? 0;
         return Wrap(
           spacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
@@ -116,6 +118,13 @@ class SessionGitBadges extends StatelessWidget {
                 label: '↑$ahead',
                 tooltip: '$ahead ${ahead == 1 ? 'commit' : 'commits'} '
                     'ahead of $base',
+              ),
+            if (behind > 0)
+              _GitBadge(
+                color: colors.waitingPermission,
+                label: '↓$behind',
+                tooltip: '$behind ${behind == 1 ? 'commit' : 'commits'} '
+                    'behind $base (the base moved on)',
               ),
             if (summary.mergedIntoBase ?? false)
               _GitBadge(

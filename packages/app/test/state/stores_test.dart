@@ -720,6 +720,7 @@ void main() {
         sessionId: 'sess-1',
         dirty: false,
         aheadOfBase: 0,
+        behindBase: 0,
         mergedIntoBase: true,
       );
       await app.git.refreshSessionSummaries('fake', projectId);
@@ -747,11 +748,33 @@ void main() {
         sessionId: 'sess-1',
         dirty: false,
         aheadOfBase: 0,
+        behindBase: 0,
         mergedIntoBase: true,
       );
       await fake.renameSession('sess-1', 'Renamed (idle update)');
       await _waitUntil(() =>
           app.git.sessionSummaryFor('sess-1')?.mergedIntoBase == true);
+    });
+
+    test('a git.changed notification refetches summaries for a known project',
+        () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.git.refreshSessionSummaries('fake', projectId);
+      expect(app.git.sessionSummaryFor('sess-1')!.behindBase, 0);
+
+      // The daemon's watcher noticed the base move on the remote: the
+      // notification alone must pull the fresh summaries, with no turn
+      // having ended and no manual refresh.
+      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+        sessionId: 'sess-1',
+        dirty: false,
+        aheadOfBase: 1,
+        behindBase: 3,
+        mergedIntoBase: false,
+      );
+      fake.gitChangedController.add(projectId);
+      await _waitUntil(
+          () => app.git.sessionSummaryFor('sess-1')?.behindBase == 3);
     });
   });
 }

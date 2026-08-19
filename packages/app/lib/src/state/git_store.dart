@@ -45,6 +45,8 @@ class GitStore extends StoreBase {
       <String, StreamSubscription<Session>>{};
   final Map<String, StreamSubscription<void>> _summaryResyncSubs =
       <String, StreamSubscription<void>>{};
+  final Map<String, StreamSubscription<String>> _gitChangedSubs =
+      <String, StreamSubscription<String>>{};
 
   /// Session ids are globally unique (uuid), so `sessionId ?? projectId`
   /// cannot collide with a plain project id.
@@ -107,8 +109,11 @@ class GitStore extends StoreBase {
   /// polling:
   /// - a session landing on `idle`/`error` means a turn just ended (agents
   ///   commit mid-turn) → refetch that project's summaries;
+  /// - a `git.changed` notification means the daemon's watcher saw the
+  ///   summaries move on their own (an agent's mid-turn commit, or a
+  ///   periodic fetch advancing the base) → refetch that project;
   /// - a resync after reconnect means the daemon's state may have moved
-  ///   while the socket was down → refetch every known project.
+  ///     while the socket was down → refetch every known project.
   ///
   /// Refreshes are gated on the project having been fetched once (the rail
   /// fetches on expansion), so projects nobody is looking at cost nothing.
@@ -117,8 +122,15 @@ class GitStore extends StoreBase {
     final DaemonClient client = _clientFor(daemonId);
     _sessionUpdateSubs[daemonId] = client.sessionUpdates.listen(
         (Session session) => _onSessionUpdate(daemonId, session));
+    _gitChangedSubs[daemonId] = client.gitChanged
+        .listen((String projectId) => _onGitChanged(daemonId, projectId));
     _summaryResyncSubs[daemonId] =
         client.resynced.listen((void _) => _onResync(daemonId));
+  }
+
+  void _onGitChanged(String daemonId, String projectId) {
+    if (!_summarySessionIds.containsKey('$daemonId/$projectId')) return;
+    unawaited(refreshSessionSummaries(daemonId, projectId));
   }
 
   void _onSessionUpdate(String daemonId, Session session) {
@@ -256,6 +268,10 @@ class GitStore extends StoreBase {
       sub.cancel();
     }
     _sessionUpdateSubs.clear();
+    for (final StreamSubscription<String> sub in _gitChangedSubs.values) {
+      sub.cancel();
+    }
+    _gitChangedSubs.clear();
     for (final StreamSubscription<void> sub in _summaryResyncSubs.values) {
       sub.cancel();
     }

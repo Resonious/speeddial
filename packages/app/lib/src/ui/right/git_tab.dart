@@ -563,8 +563,11 @@ class _GitPaneState extends State<_GitPane> {
       await _app.git.refresh(widget.daemonId, widget.projectId,
           sessionId: widget.sessionId);
       if (r.baseFastForwarded) {
-        // The base branch moved in the project checkout too.
+        // The base branch moved in the project checkout too — every other
+        // worktree on that base is now behind it.
         await _app.git.refresh(widget.daemonId, widget.projectId);
+        await _app.git
+            .refreshSessionSummaries(widget.daemonId, widget.projectId);
       }
     } catch (_) {
       // Reflected through errorFor.

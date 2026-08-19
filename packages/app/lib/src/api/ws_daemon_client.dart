@@ -55,9 +55,11 @@ class WsDaemonClient implements DaemonClient {
   /// Every decoded `session.event` notification, keyed by session id.
   final StreamController<({String sessionId, SessionEvent event})>
       _sessionEventFeed = StreamController.broadcast();
-
   final StreamController<Session> _sessionUpdatesController =
       StreamController<Session>.broadcast();
+
+  final StreamController<String> _gitChangedController =
+      StreamController<String>.broadcast();
 
   final StreamController<String> _sessionRemovalsController =
       StreamController<String>.broadcast();
@@ -313,9 +315,9 @@ class WsDaemonClient implements DaemonClient {
     _disposed = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
-    await _tearDownSocket();
-    await _sessionEventFeed.close();
     await _sessionUpdatesController.close();
+    await _gitChangedController.close();
+    await _sessionEventFeed.close();
     await _sessionRemovalsController.close();
     await _projectsChangedController.close();
     await _resyncController.close();
@@ -366,6 +368,11 @@ class WsDaemonClient implements DaemonClient {
         if (sessionId is String) {
           _sessionRemovalsController.add(sessionId);
         }
+      case 'git.changed':
+        final Object? projectId = params['projectId'];
+        if (projectId is String) {
+          _gitChangedController.add(projectId);
+        }
       case 'projects.changed':
         _projectsChangedController.add(null);
     }
@@ -388,6 +395,9 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
+
+  @override
+  Stream<String> get gitChanged => _gitChangedController.stream;
 
   @override
   Stream<void> get projectsChanged => _projectsChangedController.stream;

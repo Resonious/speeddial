@@ -49,6 +49,7 @@ class GitService {
     }
 
     int? aheadOfBase;
+    int? behindBase;
     bool? mergedIntoBase;
     if (baseBranch != null) {
       try {
@@ -58,10 +59,13 @@ class GitService {
         // that landed in either one counts as merged; no fetch is run here,
         // so the origin ref may be stale.
         final List<String> exclusions = <String>['refs/heads/$baseBranch'];
+        final List<String> baseRefs = <String>['refs/heads/$baseBranch'];
         if (await _refExists(repoPath, 'refs/remotes/origin/$baseBranch')) {
           exclusions.add('refs/remotes/origin/$baseBranch');
+          baseRefs.add('refs/remotes/origin/$baseBranch');
         }
         aheadOfBase = await _countAhead(repoPath, exclusions);
+        behindBase = await _countBehind(repoPath, baseRefs);
         if (aheadOfBase == 0) {
           // HEAD is an ancestor of a base ref. That is trivially true for a
           // branch that never moved off its creation point (fresh worktree),
@@ -75,9 +79,11 @@ class GitService {
         }
       } on DaemonError {
         aheadOfBase = null;
+        behindBase = null;
         mergedIntoBase = null;
       } on ProcessException {
         aheadOfBase = null;
+        behindBase = null;
         mergedIntoBase = null;
       }
     }
@@ -86,9 +92,26 @@ class GitService {
       sessionId: sessionId,
       dirty: dirty,
       aheadOfBase: aheadOfBase,
+      behindBase: behindBase,
       mergedIntoBase: mergedIntoBase,
     );
   }
+
+  /// One summary per session (see [sessionSummary]), computed concurrently.
+  /// Shared by the `git.sessionSummaries` handler and the summary watcher.
+  Future<List<SessionGitSummary>> sessionSummaries(
+      Iterable<Session> sessions) {
+    return Future.wait(<Future<SessionGitSummary>>[
+      for (final Session session in sessions)
+        sessionSummary(
+          sessionId: session.id,
+          repoPath: session.cwd,
+          baseBranch: session.baseBranch,
+          createdAt: session.createdAt,
+        ),
+    ]);
+  }
+
 
   /// Unified diffs, one [GitDiff] per touched file.
   Future<List<GitDiff>> diff(String repoPath,
@@ -521,6 +544,18 @@ class GitService {
       '--count',
       'HEAD',
       for (final String ref in excludeRefs) '^$ref',
+    ]);
+    return int.parse((result.stdout as String).trim());
+  }
+
+  /// Commits reachable from any of [baseRefs] but not from HEAD
+  /// (`git rev-list --count a b … ^HEAD`).
+  Future<int> _countBehind(String repoPath, List<String> baseRefs) async {
+    final result = await _run(repoPath, <String>[
+      'rev-list',
+      '--count',
+      ...baseRefs,
+      '^HEAD',
     ]);
     return int.parse((result.stdout as String).trim());
   }
