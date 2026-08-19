@@ -191,7 +191,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             onRetry: () => chat.retryHistory(daemonId, sessionId),
           );
         } else {
-          surface = Timeline(items: _items);
+          surface = Timeline(
+            items: _items,
+            attachmentLoader: (String attachmentId) =>
+                chat.attachmentData(daemonId, sessionId, attachmentId),
+          );
         }
 
         return Column(
@@ -221,11 +225,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 mode: mode,
                 usage: usage,
                 model: session?.model,
-                onSend: (String text) {
+                onSend: (String text, List<OutgoingAttachment> attachments) {
                   if (status == SessionStatus.running) {
                     return Future<void>.value();
                   }
-                  return _sendMessage(text);
+                  return _sendMessage(text, attachments);
                 },
                 onStop: () => unawaited(_cancelTurn()),
                 onModeChanged: (SessionMode next) {
@@ -239,12 +243,21 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     );
   }
 
-  Future<void> _sendMessage(String text) async {
+  Future<void> _sendMessage(
+    String text,
+    List<OutgoingAttachment> attachments,
+  ) async {
     try {
-      await widget.data.chat.send(widget.daemonId, widget.sessionId, text);
+      await widget.data.chat.send(
+        widget.daemonId,
+        widget.sessionId,
+        text,
+        attachments: attachments,
+      );
     } on DaemonError catch (error) {
       await _showError(error);
-      // Delegate the text restore to the composer, which knows the draft.
+      // Delegate the text+attachments restore to the composer, which knows
+      // the draft.
       rethrow;
     }
   }

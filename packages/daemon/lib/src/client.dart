@@ -295,11 +295,23 @@ class DaemonClient {
     return Session.fromJson(_asMap(map['session'], 'sessions.create'));
   }
 
-  /// `sessions.send` — starts a turn with [text].
-  Future<void> sendMessage(String sessionId, String text) async {
+  /// `sessions.send` — starts a turn with [text] and the attached files.
+  /// [attachments] travel as base64 payloads; the `attachments` parameter is
+  /// omitted entirely when the message carries no files.
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+  }) async {
     await _peer.call(
       'sessions.send',
-      <String, Object?>{'sessionId': sessionId, 'text': text},
+      <String, Object?>{
+        'sessionId': sessionId,
+        'text': text,
+        if (attachments.isNotEmpty)
+          'attachments':
+              attachments.map((e) => e.toJson()).toList(growable: false),
+      },
     );
   }
 

@@ -131,7 +131,37 @@ void main() {
     }) as AgentMessageChunkEvent;
     expect(chunk.text, 'delta');
 
-    final thought = SessionEvent.fromJson(const {
+    // Attachments ride the userMessage event as metadata only.
+    const withAttachment = UserMessageEvent(
+      text: 'look at this',
+      attachments: [
+        Attachment(
+          id: 'att_1',
+          name: 'shot.png',
+          mimeType: 'image/png',
+          size: 42,
+        ),
+      ],
+    );
+    final attachmentJson = withAttachment.toJson();
+    expect(attachmentJson['attachments'], [
+      {'id': 'att_1', 'name': 'shot.png', 'mimeType': 'image/png', 'size': 42},
+    ]);
+    final decodedUser =
+        SessionEvent.fromJson(attachmentJson) as UserMessageEvent;
+    expect(decodedUser.attachments, hasLength(1));
+    expect(decodedUser.attachments.single.name, 'shot.png');
+    expect(decodedUser.toJson(), attachmentJson);
+
+    // No attachments: the key is omitted entirely, and parsing defaults to [].
+    expect(const UserMessageEvent(text: 'hi').toJson()['attachments'], isNull);
+    expect(decodedUser.text, 'look at this');
+    expect(
+      (SessionEvent.fromJson(const {'type': 'userMessage', 'text': 'x'})
+              as UserMessageEvent)
+          .attachments,
+      isEmpty,
+    );    final thought = SessionEvent.fromJson(const {
       'type': 'agentThoughtChunk',
       'text': 'hmm',
     }) as AgentThoughtChunkEvent;

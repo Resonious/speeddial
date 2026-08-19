@@ -1074,6 +1074,326 @@ void main() {
     });
   });
 
+  group('attachments', () {
+    test(
+        'sessions.send with image + text attachments maps to ACP blocks, '
+        'events carry metadata, and attachments.read returns payloads',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_attach_');
+      File(p.join(dir.path, 'example.txt'))
+          .writeAsStringSync('hello from file\n');
+      final project = Project.fromJson((j(await client.peer.call('projects.add',
+              <String, Object?>{'path': dir.path}))['project']! as Map)
+          .cast<String, Object?>());
+      final created = j(await client.peer.call('sessions.create',
+          <String, Object?>{'projectId': project.id, 'providerId': 'fake'}));
+      final session =
+          Session.fromJson((created['session']! as Map).cast<String, Object?>());
+
+      // An image-ish payload plus a text payload.
+      final imageBytes = <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+      final imageData = base64Encode(imageBytes);
+      const notesText = 'line 1\nline 2';
+      final notesData = base64Encode(utf8.encode(notesText));
+      const text = 'Inspect these files';
+
+      final permission =
+          waitForEvent(client, (event) => event is PermissionRequestEvent);
+      final send = client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': session.id,
+        'text': text,
+        'attachments': <Object?>[
+          <String, Object?>{
+            'name': 'diagram.png',
+            'mimeType': 'image/png',
+            'data': imageData,
+          },
+          <String, Object?>{
+            'name': 'notes.md',
+            'mimeType': 'text/markdown',
+            'data': notesData,
+          },
+        ],
+      });
+      final requestParams = await permission;
+      final request = ((requestParams['event']! as Map)['request']! as Map)
+          .cast<String, Object?>();
+      await client.peer.call('sessions.respondPermission', <String, Object?>{
+        'sessionId': session.id,
+        'requestId': request['requestId']! as String,
+        'optionId': 'allow',
+      });
+      await send;
+
+      // The agent received the mapped prompt blocks (text first, then image,
+      // then the inline-text resource).
+      final lastPrompt = jsonDecode(
+              File(p.join(dir.path, 'agent.last_prompt.json'))
+                  .readAsStringSync())
+          as List<Object?>;
+      expect(lastPrompt, hasLength(3));
+      final textBlock = lastPrompt[0]! as Map;
+      expect(textBlock['type'], 'text');
+      expect(textBlock['text'], text);
+      final imageBlock = lastPrompt[1]! as Map;
+      expect(imageBlock['type'], 'image');
+      expect(imageBlock['data'], imageData);
+      expect(imageBlock['mimeType'], 'image/png');
+      final resourceBlock = lastPrompt[2]! as Map;
+      expect(resourceBlock['type'], 'resource');
+      final resource = resourceBlock['resource']! as Map;
+      expect(resource['uri'], startsWith('speeddial-attachment:///'));
+      expect(resource['uri']!.endsWith('/notes.md'), isTrue);
+      expect(resource['mimeType'], 'text/markdown');
+      expect(resource['text'], notesText);
+      expect(resource.containsKey('blob'), isFalse);
+
+      // The persisted userMessage event carries metadata only (no payload).
+      final history = j(await client.peer.call('sessions.history',
+          <String, Object?>{'sessionId': session.id}));
+      final events = (history['events']! as List<Object?>)
+          .map((e) =>
+              SessionEvent.fromJson((e! as Map).cast<String, Object?>()))
+          .toList();
+      final userMessage = events.first as UserMessageEvent;
+      expect(userMessage.attachments, hasLength(2));
+      final imageMeta = userMessage.attachments[0];
+      expect(imageMeta.name, 'diagram.png');
+      expect(imageMeta.mimeType, 'image/png');
+      expect(imageMeta.size, imageBytes.length);
+      expect(imageMeta.id, isNotEmpty);
+      final notesMeta = userMessage.attachments[1];
+      expect(notesMeta.name, 'notes.md');
+      expect(notesMeta.mimeType, 'text/markdown');
+      expect(notesMeta.size, utf8.encode(notesText).length);
+      expect(notesMeta.id, isNotEmpty);
+      expect(imageMeta.id == notesMeta.id, isFalse,
+          reason: 'each attachment gets its own id');
+      final metaJson =
+          ((userMessage.toJson()['attachments']! as List).first! as Map);
+      expect(metaJson.containsKey('data'), isFalse,
+          reason: 'metadata never carries the payload');
+
+      // attachments.read returns the payloads.
+      final read = j(await client.peer.call('attachments.read', <String, Object?>{
+        'sessionId': session.id,
+        'attachmentId': imageMeta.id,
+      }));
+      final attachmentJson =
+          (read['attachment']! as Map).cast<String, Object?>();
+      expect(attachmentJson['id'], imageMeta.id);
+      expect(attachmentJson['name'], 'diagram.png');
+      expect(attachmentJson['mimeType'], 'image/png');
+      expect(attachmentJson['size'], imageBytes.length);
+      expect(attachmentJson['data'], imageData);
+      final readNotes = j(await client.peer.call('attachments.read',
+          <String, Object?>{
+            'sessionId': session.id,
+            'attachmentId': notesMeta.id,
+          }));
+      expect((readNotes['attachment']! as Map)['data'], notesData);
+
+      // Unknown ids / sessions → -32002.
+      await expectLater(
+        client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': session.id,
+          'attachmentId': 'no-such-id',
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrNotFound)),
+      );
+      await expectLater(
+        client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': 'no-such-session',
+          'attachmentId': imageMeta.id,
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrNotFound)),
+      );
+
+      // Deleting the session removes its attachments too (cascade).
+      await client.peer.call('sessions.delete',
+          <String, Object?>{'sessionId': session.id});
+      await expectLater(
+        client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': session.id,
+          'attachmentId': imageMeta.id,
+        }),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrNotFound)),
+      );
+
+      await client.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('sessions.send attachment validation rejects caps violations',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_attach_val_');
+      File(p.join(dir.path, 'example.txt')).writeAsStringSync('hello\n');
+      final project = Project.fromJson((j(await client.peer.call('projects.add',
+              <String, Object?>{'path': dir.path}))['project']! as Map)
+          .cast<String, Object?>());
+      final created = j(await client.peer.call('sessions.create',
+          <String, Object?>{'projectId': project.id, 'providerId': 'fake'}));
+      final sessionId = (created['session']! as Map)['id']! as String;
+
+      // Empty text with no attachments → -32602.
+      await expectLater(
+        client.peer.call('sessions.send',
+            <String, Object?>{'sessionId': sessionId, 'text': ''}),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('sessions.send',
+            <String, Object?>{'sessionId': sessionId}),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      Map<String, Object?> attachment(int i) => <String, Object?>{
+            'name': 'f$i.bin',
+            'mimeType': 'application/octet-stream',
+            'data': base64Encode(<int>[i]),
+          };
+
+      // More than 8 attachments → -32602.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'too many',
+          'attachments': <Object?>[for (var i = 0; i < 9; i++) attachment(i)],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      // Non-object / missing-field / malformed-base64 entries → -32602.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'bad',
+          'attachments': <Object?>['nope'],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'bad',
+          'attachments': <Object?>[
+            <String, Object?>{
+              'name': 'f1.bin',
+              'mimeType': 'application/octet-stream',
+            },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'bad',
+          'attachments': <Object?>[
+            <String, Object?>{
+              'name': 'f1.bin',
+              'mimeType': 'application/octet-stream',
+              'data': '!!!!',
+            },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      // A single attachment over 8 MiB → -32602.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'too big',
+          'attachments': <Object?>[
+            <String, Object?>{
+              'name': 'big.bin',
+              'mimeType': 'application/octet-stream',
+              'data': base64Encode(
+                  List<int>.filled(kMaxAttachmentBytes + 1, 0)),
+            },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      // Attachments whose combined size exceeds 16 MiB → -32602.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'too big together',
+          'attachments': <Object?>[
+            for (var i = 0; i < 3; i++)
+              <String, Object?>{
+                'name': 'part$i.bin',
+                'mimeType': 'application/octet-stream',
+                'data': base64Encode(List<int>.filled(6 * 1024 * 1024, 0)),
+              },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      await client.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('sessions.send allows an empty text when attachments are present',
+        () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_attach_empty_');
+      File(p.join(dir.path, 'example.txt')).writeAsStringSync('hello\n');
+      final project = Project.fromJson((j(await client.peer.call('projects.add',
+              <String, Object?>{'path': dir.path}))['project']! as Map)
+          .cast<String, Object?>());
+      final created = j(await client.peer.call('sessions.create',
+          <String, Object?>{'projectId': project.id, 'providerId': 'fake'}));
+      final session =
+          Session.fromJson((created['session']! as Map).cast<String, Object?>());
+
+      final permission =
+          waitForEvent(client, (event) => event is PermissionRequestEvent);
+      final send = client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': session.id,
+        'attachments': <Object?>[
+          <String, Object?>{
+            'name': 'data.json',
+            'mimeType': 'application/json',
+            'data': base64Encode(utf8.encode('{"a":1}')),
+          },
+        ],
+      });
+      final requestParams = await permission;
+      final request = ((requestParams['event']! as Map)['request']! as Map)
+          .cast<String, Object?>();
+      await client.peer.call('sessions.respondPermission', <String, Object?>{
+        'sessionId': session.id,
+        'requestId': request['requestId']! as String,
+        'optionId': 'allow',
+      });
+      await send;
+
+      // No text block: only the resource block (application/json is a text
+      // mime type, so the payload is inlined as decoded text).
+      final lastPrompt = jsonDecode(
+              File(p.join(dir.path, 'agent.last_prompt.json'))
+                  .readAsStringSync())
+          as List<Object?>;
+      expect(lastPrompt, hasLength(1));
+      final block = lastPrompt.single! as Map;
+      expect(block['type'], 'resource');
+      expect((block['resource']! as Map)['text'], '{"a":1}');
+
+      await client.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
+  });
+
   group('fs', () {
     test('fs.list / fs.read: confinement, binary detection, truncation',
         () async {

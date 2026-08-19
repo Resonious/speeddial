@@ -13,8 +13,16 @@ sealed class TimelineItem {
 
 /// A user message (already complete; not streamed).
 class UserMessageItem extends TimelineItem {
-  const UserMessageItem({required this.text});
+  const UserMessageItem({
+    required this.text,
+    this.attachments = const <Attachment>[],
+  });
+
   final String text;
+
+  /// Files attached to the message (metadata; payloads are fetched lazily
+  /// through the timeline's `attachmentLoader`).
+  final List<Attachment> attachments;
 }
 
 /// A merged run of consecutive agent message chunks.
@@ -109,7 +117,9 @@ List<TimelineItem> deriveTimelineItems(
       case UserMessageEvent e:
         flushMessage();
         flushThought();
-        items.add(UserMessageItem(text: e.text));
+        items.add(
+          UserMessageItem(text: e.text, attachments: e.attachments),
+        );
       case AgentMessageChunkEvent e:
         message.write(e.text);
       case AgentThoughtChunkEvent e:
@@ -166,9 +176,14 @@ List<TimelineItem> deriveTimelineItems(
 /// cache it per session revision so every chunk notification does not
 /// re-scan the full raw event list.
 class Timeline extends StatelessWidget {
-  const Timeline({super.key, required this.items});
+  const Timeline({super.key, required this.items, this.attachmentLoader});
 
   final List<TimelineItem> items;
+
+  /// Resolves an attachment's payload by id (through the chat store); when
+  /// null, attachment chips render without loading their bytes (defensive
+  /// default for standalone timelines).
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -182,22 +197,31 @@ class Timeline extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         itemCount: items.length,
         // reverse: true renders index 0 (the newest) at the bottom.
-        itemBuilder: (BuildContext context, int index) =>
-            _TimelineRow(item: items[items.length - 1 - index]),
+        itemBuilder: (BuildContext context, int index) => _TimelineRow(
+          item: items[items.length - 1 - index],
+          attachmentLoader: attachmentLoader,
+        ),
       ),
     );
   }
 }
 
 class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.item});
+  const _TimelineRow({required this.item, this.attachmentLoader});
 
   final TimelineItem item;
+
+  /// See [Timeline.attachmentLoader].
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
     return switch (item) {
-      UserMessageItem i => UserMessageBubble(text: i.text),
+      UserMessageItem i => UserMessageBubble(
+          text: i.text,
+          attachments: i.attachments,
+          attachmentLoader: attachmentLoader,
+        ),
       AgentMessageItem i => AgentMessageView(text: i.text),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),

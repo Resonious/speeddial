@@ -55,7 +55,9 @@ lib/src/engine/     SessionEngine: owns live ACP processes per session, maps ACP
                     broadcasts to listeners. Handles permission requests (parked until
                     respondPermission), cancel, process exit, turn lifecycle.
 lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (override with
-                    --db or SPEEDIAL_DB). Tables: projects, sessions, session_events.
+                    --db or SPEEDIAL_DB). Tables: projects, sessions, session_events,
+                    attachments (message-attachment payloads, FK-cascaded with their
+                    session; events carry metadata only, `attachments.read` serves blobs).
                     WAL mode, foreign keys on. Events stored as JSON blobs + seq.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
                     for status, --no-color unified diffs, branch lists; fetch and
@@ -109,7 +111,8 @@ lib/src/ui/chat/             timeline (virtualized ListView, reversed), message 
                              markdown + syntax-highlighted code blocks, collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              plan panel, permission banner with option buttons, composer
-                             (multiline, Enter send / Shift+Enter newline, model + mode
+                             (multiline, Enter send / Shift+Enter newline, file attachments
+                             via file_picker with image thumbnails + file chips, model + mode
                              selectors, stop button while running), usage footer
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
                              highlight) and Git (branch picker, staged/unstaged lists,

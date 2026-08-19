@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +10,7 @@ import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
+import 'package:speeddial_app/src/ui/chat/composer.dart';
 import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
 import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
@@ -100,6 +102,36 @@ void main() {
     for (int i = 0; i < attempts && !condition(); i++) {
       await tester.pump(step);
     }
+  }
+
+  /// Pumps a bare [Composer] (no pane) with an injected [AttachmentPicker]
+  /// and a recorded send callback, so attachment staging is testable without
+  /// the real platform picker.
+  Future<void> pumpComposer(
+    WidgetTester tester, {
+    required AttachmentPicker picker,
+    Future<void> Function(String text, List<OutgoingAttachment> attachments)?
+        onSend,
+  }) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Composer(
+            status: SessionStatus.idle,
+            mode: SessionMode.build,
+            attachmentPicker: picker,
+            onSend: onSend ??
+                (String text, List<OutgoingAttachment> attachments) async {},
+            onStop: () {},
+            onModeChanged: (SessionMode _) {},
+          ),
+        ),
+      ),
+    );
   }
 
   testWidgets(
@@ -528,13 +560,209 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
+
+  // A real 1x1 transparent PNG, so image thumbnails decode in tests.
+  final Uint8List pngBytes = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+    'DwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  );
+
+  testWidgets('attach button stages chips including an image thumbnail',
+      (WidgetTester tester) async {
+    await pumpComposer(
+      tester,
+      picker: () async => <({String name, Uint8List bytes})>[
+        (name: 'shot.png', bytes: pngBytes),
+        (name: 'notes.txt', bytes: Uint8List.fromList(<int>[104, 105])),
+      ],
+    );
+
+    expect(find.byIcon(Icons.attach_file), findsOneWidget);
+    // Send disabled with no draft (no text, no attachments).
+    IconButton send = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(send.onPressed, isNull);
+
+    await tester.tap(find.byIcon(Icons.attach_file));
+    await tester.pump();
+
+    // Image chip renders a decoded thumbnail; the text file renders a name
+    // chip; each has a remove affordance.
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('notes.txt'), findsOneWidget);
+    expect(find.byTooltip('Remove'), findsNWidgets(2));
+
+    // Attachments alone (still no text) enable send.
+    send = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(send.onPressed, isNotNull);
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, isEmpty);
+  });
+
+  testWidgets('removing a staged chip drops it and re-disables send',
+      (WidgetTester tester) async {
+    await pumpComposer(
+      tester,
+      picker: () async => <({String name, Uint8List bytes})>[
+        (name: 'one.txt', bytes: Uint8List.fromList(<int>[1])),
+        (name: 'two.txt', bytes: Uint8List.fromList(<int>[2])),
+      ],
+    );
+
+    await tester.tap(find.byIcon(Icons.attach_file));
+    await tester.pump();
+    expect(find.byTooltip('Remove'), findsNWidgets(2));
+
+    // Remove the second chip.
+    await tester.tap(find.byTooltip('Remove').last);
+    await tester.pump();
+    expect(find.text('two.txt'), findsNothing);
+    expect(find.text('one.txt'), findsOneWidget);
+    expect(find.byTooltip('Remove'), findsOneWidget);
+
+    // Remove the last one: no chips, send disabled again.
+    await tester.tap(find.byTooltip('Remove'));
+    await tester.pump();
+    expect(find.byTooltip('Remove'), findsNothing);
+    final IconButton send = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(send.onPressed, isNull);
+  });
+
+  testWidgets(
+      'send with empty text and an attachment delivers attachments and '
+      'clears the chips', (WidgetTester tester) async {
+    String? sentText;
+    List<OutgoingAttachment>? sentAttachments;
+    await pumpComposer(
+      tester,
+      picker: () async => <({String name, Uint8List bytes})>[
+        (name: 'notes.txt', bytes: Uint8List.fromList(<int>[104, 105])),
+      ],
+      onSend: (String text, List<OutgoingAttachment> attachments) async {
+        sentText = text;
+        sentAttachments = attachments;
+      },
+    );
+
+    await tester.tap(find.byIcon(Icons.attach_file));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+
+    // The daemon-facing payload: name, mime type, base64 data; empty text.
+    expect(sentText, isEmpty);
+    expect(sentAttachments, hasLength(1));
+    final OutgoingAttachment sent = sentAttachments!.single;
+    expect(sent.name, 'notes.txt');
+    expect(sent.mimeType, 'text/plain');
+    expect(sent.data, 'aGk='); // base64 of [104, 105]
+
+    // Chips cleared, field still empty, send disabled again.
+    expect(find.byTooltip('Remove'), findsNothing);
+    expect(find.text('notes.txt'), findsNothing);
+    final IconButton send = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(send.onPressed, isNull);
+  });
+
+  testWidgets('a failed send restores both the text and the attachments',
+      (WidgetTester tester) async {
+    await pumpComposer(
+      tester,
+      picker: () async => <({String name, Uint8List bytes})>[
+        (name: 'notes.txt', bytes: Uint8List.fromList(<int>[104, 105])),
+      ],
+      onSend: (String text, List<OutgoingAttachment> attachments) async {
+        throw const DaemonError(kErrConflict, 'a turn is already running');
+      },
+    );
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.attach_file));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+    await tester.pump();
+
+    // Both halves of the draft are back: text in the field, chip restored.
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'hello');
+    expect(find.text('notes.txt'), findsOneWidget);
+    expect(find.byTooltip('Remove'), findsOneWidget);
+    // Send is re-enabled (text restored).
+    expect(find.byIcon(Icons.send), findsOneWidget);
+  });
+
+  testWidgets(
+      'a user message with attachments renders file chips and an image '
+      'thumbnail from readAttachment', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final Session session = (await fake.listSessions()).first;
+    // Seed a completed turn whose user message carries both an image and a
+    // text file; the fake stores the payloads for attachments.read.
+    await fake.sendMessage(
+      session.id,
+      'look at these',
+      attachments: <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'shot.png',
+          mimeType: 'image/png',
+          data: base64Encode(pngBytes),
+        ),
+        OutgoingAttachment(
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          data: base64Encode(Uint8List.fromList(<int>[104, 105])),
+        ),
+      ],
+    );
+    await tester.pump(const Duration(seconds: 1)); // run the scripted turn
+
+    await pumpChat(tester, fake: fake);
+    await pumpUntil(
+      tester,
+      () => find.text('look at these').evaluate().isNotEmpty,
+    );
+    expect(find.text('look at these'), findsOneWidget);
+
+    // Non-image attachment renders its compact icon+name+size row.
+    expect(find.text('notes.txt'), findsOneWidget);
+    expect(find.text('2 B'), findsOneWidget);
+
+    // Image thumbnail arrives once readAttachment resolves and decodes.
+    await pumpUntil(
+      tester,
+      () => find.byType(Image).evaluate().isNotEmpty,
+    );
+    expect(find.byType(Image), findsOneWidget);
+
+    // Drain stream + settle timers so the test ends clean.
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 350));
+  });
 }
 
 /// A fake whose sends always fail like a turn conflict, driving the
 /// composer/pane failure path (SnackBar + text restore).
 class _FailingSendFake extends FakeDaemonClient {
   @override
-  Future<void> sendMessage(String sessionId, String text) async {
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
     throw const DaemonError(kErrConflict, 'a turn is already running');
   }
 }
@@ -543,7 +771,8 @@ class _FailingSendFake extends FakeDaemonClient {
 /// the pane's softened connection-lost notice.
 class _DroppedConnectionFake extends FakeDaemonClient {
   @override
-  Future<void> sendMessage(String sessionId, String text) async {
+  Future<void> sendMessage(String sessionId, String text,
+      {List<OutgoingAttachment>? attachments}) async {
     throw const DaemonConnectionError('peer closed');
   }
 }

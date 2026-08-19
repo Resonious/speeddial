@@ -118,6 +118,11 @@ class ChatStore extends StoreBase {
   final Map<String, SessionMode> _modeById = <String, SessionMode>{};
   final Map<String, UsageInfo> _usageById = <String, UsageInfo>{};
 
+  /// Memoized attachment payload futures, keyed by
+  /// `daemonId/sessionId/attachmentId` (see [attachmentData]).
+  final Map<String, Future<AttachmentData>> _attachmentLoads =
+      <String, Future<AttachmentData>>{};
+
   /// Monotonic per-session buffer mutation counter, keyed like the rest of
   /// the derived state; incremented on every event appended or merged in.
   final Map<String, int> _revisions = <String, int>{};
@@ -254,8 +259,29 @@ class ChatStore extends StoreBase {
   }
 
   /// Starts a turn. Events flow into the buffer via [watchSession].
-  Future<void> send(String daemonId, String sessionId, String text) =>
-      _clientFor(daemonId).sendMessage(sessionId, text);
+  Future<void> send(
+    String daemonId,
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) =>
+      _clientFor(daemonId)
+          .sendMessage(sessionId, text, attachments: attachments);
+
+  /// Fetches an attachment's payload, memoized per composite
+  /// `daemonId/sessionId/attachmentId` key. Attachments are immutable (their
+  /// payload never changes once assigned an id), so the first result stays
+  /// valid for the life of the store and no eviction is needed; repeat
+  /// reads of the same attachment share one future.
+  Future<AttachmentData> attachmentData(
+    String daemonId,
+    String sessionId,
+    String attachmentId,
+  ) {
+    final String key = '$daemonId/$sessionId/$attachmentId';
+    return _attachmentLoads[key] ??=
+        _clientFor(daemonId).readAttachment(sessionId, attachmentId);
+  }
 
   Future<void> cancel(String daemonId, String sessionId) =>
       _clientFor(daemonId).cancelSession(sessionId);

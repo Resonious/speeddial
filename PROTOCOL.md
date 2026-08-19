@@ -76,6 +76,20 @@ Session = {
 
 FileEntry = { name: string, path: string, isDir: boolean, size: int, modifiedAt: string }
 
+// Attachments (files the user attaches to a message)
+OutgoingAttachment = {           // client → daemon payload (sessions.send only)
+  name: string,                  // file name incl. extension
+  mimeType: string,              // IANA type; "application/octet-stream" when unknown
+  data: string,                  // base64-encoded content
+}
+Attachment = {                   // metadata carried by userMessage events (no payload)
+  id: string,                    // daemon-assigned, unique within the session
+  name: string,
+  mimeType: string,
+  size: int,                     // decoded byte count
+}
+AttachmentData = Attachment & { data: string }   // attachments.read result: metadata + base64
+
 GitStatusFile = { path: string, indexStatus: string, worktreeStatus: string, staged: boolean }
 GitStatus = { branch: string, ahead: int, behind: int, files: GitStatusFile[] }
 GitDiff = { path: string, patch: string, isNew: boolean, isDeleted: boolean, isBinary: boolean }
@@ -117,7 +131,7 @@ receive them. `sessions.history` returns events ordered by `seq` ascending.
 
 ```ts
 SessionEvent =
-  | { type: "userMessage", text: string }
+  | { type: "userMessage", text: string, attachments?: Attachment[] }  // attachments omitted when empty
   | { type: "agentMessageChunk", text: string }        // streaming delta
   | { type: "agentThoughtChunk", text: string }        // streaming delta, collapsible in UI
   | { type: "toolCall", toolCall: ToolCall }           // created or updated; match by toolCall.id
@@ -177,7 +191,14 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     otherwise (local ahead, equal, or diverged). `baseBranch` and `cwd` are mutually exclusive
     (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
     worktree on disk.
-- `sessions.send {sessionId: string, text: string}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+- `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
+  may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
+  attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon
+  persists each payload (fetchable later via `attachments.read`), records the metadata on the turn's
+  `userMessage` event, and forwards the files to the agent as ACP prompt content blocks: `image/*` becomes
+  an `image` block; text-like types (`text/*`, JSON/XML/YAML, source code, SVG) become an embedded `resource`
+  block with `text`; anything else becomes an embedded `resource` block with a base64 `blob`. Resource URIs
+  have the form `speeddial-attachment:///<id>/<name>`.
   Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and resumes the
   conversation via ACP `session/load` before starting the turn. Errors `-32003` when the session is closed or its
   provider cannot resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
@@ -191,6 +212,11 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `sessions.setModel {sessionId: string, model: string}` → `{session: Session}`
 - `sessions.history {sessionId: string, limit?: int, beforeSeq?: int}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page
 - `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
+
+### Attachments
+- `attachments.read {sessionId: string, attachmentId: string}` → `{attachment: AttachmentData}` — fetches one
+  attachment's metadata plus base64 payload; `-32002` when the session or attachment is unknown. Payloads are
+  persisted by the daemon and survive restarts; they are deleted with their session.
 
 ### Files (paths are relative to the project root; absolute rejected with `-32602`)
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending

@@ -34,6 +34,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 const String sessionId = 's1';
 
 final Map<int, Completer<Map<String, Object?>>> _agentRequests =
@@ -236,6 +238,16 @@ Future<void> _runTurn(
   String targetPath,
 ) async {
   _pendingPrompts[promptId] = false;
+  // Expose the prompt blocks (text/image/resource) as JSON for tests; the
+  // file is overwritten on every prompt and lives in the agent's cwd (the
+  // session cwd). Never write it into a git working tree: the e2e test runs
+  // a session inside its own repo, and a stray file would dirty `git status`.
+  final cwd = Directory.current.path;
+  if (!Directory(p.join(cwd, '.git')).existsSync() &&
+      !File(p.join(cwd, '.git')).existsSync()) {
+    File(p.join(cwd, 'agent.last_prompt.json'))
+        .writeAsStringSync(jsonEncode(promptParams['prompt']));
+  }
   final text = _promptText(promptParams);
 
   if (text == 'cancel') return; // Left pending; session/cancel resolves it.

@@ -2,9 +2,11 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/client.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -142,8 +144,17 @@ class SessionsCreateCommand extends Command<int> {
   }
 }
 
-/// `speeddial sessions send <id> <text...>` — starts a turn.
+/// `speeddial sessions send <id> <text...> [--attach <file> ...]` — starts a
+/// turn, optionally attaching files.
 class SessionsSendCommand extends Command<int> {
+  SessionsSendCommand() {
+    argParser.addMultiOption(
+      'attach',
+      abbr: 'a',
+      help: 'File to attach to the message (repeatable).',
+    );
+  }
+
   @override
   final String name = 'send';
 
@@ -160,10 +171,23 @@ class SessionsSendCommand extends Command<int> {
     if (id.isEmpty || text.isEmpty) {
       throw UsageException('Usage: speeddial sessions send <id> <text>', usage);
     }
+    final attachPaths =
+        argResults!['attach'] as List<String>? ?? const <String>[];
+    final attachments = <OutgoingAttachment>[];
+    for (final path in attachPaths) {
+      final bytes = await _readAttachment(path);
+      if (bytes == null) return Exit.usage; // Error already printed.
+      final name = p.basename(path);
+      attachments.add(OutgoingAttachment(
+        name: name,
+        mimeType: mimeTypeForFileName(name),
+        data: base64Encode(bytes),
+      ));
+    }
     final conn = resolveConnection(globalResults!);
     final output = Output(json: conn.json);
     return withDaemon(conn, (client) async {
-      await client.sendMessage(id, text);
+      await client.sendMessage(id, text, attachments: attachments);
       if (conn.json) {
         output.raw(const <String, Object?>{});
       } else {
@@ -394,6 +418,19 @@ Map<String, Object?> _sessionRecord(Session session) => <String, Object?>{
       'cwd': session.cwd,
       'archived': session.archived ? 'yes' : 'no',
     };
+
+/// Reads an attached file's bytes, printing the error to stderr (matching
+/// the CLI's error style) and returning null when the file is missing or
+/// unreadable; the caller then exits non-zero.
+Future<List<int>?> _readAttachment(String path) async {
+  final file = File(path);
+  try {
+    return await file.readAsBytes();
+  } on FileSystemException catch (e) {
+    stderr.writeln('speeddial: cannot read attachment "$path": ${e.message}');
+    return null;
+  }
+}
 
 String _requireSessionId(Command<int> command) {
   if (command.argResults!.rest.isEmpty) {

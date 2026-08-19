@@ -459,14 +459,19 @@ class AcpClient {
   }
 
   /// Sends a prompt and awaits the agent's stop reason.
-  Future<PromptResult> prompt(String sessionId, String text) async {
+  ///
+  /// [promptBlocks] are the ACP prompt content blocks (text, image, resource)
+  /// sent verbatim as the request's `prompt` parameter; empty for a turn
+  /// without any content.
+  Future<PromptResult> prompt(
+    String sessionId,
+    List<Map<String, Object?>> promptBlocks,
+  ) async {
     final result = await _request(
       'session/prompt',
       <String, Object?>{
         'sessionId': sessionId,
-        'prompt': <Object?>[
-          <String, Object?>{'type': 'text', 'text': text},
-        ],
+        'prompt': promptBlocks,
       },
     );
     return PromptResult.fromJson(result);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -31,6 +32,14 @@ class FakeDaemonClient implements DaemonClient {
   final Set<String> _runningScripts = <String>{};
   final Set<String> _cancelRequested = <String>{};
   final Map<String, String> _pendingPermissions = <String, String>{};
+
+  /// Attachments per session, keyed by attachment id; payloads are served by
+  /// [readAttachment] from here (mirroring the daemon's attachment store).
+  final Map<String, Map<String, AttachmentData>> _attachmentsBySession =
+      <String, Map<String, AttachmentData>>{};
+
+  /// Per-session counters backing `att-<n>` attachment ids.
+  final Map<String, int> _attachmentCounters = <String, int>{};
 
   final Map<String, List<FileEntry>> _fileTree = <String, List<FileEntry>>{};
   final Map<String, String> _fileContents = <String, String>{};
@@ -323,19 +332,65 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<void> sendMessage(String sessionId, String text) async {
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
     _ensureSeeded();
     _requireSession(sessionId);
     if (_runningScripts.contains(sessionId)) {
       throw const DaemonError(kErrConflict, 'a turn is already running');
     }
+    // Mirror the daemon: each outgoing file is persisted under an id unique
+    // within the session; message events carry only the metadata.
+    final List<Attachment> metadata = <Attachment>[];
+    if (attachments.isNotEmpty) {
+      final Map<String, AttachmentData> store =
+          _attachmentsBySession.putIfAbsent(
+              sessionId, () => <String, AttachmentData>{});
+      for (final OutgoingAttachment outgoing in attachments) {
+        final int n = (_attachmentCounters[sessionId] ?? 0) + 1;
+        _attachmentCounters[sessionId] = n;
+        final int size = base64Decode(outgoing.data).length;
+        final AttachmentData stored = AttachmentData(
+          id: 'att-$n',
+          name: outgoing.name,
+          mimeType: outgoing.mimeType,
+          size: size,
+          data: outgoing.data,
+        );
+        store[stored.id] = stored;
+        metadata.add(Attachment(
+          id: stored.id,
+          name: stored.name,
+          mimeType: stored.mimeType,
+          size: stored.size,
+        ));
+      }
+    }
     _runningScripts.add(sessionId);
     _cancelRequested.remove(sessionId);
     // The daemon broadcasts the user's own message as the turn's first event
     // (see daemon SessionEngine._runTurn); mirror that here.
-    _emit(sessionId, UserMessageEvent(text: text));
+    _emit(sessionId, UserMessageEvent(text: text, attachments: metadata));
     _setStatus(sessionId, SessionStatus.running);
     unawaited(_runScript(sessionId, text));
+  }
+
+  @override
+  Future<AttachmentData> readAttachment(
+    String sessionId,
+    String attachmentId,
+  ) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final AttachmentData? stored =
+        _attachmentsBySession[sessionId]?[attachmentId];
+    if (stored == null) {
+      throw DaemonError(kErrNotFound, 'unknown attachment: $attachmentId');
+    }
+    return stored;
   }
 
   @override
@@ -969,6 +1024,8 @@ class FakeDaemonClient implements DaemonClient {
     _runningScripts.remove(sessionId);
     _cancelRequested.remove(sessionId);
     _pendingPermissions.remove(sessionId);
+    _attachmentsBySession.remove(sessionId);
+    _attachmentCounters.remove(sessionId);
     final StreamController<SessionEvent>? controller =
         _eventControllers.remove(sessionId);
     if (_disposed) return;
@@ -993,8 +1050,8 @@ class FakeDaemonClient implements DaemonClient {
 
   SessionEvent _withSeq(SessionEvent event, int seq, DateTime timestamp) =>
       switch (event) {
-        UserMessageEvent e =>
-          UserMessageEvent(text: e.text, seq: seq, timestamp: timestamp),
+        UserMessageEvent e => UserMessageEvent(
+            text: e.text, attachments: e.attachments, seq: seq, timestamp: timestamp),
         AgentMessageChunkEvent e =>
           AgentMessageChunkEvent(text: e.text, seq: seq, timestamp: timestamp),
         AgentThoughtChunkEvent e =>

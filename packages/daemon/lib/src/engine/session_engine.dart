@@ -5,9 +5,10 @@
 /// Lifecycle:
 ///   * `createSession` spawns a provider's ACP agent (cwd = session cwd),
 ///     creates an ACP session, and persists an idle protocol session.
-///   * `sendMessage` runs a turn: user message event, status `running`,
-///     mapped ACP updates (chunks, tool calls, plan, usage) streamed and
-///     persisted, permission requests parked until `respondPermission`, then
+///   * `sendMessage` runs a turn: user message event (with attachment
+///     metadata when files were attached), status `running`, mapped ACP
+///     updates (chunks, tool calls, plan, usage) streamed and persisted,
+///     permission requests parked until `respondPermission`, then
 ///     `turnComplete` and status `idle`.
 ///   * `cancel` cancels the running turn via the agent.
 ///   * `delete` kills the agent and removes the session (and its events).
@@ -22,6 +23,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -63,6 +65,15 @@ class _LiveSession {
 
   String get sessionId => session.id;
   String get cwd => session.cwd;
+}
+
+/// A validated, persisted attachment ready for the turn: its metadata plus
+/// the decoded payload (for ACP block building).
+class _PreparedAttachment {
+  _PreparedAttachment({required this.data, required this.bytes});
+
+  final AttachmentData data;
+  final List<int> bytes;
 }
 
 /// Orchestrates ACP agent processes and the project session lifecycle.
@@ -302,12 +313,17 @@ class SessionEngine {
     );
   }
 
-  /// Starts a turn for [text]. When the session's agent process is gone
-  /// (daemon restarted), the agent is first respawned and resumed via ACP
-  /// `session/load` — see [_resume]. Errors `kErrConflict` when a turn is
-  /// already running or the session cannot be resumed (closed, predates
-  /// resume support, or the provider lacks `session/load`).
-  Future<void> sendMessage(String sessionId, String text) async {
+  /// Starts a turn for [text] with the attached files. When the session's
+  /// agent process is gone (daemon restarted), the agent is first respawned
+  /// and resumed via ACP `session/load` — see [_resume]. Errors
+  /// `kErrConflict` when a turn is already running or the session cannot be
+  /// resumed (closed, predates resume support, or the provider lacks
+  /// `session/load`).
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+  }) async {
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
     live ??= await _resuming.putIfAbsent(
@@ -325,7 +341,33 @@ class SessionEngine {
         'A turn is already running for session "$sessionId"',
       );
     }
-    final turn = _runTurn(live, text);
+    // Decode and persist each attachment before the turn starts so the
+    // metadata rides on the user message event and the payload is fetchable
+    // via `attachments.read`. The wire handler has already validated the
+    // base64 and the size caps; the defensive decoding here turns a malformed
+    // payload into a clean -32602 instead of an internal error.
+    final prepared = <_PreparedAttachment>[];
+    for (final attachment in attachments) {
+      final List<int> bytes;
+      try {
+        bytes = base64Decode(attachment.data);
+      } on FormatException {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'Attachment "${attachment.name}" carries malformed base64 data',
+        );
+      }
+      final data = AttachmentData(
+        id: _uuid.v4(),
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: bytes.length,
+        data: attachment.data,
+      );
+      _store.insertAttachment(sessionId, data);
+      prepared.add(_PreparedAttachment(data: data, bytes: bytes));
+    }
+    final turn = _runTurn(live, text, prepared);
     live.turn = turn;
     try {
       await turn;
@@ -554,10 +596,22 @@ class SessionEngine {
   // Turn machinery
   // -------------------------------------------------------------------------
 
-  Future<void> _runTurn(_LiveSession live, String text) async {
+  Future<void> _runTurn(
+    _LiveSession live,
+    String text,
+    List<_PreparedAttachment> attachments,
+  ) async {
     final sessionId = live.sessionId;
     _toolCalls[sessionId] = <String, ToolCall>{};
-    _emit(live, UserMessageEvent(text: text));
+    _emit(
+      live,
+      UserMessageEvent(
+        text: text,
+        // AttachmentData is an Attachment; only the metadata fields are
+        // serialized by Attachment.toJson (no payload).
+        attachments: [for (final prepared in attachments) prepared.data],
+      ),
+    );
     _setStatus(live, SessionStatus.running);
 
     final updates = live.client.sessionUpdates(live.acpSessionId);
@@ -567,7 +621,10 @@ class SessionEngine {
     });
 
     try {
-      final result = await live.client.prompt(live.acpSessionId, text);
+      final result = await live.client.prompt(
+        live.acpSessionId,
+        _promptBlocks(text, attachments),
+      );
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
       _setStatus(live, SessionStatus.idle);
     } on Object catch (error) {
@@ -582,6 +639,45 @@ class SessionEngine {
     } finally {
       await subscription.cancel();
     }
+  }
+
+  /// The ACP prompt content blocks for a turn: an optional leading text block
+  /// (only when [text] is non-empty), then one block per [attachments] — an
+  /// `image` block for images, and an embedded `resource` block for anything
+  /// else (inline `text` for text mime types, base64 `blob` otherwise). The
+  /// resource URI is stable per attachment id so an agent can reference the
+  /// file across requests.
+  static List<Map<String, Object?>> _promptBlocks(
+    String text,
+    List<_PreparedAttachment> attachments,
+  ) {
+    final blocks = <Map<String, Object?>>[];
+    if (text.isNotEmpty) {
+      blocks.add(<String, Object?>{'type': 'text', 'text': text});
+    }
+    for (final prepared in attachments) {
+      final data = prepared.data;
+      if (isImageMimeType(data.mimeType)) {
+        blocks.add(<String, Object?>{
+          'type': 'image',
+          'data': data.data,
+          'mimeType': data.mimeType,
+        });
+        continue;
+      }
+      final resource = <String, Object?>{
+        'uri': 'speeddial-attachment:///${data.id}/'
+            '${Uri.encodeComponent(data.name)}',
+        'mimeType': data.mimeType,
+      };
+      if (isTextMimeType(data.mimeType)) {
+        resource['text'] = utf8.decode(prepared.bytes);
+      } else {
+        resource['blob'] = data.data;
+      }
+      blocks.add(<String, Object?>{'type': 'resource', 'resource': resource});
+    }
+    return blocks;
   }
 
   /// Completes and clears every parked permission request for [live]. Called

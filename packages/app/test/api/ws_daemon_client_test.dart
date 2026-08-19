@@ -37,6 +37,14 @@ class TestDaemonServer {
   final Map<String, List<Map<String, Object?>>> history =
       <String, List<Map<String, Object?>>>{};
 
+  /// Every `sessions.send` params object received, in call order.
+  final List<Map<String, Object?>> sends = <Map<String, Object?>>[];
+
+  /// Attachment payloads keyed by session id then attachment id, served by
+  /// the `attachments.read` handler.
+  final Map<String, Map<String, Map<String, Object?>>> attachments =
+      <String, Map<String, Map<String, Object?>>>{};
+
   int connectionCount = 0;
   int seq = 0;
 
@@ -84,10 +92,21 @@ class TestDaemonServer {
       return <String, Object?>{'projects': <Object?>[projectJson()]};
     });
     peer.registerHandler('sessions.send', (Map<String, Object?> params) {
+      sends.add(params);
       if (params['text'] == 'boom') {
         throw DaemonError(kErrConflict, 'turn already running');
       }
       return <String, Object?>{};
+    });
+    peer.registerHandler('attachments.read', (Map<String, Object?> params) {
+      final String sessionId = params['sessionId']! as String;
+      final String attachmentId = params['attachmentId']! as String;
+      final Map<String, Object?>? stored =
+          attachments[sessionId]?[attachmentId];
+      if (stored == null) {
+        throw DaemonError(kErrNotFound, 'unknown attachment: $attachmentId');
+      }
+      return <String, Object?>{'attachment': stored};
     });
     peer.registerHandler('sessions.history', (Map<String, Object?> params) {
       final String sessionId = params['sessionId']! as String;
@@ -265,6 +284,80 @@ void main() {
 
     // Void calls resolve without error.
     await client.sendMessage('sess-1', 'hello');
+  });
+
+  test('sendMessage omits attachments when empty and serializes them otherwise',
+      () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    // PROTOCOL.md: the `attachments` param is absent entirely when empty.
+    await client.sendMessage('sess-1', 'hello');
+    await client.sendMessage('sess-1', '', attachments: <OutgoingAttachment>[
+      const OutgoingAttachment(
+        name: 'shot.png',
+        mimeType: 'image/png',
+        data: 'aGVsbG8=',
+      ),
+    ]);
+
+    expect(server.sends, hasLength(2));
+    expect(server.sends[0].containsKey('attachments'), isFalse);
+    expect(server.sends[0]['text'], 'hello');
+    final Object? wire = server.sends[1]['attachments'];
+    expect(wire, isA<List<Object?>>());
+    final List<Object?> list = wire! as List<Object?>;
+    expect(list, hasLength(1));
+    expect(list.single, <String, Object?>{
+      'name': 'shot.png',
+      'mimeType': 'image/png',
+      'data': 'aGVsbG8=',
+    });
+  });
+
+  test('readAttachment decodes the attachment result and errors on unknowns',
+      () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    server.attachments['sess-1'] = <String, Map<String, Object?>>{
+      'att-1': <String, Object?>{
+        'id': 'att-1',
+        'name': 'shot.png',
+        'mimeType': 'image/png',
+        'size': 5,
+        'data': 'aGVsbG8=',
+      },
+    };
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    final AttachmentData data = await client.readAttachment('sess-1', 'att-1');
+    expect(data.id, 'att-1');
+    expect(data.name, 'shot.png');
+    expect(data.mimeType, 'image/png');
+    expect(data.size, 5);
+    expect(data.data, 'aGVsbG8=');
+
+    // Server-side unknown attachment surfaces as a not-found DaemonError.
+    await expectLater(
+      client.readAttachment('sess-1', 'att-99'),
+      throwsA(
+        isA<DaemonError>()
+            .having((DaemonError e) => e.code, 'code', kErrNotFound),
+      ),
+    );
   });
 
   test('auth failure propagates and leaves the client failed', () async {

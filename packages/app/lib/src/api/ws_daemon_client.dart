@@ -468,11 +468,36 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<void> sendMessage(String sessionId, String text) async {
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
     await _requirePeer().call(
       'sessions.send',
-      <String, Object?>{'sessionId': sessionId, 'text': text},
+      <String, Object?>{
+        'sessionId': sessionId,
+        'text': text,
+        // PROTOCOL.md: the wire param is omitted entirely when empty; the
+        // daemon rejects `sessions.send` without text *and* without
+        // attachments, so clients never send a bare attachment list here.
+        if (attachments.isNotEmpty)
+          'attachments':
+              attachments.map((OutgoingAttachment a) => a.toJson()).toList(growable: false),
+      },
     );
+  }
+
+  @override
+  Future<AttachmentData> readAttachment(
+    String sessionId,
+    String attachmentId,
+  ) async {
+    final Object? result = await _requirePeer().call(
+      'attachments.read',
+      <String, Object?>{'sessionId': sessionId, 'attachmentId': attachmentId},
+    );
+    return AttachmentData.fromJson(_resultMap(_resultField(result, 'attachment')));
   }
 
   @override

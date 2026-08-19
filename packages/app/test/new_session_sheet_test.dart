@@ -84,7 +84,8 @@ class _SendFailingFake extends FakeDaemonClient {
   final Object error;
 
   @override
-  Future<void> sendMessage(String sessionId, String text) async {
+  Future<void> sendMessage(String sessionId, String text,
+      {List<OutgoingAttachment>? attachments}) async {
     throw error;
   }
 }

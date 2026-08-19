@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -326,6 +327,81 @@ void main() {
     await fake.removeProject('proj-demo');
     await Future<void>.delayed(Duration.zero);
     expect(emissions, 2);
+  });
+
+  test('sendMessage with attachments echoes metadata and readAttachment '
+      'serves the payloads', () async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final List<SessionEvent> events = <SessionEvent>[];
+    fake.sessionEvents('sess-1').listen(events.add);
+
+    // A 1x1 transparent PNG, so the size is deterministic.
+    final List<int> png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+      'DwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    );
+    await fake.sendMessage('sess-1', '', attachments: <OutgoingAttachment>[
+      OutgoingAttachment(
+        name: 'shot.png',
+        mimeType: 'image/png',
+        data: base64Encode(png),
+      ),
+      OutgoingAttachment(
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        data: base64Encode(<int>[104, 105]),
+      ),
+    ]);
+    await _waitUntil(() => Future<bool>.value(
+        events.any((SessionEvent e) => e is TurnCompleteEvent)));
+
+    // The echoed user message carries metadata only, ids assigned in order.
+    final UserMessageEvent user = events.first as UserMessageEvent;
+    expect(user.text, isEmpty);
+    expect(user.attachments, hasLength(2));
+    expect(user.attachments[0].id, 'att-1');
+    expect(user.attachments[0].name, 'shot.png');
+    expect(user.attachments[0].mimeType, 'image/png');
+    expect(user.attachments[0].size, png.length);
+    expect(user.attachments[1].id, 'att-2');
+    expect(user.attachments[1].name, 'notes.txt');
+    expect(user.attachments[1].size, 2);
+
+    // readAttachment serves the stored payload, metadata intact.
+    final AttachmentData data = await fake.readAttachment('sess-1', 'att-1');
+    expect(data.id, 'att-1');
+    expect(data.name, 'shot.png');
+    expect(data.mimeType, 'image/png');
+    expect(data.size, png.length);
+    expect(data.data, base64Encode(png));
+
+    // Unknown attachment or session → not-found DaemonError.
+    await expectLater(
+      fake.readAttachment('sess-1', 'att-99'),
+      throwsA(isA<DaemonError>()
+          .having((DaemonError e) => e.code, 'code', kErrNotFound)),
+    );
+    await expectLater(
+      fake.readAttachment('nope', 'att-1'),
+      throwsA(isA<DaemonError>()
+          .having((DaemonError e) => e.code, 'code', kErrNotFound)),
+    );
+
+    // Id counters are per-session: a fresh session starts at att-1 again.
+    final List<SessionEvent> other = <SessionEvent>[];
+    fake.sessionEvents('sess-2').listen(other.add);
+    await fake.sendMessage('sess-2', 'x', attachments: <OutgoingAttachment>[
+      const OutgoingAttachment(
+        name: 'a.txt',
+        mimeType: 'text/plain',
+        data: 'YQ==',
+      ),
+    ]);
+    await _waitUntil(() => Future<bool>.value(
+        other.any((SessionEvent e) => e is TurnCompleteEvent)));
+    expect((other.first as UserMessageEvent).attachments.single.id, 'att-1');
   });
 
   test('sendMessage while a turn is running throws a conflict error', () async {

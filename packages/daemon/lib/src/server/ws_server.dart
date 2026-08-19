@@ -37,6 +37,7 @@ const List<String> _kProtocolMethods = <String>[
   'auth.authenticate',
   'daemon.info',
   'providers.list',
+  'attachments.read',
   'projects.list',
   'projects.add',
   'projects.remove',
@@ -319,6 +320,7 @@ class SpeedDialServer {
       'auth.authenticate' => _authenticate(client, params),
       'daemon.info' => _daemonInfo(),
       'providers.list' => _providersList(),
+      'attachments.read' => _attachmentsRead(params),
       'projects.list' => _projectsList(),
       'projects.add' => _projectsAdd(params),
       'projects.remove' => _projectsRemove(params),
@@ -477,9 +479,104 @@ class SpeedDialServer {
 
   Future<Object?> _sessionsSend(Map<String, Object?> params) async {
     final sessionId = _requiredString(params, 'sessionId');
-    final text = _requiredString(params, 'text');
-    await _engine.sendMessage(sessionId, text);
+    final rawAttachments = params['attachments'];
+    final List<OutgoingAttachment> attachments;
+    if (rawAttachments != null) {
+      if (rawAttachments is! List) {
+        throw DaemonError(
+            _kErrInvalidParams, 'Missing or invalid parameter: attachments');
+      }
+      if (rawAttachments.length > kMaxAttachmentsPerMessage) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'Too many attachments: ${rawAttachments.length} '
+          '(max $kMaxAttachmentsPerMessage)',
+        );
+      }
+      attachments = <OutgoingAttachment>[];
+      var totalBytes = 0;
+      for (final entry in rawAttachments) {
+        if (entry is! Map) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Each attachment must be an object with name, mimeType, and data',
+          );
+        }
+        final map = Map<String, Object?>.from(entry);
+        final name = map['name'];
+        final mimeType = map['mimeType'];
+        final rawData = map['data'];
+        if (name is! String || mimeType is! String || rawData is! String) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Each attachment must be an object with string name, mimeType, '
+            'and data',
+          );
+        }
+        final List<int> decoded;
+        try {
+          decoded = base64Decode(rawData);
+        } on FormatException {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Attachment "$name" carries malformed base64 data',
+          );
+        }
+        if (decoded.length > kMaxAttachmentBytes) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Attachment "$name" is $decoded.length bytes '
+            '(max $kMaxAttachmentBytes per attachment)',
+          );
+        }
+        totalBytes += decoded.length;
+        if (totalBytes > kMaxAttachmentTotalBytes) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Attachments total $totalBytes bytes '
+            '(max $kMaxAttachmentTotalBytes per message)',
+          );
+        }
+        attachments.add(OutgoingAttachment(
+          name: name,
+          mimeType: mimeType,
+          data: rawData,
+        ));
+      }
+    } else {
+      attachments = const <OutgoingAttachment>[];
+    }
+    // `text` may be empty only when attachments are present; otherwise it
+    // keeps the non-empty required semantics.
+    final rawText = params['text'];
+    final String text;
+    if (rawText is String) {
+      if (rawText.isNotEmpty || attachments.isNotEmpty) {
+        text = rawText;
+      } else {
+        throw DaemonError(
+            _kErrInvalidParams, 'Missing or invalid parameter: text');
+      }
+    } else if (rawText == null && attachments.isNotEmpty) {
+      text = '';
+    } else {
+      throw DaemonError(_kErrInvalidParams, 'Missing or invalid parameter: text');
+    }
+    await _engine.sendMessage(sessionId, text, attachments: attachments);
     return <String, Object?>{};
+  }
+
+  Object? _attachmentsRead(Map<String, Object?> params) {
+    final sessionId = _requiredString(params, 'sessionId');
+    final attachmentId = _requiredString(params, 'attachmentId');
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final attachment = _store.getAttachment(sessionId, attachmentId);
+    if (attachment == null) {
+      throw DaemonError(kErrNotFound, 'Unknown attachment: $attachmentId');
+    }
+    return <String, Object?>{'attachment': attachment.toJson()};
   }
 
   Future<Object?> _sessionsCancel(Map<String, Object?> params) async {

@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -451,5 +452,65 @@ void main() {
     store.deleteSession('a');
     expect(store.getSession('a'), isNull);
     expect(store.listEvents('a').events, isEmpty);
+  });
+
+  test('attachments round-trip including binary bytes and survive a reopen',
+      () {
+    store.insertProject(project());
+    store.insertSession(session(id: 's1'));
+    // Bytes that are not valid UTF-8: the payload must round-trip verbatim.
+    final binaryBytes = <int>[0, 1, 2, 250, 251, 255, 128, 0];
+    store.insertAttachment(
+      's1',
+      AttachmentData(
+        id: 'a1',
+        name: 'blob.bin',
+        mimeType: 'application/octet-stream',
+        size: binaryBytes.length,
+        data: base64Encode(binaryBytes),
+      ),
+    );
+    final loaded = store.getAttachment('s1', 'a1')!;
+    expect(loaded.id, 'a1');
+    expect(loaded.name, 'blob.bin');
+    expect(loaded.mimeType, 'application/octet-stream');
+    expect(loaded.size, binaryBytes.length);
+    expect(base64Decode(loaded.data), binaryBytes);
+
+    // Unknown ids and unknown sessions read as null.
+    expect(store.getAttachment('s1', 'nope'), isNull);
+    expect(store.getAttachment('nope', 'a1'), isNull);
+
+    // Attachments are scoped to their session.
+    store.insertSession(session(id: 's2'));
+    expect(store.getAttachment('s2', 'a1'), isNull);
+
+    // The payload survives a reopen (it is stored as a BLOB, not re-decoded
+    // from the base64 metadata).
+    store.dispose();
+    store = openStore(tempDir);
+    final reloaded = store.getAttachment('s1', 'a1')!;
+    expect(reloaded.name, 'blob.bin');
+    expect(base64Decode(reloaded.data), binaryBytes);
+  });
+
+  test('deleteSession cascades attachments', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 's1'));
+    store.insertAttachment(
+      's1',
+      AttachmentData(
+        id: 'a1',
+        name: 'notes.md',
+        mimeType: 'text/markdown',
+        size: 5,
+        data: base64Encode(utf8.encode('hello')),
+      ),
+    );
+    expect(store.getAttachment('s1', 'a1'), isNotNull);
+
+    store.deleteSession('s1');
+    expect(store.getAttachment('s1', 'a1'), isNull,
+        reason: 'attachments die with their session (ON DELETE CASCADE)');
   });
 }
