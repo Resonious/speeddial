@@ -11,3 +11,9 @@ pubspec.lock
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Fake ACP agent test artifacts (written into the test cwd)
+agent.last_prompt.json
+agent.no_load_session
+agent.load_fails
+agent.turn.die

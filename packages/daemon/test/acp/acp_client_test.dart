@@ -41,6 +41,10 @@ AcpClient spawnClient({
 bool isDisposalError(Object error) =>
     error is StateError || error is AcpProcessExitedException;
 
+/// A single-text ACP prompt (the shape every test turn uses).
+List<Map<String, Object?>> textBlocks(String text) =>
+    <Map<String, Object?>>[<String, Object?>{'type': 'text', 'text': text}];
+
 void main() {
   late Directory tempDir;
   late String targetPath;
@@ -93,7 +97,8 @@ void main() {
     final subscription = client.sessionUpdates(sessionId).listen(updates.add);
     addTearDown(subscription.cancel);
 
-    final result = await client.prompt(sessionId, 'please edit the file');
+    final result =
+        await client.prompt(sessionId, textBlocks('please edit the file'));
     expect(result.stopReason, 'end_turn');
 
     // Updates arrive in the order the agent emitted them.
@@ -165,7 +170,7 @@ void main() {
     await client.initialized;
     final sessionId = await client.newSession(cwd: tempDir.path);
 
-    final promptFuture = client.prompt(sessionId, 'cancel');
+    final promptFuture = client.prompt(sessionId, textBlocks('cancel'));
     await client.cancel(sessionId);
     final result = await promptFuture;
     expect(result.stopReason, 'cancelled');
@@ -184,7 +189,7 @@ void main() {
     await client.initialized;
     final sessionId = await client.newSession(cwd: tempDir.path);
 
-    final pending = client.prompt(sessionId, 'hang');
+    final pending = client.prompt(sessionId, textBlocks('hang'));
     // Attach the matcher before dispose() so the pending future's error has a
     // listener from the start (an unlistened error would be reported as an
     // unhandled async error).
@@ -210,7 +215,7 @@ void main() {
     final subscription = client.sessionUpdates(sessionId).listen(updates.add);
     addTearDown(subscription.cancel);
 
-    final result = await client.prompt(sessionId, 'weird');
+    final result = await client.prompt(sessionId, textBlocks('weird'));
     expect(result.stopReason, 'end_turn');
     expect(updates, hasLength(1));
     final usage = updates.single as AcpUsageUpdate;
@@ -239,7 +244,7 @@ void main() {
     final sessionId = await client.newSession(cwd: tempDir.path);
     await client.loadSession(sessionId: sessionId, cwd: tempDir.path);
     // The resumed session accepts prompts.
-    final result = await client.prompt(sessionId, 'weird');
+    final result = await client.prompt(sessionId, textBlocks('weird'));
     expect(result.stopReason, 'end_turn');
   });
 

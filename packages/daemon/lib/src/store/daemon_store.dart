@@ -14,6 +14,8 @@
 ///                      archived INT, created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
+///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
+///                      name, mime_type, size, data
 library;
 
 import 'dart:convert';
@@ -82,6 +84,16 @@ class DaemonStore {
         timestamp INTEGER NOT NULL,
         json TEXT NOT NULL,
         PRIMARY KEY (session_id, seq)
+      );
+    ''');
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        data BLOB NOT NULL
       );
     ''');
   }
@@ -257,7 +269,8 @@ class DaemonStore {
     }
   }
 
-  /// Permanently removes a session and (via cascade) its events.
+  /// Permanently removes a session and (via cascade) its events and
+  /// attachments.
   void deleteSession(String id) {
     _db.execute('DELETE FROM sessions WHERE id = ?', [id]);
   }
@@ -343,6 +356,48 @@ class DaemonStore {
   }
 
   void dispose() => _db.dispose();
+
+  // -------------------------------------------------------------------------
+  // Attachments
+  // -------------------------------------------------------------------------
+
+  /// Persists [attachment] for [sessionId], storing its base64 payload as a
+  /// BLOB. The caller (the engine) has already validated the base64 and the
+  /// size caps; a malformed payload here would surface as a
+  /// [FormatException] from `base64Decode`.
+  void insertAttachment(String sessionId, AttachmentData attachment) {
+    _db.execute(
+      'INSERT INTO attachments (id, session_id, name, mime_type, size, data) '
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        attachment.id,
+        sessionId,
+        attachment.name,
+        attachment.mimeType,
+        attachment.size,
+        base64Decode(attachment.data),
+      ],
+    );
+  }
+
+  /// The stored attachment of [sessionId] with [attachmentId], or null when
+  /// unknown (payload re-encoded to base64).
+  AttachmentData? getAttachment(String sessionId, String attachmentId) {
+    final rows = _db.select(
+      'SELECT id, name, mime_type, size, data FROM attachments '
+      'WHERE session_id = ? AND id = ?',
+      [sessionId, attachmentId],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return AttachmentData(
+      id: row['id'] as String,
+      name: row['name'] as String,
+      mimeType: row['mime_type'] as String,
+      size: row['size'] as int,
+      data: base64Encode(row['data'] as List<int>),
+    );
+  }
 
   // -------------------------------------------------------------------------
   // Row mapping

@@ -414,6 +414,39 @@ void main() {
       expect(app.chat.revisionFor(sessionId), 0);
     });
 
+    test('attachmentData fetches payloads and memoizes per attachment',
+        () async {
+      final String sessionId = (await fake.listSessions()).first.id;
+      await fake.sendMessage(sessionId, '', attachments: <OutgoingAttachment>[
+        const OutgoingAttachment(
+          name: 'shot.png',
+          mimeType: 'image/png',
+          data: 'aGVsbG8=',
+        ),
+      ]);
+
+      final Future<AttachmentData> first =
+          app.chat.attachmentData('fake', sessionId, 'att-1');
+      final AttachmentData data = await first;
+      expect(data.id, 'att-1');
+      expect(data.name, 'shot.png');
+      expect(data.mimeType, 'image/png');
+      expect(data.data, 'aGVsbG8=');
+
+      // Attachments are immutable, so repeat reads share one future.
+      expect(
+        app.chat.attachmentData('fake', sessionId, 'att-1'),
+        same(first),
+      );
+
+      // Unknown attachments surface the daemon's not-found code.
+      await expectLater(
+        app.chat.attachmentData('fake', sessionId, 'att-99'),
+        throwsA(isA<DaemonError>()
+            .having((DaemonError e) => e.code, 'code', kErrNotFound)),
+      );
+    });
+
     test('same session id on two daemons stays separate, last watch wins',
         () async {
       final FakeDaemonClient fake2 =

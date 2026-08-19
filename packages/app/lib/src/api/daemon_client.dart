@@ -68,7 +68,20 @@ abstract class DaemonClient {
   });
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].
-  Future<void> sendMessage(String sessionId, String text);
+  ///
+  /// [attachments] carries the files (base64 payloads) to attach to the
+  /// message; `text` may be empty when at least one attachment is present.
+  /// The daemon broadcasts the user's message (with attachment metadata) as
+  /// the turn's first event; payloads are fetched via [readAttachment].
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  });
+
+  /// Fetches an attachment's base64 payload by id; errors `-32002` when the
+  /// session or attachment is unknown.
+  Future<AttachmentData> readAttachment(String sessionId, String attachmentId);
 
   /// Cancels the running turn, if any.
   Future<void> cancelSession(String sessionId);

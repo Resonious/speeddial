@@ -809,6 +809,207 @@ class ProviderInfo {
       };
 }
 
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+/// Protocol cap: maximum attachments per `sessions.send`.
+const int kMaxAttachmentsPerMessage = 8;
+
+/// Protocol cap: maximum decoded size of one attachment (8 MiB).
+const int kMaxAttachmentBytes = 8 * 1024 * 1024;
+
+/// Protocol cap: maximum combined decoded size of one message's attachments
+/// (16 MiB).
+const int kMaxAttachmentTotalBytes = 16 * 1024 * 1024;
+
+/// Persisted metadata of a file attached to a user message. The payload
+/// travels only in `sessions.send` (client → daemon) and `attachments.read`
+/// (daemon → client); events and history carry this metadata form.
+class Attachment {
+  const Attachment({
+    required this.id,
+    required this.name,
+    required this.mimeType,
+    required this.size,
+  });
+
+  /// Daemon-assigned id, unique within its session.
+  final String id;
+
+  /// File name, including extension.
+  final String name;
+
+  /// IANA media type; `application/octet-stream` when unknown.
+  final String mimeType;
+
+  /// Decoded payload size in bytes.
+  final int size;
+
+  factory Attachment.fromJson(Map<String, Object?> json) => Attachment(
+        id: json['id']! as String,
+        name: json['name']! as String,
+        mimeType: json['mimeType']! as String,
+        size: json['size']! as int,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'id': id,
+        'name': name,
+        'mimeType': mimeType,
+        'size': size,
+      };
+}
+
+/// An [Attachment] with its base64-encoded payload, as returned by
+/// `attachments.read`.
+class AttachmentData extends Attachment {
+  const AttachmentData({
+    required super.id,
+    required super.name,
+    required super.mimeType,
+    required super.size,
+    required this.data,
+  });
+
+  /// Base64-encoded file content.
+  final String data;
+
+  factory AttachmentData.fromJson(Map<String, Object?> json) =>
+      AttachmentData(
+        id: json['id']! as String,
+        name: json['name']! as String,
+        mimeType: json['mimeType']! as String,
+        size: json['size']! as int,
+        data: json['data']! as String,
+      );
+
+  @override
+  Map<String, Object?> toJson() => <String, Object?>{
+        ...super.toJson(),
+        'data': data,
+      };
+}
+
+/// A file the client attaches to an outgoing `sessions.send` message.
+class OutgoingAttachment {
+  const OutgoingAttachment({
+    required this.name,
+    required this.mimeType,
+    required this.data,
+  });
+
+  /// File name, including extension.
+  final String name;
+
+  /// IANA media type; `application/octet-stream` when unknown.
+  final String mimeType;
+
+  /// Base64-encoded file content.
+  final String data;
+
+  factory OutgoingAttachment.fromJson(Map<String, Object?> json) =>
+      OutgoingAttachment(
+        name: json['name']! as String,
+        mimeType: json['mimeType']! as String,
+        data: json['data']! as String,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'name': name,
+        'mimeType': mimeType,
+        'data': data,
+      };
+}
+
+/// Best-effort IANA media type for a file name, from its extension. Falls
+/// back to `application/octet-stream` for unrecognized extensions.
+String mimeTypeForFileName(String name) {
+  final int dot = name.lastIndexOf('.');
+  if (dot < 0 || dot == name.length - 1) return 'application/octet-stream';
+  final String ext = name.substring(dot + 1).toLowerCase();
+  return _kExtensionMimeTypes[ext] ?? 'application/octet-stream';
+}
+
+/// Whether [mimeType] denotes an image agents can consume as an ACP `image`
+/// content block.
+bool isImageMimeType(String mimeType) =>
+    mimeType.toLowerCase().startsWith('image/');
+
+/// Whether [mimeType] denotes text that can be inlined as the `text` of an
+/// ACP embedded resource (as opposed to a base64 `blob`).
+bool isTextMimeType(String mimeType) {
+  final String type = mimeType.toLowerCase();
+  if (type.startsWith('text/')) return true;
+  if (type.endsWith('+json') || type.endsWith('+xml') || type.endsWith('+yaml')) {
+    return true;
+  }
+  return _kTextMimeTypes.contains(type);
+}
+
+const Set<String> _kTextMimeTypes = <String>{
+  'application/json',
+  'application/xml',
+  'application/yaml',
+  'application/x-yaml',
+  'application/toml',
+  'application/javascript',
+  'application/typescript',
+  'application/x-sh',
+  'application/sql',
+  'image/svg+xml',
+};
+
+const Map<String, String> _kExtensionMimeTypes = <String, String>{
+  // Images
+  'png': 'image/png',
+  'jpg': 'image/jpeg',
+  'jpeg': 'image/jpeg',
+  'gif': 'image/gif',
+  'webp': 'image/webp',
+  'bmp': 'image/bmp',
+  'ico': 'image/x-icon',
+  'svg': 'image/svg+xml',
+  'tif': 'image/tiff',
+  'tiff': 'image/tiff',
+  'avif': 'image/avif',
+  'heic': 'image/heic',
+  // Text / code
+  'txt': 'text/plain',
+  'md': 'text/markdown',
+  'markdown': 'text/markdown',
+  'dart': 'text/plain',
+  'json': 'application/json',
+  'yaml': 'application/yaml',
+  'yml': 'application/yaml',
+  'toml': 'application/toml',
+  'xml': 'application/xml',
+  'csv': 'text/csv',
+  'html': 'text/html',
+  'htm': 'text/html',
+  'css': 'text/css',
+  'js': 'application/javascript',
+  'mjs': 'application/javascript',
+  'ts': 'application/typescript',
+  'sh': 'application/x-sh',
+  'sql': 'application/sql',
+  'log': 'text/plain',
+  // Documents / archives / media
+  'pdf': 'application/pdf',
+  'zip': 'application/zip',
+  'tar': 'application/x-tar',
+  'gz': 'application/gzip',
+  'tgz': 'application/gzip',
+  '7z': 'application/x-7z-compressed',
+  'wasm': 'application/wasm',
+  'mp3': 'audio/mpeg',
+  'wav': 'audio/wav',
+  'ogg': 'audio/ogg',
+  'mp4': 'video/mp4',
+  'webm': 'video/webm',
+  'mov': 'video/quicktime',
+};
+
 /// Static daemon identity handed out at connect/auth time.
 class DaemonInfo {
   const DaemonInfo({

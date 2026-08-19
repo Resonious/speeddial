@@ -45,13 +45,26 @@ sealed class SessionEvent {
 
 /// A message the user sent to the session.
 class UserMessageEvent extends SessionEvent {
-  const UserMessageEvent({required this.text, super.seq, super.timestamp});
+  const UserMessageEvent({
+    required this.text,
+    this.attachments = const <Attachment>[],
+    super.seq,
+    super.timestamp,
+  });
 
   final String text;
+
+  /// Files attached to the message (metadata only; payloads are fetched via
+  /// `attachments.read`). Empty when the message carries no files.
+  final List<Attachment> attachments;
 
   factory UserMessageEvent.fromJson(Map<String, Object?> json) =>
       UserMessageEvent(
         text: json['text']! as String,
+        attachments: (json['attachments'] as List<Object?>?)
+                ?.map((e) => Attachment.fromJson(e! as Map<String, Object?>))
+                .toList(growable: false) ??
+            const <Attachment>[],
         seq: json['seq'] as int?,
         timestamp: _parseTimestamp(json['timestamp']),
       );
@@ -63,6 +76,9 @@ class UserMessageEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'userMessage',
       'text': text,
+      if (attachments.isNotEmpty)
+        'attachments':
+            attachments.map((a) => a.toJson()).toList(growable: false),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

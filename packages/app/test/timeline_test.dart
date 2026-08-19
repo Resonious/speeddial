@@ -55,4 +55,35 @@ void main() {
       expect(thought.active, isFalse);
     });
   });
+
+  group('deriveTimelineItems user attachments', () {
+    test('attachment metadata carries into the user message item', () {
+      final List<TimelineItem> items = deriveTimelineItems(
+        <SessionEvent>[
+          const UserMessageEvent(
+            text: 'files',
+            attachments: <Attachment>[
+              Attachment(
+                id: 'att-1',
+                name: 'shot.png',
+                mimeType: 'image/png',
+                size: 5,
+              ),
+              Attachment(
+                id: 'att-2',
+                name: 'notes.txt',
+                mimeType: 'text/plain',
+                size: 2,
+              ),
+            ],
+          ),
+        ],
+      );
+      final UserMessageItem item = items.single as UserMessageItem;
+      expect(item.text, 'files');
+      expect(item.attachments, hasLength(2));
+      expect(item.attachments.map((Attachment a) => a.id),
+          <String>['att-1', 'att-2']);
+    });
+  });
 }

@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
 
 import '../../theme.dart';
@@ -54,14 +57,50 @@ String? detectCodeLanguage(String source) {
 }
 
 /// Right-aligned outgoing user message bubble.
+///
+/// Attachments render above the text: images as ~160px thumbnails (payload
+/// fetched through [attachmentLoader] and opened full-screen on tap),
+/// everything else as a compact file row. When the text is empty the Text is
+/// omitted entirely and the bubble shows just the attachments.
 class UserMessageBubble extends StatelessWidget {
-  const UserMessageBubble({super.key, required this.text});
+  const UserMessageBubble({
+    super.key,
+    required this.text,
+    this.attachments = const <Attachment>[],
+    this.attachmentLoader,
+  });
 
   final String text;
+
+  /// Files attached to the message (metadata only; ids address the daemon).
+  final List<Attachment> attachments;
+
+  /// Fetches an attachment's payload by id; when null, attachments render as
+  /// static chips without loading (defensive default).
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool hasText = text.isNotEmpty;
+    final List<Widget> content = <Widget>[
+      if (hasText)
+        Text(
+          text,
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(color: scheme.onPrimary),
+        ),
+      if (attachments.isNotEmpty) ...<Widget>[
+        if (hasText) const SizedBox(height: 8),
+        for (final Attachment attachment in attachments)
+          _AttachmentView(
+            attachment: attachment,
+            loader: attachmentLoader,
+          ),
+      ],
+    ];
     return Align(
       alignment: Alignment.centerRight,
       child: Container(
@@ -72,16 +111,214 @@ class UserMessageBubble extends StatelessWidget {
           color: scheme.primary,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Text(
-          text,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(color: scheme.onPrimary),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: content,
         ),
       ),
     );
   }
+}
+
+/// One rendered attachment inside a user bubble: image thumbnails fetch and
+/// decode their payload; other types render a compact icon+name+size row.
+class _AttachmentView extends StatelessWidget {
+  const _AttachmentView({required this.attachment, required this.loader});
+
+  final Attachment attachment;
+
+  /// See [UserMessageBubble.attachmentLoader].
+  final Future<AttachmentData> Function(String attachmentId)? loader;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isImageMimeType(attachment.mimeType)) {
+      // No payload needed; a loader is irrelevant here.
+      return _AttachmentMetaRow(attachment: attachment);
+    }
+    final Future<AttachmentData> Function(String attachmentId)? load = loader;
+    if (load == null) {
+      // Defensive: metadata chip without loading bytes.
+      return _AttachmentMetaRow(attachment: attachment);
+    }
+    return FutureBuilder<AttachmentData>(
+      future: load(attachment.id),
+      builder: (BuildContext context, AsyncSnapshot<AttachmentData> snapshot) {
+        final AttachmentData? data = snapshot.data;
+        if (data == null) {
+          // Loading (or failed): a small placeholder box.
+          return _ImageThumbPlaceholder(attachment: attachment);
+        }
+        return _ImageThumbnail(attachment: data);
+      },
+    );
+  }
+}
+
+/// Compact file row: icon by type, name, formatted size.
+class _AttachmentMetaRow extends StatelessWidget {
+  const _AttachmentMetaRow({required this.attachment});
+
+  final Attachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool pdf = attachment.mimeType.toLowerCase() == 'application/pdf';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Icon(
+            pdf
+                ? Icons.picture_as_pdf_outlined
+                : Icons.insert_drive_file_outlined,
+            size: 16,
+            color: theme.colorScheme.onPrimary,
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              attachment.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onPrimary),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _formatSize(attachment.size),
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.onPrimary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Loading placeholder for an image thumb whose payload is still arriving.
+class _ImageThumbPlaceholder extends StatelessWidget {
+  const _ImageThumbPlaceholder({required this.attachment});
+
+  final Attachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      width: 160,
+      height: 160,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.image_outlined,
+              color: theme.colorScheme.onPrimary,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              attachment.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: theme.colorScheme.onPrimary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A decoded image thumb; tapping opens it full-screen (zooming via
+/// [InteractiveViewer]).
+class _ImageThumbnail extends StatelessWidget {
+  const _ImageThumbnail({required this.attachment});
+
+  final AttachmentData attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final Uint8List bytes;
+    try {
+      bytes = base64Decode(attachment.data);
+    } on FormatException {
+      // Malformed payload from the daemon: degrade to the metadata row.
+      return _AttachmentMetaRow(attachment: attachment);
+    }
+    return GestureDetector(
+      onTap: () => _showImageDialog(context, bytes, attachment.name),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.memory(
+          bytes,
+          width: 160,
+          height: 160,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          errorBuilder: (BuildContext context, Object error,
+                  StackTrace? stackTrace) =>
+              _AttachmentMetaRow(attachment: attachment),
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen dialog with the image, pan/zoom via [InteractiveViewer].
+void _showImageDialog(BuildContext context, Uint8List bytes, String name) {
+  showDialog<void>(
+    context: context,
+    builder: (BuildContext dialogContext) => Dialog.fullscreen(
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: InteractiveViewer(
+              child: Center(
+                child: Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: IconButton(
+              tooltip: 'Close',
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Formats [size] bytes compactly: B, KiB, or MiB (one decimal below 10).
+String _formatSize(int size) {
+  const int kib = 1024;
+  const int mib = 1024 * 1024;
+  if (size < kib) return '$size B';
+  if (size < mib) {
+    final double value = size / kib;
+    return '${value.toStringAsFixed(value >= 10 ? 0 : 1)} KiB';
+  }
+  final double value = size / mib;
+  return '${value.toStringAsFixed(value >= 10 ? 0 : 1)} MiB';
 }
 
 /// One agent message: markdown body with syntax-highlighted code blocks.

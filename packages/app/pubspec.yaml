@@ -39,6 +39,9 @@ dependencies:
   flutter_markdown_plus: ^1.0.5
   syntax_highlight: ^0.4.0
   collection: ^1.19.1
+  # Flutter SDK ships no cross-platform file picker; file_picker covers
+  # desktop/mobile/web and returns bytes via withData: true.
+  file_picker: ^10.3.8
 
 dev_dependencies:
   flutter_test:

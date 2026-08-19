@@ -492,5 +492,86 @@ void main() {
       });
       expect(UsageInfo.fromJson(noCost.toJson()).cost, isNull);
     });
+
+    test('Attachment metadata roundtrip', () {
+      const model = Attachment(
+        id: 'att_1',
+        name: 'shot.png',
+        mimeType: 'image/png',
+        size: 12345,
+      );
+      final json = model.toJson();
+      expect(json, {
+        'id': 'att_1',
+        'name': 'shot.png',
+        'mimeType': 'image/png',
+        'size': 12345,
+      });
+      final decoded = Attachment.fromJson(json);
+      expect(decoded.id, 'att_1');
+      expect(decoded.size, 12345);
+      expect(decoded.toJson(), json);
+    });
+
+    test('AttachmentData adds the payload to the metadata wire shape', () {
+      const model = AttachmentData(
+        id: 'att_1',
+        name: 'notes.txt',
+        mimeType: 'text/plain',
+        size: 5,
+        data: 'aGVsbG8=',
+      );
+      final json = model.toJson();
+      expect(json['data'], 'aGVsbG8=');
+      expect(json['mimeType'], 'text/plain');
+      final decoded = AttachmentData.fromJson(json);
+      expect(decoded.data, 'aGVsbG8=');
+      expect(decoded.name, 'notes.txt');
+      expect(decoded.toJson(), json);
+    });
+
+    test('OutgoingAttachment roundtrip', () {
+      const model = OutgoingAttachment(
+        name: 'a.bin',
+        mimeType: 'application/octet-stream',
+        data: 'AAE=',
+      );
+      final decoded = OutgoingAttachment.fromJson(model.toJson());
+      expect(decoded.name, 'a.bin');
+      expect(decoded.mimeType, 'application/octet-stream');
+      expect(decoded.data, 'AAE=');
+      expect(decoded.toJson(), model.toJson());
+    });
+  });
+
+  group('attachment MIME helpers', () {
+    test('mimeTypeForFileName maps known extensions case-insensitively', () {
+      expect(mimeTypeForFileName('shot.PNG'), 'image/png');
+      expect(mimeTypeForFileName('photo.jpeg'), 'image/jpeg');
+      expect(mimeTypeForFileName('doc.pdf'), 'application/pdf');
+      expect(mimeTypeForFileName('data.yaml'), 'application/yaml');
+      expect(mimeTypeForFileName('main.dart'), 'text/plain');
+      expect(mimeTypeForFileName('archive.tar.gz'), 'application/gzip');
+    });
+
+    test('mimeTypeForFileName falls back for unknown or missing extensions',
+        () {
+      expect(mimeTypeForFileName('README'), 'application/octet-stream');
+      expect(mimeTypeForFileName('trailing.'), 'application/octet-stream');
+      expect(mimeTypeForFileName('x.weirdext'), 'application/octet-stream');
+    });
+
+    test('isImageMimeType / isTextMimeType classify', () {
+      expect(isImageMimeType('image/png'), isTrue);
+      expect(isImageMimeType('IMAGE/JPEG'), isTrue);
+      expect(isImageMimeType('text/plain'), isFalse);
+
+      expect(isTextMimeType('text/plain'), isTrue);
+      expect(isTextMimeType('application/json'), isTrue);
+      expect(isTextMimeType('application/ld+json'), isTrue);
+      expect(isTextMimeType('image/svg+xml'), isTrue);
+      expect(isTextMimeType('application/octet-stream'), isFalse);
+      expect(isTextMimeType('image/png'), isFalse);
+    });
   });
 }
