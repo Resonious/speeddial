@@ -645,6 +645,72 @@ void main() {
       expect(File(p.join(s.repo.path, 'feat.txt')).existsSync(), isTrue);
     });
 
+    test('aborts a conflicted merge and restores the base checkout',
+        () async {
+      final s = await setup();
+      // Both sides edit the same file since the branch point → conflict.
+      await commitIn(s.repo, 'a.txt', 'base edit');
+      final baseTip = await tip(s.repo, 'main');
+      await commitIn(s.worktree, 'a.txt', 'session edit');
+      final sessionTip = await tip(s.worktree, 'HEAD');
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('aborted'))),
+      );
+
+      final merging = await _git(
+          s.repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+      expect(merging.exitCode, isNot(0),
+          reason: 'the base checkout must not stay in MERGING state');
+      expect(await tip(s.repo, 'main'), baseTip,
+          reason: 'the base ref must not move');
+      expect(
+          File(p.join(s.repo.path, 'a.txt')).readAsStringSync(), 'base edit\n',
+          reason: 'no conflict markers may remain');
+      final status = await _git(s.repo, ['status', '--porcelain']);
+      expect((status.stdout as String).trim(), isEmpty,
+          reason: 'the base checkout must be clean after the abort');
+      expect(await tip(s.worktree, 'HEAD'), sessionTip,
+          reason: 'the session branch is left untouched');
+    });
+
+    test('surfaces a merge failure that never entered MERGING state',
+        () async {
+      final s = await setup();
+      // An untracked file in the base checkout blocks the file the session
+      // branch adds: git refuses before MERGING state exists, so there is
+      // nothing to abort and git's original error must surface unchanged.
+      await _write(s.repo, 'feat.txt', 'untracked local\n');
+      await commitIn(s.worktree, 'feat.txt', 'session work');
+
+      await expectLater(
+        service.mergeIntoBase(
+          projectPath: s.repo.path,
+          worktreePath: s.worktree.path,
+          baseBranch: 'main',
+        ),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message',
+                contains('untracked working tree files'))
+            .having(
+                (e) => e.message, 'message', isNot(contains('aborted')))),
+      );
+      final merging = await _git(
+          s.repo, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']);
+      expect(merging.exitCode, isNot(0));
+      expect(File(p.join(s.repo.path, 'feat.txt')).readAsStringSync(),
+          'untracked local\n',
+          reason: 'the untracked file must survive untouched');
+    });
+
     test('reports alreadyUpToDate when the base contains the session branch',
         () async {
       final s = await setup();
