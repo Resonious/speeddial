@@ -104,7 +104,7 @@ class _ShellState extends State<_Shell> {
               icon: const Icon(Icons.menu),
               onPressed: () => _narrowScaffoldKey.currentState?.openDrawer(),
             ),
-            title: const Text('SpeedDial'),
+            title: const _TopBarTitle(),
             actions: <Widget>[
               const _DaemonStatusChip(),
               const SizedBox(width: 4),
@@ -180,12 +180,12 @@ class _DesktopTopBar extends StatelessWidget {
                 icon: Icon(leftOpen ? Icons.menu_open : Icons.menu),
                 onPressed: onToggleLeft,
               ),
-              Text(
-                'SpeedDial',
-                style: textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w600),
+              Expanded(
+                child: _TopBarTitle(
+                  style: textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
               ),
-              const Spacer(),
               const _DaemonStatusChip(),
               const SizedBox(width: 4),
               IconButton(
@@ -198,6 +198,38 @@ class _DesktopTopBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Top-bar title: the selected session's title, falling back to the app
+/// name when no session is selected (or the store hasn't loaded it yet).
+/// Long titles ellipsize; the wide layout hands the bar's remaining width
+/// to this via `Expanded`.
+class _TopBarTitle extends StatelessWidget {
+  const _TopBarTitle({this.style});
+
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    return ListenableBuilder(
+      listenable:
+          Listenable.merge(<Listenable>[data.selection, data.sessions]),
+      builder: (BuildContext context, Widget? _) {
+        final String? sessionId = data.selection.selectedSessionId;
+        final String title = sessionId == null
+            ? 'SpeedDial'
+            : data.sessions.byId(sessionId)?.title ?? 'SpeedDial';
+        return Text(
+          title,
+          key: const Key('top-bar-title'),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
+      },
     );
   }
 }
