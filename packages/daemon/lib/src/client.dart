@@ -166,7 +166,8 @@ class DaemonClient {
   }
 
   /// Closes the WebSocket. Pending calls complete with
-  /// `DaemonError(-32603, 'peer closed')`; the notification stream closes.
+  /// `DaemonConnectionError(-32603, 'peer closed')`; the notification
+  /// stream closes.
   Future<void> close() async {
     _peer.close();
     await _socket.close();

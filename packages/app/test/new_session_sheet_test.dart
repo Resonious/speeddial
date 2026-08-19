@@ -6,18 +6,26 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/daemon_error_text.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/new_session_sheet.dart';
 
-/// Pumps [NewSessionSheet] directly (no bottom-sheet route) against a fake
-/// daemon whose `omp` provider offers two models.
-Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester) async {
+/// Pumps a host scaffold that opens [NewSessionSheet] as a real modal
+/// bottom-sheet route (mirroring the left rail: caller-captured
+/// [ScaffoldMessenger], scroll-controlled, safe-area) against a fake daemon
+/// (either [fake] or a fresh scripted one) whose `omp` provider offers two
+/// models. The sheet is already open when this returns.
+///
+/// A real route matters: submit pops the sheet, and the host survives
+/// underneath — so post-create send failures can land in a snackbar.
+Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
+    {FakeDaemonClient? fake}) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
-  final FakeDaemonClient fake =
-      FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
-  final AppData app = AppData()..registerClient('fake', fake);
+  final FakeDaemonClient fakeClient =
+      fake ?? FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+  final AppData app = AppData()..registerClient('fake', fakeClient);
   addTearDown(app.dispose);
-  final String projectId = (await fake.listProjects()).single.id;
+  final String projectId = (await fakeClient.listProjects()).single.id;
 
   await tester.pumpWidget(
     MaterialApp(
@@ -25,15 +33,37 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester) async {
       home: Scaffold(
         body: AppScope(
           data: app,
-          child: NewSessionSheet(
-            data: app,
-            daemonId: 'fake',
-            projectId: projectId,
+          child: Builder(
+            builder: (BuildContext context) => Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  final ScaffoldMessengerState messenger =
+                      ScaffoldMessenger.of(context);
+                  showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    builder: (BuildContext context) => Padding(
+                      padding: EdgeInsets.only(
+                          bottom: MediaQuery.viewInsetsOf(context).bottom),
+                      child: NewSessionSheet(
+                        data: app,
+                        daemonId: 'fake',
+                        projectId: projectId,
+                        messenger: messenger,
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('open-sheet'),
+              ),
+            ),
           ),
         ),
       ),
     ),
   );
+  await tester.tap(find.text('open-sheet'));
   await tester.pumpAndSettle();
   return (app: app, projectId: projectId);
 }
@@ -44,6 +74,19 @@ Session createdSession(AppData app, String projectId) {
   final List<Session> sessions = app.sessions.sessionsFor(projectId);
   return sessions.singleWhere(
       (Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+}
+
+/// A fake whose sends always fail with [error], driving the sheet's
+/// post-create send-failure snackbar path.
+class _SendFailingFake extends FakeDaemonClient {
+  _SendFailingFake(this.error);
+
+  final Object error;
+
+  @override
+  Future<void> sendMessage(String sessionId, String text) async {
+    throw error;
+  }
 }
 
 void main() {
@@ -86,6 +129,53 @@ void main() {
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
     expect(createdSession(app, projectId).model, 'some/custom-id');
+  });
+
+  testWidgets('a connection drop while sending the initial prompt shows a '
+      'soft reconnecting notice, not a raw error',
+      (WidgetTester tester) async {
+    await pumpSheet(
+      tester,
+      fake: _SendFailingFake(const DaemonConnectionError('peer closed')),
+    );
+
+    await tester.enterText(find.byKey(const Key('new-session-prompt')),
+        'Fix the login redirect');
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    // The drop self-heals (auto-reconnect + resync), so no raw socket
+    // error and no "failed to send" framing reaches the user.
+    expect(find.text(kConnectionLostMessage), findsOneWidget);
+    expect(find.textContaining('Failed to send the initial prompt'),
+        findsNothing);
+    expect(find.textContaining('peer closed'), findsNothing);
+
+    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('a genuine rejection of the initial prompt still shows the '
+      'raw error', (WidgetTester tester) async {
+    await pumpSheet(
+      tester,
+      fake: _SendFailingFake(
+          const DaemonError(kErrConflict, 'a turn is already running')),
+    );
+
+    await tester.enterText(find.byKey(const Key('new-session-prompt')),
+        'Fix the login redirect');
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Failed to send the initial prompt'),
+        findsOneWidget);
+    expect(find.textContaining('a turn is already running'), findsOneWidget);
+
+    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('keyboard dismissal keeps Cancel/Create session clear of the '

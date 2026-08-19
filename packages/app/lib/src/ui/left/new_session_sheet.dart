@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../daemon_error_text.dart';
 
 /// Modal sheet used to create a session under [projectId] of [daemonId].
 ///
@@ -110,16 +111,17 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       if (mounted) Navigator.of(context).pop();
       if (prompt.isNotEmpty) {
         // Fire-and-forget: sendMessage resolves only when the whole turn
-        // completes, and the sheet is already closed by then. A failure
-        // (e.g. the daemon connection dropped) is surfaced as a snackbar.
+        // completes, and the sheet is already closed by then. A failure is
+        // surfaced as a snackbar — softened for connection drops (e.g. the
+        // device slept mid-turn): the turn keeps running daemon-side and
+        // the client reconnects on its own, so a raw error would be noise.
         unawaited(
           data.chat.send(widget.daemonId, session.id, prompt).catchError(
             (Object error) {
-              widget.messenger?.showSnackBar(
-                SnackBar(
-                  content: Text('Failed to send the initial prompt: $error'),
-                ),
-              );
+              final String text = error is DaemonConnectionError
+                  ? kConnectionLostMessage
+                  : 'Failed to send the initial prompt: $error';
+              widget.messenger?.showSnackBar(SnackBar(content: Text(text)));
             },
           ),
         );

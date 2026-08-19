@@ -226,7 +226,7 @@ void main() {
       final pending = p.a.call('hang');
       final done = expectLater(
         pending,
-        throwsA(isA<DaemonError>()
+        throwsA(isA<DaemonConnectionError>()
             .having((e) => e.code, 'code', -32603)
             .having((e) => e.message, 'message', 'peer closed')),
       );
@@ -251,7 +251,7 @@ void main() {
       await p.a.close();
       await expectLater(
         p.a.call('anything'),
-        throwsA(isA<DaemonError>()
+        throwsA(isA<DaemonConnectionError>()
             .having((e) => e.code, 'code', -32603)
             .having((e) => e.message, 'message', 'peer closed')),
       );

@@ -12,6 +12,7 @@ import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
 import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
 import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
+import 'package:speeddial_app/src/ui/daemon_error_text.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -502,6 +503,31 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('a connection drop on send shows a reconnecting notice, not '
+      'the raw socket error', (WidgetTester tester) async {
+    await pumpChat(tester, fake: _DroppedConnectionFake());
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    await pumpUntil(
+      tester,
+      () => find.byType(SnackBar).evaluate().isNotEmpty,
+    );
+    // The drop self-heals (auto-reconnect + resync): transient copy only.
+    expect(find.text(kConnectionLostMessage), findsOneWidget);
+    expect(find.text('peer closed'), findsNothing);
+    // The draft is still restored: the daemon may never have received it.
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'hello');
+
+    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+  });
 }
 
 /// A fake whose sends always fail like a turn conflict, driving the
@@ -510,5 +536,14 @@ class _FailingSendFake extends FakeDaemonClient {
   @override
   Future<void> sendMessage(String sessionId, String text) async {
     throw const DaemonError(kErrConflict, 'a turn is already running');
+  }
+}
+
+/// A fake whose sends fail like a dropped socket (device sleep), driving
+/// the pane's softened connection-lost notice.
+class _DroppedConnectionFake extends FakeDaemonClient {
+  @override
+  Future<void> sendMessage(String sessionId, String text) async {
+    throw const DaemonConnectionError('peer closed');
   }
 }

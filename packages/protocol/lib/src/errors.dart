@@ -48,3 +48,16 @@ class DaemonError implements Exception {
   @override
   String toString() => 'DaemonError($code): $message';
 }
+
+/// A [DaemonError] raised client-side when the connection drops or was
+/// never up: pending calls fail with it on socket close, and calls made
+/// while disconnected/disposed fail with it immediately.
+///
+/// Never crosses the wire — the daemon reports real rejections as plain
+/// [DaemonError]s — so UI can treat this subtype as transient (the client
+/// reconnects with backoff and stores resync afterwards) instead of a
+/// failed request. Code and message stay `-32603`/`'peer closed'`-style,
+/// so existing `DaemonError` catches and code/message checks are unaffected.
+class DaemonConnectionError extends DaemonError {
+  const DaemonConnectionError(String message) : super(kErrInternal, message);
+}
