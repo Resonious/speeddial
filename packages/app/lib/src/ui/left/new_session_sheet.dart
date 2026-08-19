@@ -312,25 +312,28 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ),
           if (_useWorktree) ...<Widget>[
             const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
+            // Searchable dropdown (the model field above uses the same
+            // pattern): typing filters the entries case-insensitively by
+            // label. Selection stays constrained to listed branches — the
+            // daemon fetches origin/<base>, so a free-text typo would just
+            // fail at creation time.
+            DropdownMenu<String>(
               key: const Key('new-session-base-branch'),
-              initialValue: _baseBranch,
-              decoration: const InputDecoration(labelText: 'Base branch'),
-              items: <DropdownMenuItem<String>>[
+              initialSelection: _baseBranch,
+              label: const Text('Base branch'),
+              expandedInsets: EdgeInsets.zero,
+              enableFilter: true,
+              requestFocusOnTap: true,
+              enabled: !_submitting,
+              dropdownMenuEntries: <DropdownMenuEntry<String>>[
                 for (final Branch branch in branches)
-                  DropdownMenuItem<String>(
+                  DropdownMenuEntry<String>(
                     value: branch.name,
-                    child: Text(
-                      branch.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    label: branch.name,
                   ),
               ],
-              onChanged: _submitting
-                  ? null
-                  : (String? value) =>
-                        setState(() => _baseBranch = value),
+              onSelected: (String? value) =>
+                  setState(() => _baseBranch = value),
             ),
           ],
         ],
