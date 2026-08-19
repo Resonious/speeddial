@@ -126,9 +126,11 @@ class SessionEngine {
   /// When [baseBranch] is given, the session runs in a fresh git worktree:
   /// the daemon fetches `origin/<baseBranch>` in the project repo and adds a
   /// worktree at `<project-parent>/.speeddial-worktrees/<name>-<id8>` on a
-  /// new `speeddial/<slug>-<id8>` branch based on the remote tip. The
-  /// worktree becomes the session cwd; [cwd] and [baseBranch] are mutually
-  /// exclusive. The worktree is rolled back if the agent fails to start.
+  /// new `speeddial/<slug>-<id8>` branch based on whichever of the local
+  /// branch and the remote-tracking ref is ahead (local wins ties and
+  /// divergence — see [GitService.worktreeBaseRef]). The worktree becomes
+  /// the session cwd; [cwd] and [baseBranch] are mutually exclusive. The
+  /// worktree is rolled back if the agent fails to start.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -188,7 +190,8 @@ class SessionEngine {
       if (git == null) {
         throw DaemonError(kErrGit, 'worktree sessions are not supported');
       }
-      await git.fetch(project.path, baseBranch);
+      final String baseRef =
+          await git.worktreeBaseRef(project.path, baseBranch);
       worktreePath = p.join(
         p.dirname(project.path),
         '.speeddial-worktrees',
@@ -198,7 +201,7 @@ class SessionEngine {
         project.path,
         path: worktreePath,
         branch: 'speeddial/${_branchSlug(title) ?? 'session'}-$shortId',
-        baseRef: 'origin/$baseBranch',
+        baseRef: baseRef,
       );
       workingDir = worktreePath;
     } else {

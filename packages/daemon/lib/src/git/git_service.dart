@@ -115,6 +115,53 @@ class GitService {
     await _run(repoPath, ['fetch', remote, branch]);
   }
 
+  /// Resolves the base ref for a new session worktree on [branch]:
+  /// `origin/<branch>` when the (freshly fetched) remote-tracking ref is
+  /// strictly ahead of the local branch, otherwise the local branch —
+  /// i.e. local wins when ahead, when equal, and on divergence. A branch
+  /// that exists only locally or only on the remote resolves to the side
+  /// that exists; one that exists on neither throws [DaemonError] `kErrGit`.
+  Future<String> worktreeBaseRef(String repoPath, String branch) async {
+    _validateBranchName(branch);
+    var hasRemote = false;
+    try {
+      await fetch(repoPath, branch);
+      hasRemote = true;
+    } on DaemonError catch (e) {
+      // A missing remote branch is fine: the local branch stands alone.
+      // Anything else (network, auth) still fails the create.
+      if (!e.message.toLowerCase().contains("couldn't find remote ref")) {
+        rethrow;
+      }
+    }
+    final bool hasLocal =
+        await _refExists(repoPath, 'refs/heads/$branch');
+    if (!hasLocal && !hasRemote) {
+      throw DaemonError(kErrGit, 'No local or origin branch named: $branch');
+    }
+    if (!hasLocal) return 'origin/$branch';
+    if (!hasRemote) return branch;
+
+    final result = await _run(repoPath,
+        ['rev-list', '--left-right', '--count', '$branch...origin/$branch']);
+    final List<String> parts =
+        (result.stdout as String).trim().split(RegExp(r'\s+'));
+    final int ahead = int.parse(parts[0]);
+    final int behind = int.parse(parts[1]);
+    // Remote wins only when the local branch can fast-forward to it.
+    return behind > 0 && ahead == 0 ? 'origin/$branch' : branch;
+  }
+
+  /// Whether [ref] (fully qualified, e.g. `refs/heads/main`) resolves.
+  Future<bool> _refExists(String repoPath, String ref) async {
+    final result = await Process.run(
+      gitPath,
+      ['rev-parse', '--verify', '--quiet', ref],
+      workingDirectory: repoPath,
+    );
+    return result.exitCode == 0;
+  }
+
   /// Creates a worktree at [path] on a new branch [branch] based on
   /// [baseRef] (e.g. `origin/main`). Fails with [DaemonError] `kErrGit` when
   /// the base ref is unknown or the path is occupied.

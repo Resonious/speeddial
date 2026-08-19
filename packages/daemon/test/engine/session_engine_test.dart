@@ -584,6 +584,29 @@ void main() {
       }
     });
 
+    test('createSession bases the worktree on the local base branch when it '
+        'is ahead of origin', () async {
+      final git = await setupGitProject();
+      // One unpushed local commit: local main is ahead of origin/main.
+      File(p.join(git.repoPath, 'local.txt')).writeAsStringSync('local\n');
+      await runGit(git.repoPath, ['add', '-A']);
+      await runGit(git.repoPath, ['commit', '-m', 'local work']);
+      final localTip = await runGit(git.repoPath, ['rev-parse', 'HEAD']);
+      expect(localTip, isNot(git.originTip));
+
+      final gitEngine = SessionEngine(
+          store: store, providers: fakeProviders(), git: GitService());
+      try {
+        final session = await gitEngine.createSession(
+            projectId: 'gitp', providerId: 'fake', baseBranch: 'main');
+        expect(await runGit(session.cwd, ['rev-parse', 'HEAD']), localTip);
+        expect(File(p.join(session.cwd, 'local.txt')).existsSync(), isTrue,
+            reason: 'the worktree must contain the unpushed local work');
+      } finally {
+        await gitEngine.dispose();
+      }
+    });
+
     test('createSession rejects cwd combined with baseBranch', () async {
       final git = await setupGitProject();
       final gitEngine = SessionEngine(

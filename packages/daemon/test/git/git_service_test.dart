@@ -407,6 +407,83 @@ void main() {
     });
   });
 
+  group('worktreeBaseRef', () {
+    Future<Directory> secondClone(Directory origin) async {
+      final other = Directory(p.join(origin.parent.path, 'other'));
+      await Process.run('git', ['clone', origin.path, other.path]);
+      await _git(other, ['config', 'user.email', 'test@example.com']);
+      await _git(other, ['config', 'user.name', 'Test User']);
+      return other;
+    }
+
+    test('local wins when equal or ahead; remote wins when strictly ahead',
+        () async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+
+      // Equal tips: local (same commit either way).
+      expect(await service.worktreeBaseRef(repo.path, 'main'), 'main');
+
+      // Unpushed local commit: local ahead.
+      await _write(repo, 'a.txt', 'v2\n');
+      await _commitAll(repo, 'local work');
+      expect(await service.worktreeBaseRef(repo.path, 'main'), 'main');
+
+      // Push, then advance origin through a second clone: local is strictly
+      // behind and can fast-forward — the remote tip wins.
+      await _git(repo, ['push', 'origin', 'main']);
+      final other = await secondClone(repos.origin);
+      await _write(other, 'b.txt', 'remote work\n');
+      await _commitAll(other, 'remote work');
+      await _git(other, ['push', 'origin', 'main']);
+      expect(await service.worktreeBaseRef(repo.path, 'main'), 'origin/main');
+    });
+
+    test('diverged branches resolve to local', () async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+
+      // Local commit, unpushed…
+      await _write(repo, 'a.txt', 'v2\n');
+      await _commitAll(repo, 'local');
+
+      // …plus an independent remote commit: ahead 1, behind 1.
+      final other = await secondClone(repos.origin);
+      await _write(other, 'b.txt', 'x\n');
+      await _commitAll(other, 'remote');
+      await _git(other, ['push', 'origin', 'main']);
+
+      expect(await service.worktreeBaseRef(repo.path, 'main'), 'main');
+    });
+
+    test('local-only branch resolves to local; unknown branch throws',
+        () async {
+      final repos = await _initRepoWithOrigin();
+      final repo = repos.repo;
+      await _write(repo, 'a.txt', 'v1\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', '-u', 'origin', 'main']);
+      await service.createBranch(repo.path, 'feature', checkout: false);
+
+      // `git fetch origin feature` fails (no such remote branch); the local
+      // branch stands alone.
+      expect(await service.worktreeBaseRef(repo.path, 'feature'), 'feature');
+
+      await expectLater(
+        service.worktreeBaseRef(repo.path, 'ghost'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', kErrGit)
+            .having((e) => e.message, 'message', contains('ghost'))),
+      );
+    });
+  });
+
   group('error handling', () {
     test('throws DaemonError kErrGit with exit code and args on failure',
         () async {
