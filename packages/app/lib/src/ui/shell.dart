@@ -136,9 +136,17 @@ class _ShellState extends State<_Shell> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (BuildContext context) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.75,
-        child: const RightPanel(),
+      // The modal route doesn't consume the keyboard's viewInsets, so pad
+      // the sheet here (same as the new-session sheet in left_rail.dart):
+      // the footer of the Git tab — the commit field — rides up above the
+      // keyboard while the TabBar stays on screen.
+      builder: (BuildContext context) => Padding(
+        padding:
+            EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.75,
+          child: const RightPanel(),
+        ),
       ),
     );
   }

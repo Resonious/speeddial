@@ -40,11 +40,13 @@ Future<AppData> pumpShell(WidgetTester tester, Size size) async {
   addTearDown(tester.view.reset);
 
   await tester.pumpWidget(
-    MaterialApp(
-      theme: buildSpeedDialTheme(),
-      home: AppScope(
-        data: app,
-        child: const SpeedDialShell(),
+    // Mirrors main.dart: AppScope above MaterialApp, so routes pushed on the
+    // Navigator (the narrow layout's right-panel sheet) still see it.
+    AppScope(
+      data: app,
+      child: MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: const SpeedDialShell(),
       ),
     ),
   );
@@ -83,6 +85,43 @@ void main() {
     expect(tester.getTopLeft(find.text('Daemons')).dy,
         greaterThanOrEqualTo(kPhoneInsets.top));
     expect(tester.getBottomLeft(find.text('Add daemon')).dy,
+        lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
+  });
+
+  testWidgets('narrow right sheet lifts the commit field above the keyboard',
+      (WidgetTester tester) async {
+    const Size size = Size(390, 844);
+    const double keyboard = 300;
+    await pumpShell(tester, size);
+
+    await tester.tap(find.byTooltip('Open right panel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+
+    // Tapping the commit field opens the keyboard: Android reports it as
+    // viewInsets and consumes the bottom system padding.
+    tester.view.viewInsets = const FakeViewPadding(bottom: keyboard);
+    tester.view.padding = FakeViewPadding(top: kPhoneInsets.top);
+    await tester.pumpAndSettle();
+
+    expect(
+        tester
+            .getBottomLeft(
+                find.widgetWithText(FilledButton, 'Commit'))
+            .dy,
+        lessThanOrEqualTo(size.height - keyboard));
+    // The sheet grew toward full height instead of overflowing: the TabBar
+    // stays on screen.
+    expect(tester.getTopLeft(find.text('Files')).dy, greaterThanOrEqualTo(0));
+
+    // Dismissing the keyboard sinks the sheet back to the bottom edge.
+    tester.view.viewInsets = FakeViewPadding.zero;
+    tester.view.padding = FakeViewPadding(
+        top: kPhoneInsets.top, bottom: kPhoneInsets.bottom);
+    await tester.pumpAndSettle();
+    expect(
+        tester.getBottomLeft(find.widgetWithText(FilledButton, 'Commit')).dy,
         lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
   });
 
