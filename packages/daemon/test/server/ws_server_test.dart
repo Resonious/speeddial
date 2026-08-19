@@ -25,16 +25,19 @@ String resolveFixture() => <String>[
     ].firstWhere((path) => File(path).existsSync());
 
 /// A registry whose only provider is the fake ACP fixture, spawned through
-/// the current Dart VM.
+/// the current Dart VM. The fake declares static models; the built-in `omp`
+/// probe is stubbed out so tests never touch real agent CLIs.
 ProviderRegistry fakeProviders() => ProviderRegistry(
       configOverrides: <String, Object?>{
         'providers': <String, Object?>{
           'fake': <String, Object?>{
             'name': 'Fake Agent',
             'command': <String>[Platform.resolvedExecutable, resolveFixture()],
+            'models': <String>['fake-fast', 'fake-smart'],
           },
         },
       },
+      modelsProbe: (command) async => const <String>[],
     );
 
 /// A test client: its own [RpcPeer] over a real WebSocket.
@@ -242,6 +245,10 @@ void main() {
           DaemonInfo.fromJson(j(await client.peer.call('daemon.info')));
       expect(info.authRequired, isFalse);
       expect(info.providers.map((p) => p.id), contains('fake'));
+      expect(
+        info.providers.firstWhere((p) => p.id == 'fake').models,
+        <String>['fake-fast', 'fake-smart'],
+      );
 
       await client.close();
     });

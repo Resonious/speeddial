@@ -117,7 +117,9 @@ void main() {
     Directory(projectDir).createSync(recursive: true);
     final env = sandboxEnv(homeDir);
 
-    // Provider config: register the fake ACP agent fixture as 'fake'.
+    // Provider config: register the fake ACP agent fixture as 'fake', and
+    // disable the built-in omp provider's model probe so the sandboxed
+    // daemon never shells out to a real agent CLI for `providers.list`.
     final configDir = p.join(homeDir, '.speeddial');
     Directory(configDir).createSync(recursive: true);
     File(p.join(configDir, 'config.json')).writeAsStringSync(
@@ -126,6 +128,11 @@ void main() {
           'fake': <String, Object?>{
             'name': 'Fake',
             'command': <String>[Platform.resolvedExecutable, fixture],
+          },
+          'omp': <String, Object?>{
+            'name': 'OMP',
+            'command': <String>['omp', 'acp'],
+            'modelsCommand': <String>[],
           },
         },
       }),

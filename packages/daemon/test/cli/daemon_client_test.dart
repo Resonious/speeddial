@@ -26,7 +26,8 @@ String resolveFixture() => <String>[
           'fake_acp_agent.dart'),
     ].firstWhere((path) => File(path).existsSync());
 
-/// A registry whose only provider is the fake ACP fixture.
+/// A registry whose only provider is the fake ACP fixture. The built-in
+/// `omp` probe is stubbed out so tests never touch real agent CLIs.
 ProviderRegistry fakeProviders() =>
     ProviderRegistry(configOverrides: <String, Object?>{
       'providers': <String, Object?>{
@@ -35,7 +36,7 @@ ProviderRegistry fakeProviders() =>
           'command': <String>[Platform.resolvedExecutable, resolveFixture()],
         },
       },
-    });
+    }, modelsProbe: (command) async => const <String>[]);
 
 void main() {
   const token = 'test-token';

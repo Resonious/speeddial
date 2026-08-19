@@ -352,24 +352,26 @@ class SpeedDialServer {
   // daemon.* / providers.* / auth
   // -------------------------------------------------------------------------
 
-  Object? _authenticate(_Client client, Map<String, Object?> params) {
+  Future<Object?> _authenticate(
+      _Client client, Map<String, Object?> params) async {
     if (!client.authenticated && params['token'] != _authToken) {
       throw DaemonError(kErrUnauthenticated, 'invalid token');
     }
     client.authenticated = true;
-    return <String, Object?>{'ok': true, 'daemon': _daemonInfo()};
+    return <String, Object?>{'ok': true, 'daemon': await _daemonInfo()};
   }
 
-  Map<String, Object?> _daemonInfo() => DaemonInfo(
+  Future<Map<String, Object?>> _daemonInfo() async => DaemonInfo(
         version: kDaemonVersion,
         protocolVersion: _kProtocolVersion,
         authRequired: _authToken != null,
-        providers: _providers.list(),
+        providers: await _providers.list(),
       ).toJson();
 
-  Object? _providersList() => <String, Object?>{
-        'providers':
-            _providers.list().map((info) => info.toJson()).toList(growable: false),
+  Future<Object?> _providersList() async => <String, Object?>{
+        'providers': (await _providers.list())
+            .map((info) => info.toJson())
+            .toList(growable: false),
       };
 
   // -------------------------------------------------------------------------

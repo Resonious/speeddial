@@ -43,8 +43,11 @@ typedef _SheetData = ({DaemonInfo info, List<Branch> branches});
 
 class _NewSessionSheetState extends State<NewSessionSheet> {
   Future<_SheetData>? _data;
-  final TextEditingController _model = TextEditingController();
   final TextEditingController _prompt = TextEditingController();
+
+  /// Model id, mirrored from the Autocomplete field (which owns its
+  /// controller) via onChanged/onSelected.
+  String _modelText = '';
   SessionMode _mode = SessionMode.build;
   String? _providerId;
   String? _baseBranch;
@@ -60,7 +63,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
 
   @override
   void dispose() {
-    _model.dispose();
     _prompt.dispose();
     super.dispose();
   }
@@ -98,7 +100,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         widget.daemonId,
         projectId: widget.projectId,
         providerId: _providerId!,
-        model: _model.text.trim().isEmpty ? null : _model.text.trim(),
+        model: _modelText.trim().isEmpty ? null : _modelText.trim(),
         mode: _mode,
         title: prompt.isEmpty ? null : _titleFromPrompt(prompt),
         baseBranch: _useWorktree ? _baseBranch : null,
@@ -215,11 +217,34 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                     setState(() => _providerId = value),
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          key: const Key('new-session-model'),
-          controller: _model,
-          textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(labelText: 'Model (optional)'),
+        Autocomplete<String>(
+          // The selected provider's known models, substring-filtered; the
+          // field stays free-text so unlisted ids remain valid.
+          optionsBuilder: (TextEditingValue value) {
+            final List<String> models = providers
+                .where((ProviderInfo p) => p.id == _providerId)
+                .expand((ProviderInfo p) => p.models)
+                .toList(growable: false);
+            final String query = value.text.trim().toLowerCase();
+            if (query.isEmpty) return models;
+            return models
+                .where((String m) => m.toLowerCase().contains(query))
+                .toList(growable: false);
+          },
+          onSelected: (String selection) => _modelText = selection,
+          fieldViewBuilder: (BuildContext context,
+              TextEditingController controller,
+              FocusNode focusNode,
+              VoidCallback onFieldSubmitted) {
+            return TextFormField(
+              key: const Key('new-session-model'),
+              controller: controller,
+              focusNode: focusNode,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'Model (optional)'),
+              onChanged: (String value) => _modelText = value,
+            );
+          },
         ),
         const SizedBox(height: 12),
         Align(

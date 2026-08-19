@@ -166,7 +166,7 @@ class FakeDaemonClient implements DaemonClient {
           name: 'OMP Agent',
           available: true,
           command: 'omp',
-          models: <String>['omp-default'],
+          models: <String>['omp-default', 'omp-fast'],
         ),
         ProviderInfo(
           id: 'claude',
