@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 import '../engine/session_engine.dart';
 import '../git/git_service.dart';
 import '../git/pr_service.dart';
+import '../paths.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'fs_service.dart';
@@ -392,7 +393,7 @@ class SpeedDialServer {
       };
 
   Future<Object?> _projectsAdd(Map<String, Object?> params) async {
-    final path = _requiredString(params, 'path');
+    final path = expandTilde(_requiredString(params, 'path'));
     if (!Directory(path).existsSync()) {
       throw DaemonError(_kErrInvalidParams, 'Not a directory: $path');
     }

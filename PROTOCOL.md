@@ -178,7 +178,7 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 
 ### Projects
 - `projects.list {}` → `{projects: Project[]}`
-- `projects.add {path: string, name?: string}` → `{project: Project}` — errors `-32602` if path missing or not a directory
+- `projects.add {path: string, name?: string}` → `{project: Project}` — errors `-32602` if path missing or not a directory; a leading `~` or `~/` expands to the daemon user's home (`$HOME`, else `%USERPROFILE%`)
 - `projects.remove {id: string}` → `{}` — also archives its sessions; does NOT touch the filesystem
 - `projects.rename {id: string, name: string}` → `{project: Project}`
 

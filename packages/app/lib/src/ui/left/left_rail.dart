@@ -532,7 +532,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
         onSubmitted: (String _) => _submit(),
         decoration: const InputDecoration(
           labelText: 'Absolute path',
-          hintText: '/home/user/code/my-project',
+          hintText: '/home/user/code/my-project or ~/code/my-project',
         ),
       ),
       actions: <Widget>[

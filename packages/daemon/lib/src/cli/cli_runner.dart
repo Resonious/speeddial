@@ -14,6 +14,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/client.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../paths.dart';
 import 'commands_git.dart';
 import 'commands_projects.dart';
 import 'commands_serve.dart';
@@ -88,10 +89,7 @@ CommandRunner<int> _runner() {
 
 /// `~/.speeddial` — the daemon's data directory.
 String speeddialHomeDir() {
-  final home = Platform.environment['HOME'] ??
-      Platform.environment['USERPROFILE'] ??
-      Directory.current.path;
-  return p.join(home, '.speeddial');
+  return p.join(homeDir() ?? Directory.current.path, '.speeddial');
 }
 
 /// Loads `~/.speeddial/daemon.json` ({port, host, token, pid}); null when the
