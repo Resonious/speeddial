@@ -105,18 +105,16 @@ void main() {
   }
 
   /// The thinking-level selector: [DropdownButton] under the 'Thinking
-  /// level' tooltip. sess-1 also has a model selector now, so bare
-  /// `find.byType(DropdownButton<String>)` matches both.
+  /// level' tooltip, scoped by tooltip so it never matches an unrelated
+  /// dropdown.
   Finder thinkingDropdown() => find.descendant(
         of: find.byTooltip('Thinking level'),
         matching: find.byType(DropdownButton<String>),
       );
 
-  /// The model selector: [DropdownButton] under the 'Model' tooltip.
-  Finder modelDropdown() => find.descendant(
-        of: find.byTooltip('Model'),
-        matching: find.byType(DropdownButton<String>),
-      );
+  /// The model selector: searchable picker trigger under the 'Model'
+  /// tooltip.
+  Finder modelPicker() => find.byKey(const Key('composer-model'));
 
   /// Pumps a bare [Composer] (no pane) with an injected [AttachmentPicker]
   /// and a recorded send callback, so attachment staging is testable without
@@ -841,21 +839,21 @@ void main() {
     await pumpChat(tester);
 
     // The selector starts showing the current id, raw (no capitalization).
-    expect(modelDropdown(), findsOneWidget);
+    expect(modelPicker(), findsOneWidget);
     expect(find.text('omp-default'), findsOneWidget);
 
-    // Open the selector: every advertised id appears, and nothing else.
-    await tester.tap(modelDropdown());
+    // Open the picker: every advertised id appears, and nothing else.
+    await tester.tap(modelPicker());
     await tester.pumpAndSettle();
     for (final String id in <String>['omp-default', 'kimi-k3', 'gpt-5.2']) {
       expect(find.text(id).evaluate(), isNotEmpty,
-          reason: 'expected "$id" in the model dropdown');
+          reason: 'expected "$id" in the model picker');
     }
     expect(find.text('omp-fast'), findsNothing,
         reason: 'only advertised ids, not the provider\'s full list');
     expect(find.text('claude-sonnet'), findsNothing);
 
-    // Close the menu so the test ends clean.
+    // Close the picker so the test ends clean.
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
   });
@@ -864,7 +862,7 @@ void main() {
       (WidgetTester tester) async {
     final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
 
-    await tester.tap(modelDropdown());
+    await tester.tap(modelPicker());
     await tester.pumpAndSettle();
     await tester.tap(find.text('kimi-k3').last);
     await tester.pumpAndSettle();
@@ -876,12 +874,59 @@ void main() {
     expect(updated.models,
         const <String>['omp-default', 'kimi-k3', 'gpt-5.2']);
 
-    // …and the closed dropdown button now shows the new id.
-    expect(modelDropdown(), findsOneWidget);
+    // …and the closed picker button now shows the new id.
+    expect(modelPicker(), findsOneWidget);
     expect(find.text('kimi-k3'), findsOneWidget);
     expect(find.text('omp-default'), findsNothing);
   });
+
+  testWidgets('the picker searches; Enter picks, Escape keeps the current',
+      (WidgetTester tester) async {
+    final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
+    final Finder queryField = find.byKey(const Key('model-picker-query'));
+
+    // Typing filters, case-insensitively.
+    await tester.tap(modelPicker());
+    await tester.pumpAndSettle();
+    await tester.enterText(queryField, 'KIMI');
+    await tester.pumpAndSettle();
+    expect(find.text('kimi-k3'), findsOneWidget);
+    expect(
+        find.text('omp-default'),
+        findsOneWidget,
+        reason: 'filtered out of the list; only the trigger label remains');
+    expect(find.text('gpt-5.2'), findsNothing);
+
+    // A query with no matches shows the empty state, and Enter is a no-op.
+    await tester.enterText(queryField, 'zzz');
+    await tester.pumpAndSettle();
+    expect(find.text('No matching models'), findsOneWidget);
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(queryField, findsOneWidget);
+
+    // Escape closes without a pick: the session keeps its current model.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(queryField, findsNothing);
+    expect(await _fakeSessionModel(fake), 'omp-default');
+
+    // Arrow-down moves the active row and Enter selects it.
+    await tester.tap(modelPicker());
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(await _fakeSessionModel(fake), 'kimi-k3');
+  });
 }
+
+/// The fake daemon's sess-1 model, for picker assertions.
+Future<String?> _fakeSessionModel(FakeDaemonClient fake) async =>
+    (await fake.listSessions())
+        .firstWhere((Session s) => s.id == 'sess-1')
+        .model;
 
 /// A fake whose sends always fail like a turn conflict, driving the
 /// composer/pane failure path (SnackBar + text restore).

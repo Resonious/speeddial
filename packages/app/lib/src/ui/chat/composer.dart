@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
+import 'model_picker.dart';
 
 /// Picks files for attachment. The record carries the file name and raw
 /// bytes; the composer turns them into base64 [OutgoingAttachment]s.
@@ -44,8 +45,8 @@ class Composer extends StatefulWidget {
   /// Latest turn usage, shown in the footer when non-null.
   final UsageInfo? usage;
 
-  /// Current model id: the selector's value when contained in [models],
-  /// otherwise shown as static text (or as the dropdown's hint).
+  /// Current model id: the picker's highlight when contained in [models],
+  /// otherwise shown as static text (or as the picker button's label).
   final String? model;
 
   /// Selectable model ids advertised by the agent (ACP config option);
@@ -53,7 +54,8 @@ class Composer extends StatefulWidget {
   final List<String> models;
 
   /// Fires with the newly selected model id. When non-null (and [models] is
-  /// non-empty) a selector renders in place of the static model text.
+  /// non-empty) a searchable selector renders in place of the static model
+  /// text.
   final ValueChanged<String>? onModelChanged;
 
   /// Current thinking level; shown only when [thinkingLevels] is non-empty.
@@ -404,39 +406,17 @@ class _ControlsRow extends StatelessWidget {
             Flexible(
               // Raw model ids as labels: they are the agent's config values,
               // not display names. IntrinsicWidth keeps the button compact
-              // (its natural width) yet lets it shrink to the row's
-              // remaining space, where `isExpanded` bounds the item so it
-              // ellipsizes instead of overflowing the row.
+              // (its natural width) yet lets it shrink to the row's remaining
+              // space, where the Flexible label ellipsizes instead of
+              // overflowing the row. The picker itself is searchable —
+              // openrouter-scale model lists don't fit a flat dropdown menu.
               child: Tooltip(
                 message: 'Model',
                 child: IntrinsicWidth(
-                  child: DropdownButton<String>(
-                    isExpanded: true,
-                    value: models.contains(model) ? model : null,
-                    hint: Text(
-                      model ?? 'Model',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    underline: const SizedBox.shrink(),
-                    isDense: true,
-                    iconSize: 16,
-                    style: context.speedDialColors.mono
-                        .copyWith(fontSize: 11, color: muted),
-                    items: <DropdownMenuItem<String>>[
-                      for (final String id in models)
-                        DropdownMenuItem<String>(
-                          value: id,
-                          child: Text(
-                            id,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (String? value) {
-                      if (value != null) onModel(value);
-                    },
+                  child: ModelPickerButton(
+                    models: models,
+                    model: model,
+                    onChanged: onModel,
                   ),
                 ),
               ),
