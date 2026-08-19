@@ -207,65 +207,86 @@ void main() {
     expect(meta.style?.color, kDiffMeta);
   });
 
-  testWidgets('commit with an empty message surfaces the error text',
+  testWidgets('commit button asks the session to commit its changes',
       (WidgetTester tester) async {
-    final FakeDaemonClient fake = FakeDaemonClient();
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
     final AppData app = await pumpRightPanel(tester, fake);
-    final Project project = (await fake.listProjects()).single;
 
     await tester.tap(find.text('Git'));
     await tester.pumpAndSettle();
+
+    // No session selected: there is no agent to instruct, so the button is
+    // disabled.
+    FilledButton commit = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Commit'),
+    );
+    expect(commit.onPressed, isNull);
+
+    // sess-1 is a worktree session with base branch 'main'.
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.pumpAndSettle();
+
+    commit = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Commit'),
+    );
+    expect(commit.onPressed, isNotNull);
 
     await tester.tap(find.text('Commit'));
     await tester.pumpAndSettle();
 
-    expect(app.git.errorFor(project.id), isNotNull);
-    expect(find.textContaining('commit message is empty'), findsOneWidget);
+    final List<SessionEvent> events = (await fake.history('sess-1')).events;
+    expect(
+      events.whereType<UserMessageEvent>().map((UserMessageEvent e) => e.text),
+      contains('Please commit your changes'),
+    );
+    expect(
+      find.text('Sent to session: Please commit your changes'),
+      findsOneWidget,
+    );
+
+    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
   });
 
-  testWidgets('commit with a message refreshes and clears the change list',
+  testWidgets('create PR asks the session to base the PR on its base branch',
       (WidgetTester tester) async {
-    final FakeDaemonClient fake = FakeDaemonClient();
-    await pumpRightPanel(tester, fake);
-    final Project project = (await fake.listProjects()).single;
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final AppData app = await pumpRightPanel(tester, fake);
 
     await tester.tap(find.text('Git'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'Fix the bug');
-    await tester.tap(find.text('Commit'));
+    // Without a worktree session the base branch is unknown: disabled.
+    OutlinedButton createPr = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Create PR'),
+    );
+    expect(createPr.onPressed, isNull);
+
+    // sess-1's base branch is 'main'.
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
     await tester.pumpAndSettle();
 
-    final GitStatus status = await fake.gitStatus(project.id);
-    expect(status.files, isEmpty);
-    expect(find.text('lib/main.dart'), findsNothing);
-    expect(find.text('No changes'), findsOneWidget);
-  });
-
-  testWidgets('create PR returns a URL shown in a snackbar',
-      (WidgetTester tester) async {
-    final FakeDaemonClient fake = FakeDaemonClient();
-    await pumpRightPanel(tester, fake);
-
-    await tester.tap(find.text('Git'));
-    await tester.pumpAndSettle();
+    createPr = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Create PR'),
+    );
+    expect(createPr.onPressed, isNotNull);
 
     await tester.tap(find.text('Create PR'));
     await tester.pumpAndSettle();
-    expect(find.text('Create Pull Request'), findsOneWidget);
 
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Title'),
-      'My PR',
+    final List<SessionEvent> events = (await fake.history('sess-1')).events;
+    expect(
+      events.whereType<UserMessageEvent>().map((UserMessageEvent e) => e.text),
+      contains('Please create a PR based on main'),
     );
-    await tester.tap(find.text('Create'));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SnackBar), findsOneWidget);
-    expect(find.text('https://github.com/speeddial/demo/pull/1'), findsOneWidget);
 
     // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
-    await tester.pump(const Duration(seconds: 6));
+    await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
   });
 
@@ -322,30 +343,6 @@ void main() {
 
     // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 6));
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('create PR prefills the base field from the session base branch',
-      (WidgetTester tester) async {
-    final FakeDaemonClient fake = FakeDaemonClient();
-    final AppData app = await pumpRightPanel(tester, fake);
-
-    await app.sessions.refresh('fake');
-    app.selection.selectedSessionId = 'sess-1';
-    await tester.tap(find.text('Git'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Create PR'));
-    await tester.pumpAndSettle();
-    expect(find.text('Create Pull Request'), findsOneWidget);
-
-    final TextFormField base = tester.widget<TextFormField>(
-      find.widgetWithText(TextFormField, 'Base branch'),
-    );
-    expect((base.controller?.text), 'main');
-
-    // Cancel the dialog so nothing is left open.
-    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
   });
 

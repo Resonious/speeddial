@@ -10,9 +10,11 @@ import '../../theme.dart';
 import 'diff_view.dart';
 
 /// Git workspace tab: branch picker with ahead/behind chips, staged and
-/// unstaged change lists, a per-file unified diff view, and a commit field
-/// with push / create-PR actions. Reads [GitStore] through [AppScope] and
-/// rebuilds from store notifications only.
+/// unstaged change lists, a per-file unified diff view, and push / merge /
+/// rebase actions. Commit and create-PR never run git here: they send the
+/// selected session a fixed instruction and let the agent do the work in
+/// its own working tree. Reads [GitStore] through [AppScope] and rebuilds
+/// from store notifications only.
 ///
 /// The tab follows the selected session: when that session runs in a
 /// worktree (created with a base branch), all git operations target the
@@ -79,17 +81,10 @@ class _GitPane extends StatefulWidget {
 }
 
 class _GitPaneState extends State<_GitPane> {
-  final TextEditingController _commitController = TextEditingController();
   late AppData _app;
   String? _loadedKey;
   GitDiff? _openDiff;
   ({String path, bool staged})? _pendingDiff;
-
-  @override
-  void dispose() {
-    _commitController.dispose();
-    super.dispose();
-  }
 
   @override
   void didChangeDependencies() {
@@ -407,7 +402,7 @@ class _GitPaneState extends State<_GitPane> {
     }
   }
 
-  // --- Footer: error text, commit field, push / create PR. -----------------
+  // --- Footer: error text, commit / push / create-PR actions. -------------
 
   Widget _buildFooter(Object? error, bool busy) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -424,22 +419,9 @@ class _GitPaneState extends State<_GitPane> {
                 style: TextStyle(color: scheme.error, fontSize: 12),
               ),
             ),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: TextField(
-                  controller: _commitController,
-                  enabled: !busy,
-                  decoration: const InputDecoration(hintText: 'Commit message'),
-                  onSubmitted: (_) => _commit(),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: busy ? null : _commit,
-                child: const Text('Commit'),
-              ),
-            ],
+          FilledButton(
+            onPressed: widget.sessionId == null ? null : _commit,
+            child: const Text('Commit'),
           ),
           const SizedBox(height: 8),
           Row(
@@ -453,7 +435,10 @@ class _GitPaneState extends State<_GitPane> {
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: busy ? null : _createPr,
+                  onPressed: widget.sessionId == null ||
+                          widget.sessionBaseBranch == null
+                      ? null
+                      : _createPr,
                   child: const Text('Create PR'),
                 ),
               ),
@@ -492,25 +477,36 @@ class _GitPaneState extends State<_GitPane> {
     return error.toString();
   }
 
-  Future<void> _commit() async {
-    final GitStore git = _app.git;
-    final String message = _commitController.text;
+  /// Asks the session's agent to commit its changes: the button sends a
+  /// fixed user message instead of running git locally, so the agent writes
+  /// the message and stages the files itself.
+  Future<void> _commit() => _sendToSession('Please commit your changes');
+
+  /// Sends [text] to the selected session as a user message. Failures
+  /// surface in a SnackBar: the git store's `errorFor` only covers
+  /// store-run operations, and this bypasses it.
+  Future<void> _sendToSession(String text) async {
+    final String? sessionId = widget.sessionId;
+    if (sessionId == null) return;
     try {
-      await git.commit(widget.daemonId, widget.projectId, message,
-          sessionId: widget.sessionId, stageAll: true);
-    } catch (_) {
-      // The store recorded the failure in errorFor; keep the message in the
-      // field so the user can fix it.
+      await _app.chat.send(widget.daemonId, sessionId, text);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorText(error)),
+          duration: const Duration(seconds: 4),
+        ),
+      );
       return;
     }
-    if (git.errorFor(widget.projectId, sessionId: widget.sessionId) != null) {
-      return;
-    }
-    _commitController.clear();
-    await git.refresh(widget.daemonId, widget.projectId,
-        sessionId: widget.sessionId);
-    // The rail badges (dirty/ahead) just moved.
-    await git.refreshSessionSummaries(widget.daemonId, widget.projectId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Sent to session: $text'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<void> _push() async {
@@ -588,31 +584,10 @@ class _GitPaneState extends State<_GitPane> {
     }
   }
 
-  Future<void> _createPr() async {
-    final _CreatePrRequest? request = await showDialog<_CreatePrRequest>(
-      context: context,
-      builder: (BuildContext _) =>
-          _CreatePrDialog(initialBase: widget.sessionBaseBranch),
-    );
-    if (request == null || !mounted) return;
-    try {
-      final String url = await _app.git.createPr(
-        widget.daemonId,
-        widget.projectId,
-        sessionId: widget.sessionId,
-        title: request.title.isEmpty ? null : request.title,
-        body: request.body.isEmpty ? null : request.body,
-        base: request.base.isEmpty ? null : request.base,
-        draft: request.draft,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(url), duration: const Duration(seconds: 5)),
-      );
-    } catch (_) {
-      // Reflected through errorFor.
-    }
-  }
+  /// Asks the session's agent to open the PR, naming the worktree's base
+  /// branch so the agent targets the right upstream.
+  Future<void> _createPr() => _sendToSession(
+      'Please create a PR based on ${widget.sessionBaseBranch}');
 }
 
 /// Letter + color for a file's porcelain status in the section it appears in.
@@ -691,109 +666,6 @@ class _Pill extends StatelessWidget {
           color: color,
         ),
       ),
-    );
-  }
-}
-
-class _CreatePrRequest {
-  const _CreatePrRequest({
-    required this.title,
-    required this.body,
-    required this.base,
-    required this.draft,
-  });
-
-  final String title;
-  final String body;
-  final String base;
-  final bool draft;
-}
-
-/// Form dialog for creating a pull request: title/body/base plus a draft
-/// toggle. Popped with the entered values; the caller performs the actual
-/// `createPr` call (threading `draft` through to the daemon).
-class _CreatePrDialog extends StatefulWidget {
-  const _CreatePrDialog({this.initialBase});
-
-  /// Prefills the base-branch field (e.g. from the session's base branch).
-  final String? initialBase;
-
-  @override
-  State<_CreatePrDialog> createState() => _CreatePrDialogState();
-}
-
-class _CreatePrDialogState extends State<_CreatePrDialog> {
-  final TextEditingController _title = TextEditingController();
-  final TextEditingController _body = TextEditingController();
-  late final TextEditingController _base =
-      TextEditingController(text: widget.initialBase);
-  bool _draft = false;
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _body.dispose();
-    _base.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Create Pull Request'),
-      content: SizedBox(
-        width: 360,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextFormField(
-                controller: _title,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Title'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _body,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Body'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _base,
-                decoration: const InputDecoration(labelText: 'Base branch'),
-              ),
-              const SizedBox(height: 4),
-              CheckboxListTile(
-                value: _draft,
-                onChanged: (bool? value) => setState(() => _draft = value ?? false),
-                title: const Text('Draft'),
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(
-            _CreatePrRequest(
-              title: _title.text,
-              body: _body.text,
-              base: _base.text,
-              draft: _draft,
-            ),
-          ),
-          child: const Text('Create'),
-        ),
-      ],
     );
   }
 }
