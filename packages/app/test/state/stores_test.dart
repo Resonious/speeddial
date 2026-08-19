@@ -269,9 +269,9 @@ void main() {
       app.chat.watchSession('fake', sessionId);
       await _flushMicrotasks();
 
-      // 9 history events (userMessage + turn) arrive in one batch;
-      // notifications are coalesced; 3 chunks merged → 1.
-      expect(app.chat.eventsFor(sessionId).length, 7);
+      // 11 history events (userMessage + turn) arrive in one batch;
+      // notifications are coalesced; the two chunk runs merge → 2.
+      expect(app.chat.eventsFor(sessionId).length, 8);
       expect(notifications, 1);
 
       // A second watch for the same session is a no-op.
@@ -328,13 +328,14 @@ void main() {
       await _waitUntil(() => app.chat
           .eventsFor('sess-1')
           .any((SessionEvent e) => e is TurnCompleteEvent));
-      // The turn appends 9 raw events, but the 3 chunk deltas (452-454)
-      // merge into one buffered record (seq 454): 450 + 7 = 457.
-      expect(app.chat.eventsFor('sess-1'), hasLength(457));
+      // The turn appends 11 raw events, but the 2 thought deltas (452-453)
+      // and 3 chunk deltas (454-456) each merge into one buffered record:
+      // 450 + 8 = 458.
+      expect(app.chat.eventsFor('sess-1'), hasLength(458));
       // Merged chunk records the last delta's seq; the tail is contiguous.
       expect(
         app.chat.eventsFor('sess-1').sublist(450).map((SessionEvent e) => e.seq),
-        <int>[451, 454, 455, 456, 457, 458, 459],
+        <int>[451, 453, 456, 457, 458, 459, 460, 461],
       );
       expect(
         (app.chat.eventsFor('sess-1').lastWhere((SessionEvent e) =>
@@ -356,9 +357,10 @@ void main() {
       await _waitUntil(() => app.chat
           .eventsFor(sessionId)
           .any((SessionEvent e) => e is TurnCompleteEvent));
-      // 9 events (userMessage, 3 chunk deltas, 2 tool calls, plan, usage,
-      // turnComplete); the merged chunk deltas still count as mutations.
-      expect(app.chat.revisionFor(sessionId), 9);
+      // 11 events (userMessage, 2 thought deltas, 3 chunk deltas, 2 tool
+      // calls, plan, usage, turnComplete); the merged chunk deltas still
+      // count as mutations.
+      expect(app.chat.revisionFor(sessionId), 11);
 
       // Reading the buffer never bumps the revision.
       final int settled = app.chat.revisionFor(sessionId);
@@ -400,12 +402,12 @@ void main() {
       final List<SessionEvent> fake2Events = app.chat.eventsFor(sessionId);
       expect(fake2Events.first, isA<UserMessageEvent>());
       expect(fake2Events.first.seq, 1);
-      // 9 raw events; the 3 chunk deltas merge into one Buffered event whose
-      // seq is the last delta's, so the buffer holds 7 events with seqs
-      // [1, 4, 5, 6, 7, 8, 9].
+      // 11 raw events; the 2 thought deltas and 3 chunk deltas each merge
+      // into one buffered event whose seq is the last delta's, so the buffer
+      // holds 9 events with seqs [1, 3, 6, 7, 8, 9, 10, 11].
       expect(fake2Events.map((SessionEvent e) => e.seq).toList(),
-          <int>[1, 4, 5, 6, 7, 8, 9]);
-      expect(app.chat.revisionFor(sessionId), 9);
+          <int>[1, 3, 6, 7, 8, 9, 10, 11]);
+      expect(app.chat.revisionFor(sessionId), 11);
 
       // Unwatching releases the preferred (fake2) buffer; resolution shifts
       // back to fake's still-watched buffer with its turn intact.

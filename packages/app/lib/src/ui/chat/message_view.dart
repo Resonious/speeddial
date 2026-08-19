@@ -247,17 +247,70 @@ MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? bodyStyle) {
 Brightness? _cachedBrightness;
 
 /// Collapsed "Thinking…" expansion tile for agent reasoning deltas.
-class AgentThoughtView extends StatelessWidget {
-  const AgentThoughtView({super.key, required this.text});
+///
+/// While [active] (reasoning deltas still arriving) the icon and title pulse
+/// in the primary color; once the run closes they settle to a static muted
+/// "Thought" so live and finished thinking are distinguishable at a glance.
+class AgentThoughtView extends StatefulWidget {
+  const AgentThoughtView({super.key, required this.text, this.active = false});
 
   final String text;
+  final bool active;
+
+  @override
+  State<AgentThoughtView> createState() => _AgentThoughtViewState();
+}
+
+class _AgentThoughtViewState extends State<AgentThoughtView>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  );
+
+  late final Animation<double> _opacity = Tween<double>(
+    begin: 0.35,
+    end: 1,
+  ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) {
+      _pulse.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(AgentThoughtView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _pulse.repeat(reverse: true);
+    } else if (!widget.active && oldWidget.active) {
+      // Settle at full opacity: one last static frame, no ticker.
+      _pulse
+        ..stop()
+        ..value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Color muted = theme.colorScheme.onSurfaceVariant;
+    final bool active = widget.active;
+    final Color color =
+        active ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant;
     final TextStyle italic = (theme.textTheme.bodySmall ?? const TextStyle())
-        .copyWith(color: muted, fontStyle: FontStyle.italic);
+        .copyWith(color: color, fontStyle: FontStyle.italic);
+
+    final Widget leading = Icon(Icons.psychology_outlined, size: 16, color: color);
+    final Widget title = Text(active ? 'Thinking…' : 'Thought', style: italic);
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
@@ -269,9 +322,26 @@ class AgentThoughtView extends StatelessWidget {
         tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         dense: true,
-        leading: Icon(Icons.psychology_outlined, size: 16, color: muted),
-        title: Text('Thinking…', style: italic),
-        children: <Widget>[Text(text, style: italic)],
+        leading: active
+            ? FadeTransition(
+                key: const ValueKey<String>('thought-pulse'),
+                opacity: _opacity,
+                child: leading,
+              )
+            : leading,
+        title: active
+            ? FadeTransition(
+                key: const ValueKey<String>('thought-pulse'),
+                opacity: _opacity,
+                child: title,
+              )
+            : title,
+        children: <Widget>[
+          Text(
+            widget.text,
+            style: italic.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
       ),
     );
   }

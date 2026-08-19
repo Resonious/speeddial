@@ -162,6 +162,66 @@ void main() {
     expect(find.textContaining('tokens'), findsOneWidget);
   });
 
+  testWidgets('thinking indicator pulses while streaming, settles muted',
+      (WidgetTester tester) async {
+    // Slow script: the thought run stays open long enough to inspect.
+    final (AppData app, FakeDaemonClient _) = await pumpChat(
+      tester,
+      fake: FakeDaemonClient(eventDelay: const Duration(seconds: 30)),
+    );
+
+    await tester.enterText(find.byType(TextField), 'hello');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    // First thought delta lands after one eventDelay.
+    await pumpUntil(
+      tester,
+      () => find.text('Thinking…').evaluate().isNotEmpty,
+      attempts: 5,
+      step: const Duration(seconds: 31),
+    );
+    expect(find.text('Thinking…'), findsOneWidget);
+
+    final BuildContext tileContext = tester.element(find.byType(ExpansionTile));
+    final ColorScheme scheme = Theme.of(tileContext).colorScheme;
+
+    // Active: primary-colored icon with a running pulse animation on both
+    // the icon and the title.
+    Icon icon = tester.widget(find.byIcon(Icons.psychology_outlined));
+    expect(icon.color, scheme.primary);
+    expect(find.byKey(const ValueKey<String>('thought-pulse')), findsNWidgets(2));
+    final FadeTransition pulse = tester.widget(
+      find.byKey(const ValueKey<String>('thought-pulse')).first,
+    );
+    expect(
+      pulse.opacity.status,
+      anyOf(AnimationStatus.forward, AnimationStatus.reverse),
+    );
+
+    // Drain the rest of the scripted turn (~10 delays of 30 s).
+    await pumpUntil(
+      tester,
+      () =>
+          app.chat.statusOf(app.selection.selectedSessionId!) ==
+          SessionStatus.idle,
+      attempts: 20,
+      step: const Duration(seconds: 31),
+    );
+    await tester.pump();
+
+    // Settled: past-tense title, muted icon, no pulse wrapper.
+    expect(find.text('Thought'), findsOneWidget);
+    expect(find.text('Thinking…'), findsNothing);
+    icon = tester.widget(find.byIcon(Icons.psychology_outlined));
+    expect(icon.color, scheme.onSurfaceVariant);
+    expect(find.byKey(const ValueKey<String>('thought-pulse')), findsNothing);
+
+    // Drain stream + settle timers so the test ends clean.
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('typing and Enter sends a message; user bubble appears',
       (WidgetTester tester) async {
     await pumpChat(tester);

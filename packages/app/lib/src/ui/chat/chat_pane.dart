@@ -142,6 +142,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   /// Revision of the buffered events underlying [_items]/[_pending]. Starts
   /// at -1 so the first build always derives.
   int _revision = -1;
+
+  /// Session-running flag underlying [_items]; a turn start/stop can change
+  /// the derived active-thought marker without adding events.
+  bool _running = false;
+
   List<TimelineItem> _items = const <TimelineItem>[];
   PermissionRequest? _pending;
 
@@ -155,17 +160,19 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       listenable: Listenable.merge(<Listenable>[chat, data.sessions]),
       builder: (BuildContext context, Widget? _) {
         final List<SessionEvent> events = chat.eventsFor(sessionId);
+        final SessionStatus status = chat.statusOf(sessionId);
+        final bool running = status == SessionStatus.running;
         // ChatStore bumps a per-session counter on every buffer mutation,
         // so the cached derivation is skipped for rebuilds that carry no
         // new content (unrelated sessions' notifications, status/usage-only
         // updates) instead of re-scanning the whole event list per chunk.
         final int revision = chat.revisionFor(sessionId);
-        if (revision != _revision) {
+        if (revision != _revision || running != _running) {
           _revision = revision;
-          _items = deriveTimelineItems(events);
+          _running = running;
+          _items = deriveTimelineItems(events, running: running);
           _pending = _resolveLatest(events);
         }
-        final SessionStatus status = chat.statusOf(sessionId);
         final SessionMode mode = chat.modeOf(sessionId);
         final UsageInfo? usage = chat.usageOf(sessionId);
         final PermissionRequest? pending = _pending;

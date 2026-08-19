@@ -25,8 +25,12 @@ class AgentMessageItem extends TimelineItem {
 
 /// A merged run of consecutive agent thought chunks.
 class AgentThoughtItem extends TimelineItem {
-  const AgentThoughtItem({required this.text});
+  const AgentThoughtItem({required this.text, this.active = false});
   final String text;
+
+  /// True while this run is the session's live tail: the agent is still
+  /// producing reasoning deltas (drives the pulsing "Thinking…" indicator).
+  final bool active;
 }
 
 /// The latest snapshot of one tool call (later events update in place).
@@ -75,7 +79,14 @@ class SessionErrorItem extends TimelineItem {
 /// Consecutive same-type chunk events merge into one item (their final merged
 /// text). Tool-call events replace the previous snapshot with the same id.
 /// Usage events are skipped here — usage is surfaced in the composer footer.
-List<TimelineItem> deriveTimelineItems(List<SessionEvent> events) {
+///
+/// When [running] is true (session mid-turn) and the last event is a thought
+/// chunk, the trailing thought item is marked active; any later event kind
+/// (message chunk, tool call, turn complete, …) closes the thought run.
+List<TimelineItem> deriveTimelineItems(
+  List<SessionEvent> events, {
+  bool running = false,
+}) {
   final List<TimelineItem> items = <TimelineItem>[];
   final Map<String, int> toolIndexes = <String, int>{};
   final StringBuffer message = StringBuffer();
@@ -87,9 +98,9 @@ List<TimelineItem> deriveTimelineItems(List<SessionEvent> events) {
     message.clear();
   }
 
-  void flushThought() {
+  void flushThought({bool active = false}) {
     if (thought.isEmpty) return;
-    items.add(AgentThoughtItem(text: thought.toString()));
+    items.add(AgentThoughtItem(text: thought.toString(), active: active));
     thought.clear();
   }
 
@@ -141,7 +152,11 @@ List<TimelineItem> deriveTimelineItems(List<SessionEvent> events) {
     }
   }
   flushMessage();
-  flushThought();
+  flushThought(
+    active: running &&
+        events.isNotEmpty &&
+        events.last is AgentThoughtChunkEvent,
+  );
   return items;
 }
 
@@ -179,7 +194,7 @@ class _TimelineRow extends StatelessWidget {
     return switch (item) {
       UserMessageItem i => UserMessageBubble(text: i.text),
       AgentMessageItem i => AgentMessageView(text: i.text),
-      AgentThoughtItem i => AgentThoughtView(text: i.text),
+      AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
       PermissionRequestItem i => _InlinePermissionRecord(request: i.request),

@@ -650,6 +650,17 @@ class FakeDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   Future<void> _runScript(String sessionId, String text) async {
+    const List<String> thoughts = <String>[
+      'The user asked a question. ',
+      'I should answer with a short demo response.',
+    ];
+    for (final String chunk in thoughts) {
+      if (_isCancelled(sessionId)) return;
+      await _delay();
+      if (_isCancelled(sessionId)) return;
+      _emit(sessionId, AgentThoughtChunkEvent(text: chunk));
+    }
+
     const List<String> chunks = <String>[
       'Working on it…\n\n',
       '```dart\nvoid main() {}\n```\n\n',

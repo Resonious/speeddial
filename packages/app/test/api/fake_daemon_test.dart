@@ -102,11 +102,13 @@ void main() {
     await _waitUntil(
         () => Future<bool>.value(events.any((SessionEvent e) => e is TurnCompleteEvent)));
 
-    // Exactly the documented sequence: the user's own message, 3 chunk
-    // deltas, tool call (running → completed via a second event), plan
-    // (2 entries), usage, turn complete.
+    // Exactly the documented sequence: the user's own message, 2 thought
+    // deltas, 3 chunk deltas, tool call (running → completed via a second
+    // event), plan (2 entries), usage, turn complete.
     expect(events.map((SessionEvent e) => e.runtimeType).toList(), <Type>[
       UserMessageEvent,
+      AgentThoughtChunkEvent,
+      AgentThoughtChunkEvent,
       AgentMessageChunkEvent,
       AgentMessageChunkEvent,
       AgentMessageChunkEvent,
@@ -116,6 +118,10 @@ void main() {
       UsageEvent,
       TurnCompleteEvent,
     ]);
+    expect(
+      events.whereType<AgentThoughtChunkEvent>().map((AgentThoughtChunkEvent e) => e.text).join(),
+      'The user asked a question. I should answer with a short demo response.',
+    );
     expect(
       events.whereType<AgentMessageChunkEvent>().map((AgentMessageChunkEvent e) => e.text).toList(),
       <String>[
@@ -203,7 +209,7 @@ void main() {
     final ({List<SessionEvent> events, bool hasMore}) all =
         await fake.history('sess-1');
     expect(all.hasMore, isFalse);
-    expect(all.events, hasLength(9));
+    expect(all.events, hasLength(11));
     expect(all.events.last, isA<TurnCompleteEvent>());
 
     // beforeSeq excludes newer events; limit pages from the end.
