@@ -272,7 +272,7 @@ class SessionEngine {
       id: sessionId,
       projectId: projectId,
       providerId: providerId,
-      title: title ?? 'New session',
+      title: title ?? kDefaultSessionTitle,
       status: SessionStatus.idle,
       mode: mode ?? SessionMode.build,
       model: model,
@@ -611,24 +611,7 @@ class SessionEngine {
   }
 
   Future<Session> rename(String sessionId, String title) =>
-      _updateSession(sessionId, (session) => Session(
-            id: session.id,
-            projectId: session.projectId,
-            providerId: session.providerId,
-            title: title,
-            status: session.status,
-            mode: session.mode,
-            model: session.model,
-            models: session.models,
-            cwd: session.cwd,
-            baseBranch: session.baseBranch,
-            thinkingLevel: session.thinkingLevel,
-            thinkingLevels: session.thinkingLevels,
-            yolo: session.yolo,
-            archived: session.archived,
-            createdAt: session.createdAt,
-            updatedAt: DateTime.now().toUtc(),
-          ));
+      _updateSession(sessionId, (session) => _withTitle(session, title));
 
   Future<Session> archive(String sessionId, bool archived) =>
       _updateSession(sessionId, (session) => _withArchived(session, archived));
@@ -839,6 +822,16 @@ class SessionEngine {
         attachments: [for (final prepared in attachments) prepared.data],
       ),
     );
+    // A session still carrying the default title is named from this, its
+    // first user message (see PROTOCOL.md `sessions.send`). Explicit titles
+    // — creation `title` or a prior `sessions.rename` — are never clobbered,
+    // and an attachment-only turn (empty text) leaves the default in place.
+    if (live.session.title == kDefaultSessionTitle) {
+      final String derivedTitle = _titleFromMessage(text);
+      if (derivedTitle.isNotEmpty) {
+        _setTitle(live, derivedTitle);
+      }
+    }
     _setStatus(live, SessionStatus.running);
 
     final updates = live.client.sessionUpdates(live.acpSessionId);
@@ -1072,6 +1065,18 @@ class SessionEngine {
     return slug.substring(0, 32).replaceAll(RegExp('-+\$'), '');
   }
 
+  /// Derives an auto-title from a user message: its first line,
+  /// whitespace-collapsed, capped at 60 characters (the pre-overhaul
+  /// new-session sheet behavior). Empty when the message carries no text
+  /// (e.g. attachments only).
+  static String _titleFromMessage(String text) {
+    final String firstLine =
+        text.split('\n').first.trim().replaceAll(RegExp(r'\s+'), ' ');
+    return firstLine.length <= 60
+        ? firstLine
+        : '${firstLine.substring(0, 60)}…';
+  }
+
   /// Resolves [requested] against the session cwd and rejects anything that
   /// escapes it (the thrown error becomes a JSON-RPC error response to the
   /// agent). Symlink escapes are not guarded; that is a follow-up concern.
@@ -1141,12 +1146,44 @@ class SessionEngine {
     }
   }
 
+  /// Synchronous title update mirroring [_setStatus]. The auto-title in
+  /// [_runTurn] must not introduce an await between the userMessage emit
+  /// and the agent prompt — a cancel racing the send would otherwise reach
+  /// the agent before its own prompt.
+  void _setTitle(_LiveSession live, String title) {
+    final updated = _withTitle(live.session, title);
+    live.session = updated;
+    _store.updateSession(updated);
+    if (!_sessionChangesController.isClosed) {
+      _sessionChangesController.add(updated);
+    }
+  }
+
   Session _withStatus(Session session, SessionStatus status) => Session(
         id: session.id,
         projectId: session.projectId,
         providerId: session.providerId,
         title: session.title,
         status: status,
+        mode: session.mode,
+        model: session.model,
+        models: session.models,
+        cwd: session.cwd,
+        baseBranch: session.baseBranch,
+        thinkingLevel: session.thinkingLevel,
+        thinkingLevels: session.thinkingLevels,
+        yolo: session.yolo,
+        archived: session.archived,
+        createdAt: session.createdAt,
+        updatedAt: DateTime.now().toUtc(),
+      );
+
+  Session _withTitle(Session session, String title) => Session(
+        id: session.id,
+        projectId: session.projectId,
+        providerId: session.providerId,
+        title: title,
+        status: session.status,
         mode: session.mode,
         model: session.model,
         models: session.models,

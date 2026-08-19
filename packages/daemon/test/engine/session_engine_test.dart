@@ -175,6 +175,7 @@ void main() {
       changes.map((s) => s.status).toList(),
       <SessionStatus>[
         SessionStatus.idle, // created
+        SessionStatus.idle, // auto-titled while still idle
         SessionStatus.running,
         SessionStatus.waitingPermission,
         SessionStatus.running,
@@ -590,6 +591,32 @@ void main() {
       store.listSessions(includeArchived: true).map((s) => s.id),
       contains(session.id),
     );
+  });
+
+  test('the first user message auto-titles a default-titled session', () async {
+    // Yolo auto-approves the scripted permission so the turn completes
+    // without a client handshake.
+    final session = await engine.createSession(
+        projectId: 'p1', providerId: 'fake', yolo: true);
+    expect(session.title, kDefaultSessionTitle);
+
+    await engine.sendMessage(session.id, 'Fix   the\nflaky test now');
+
+    // First line only, whitespace-collapsed; broadcast on sessionChanges.
+    expect(store.getSession(session.id)!.title, 'Fix the');
+    expect(changes.where((s) => s.id == session.id).last.title, 'Fix the');
+
+    // Long first lines truncate to 60 characters.
+    final truncating = await engine.createSession(
+        projectId: 'p1', providerId: 'fake', yolo: true);
+    await engine.sendMessage(truncating.id, 'a' * 61);
+    expect(store.getSession(truncating.id)!.title, '${'a' * 60}…');
+
+    // Explicit titles are never clobbered.
+    final explicit = await engine.createSession(
+        projectId: 'p1', providerId: 'fake', yolo: true, title: 'Keep me');
+    await engine.sendMessage(explicit.id, 'a brand new task');
+    expect(store.getSession(explicit.id)!.title, 'Keep me');
   });
 
   test("createSession adopts the agent's advertised thinking level and "

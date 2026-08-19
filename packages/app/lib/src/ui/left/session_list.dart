@@ -166,7 +166,7 @@ class _GitBadge extends StatelessWidget {
 }
 
 /// One session row inside an expanded project: status chip, provider badge,
-/// title, and an archive/delete menu. Tapping selects the session.
+/// title, and a rename/archive/delete menu. Tapping selects the session.
 class SessionRow extends StatelessWidget {
   const SessionRow({
     super.key,
@@ -180,6 +180,16 @@ class SessionRow extends StatelessWidget {
   final bool selected;
   final String daemonId;
   final String projectId;
+
+  Future<void> _rename(BuildContext context, AppData data) async {
+    final String? title = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) =>
+          _RenameSessionDialog(initialTitle: session.title),
+    );
+    if (title == null || title.isEmpty) return;
+    await data.sessions.rename(daemonId, session.id, title);
+  }
 
   Future<void> _archive(BuildContext context, AppData data) async {
     await data.sessions.archive(daemonId, session.id, true);
@@ -270,6 +280,8 @@ class SessionRow extends StatelessWidget {
         icon: const Icon(Icons.more_vert, size: 18),
         onSelected: (_SessionAction action) {
           switch (action) {
+            case _SessionAction.rename:
+              _rename(context, data);
             case _SessionAction.archive:
               _archive(context, data);
             case _SessionAction.delete:
@@ -278,6 +290,10 @@ class SessionRow extends StatelessWidget {
         },
         itemBuilder: (BuildContext context) =>
             const <PopupMenuEntry<_SessionAction>>[
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.rename,
+            child: Text('Rename'),
+          ),
           PopupMenuItem<_SessionAction>(
             value: _SessionAction.archive,
             child: Text('Archive'),
@@ -303,7 +319,60 @@ class SessionRow extends StatelessWidget {
   }
 }
 
-enum _SessionAction { archive, delete }
+enum _SessionAction { rename, archive, delete }
+
+/// Pre-filled single-field dialog renaming a session title. Pops with the
+/// trimmed new title, or null when cancelled / left empty.
+class _RenameSessionDialog extends StatefulWidget {
+  const _RenameSessionDialog({required this.initialTitle});
+
+  final String initialTitle;
+
+  @override
+  State<_RenameSessionDialog> createState() => _RenameSessionDialogState();
+}
+
+class _RenameSessionDialogState extends State<_RenameSessionDialog> {
+  late final TextEditingController _title =
+      TextEditingController(text: widget.initialTitle);
+
+  @override
+  void dispose() {
+    _title.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final String title = _title.text.trim();
+    if (title.isEmpty) return;
+    Navigator.of(context).pop(title);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename session'),
+      content: TextField(
+        key: const Key('session-rename-field'),
+        controller: _title,
+        autofocus: true,
+        onSubmitted: (String _) => _submit(),
+        decoration: const InputDecoration(labelText: 'Title'),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('session-rename-submit'),
+          onPressed: _submit,
+          child: const Text('Rename'),
+        ),
+      ],
+    );
+  }
+}
 
 /// The expanded children of a project tile: the session rows for that
 /// project, or (rare) a "no sessions" hint.

@@ -308,7 +308,7 @@ class FakeDaemonClient implements DaemonClient {
       id: id,
       projectId: projectId,
       providerId: providerId,
-      title: title ?? 'New session',
+      title: title ?? kDefaultSessionTitle,
       status: SessionStatus.idle,
       mode: mode ?? SessionMode.build,
       // A requested id inside the advertised list sticks; anything else
@@ -400,6 +400,14 @@ class FakeDaemonClient implements DaemonClient {
     // The daemon broadcasts the user's own message as the turn's first event
     // (see daemon SessionEngine._runTurn); mirror that here.
     _emit(sessionId, UserMessageEvent(text: text, attachments: metadata));
+    // Mirror the daemon (SessionEngine._runTurn): a still-default-titled
+    // session is named from this message's first line.
+    if (_sessions[sessionId]!.title == kDefaultSessionTitle) {
+      final String derivedTitle = _titleFromMessage(text);
+      if (derivedTitle.isNotEmpty) {
+        await renameSession(sessionId, derivedTitle);
+      }
+    }
     _setStatus(sessionId, SessionStatus.running);
     unawaited(_runScript(sessionId, text));
   }
@@ -1098,6 +1106,17 @@ class FakeDaemonClient implements DaemonClient {
     _sessions[sessionId] = result;
     _sessionUpdatesController.add(result);
     return result;
+  }
+
+  /// Mirrors the daemon's SessionEngine._titleFromMessage: first line,
+  /// whitespace-collapsed, capped at 60 characters; empty when the message
+  /// carries no text.
+  static String _titleFromMessage(String text) {
+    final String firstLine =
+        text.split('\n').first.trim().replaceAll(RegExp(r'\s+'), ' ');
+    return firstLine.length <= 60
+        ? firstLine
+        : '${firstLine.substring(0, 60)}…';
   }
 
   void _setStatus(String sessionId, SessionStatus status) {

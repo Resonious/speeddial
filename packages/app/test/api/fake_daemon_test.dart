@@ -503,6 +503,42 @@ void main() {
     expect(await fake.listSessions(includeArchived: true), hasLength(2));
   });
 
+  test('sendMessage auto-titles a default-titled session', () async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final String projectId = (await fake.listProjects()).single.id;
+
+    final Session created =
+        await fake.createSession(projectId: projectId, providerId: 'omp');
+    expect(created.title, kDefaultSessionTitle);
+
+    await fake.sendMessage(created.id, 'Fix   the\nflaky test');
+    await _waitUntil(() async => (await fake.history(created.id))
+        .events
+        .any((SessionEvent e) => e is TurnCompleteEvent));
+    expect(
+      (await fake.listSessions(includeArchived: true))
+          .firstWhere((Session s) => s.id == created.id)
+          .title,
+      'Fix the',
+    );
+
+    // Explicit titles survive a send.
+    final Session named = await fake.createSession(
+        projectId: projectId, providerId: 'omp', title: 'Keep me');
+    await fake.sendMessage(named.id, 'something else');
+    await _waitUntil(() async => (await fake.history(named.id))
+        .events
+        .any((SessionEvent e) => e is TurnCompleteEvent));
+    expect(
+      (await fake.listSessions(includeArchived: true))
+          .firstWhere((Session s) => s.id == named.id)
+          .title,
+      'Keep me',
+    );
+  });
+
   test('createSession seeds models for omp; setModel validates membership',
       () async {
     final FakeDaemonClient fake = FakeDaemonClient();

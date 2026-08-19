@@ -410,6 +410,12 @@ class UsageInfo {
       };
 }
 
+/// The title a session carries when created without an explicit one
+/// (`sessions.create` without `title`). The daemon replaces it with a
+/// title derived from the session's first user message (see PROTOCOL.md
+/// `sessions.send`).
+const String kDefaultSessionTitle = 'New session';
+
 /// A conversation session bound to one provider/model.
 class Session {
   const Session({

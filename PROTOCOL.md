@@ -210,6 +210,8 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     advertises a model option (the returned session reflects the agent-reported model, which
     may differ when the agent rejects it); when the agent advertises none, `model` stays a
     local label as before.
+  — without `title`, the session starts as `New session`; the first user message sent to it
+    replaces that placeholder (see `sessions.send`).
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
   attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon
@@ -223,6 +225,10 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
   provider cannot resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
   the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks the session
   `error` and appends a `sessionError` event to its history; the session becomes usable again on the next send.
+  A session still titled `New session` is auto-titled from `text`'s first line (whitespace-collapsed,
+  capped at 60 characters) right after the `userMessage` event is persisted, and the change is
+  broadcast as `session.updated`; explicitly set titles are never overwritten, and an
+  attachment-only turn (empty `text`) skips the auto-title.
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`

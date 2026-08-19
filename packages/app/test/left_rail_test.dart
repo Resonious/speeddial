@@ -357,6 +357,38 @@ void main() {
     );
   });
 
+  testWidgets('renaming via the session menu updates the row',
+      (WidgetTester tester) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.descendant(
+        of: find.widgetWithText(ListTile, 'Build the feature'),
+        matching: find.byIcon(Icons.more_vert),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename'));
+    await tester.pumpAndSettle();
+
+    // The dialog opens prefilled with the current title.
+    final TextField field = tester
+        .widget<TextField>(find.byKey(const Key('session-rename-field')));
+    expect(field.controller!.text, 'Build the feature');
+
+    await tester.enterText(
+        find.byKey(const Key('session-rename-field')), 'Ship it');
+    await tester.tap(find.byKey(const Key('session-rename-submit')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ship it'), findsOneWidget);
+    expect(find.text('Build the feature'), findsNothing);
+    expect(app.sessions.byId('sess-1')!.title, 'Ship it');
+  });
+
   testWidgets('add daemon dialog still adds an endpoint to the rail',
       (WidgetTester tester) async {
     final AppData app = await pumpRail(tester);
