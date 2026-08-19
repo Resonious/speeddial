@@ -157,14 +157,19 @@ class Timeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      reverse: true,
-      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: items.length,
-      // reverse: true renders index 0 (the newest) at the bottom.
-      itemBuilder: (BuildContext context, int index) =>
-          _TimelineRow(item: items[items.length - 1 - index]),
+    // SelectionArea makes every Text/RichText descendant (message bubbles,
+    // markdown bodies, tool output, diffs, plan rows) selectable and
+    // copyable; interactive widgets (expansion tiles, buttons) keep working.
+    return SelectionArea(
+      child: ListView.builder(
+        reverse: true,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: items.length,
+        // reverse: true renders index 0 (the newest) at the bottom.
+        itemBuilder: (BuildContext context, int index) =>
+            _TimelineRow(item: items[items.length - 1 - index]),
+      ),
     );
   }
 }

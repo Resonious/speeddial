@@ -198,11 +198,13 @@ class _FileViewerState extends State<FileViewer> {
             ),
           ),
         Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Text.rich(
-              _highlighted ?? TextSpan(text: result.content),
-              style: colors.mono,
+          child: SelectionArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: Text.rich(
+                _highlighted ?? TextSpan(text: result.content),
+                style: colors.mono,
+              ),
             ),
           ),
         ),
