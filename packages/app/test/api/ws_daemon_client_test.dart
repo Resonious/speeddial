@@ -332,12 +332,12 @@ void main() {
     await client.sendMessage('sess-1', 'hello');
   });
 
-  test('beginMcpOAuth derives the browser callback from the daemon URL',
+  test('beginMcpOAuth canonicalizes plain HTTP callbacks to loopback',
       () async {
     final TestDaemonServer server = await TestDaemonServer.start();
     addTearDown(server.close);
     final WsDaemonClient client = WsDaemonClient(
-      url: server.url,
+      url: server.url.replaceFirst('127.0.0.1', 'localhost'),
       token: 'secret',
       reconnectBase: const Duration(milliseconds: 20),
     );
@@ -355,6 +355,31 @@ void main() {
             'http://127.0.0.1:${server.server.port}/oauth/callback',
       },
     ]);
+  });
+
+  test('beginMcpOAuth rejects a remote plaintext daemon', () async {
+    final WsDaemonClient client = WsDaemonClient(
+      url: 'ws://192.0.2.1:7331/ws',
+      token: 'secret',
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.beginMcpOAuth('mcp-1'),
+      throwsA(
+        isA<DaemonError>()
+            .having(
+              (DaemonError error) => error.code,
+              'code',
+              kErrProviderUnavailable,
+            )
+            .having(
+              (DaemonError error) => error.message,
+              'message',
+              contains('requires a wss:// endpoint'),
+            ),
+      ),
+    );
   });
 
   test('sendMessage omits attachments when empty and serializes them otherwise',

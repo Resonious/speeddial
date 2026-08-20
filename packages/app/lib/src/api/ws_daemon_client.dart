@@ -534,8 +534,23 @@ class WsDaemonClient implements DaemonClient {
   @override
   Future<McpOAuthFlow> beginMcpOAuth(String id) async {
     final Uri endpoint = Uri.parse(url);
+    final bool secure = endpoint.scheme == 'wss';
+    if (!secure && !_isLoopbackOAuthHost(endpoint.host)) {
+      throw DaemonError(
+        kErrProviderUnavailable,
+        'MCP OAuth for a remote daemon requires a wss:// endpoint with '
+        'HTTPS /oauth/callback routing',
+      );
+    }
     final Uri redirectUri = endpoint.replace(
-      scheme: endpoint.scheme == 'wss' ? 'https' : 'http',
+      scheme: secure ? 'https' : 'http',
+      // Canonicalize local IPv4 aliases because authorization servers may
+      // recognize only numeric loopback redirect URIs. IPv6 stays on ::1.
+      host: secure
+          ? endpoint.host
+          : endpoint.host == '::1'
+          ? '::1'
+          : '127.0.0.1',
       path: '/oauth/callback',
       query: null,
       fragment: null,
@@ -545,6 +560,14 @@ class WsDaemonClient implements DaemonClient {
       <String, Object?>{'id': id, 'redirectUri': redirectUri.toString()},
     );
     return McpOAuthFlow.fromJson(_resultMap(_resultField(result, 'flow')));
+  }
+
+  bool _isLoopbackOAuthHost(String host) {
+    final String normalized = host.toLowerCase();
+    return normalized == 'localhost' ||
+        normalized == '::1' ||
+        normalized == '0:0:0:0:0:0:0:1' ||
+        normalized.startsWith('127.');
   }
 
   @override

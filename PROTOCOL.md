@@ -257,13 +257,16 @@ configuration.
 OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
 RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic
 client registration, RFC 8707 resource indicators, refresh tokens, and the token endpoint
-authentication methods `none`, `client_secret_post`, and `client_secret_basic`. The app derives
-`redirectUri` from its daemon WebSocket URL (`ws` → `http`, `wss` → `https`) at
-`/oauth/callback`; remote HTTPS deployments must route that path to the daemon alongside `/ws`.
-Plain HTTP callbacks are accepted only on loopback. Client secrets, access tokens, and refresh
-tokens remain in daemon SQLite and never cross the public RPC surface. The daemon injects an
-`Authorization: Bearer ...` header only while constructing ACP session configuration and refreshes
-expiring tokens before session creation/resume and periodically while running.
+authentication methods `none`, `client_secret_post`, and `client_secret_basic`. For `ws` daemon
+connections, the app uses the daemon port with the canonical loopback callback host `127.0.0.1`
+(`::1` is preserved). The app rejects OAuth through a non-loopback `ws` endpoint because its HTTP
+callback would be insecure and unreachable from a remote device. For `wss` connections, the app
+derives an HTTPS callback from the daemon WebSocket URL. Both use `/oauth/callback`; remote HTTPS
+deployments must route that path to the daemon alongside `/ws`.
+Client secrets, access tokens, and refresh tokens remain in daemon SQLite and never cross the
+public RPC surface. The daemon injects an `Authorization: Bearer ...` header only while constructing
+ACP session configuration and refreshes expiring tokens before session creation/resume and
+periodically while running.
 
 
 ### Sessions
