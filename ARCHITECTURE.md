@@ -68,8 +68,9 @@ lib/src/engine/     SessionEngine: owns live ACP processes per session, maps ACP
                     to protocol SessionEvents, assigns seq, persists via SessionStore,
                     broadcasts to listeners. Handles permission requests (parked until
                     respondPermission), cancel, process exit, turn lifecycle.
-lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (override with
-                    --db or SPEEDIAL_DB). Tables: projects, sessions, session_events,
+lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
+                    dependency) at ~/.speeddial/speeddial.db (override with --db or
+                    SPEEDIAL_DB). Tables: projects, sessions, session_events,
                     attachments (message and MCP-displayed image payloads, FK-cascaded
                     with their session; events carry metadata only, `attachments.read`
                     serves blobs), mcp_servers, mcp_secrets, and mcp_oauth. MCP static

@@ -1001,7 +1001,7 @@ class DaemonStore {
     return (events: events, hasMore: hasMore);
   }
 
-  void dispose() => _db.dispose();
+  void dispose() => _db.close();
 
   // -------------------------------------------------------------------------
   // Attachments

@@ -397,7 +397,7 @@ void main() {
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ['s1', 'p1', 'fake', 'Legacy', 'idle', 'build', null, '/tmp/x', 0, 1, 1],
     );
-    raw.dispose();
+    raw.close();
 
     store = openStore(tempDir);
     final migrated = store.getSession('s1')!;

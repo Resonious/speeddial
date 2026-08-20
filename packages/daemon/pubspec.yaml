@@ -13,7 +13,7 @@ dependencies:
     path: ../protocol
   args: ^2.7.0
   path: ^1.9.1
-  sqlite3: ^2.9.4
+  sqlite3: ^3.5.2
   uuid: ^4.5.1
   crypto: ^3.0.7
 
