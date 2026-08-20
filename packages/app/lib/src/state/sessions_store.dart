@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'store_base.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -7,10 +8,10 @@ import '../api/daemon_client.dart';
 
 /// Caches sessions bucketed by project and keyed by id.
 ///
-/// [refresh] rebuilding all buckets is the source of truth for a listing;
-/// mutating methods ([create], [rename], [archive], [delete], [setMode])
-/// update both the by-project bucket and the by-id index immediately and
-/// notify. Buckets keep the complete picture (archived included); the public
+/// Mutating methods ([create], [fork], [rename], [archive], [delete],
+/// [setMode]) update both the by-project bucket and the by-id index
+/// immediately and notify.
+/// Buckets keep the complete picture (archived included); the public
 /// [sessionsFor] view omits archived sessions.
 ///
 /// Caches are keyed by composite `daemonId/id` strings because session and
@@ -28,8 +29,8 @@ import '../api/daemon_client.dart';
 /// reconnect; subscriptions live until the store is disposed.
 class SessionsStore extends StoreBase {
   SessionsStore({required DaemonClient Function(String daemonId) clientFor})
-      // ignore: prefer_initializing_formals
-      : _clientFor = clientFor;
+    // ignore: prefer_initializing_formals
+    : _clientFor = clientFor;
 
   final DaemonClient Function(String daemonId) _clientFor;
 
@@ -65,7 +66,8 @@ class SessionsStore extends StoreBase {
   List<Session> sessionsFor(String projectId) {
     final List<Session>? bucket = _bucketFor(projectId);
     return List<Session>.unmodifiable(
-        bucket?.where((Session s) => !s.archived) ?? const <Session>[]);
+      bucket?.where((Session s) => !s.archived) ?? const <Session>[],
+    );
   }
 
   /// The session with [sessionId] (preferring the last-used daemon for that
@@ -90,13 +92,16 @@ class SessionsStore extends StoreBase {
         .listSessions(projectId: projectId, includeArchived: true);
     // Drop only this daemon's cached buckets; other daemons' listings stay.
     _sessionsByProject.removeWhere(
-        (String key, List<Session> _) => _daemonOf(key) == daemonId);
+      (String key, List<Session> _) => _daemonOf(key) == daemonId,
+    );
     if (projectId == null) {
       for (final Session session in sessions) {
         // Upsert: a sessionUpdates notification (create/rename on another
         // path) may have created the bucket mid-refresh with this session.
         final List<Session> bucket = _sessionsByProject.putIfAbsent(
-            _scopedKey(daemonId, session.projectId), () => <Session>[]);
+          _scopedKey(daemonId, session.projectId),
+          () => <Session>[],
+        );
         final int index = bucket.indexWhere((Session s) => s.id == session.id);
         if (index >= 0) {
           bucket[index] = session;
@@ -106,8 +111,9 @@ class SessionsStore extends StoreBase {
         _note(daemonId, session);
       }
     } else {
-      _sessionsByProject[_scopedKey(daemonId, projectId)] =
-          List<Session>.of(sessions);
+      _sessionsByProject[_scopedKey(daemonId, projectId)] = List<Session>.of(
+        sessions,
+      );
       for (final Session session in sessions) {
         _note(daemonId, session);
       }
@@ -138,9 +144,30 @@ class SessionsStore extends StoreBase {
     // Upsert rather than blind-add: daemons surface the created session on
     // `sessionUpdates`, and a live listener (running synchronously inside
     // createSession, before this continuation) may already have inserted it.
-    final List<Session> bucket =
-        _sessionsByProject.putIfAbsent(_scopedKey(daemonId, projectId),
-            () => <Session>[]);
+    final List<Session> bucket = _sessionsByProject.putIfAbsent(
+      _scopedKey(daemonId, projectId),
+      () => <Session>[],
+    );
+    final int index = bucket.indexWhere((Session s) => s.id == session.id);
+    if (index >= 0) {
+      bucket[index] = session;
+    } else {
+      bucket.add(session);
+    }
+    _note(daemonId, session);
+    notifyListeners();
+    return session;
+  }
+
+  /// Creates a new session whose copied history ends at message event [seq].
+  Future<Session> fork(String daemonId, String sourceSessionId, int seq) async {
+    _ensureDaemonSubscriptions(daemonId);
+    final Session session = await _clientFor(daemonId)
+        .forkSession(sourceSessionId, seq);
+    final List<Session> bucket = _sessionsByProject.putIfAbsent(
+      _scopedKey(daemonId, session.projectId),
+      () => <Session>[],
+    );
     final int index = bucket.indexWhere((Session s) => s.id == session.id);
     if (index >= 0) {
       bucket[index] = session;
@@ -154,14 +181,18 @@ class SessionsStore extends StoreBase {
 
   Future<void> rename(String daemonId, String sessionId, String title) async {
     _ensureDaemonSubscriptions(daemonId);
-    _replace(daemonId, await _clientFor(daemonId).renameSession(sessionId, title));
+    _replace(
+      daemonId,
+      await _clientFor(daemonId).renameSession(sessionId, title),
+    );
   }
 
-  Future<void> archive(
-      String daemonId, String sessionId, bool archived) async {
+  Future<void> archive(String daemonId, String sessionId, bool archived) async {
     _ensureDaemonSubscriptions(daemonId);
     _replace(
-        daemonId, await _clientFor(daemonId).archiveSession(sessionId, archived));
+      daemonId,
+      await _clientFor(daemonId).archiveSession(sessionId, archived),
+    );
   }
 
   Future<void> delete(String daemonId, String sessionId) async {
@@ -171,22 +202,32 @@ class SessionsStore extends StoreBase {
     await _clientFor(daemonId).deleteSession(sessionId);
     _sessionsById.remove(key);
     if (before != null) {
-      _sessionsByProject[_scopedKey(daemonId, before.projectId)]
-          ?.removeWhere((Session s) => s.id == sessionId);
+      _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
+        (Session s) => s.id == sessionId,
+      );
     }
     notifyListeners();
   }
 
-  Future<void> setMode(String daemonId, String sessionId, SessionMode mode) async {
+  Future<void> setMode(
+    String daemonId,
+    String sessionId,
+    SessionMode mode,
+  ) async {
     _ensureDaemonSubscriptions(daemonId);
     _replace(daemonId, await _clientFor(daemonId).setMode(sessionId, mode));
   }
 
   Future<void> setThinkingLevel(
-      String daemonId, String sessionId, String level) async {
+    String daemonId,
+    String sessionId,
+    String level,
+  ) async {
     _ensureDaemonSubscriptions(daemonId);
     _replace(
-        daemonId, await _clientFor(daemonId).setThinkingLevel(sessionId, level));
+      daemonId,
+      await _clientFor(daemonId).setThinkingLevel(sessionId, level),
+    );
   }
 
   /// Sets the session's model. Valid ids come from `Session.models`; the
@@ -203,12 +244,15 @@ class SessionsStore extends StoreBase {
   void _ensureDaemonSubscriptions(String daemonId) {
     if (_updateSubs.containsKey(daemonId)) return;
     final DaemonClient client = _clientFor(daemonId);
-    _updateSubs[daemonId] = client.sessionUpdates
-        .listen((Session session) => _onSessionUpdate(daemonId, session));
-    _removalSubs[daemonId] = client.sessionRemovals
-        .listen((String sessionId) => _onSessionRemoved(daemonId, sessionId));
-    _resyncSubs[daemonId] =
-        client.resynced.listen((void _) => unawaited(_resync(daemonId)));
+    _updateSubs[daemonId] = client.sessionUpdates.listen(
+      (Session session) => _onSessionUpdate(daemonId, session),
+    );
+    _removalSubs[daemonId] = client.sessionRemovals.listen(
+      (String sessionId) => _onSessionRemoved(daemonId, sessionId),
+    );
+    _resyncSubs[daemonId] = client.resynced.listen(
+      (void _) => unawaited(_resync(daemonId)),
+    );
   }
 
   /// Refetch after a reconnect; a failure here races a fresh drop and is
@@ -242,8 +286,9 @@ class SessionsStore extends StoreBase {
     final String key = _scopedKey(daemonId, sessionId);
     final Session? before = _sessionsById.remove(key);
     if (before == null) return;
-    _sessionsByProject[_scopedKey(daemonId, before.projectId)]
-        ?.removeWhere((Session s) => s.id == sessionId);
+    _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
+      (Session s) => s.id == sessionId,
+    );
     notifyListeners();
   }
 

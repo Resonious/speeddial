@@ -46,6 +46,7 @@ const List<String> _kProtocolMethods = <String>[
   'projects.rename',
   'sessions.list',
   'sessions.create',
+  'sessions.fork',
   'sessions.send',
   'sessions.cancel',
   'sessions.rename',
@@ -73,7 +74,11 @@ const List<String> _kProtocolMethods = <String>[
 
 /// One connected client: its peer, socket, and authentication state.
 class _Client {
-  _Client({required this.peer, required this.socket, required this.authenticated});
+  _Client({
+    required this.peer,
+    required this.socket,
+    required this.authenticated,
+  });
 
   final RpcPeer peer;
   final WebSocket socket;
@@ -91,12 +96,12 @@ class SpeedDialServer {
     String? authToken,
     this.gitPollInterval = const Duration(seconds: 15),
     this.gitFetchInterval = const Duration(minutes: 2),
-  })  : _engine = engine, // ignore: prefer_initializing_formals — public API name
-        _store = store, // ignore: prefer_initializing_formals — public API name
-        _providers = providers, // ignore: prefer_initializing_formals — public API name
-        _authToken = authToken, // ignore: prefer_initializing_formals — public API name
-        _git = git ?? GitService(),
-        _pr = pr ?? PrService() {
+  }) : _engine = engine, // ignore: prefer_initializing_formals
+       _store = store, // ignore: prefer_initializing_formals
+       _providers = providers, // ignore: prefer_initializing_formals
+       _authToken = authToken, // ignore: prefer_initializing_formals
+       _git = git ?? GitService(),
+       _pr = pr ?? PrService() {
     _init();
   }
 
@@ -142,11 +147,12 @@ class SpeedDialServer {
   final Duration gitFetchInterval;
   late final SummaryWatcher _summaryWatcher;
 
-
   HttpServer? _httpServer;
   final List<_Client> _clients = <_Client>[];
-  late final StreamSubscription<({String sessionId, int seq, SessionEvent event})>
-      _eventsSub;
+  late final StreamSubscription<
+    ({String sessionId, int seq, SessionEvent event})
+  >
+  _eventsSub;
   late final StreamSubscription<Session> _changesSub;
   late final StreamSubscription<String> _removalsSub;
   bool _closed = false;
@@ -173,9 +179,11 @@ class SpeedDialServer {
     await _removalsSub.cancel();
     for (final client in _clients.toList()) {
       client.peer.close();
-      unawaited(client.socket
-          .close(WebSocketStatus.normalClosure, 'daemon closing')
-          .catchError((Object _) {}));
+      unawaited(
+        client.socket
+            .close(WebSocketStatus.normalClosure, 'daemon closing')
+            .catchError((Object _) {}),
+      );
     }
     _clients.clear();
     await _httpServer?.close(force: true);
@@ -188,14 +196,11 @@ class SpeedDialServer {
     _summaryWatcher = SummaryWatcher(
       store: _store,
       git: _git,
-      hasClients: () =>
-          _clients.any((_Client client) => client.authenticated),
+      hasClients: () => _clients.any((_Client client) => client.authenticated),
       pollInterval: gitPollInterval,
       fetchInterval: gitFetchInterval,
-      onChanged: (String projectId) => _broadcast(
-        'git.changed',
-        <String, Object?>{'projectId': projectId},
-      ),
+      onChanged: (String projectId) =>
+          _broadcast('git.changed', <String, Object?>{'projectId': projectId}),
     )..start();
 
     // Broadcast every engine emission as a PROTOCOL.md notification. The
@@ -213,7 +218,9 @@ class SpeedDialServer {
       // broadcast yet: the engine emits updates while `sessions.create` is
       // still in flight, and a client must observe created before updated.
       if (!_createdBroadcast.contains(session.id)) return;
-      _broadcast('session.updated', <String, Object?>{'session': session.toJson()});
+      _broadcast('session.updated', <String, Object?>{
+        'session': session.toJson(),
+      });
     });
     _removalsSub = _engine.sessionRemovals.listen((sessionId) {
       _createdBroadcast.remove(sessionId);
@@ -356,6 +363,7 @@ class SpeedDialServer {
       'projects.rename' => _projectsRename(params),
       'sessions.list' => _sessionsList(params),
       'sessions.create' => _sessionsCreate(params),
+      'sessions.fork' => _sessionsFork(params),
       'sessions.send' => _sessionsSend(params),
       'sessions.cancel' => _sessionsCancel(params),
       'sessions.rename' => _sessionsRename(params),
@@ -380,9 +388,9 @@ class SpeedDialServer {
       'git.rebaseOntoBase' => _gitRebaseOntoBase(params),
       'git.sessionSummaries' => _gitSessionSummaries(params),
       _ => throw DaemonError(
-          _kErrInvalidParams,
-          'Unknown method: $method', // Unreachable: the peer answers -32601.
-        ),
+        _kErrInvalidParams,
+        'Unknown method: $method', // Unreachable: the peer answers -32601.
+      ),
     };
   }
 
@@ -391,7 +399,9 @@ class SpeedDialServer {
   // -------------------------------------------------------------------------
 
   Future<Object?> _authenticate(
-      _Client client, Map<String, Object?> params) async {
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
     if (!client.authenticated && params['token'] != _authToken) {
       throw DaemonError(kErrUnauthenticated, 'invalid token');
     }
@@ -400,26 +410,28 @@ class SpeedDialServer {
   }
 
   Future<Map<String, Object?>> _daemonInfo() async => DaemonInfo(
-        version: kDaemonVersion,
-        protocolVersion: _kProtocolVersion,
-        authRequired: _authToken != null,
-        providers: await _providers.list(),
-      ).toJson();
+    version: kDaemonVersion,
+    protocolVersion: _kProtocolVersion,
+    authRequired: _authToken != null,
+    providers: await _providers.list(),
+  ).toJson();
 
   Future<Object?> _providersList() async => <String, Object?>{
-        'providers': (await _providers.list())
-            .map((info) => info.toJson())
-            .toList(growable: false),
-      };
+    'providers': (await _providers.list())
+        .map((info) => info.toJson())
+        .toList(growable: false),
+  };
 
   // -------------------------------------------------------------------------
   // projects.*
   // -------------------------------------------------------------------------
 
   Object? _projectsList() => <String, Object?>{
-        'projects':
-            _store.listProjects().map((project) => project.toJson()).toList(growable: false),
-      };
+    'projects': _store
+        .listProjects()
+        .map((project) => project.toJson())
+        .toList(growable: false),
+  };
 
   Future<Object?> _projectsAdd(Map<String, Object?> params) async {
     final path = expandTilde(_requiredString(params, 'path'));
@@ -473,8 +485,9 @@ class SpeedDialServer {
       includeArchived: includeArchived is bool ? includeArchived : false,
     );
     return <String, Object?>{
-      'sessions':
-          sessions.map((session) => session.toJson()).toList(growable: false),
+      'sessions': sessions
+          .map((session) => session.toJson())
+          .toList(growable: false),
     };
   }
 
@@ -494,8 +507,9 @@ class SpeedDialServer {
       mode: rawMode == null ? null : _parseMode(rawMode),
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
       cwd: rawCwd is String && rawCwd.isNotEmpty ? rawCwd : null,
-      baseBranch:
-          rawBaseBranch is String && rawBaseBranch.isNotEmpty ? rawBaseBranch : null,
+      baseBranch: rawBaseBranch is String && rawBaseBranch.isNotEmpty
+          ? rawBaseBranch
+          : null,
       yolo: rawYolo is bool && rawYolo,
     );
     // The engine already published `session.updated` (suppressed by the
@@ -504,7 +518,29 @@ class SpeedDialServer {
     // may the sessionChanges relay let updates through. Broadcasts are
     // synchronous and per-connection FIFO, so on every socket
     // `session.created` is queued before any later `session.updated`.
-    _broadcast('session.created', <String, Object?>{'session': session.toJson()});
+    _broadcast('session.created', <String, Object?>{
+      'session': session.toJson(),
+    });
+    _createdBroadcast.add(session.id);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsFork(Map<String, Object?> params) async {
+    final sessionId = _requiredString(params, 'sessionId');
+    final rawSeq = params['seq'];
+    if (rawSeq is! int || rawSeq < 1) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: seq',
+      );
+    }
+    final session = await _engine.forkSession(
+      sourceSessionId: sessionId,
+      throughSeq: rawSeq,
+    );
+    _broadcast('session.created', <String, Object?>{
+      'session': session.toJson(),
+    });
     _createdBroadcast.add(session.id);
     return <String, Object?>{'session': session.toJson()};
   }
@@ -516,7 +552,9 @@ class SpeedDialServer {
     if (rawAttachments != null) {
       if (rawAttachments is! List) {
         throw DaemonError(
-            _kErrInvalidParams, 'Missing or invalid parameter: attachments');
+          _kErrInvalidParams,
+          'Missing or invalid parameter: attachments',
+        );
       }
       if (rawAttachments.length > kMaxAttachmentsPerMessage) {
         throw DaemonError(
@@ -569,11 +607,9 @@ class SpeedDialServer {
             '(max $kMaxAttachmentTotalBytes per message)',
           );
         }
-        attachments.add(OutgoingAttachment(
-          name: name,
-          mimeType: mimeType,
-          data: rawData,
-        ));
+        attachments.add(
+          OutgoingAttachment(name: name, mimeType: mimeType, data: rawData),
+        );
       }
     } else {
       attachments = const <OutgoingAttachment>[];
@@ -587,12 +623,17 @@ class SpeedDialServer {
         text = rawText;
       } else {
         throw DaemonError(
-            _kErrInvalidParams, 'Missing or invalid parameter: text');
+          _kErrInvalidParams,
+          'Missing or invalid parameter: text',
+        );
       }
     } else if (rawText == null && attachments.isNotEmpty) {
       text = '';
     } else {
-      throw DaemonError(_kErrInvalidParams, 'Missing or invalid parameter: text');
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: text',
+      );
     }
     await _engine.sendMessage(sessionId, text, attachments: attachments);
     return <String, Object?>{};
@@ -628,7 +669,10 @@ class SpeedDialServer {
     final sessionId = _requiredString(params, 'sessionId');
     final archived = params['archived'];
     if (archived is! bool) {
-      throw DaemonError(_kErrInvalidParams, 'Missing or invalid parameter: archived');
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: archived',
+      );
     }
     final session = await _engine.archive(sessionId, archived);
     return <String, Object?>{'session': session.toJson()};
@@ -654,9 +698,7 @@ class SpeedDialServer {
     return <String, Object?>{'session': session.toJson()};
   }
 
-  Future<Object?> _sessionsSetThinkingLevel(
-    Map<String, Object?> params,
-  ) async {
+  Future<Object?> _sessionsSetThinkingLevel(Map<String, Object?> params) async {
     final sessionId = _requiredString(params, 'sessionId');
     final level = _requiredString(params, 'level');
     final session = await _engine.setThinkingLevel(sessionId, level);
@@ -674,14 +716,22 @@ class SpeedDialServer {
         : 200;
     final rawBefore = params['beforeSeq'];
     final beforeSeq = rawBefore is int ? rawBefore : null;
-    final page = _store.listEvents(sessionId, limit: limit, beforeSeq: beforeSeq);
+    final page = _store.listEvents(
+      sessionId,
+      limit: limit,
+      beforeSeq: beforeSeq,
+    );
     return <String, Object?>{
-      'events': page.events.map((event) => event.toJson()).toList(growable: false),
+      'events': page.events
+          .map((event) => event.toJson())
+          .toList(growable: false),
       'hasMore': page.hasMore,
     };
   }
 
-  Future<Object?> _sessionsRespondPermission(Map<String, Object?> params) async {
+  Future<Object?> _sessionsRespondPermission(
+    Map<String, Object?> params,
+  ) async {
     final sessionId = _requiredString(params, 'sessionId');
     final requestId = _requiredString(params, 'requestId');
     final optionId = _requiredString(params, 'optionId');
@@ -744,15 +794,19 @@ class SpeedDialServer {
     if (rawSessionId == null) return null;
     if (rawSessionId is! String || rawSessionId.isEmpty) {
       throw DaemonError(
-          _kErrInvalidParams, 'sessionId must be a non-empty string');
+        _kErrInvalidParams,
+        'sessionId must be a non-empty string',
+      );
     }
     final session = _store.getSession(rawSessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $rawSessionId');
     }
     if (session.projectId != project.id) {
-      throw DaemonError(_kErrInvalidParams,
-          'session $rawSessionId does not belong to project ${project.id}');
+      throw DaemonError(
+        _kErrInvalidParams,
+        'session $rawSessionId does not belong to project ${project.id}',
+      );
     }
     return session;
   }
@@ -778,12 +832,17 @@ class SpeedDialServer {
   Future<Object?> _gitBranches(Map<String, Object?> params) async {
     final branches = await _git.branches(_gitRepoPath(params));
     return <String, Object?>{
-      'branches': branches.map((branch) => branch.toJson()).toList(growable: false),
+      'branches': branches
+          .map((branch) => branch.toJson())
+          .toList(growable: false),
     };
   }
 
   Future<Object?> _gitCheckout(Map<String, Object?> params) async {
-    await _git.checkout(_gitRepoPath(params), _requiredString(params, 'branch'));
+    await _git.checkout(
+      _gitRepoPath(params),
+      _requiredString(params, 'branch'),
+    );
     return <String, Object?>{};
   }
 
@@ -825,7 +884,9 @@ class SpeedDialServer {
     final session = _gitSession(params, project);
     // A worktree session's PR targets the branch it was created from unless
     // the caller overrides it; only with neither does gh pick the default.
-    final explicitBase = rawBase is String && rawBase.isNotEmpty ? rawBase : null;
+    final explicitBase = rawBase is String && rawBase.isNotEmpty
+        ? rawBase
+        : null;
     final url = await _pr.createPullRequest(
       session?.cwd ?? project.path,
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
@@ -841,14 +902,16 @@ class SpeedDialServer {
     final session = _gitSession(params, project);
     if (session == null) {
       throw DaemonError(
-          _kErrInvalidParams, 'git.mergeToBase requires a sessionId');
+        _kErrInvalidParams,
+        'git.mergeToBase requires a sessionId',
+      );
     }
     final baseBranch = session.baseBranch;
     if (baseBranch == null) {
       throw DaemonError(
         _kErrInvalidParams,
         'session ${session.id} has no base branch '
-            '(not created with baseBranch)',
+        '(not created with baseBranch)',
       );
     }
     final merge = await _git.mergeIntoBase(
@@ -864,14 +927,16 @@ class SpeedDialServer {
     final session = _gitSession(params, project);
     if (session == null) {
       throw DaemonError(
-          _kErrInvalidParams, 'git.rebaseOntoBase requires a sessionId');
+        _kErrInvalidParams,
+        'git.rebaseOntoBase requires a sessionId',
+      );
     }
     final baseBranch = session.baseBranch;
     if (baseBranch == null) {
       throw DaemonError(
         _kErrInvalidParams,
         'session ${session.id} has no base branch '
-            '(not created with baseBranch)',
+        '(not created with baseBranch)',
       );
     }
     final rebase = await _git.rebaseOntoBase(
@@ -887,13 +952,14 @@ class SpeedDialServer {
   /// failures degrade to null fields inside [GitService.sessionSummary].
   Future<Object?> _gitSessionSummaries(Map<String, Object?> params) async {
     final project = _requireProject(_requiredString(params, 'projectId'));
-    final List<Session> sessions =
-        _store.listSessions(projectId: project.id);
-    final List<SessionGitSummary> summaries =
-        await _git.sessionSummaries(sessions);
+    final List<Session> sessions = _store.listSessions(projectId: project.id);
+    final List<SessionGitSummary> summaries = await _git.sessionSummaries(
+      sessions,
+    );
     return <String, Object?>{
-      'summaries':
-          summaries.map((summary) => summary.toJson()).toList(growable: false),
+      'summaries': summaries
+          .map((summary) => summary.toJson())
+          .toList(growable: false),
     };
   }
 
@@ -909,7 +975,10 @@ class SpeedDialServer {
 
   SessionMode _parseMode(Object? raw) {
     if (raw is! String) {
-      throw DaemonError(_kErrInvalidParams, 'Missing or invalid parameter: mode');
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: mode',
+      );
     }
     try {
       return SessionMode.parse(raw);

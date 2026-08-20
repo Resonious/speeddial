@@ -23,7 +23,8 @@ class FakeDaemonClient implements DaemonClient {
 
   final List<Project> _projects = <Project>[];
   final Map<String, Session> _sessions = <String, Session>{};
-  final Map<String, List<SessionEvent>> _history = <String, List<SessionEvent>>{};
+  final Map<String, List<SessionEvent>> _history =
+      <String, List<SessionEvent>>{};
   final Map<String, int> _seqBySession = <String, int>{};
   final Map<String, StreamController<SessionEvent>> _eventControllers =
       <String, StreamController<SessionEvent>>{};
@@ -123,17 +124,42 @@ class FakeDaemonClient implements DaemonClient {
     _history.clear();
     _fileTree
       ..['.'] = List<FileEntry>.unmodifiable(<FileEntry>[
-        FileEntry(name: 'lib', path: 'lib', isDir: true, size: 0, modifiedAt: now),
-        FileEntry(name: 'main.dart', path: 'main.dart', isDir: false, size: 120, modifiedAt: now),
-        FileEntry(name: 'pubspec.yaml', path: 'pubspec.yaml', isDir: false, size: 30, modifiedAt: now),
+        FileEntry(
+          name: 'lib',
+          path: 'lib',
+          isDir: true,
+          size: 0,
+          modifiedAt: now,
+        ),
+        FileEntry(
+          name: 'main.dart',
+          path: 'main.dart',
+          isDir: false,
+          size: 120,
+          modifiedAt: now,
+        ),
+        FileEntry(
+          name: 'pubspec.yaml',
+          path: 'pubspec.yaml',
+          isDir: false,
+          size: 30,
+          modifiedAt: now,
+        ),
       ])
       ..['lib'] = List<FileEntry>.unmodifiable(<FileEntry>[
-        FileEntry(name: 'main.dart', path: 'lib/main.dart', isDir: false, size: 64, modifiedAt: now),
+        FileEntry(
+          name: 'main.dart',
+          path: 'lib/main.dart',
+          isDir: false,
+          size: 64,
+          modifiedAt: now,
+        ),
       ]);
     _fileContents
       ..['main.dart'] = 'void main() { print("hi"); }\n'
       ..['pubspec.yaml'] = 'name: demo\n'
-      ..['lib/main.dart'] = 'import "package:flutter/material.dart";\n\n'
+      ..['lib/main.dart'] =
+          'import "package:flutter/material.dart";\n\n'
           'void main() => runApp(const App());\n';
     _gitStatus[project.path] = const GitStatus(
       branch: 'main',
@@ -155,7 +181,8 @@ class FakeDaemonClient implements DaemonClient {
     _gitDiffs[project.path] = const <GitDiff>[
       GitDiff(
         path: 'lib/main.dart',
-        patch: '--- a/lib/main.dart\n+++ b/lib/main.dart\n@@ -1 +1 @@\n'
+        patch:
+            '--- a/lib/main.dart\n+++ b/lib/main.dart\n@@ -1 +1 @@\n'
             '-void main()\n+void main() { print("hi"); }\n',
         isNew: false,
         isDeleted: false,
@@ -166,17 +193,19 @@ class FakeDaemonClient implements DaemonClient {
     // sess-2 shares the (dirty) project checkout and has no base branch.
     sessionGitSummaries
       ..['sess-1'] = const SessionGitSummary(
-          sessionId: 'sess-1',
-          dirty: true,
-          aheadOfBase: 2,
-          behindBase: 0,
-          mergedIntoBase: false)
+        sessionId: 'sess-1',
+        dirty: true,
+        aheadOfBase: 2,
+        behindBase: 0,
+        mergedIntoBase: false,
+      )
       ..['sess-2'] = const SessionGitSummary(
-          sessionId: 'sess-2',
-          dirty: true,
-          aheadOfBase: null,
-          behindBase: null,
-          mergedIntoBase: null);
+        sessionId: 'sess-2',
+        dirty: true,
+        aheadOfBase: null,
+        behindBase: null,
+        mergedIntoBase: null,
+      );
     _sessionUpdatesController = StreamController<Session>.broadcast();
     _sessionRemovalsController = StreamController<String>.broadcast();
     _projectsChangedController = StreamController<void>.broadcast();
@@ -239,8 +268,7 @@ class FakeDaemonClient implements DaemonClient {
     final String trimmed = path.endsWith('/')
         ? path.substring(0, path.length - 1)
         : path;
-    final String fallback =
-        trimmed.substring(trimmed.lastIndexOf('/') + 1);
+    final String fallback = trimmed.substring(trimmed.lastIndexOf('/') + 1);
     final Project project = Project(
       id: 'proj-${_projectCounter++}',
       name: name ?? (fallback.isEmpty ? path : fallback),
@@ -270,7 +298,8 @@ class FakeDaemonClient implements DaemonClient {
     _projects.removeWhere((Project p) => p.id == id);
     final List<String> removed = <String>[
       for (final Session s in _sessions.values.where(
-          (Session s) => s.projectId == id))
+        (Session s) => s.projectId == id,
+      ))
         s.id,
     ];
     for (final String sessionId in removed) {
@@ -289,9 +318,13 @@ class FakeDaemonClient implements DaemonClient {
     bool includeArchived = false,
   }) async {
     _ensureSeeded();
-    return List<Session>.unmodifiable(_sessions.values.where((Session s) =>
-        (projectId == null || s.projectId == projectId) &&
-        (includeArchived || !s.archived)));
+    return List<Session>.unmodifiable(
+      _sessions.values.where(
+        (Session s) =>
+            (projectId == null || s.projectId == projectId) &&
+            (includeArchived || !s.archived),
+      ),
+    );
   }
 
   @override
@@ -323,15 +356,16 @@ class FakeDaemonClient implements DaemonClient {
       // falls back to the omp default (mirrors the agent's best-effort
       // adoption of an unlisted model id). Providers without a model option
       // keep the caller's id as a locally persisted preference.
-      model:
-          models.isEmpty ? model : (models.contains(model) ? model : 'omp-default'),
+      model: models.isEmpty
+          ? model
+          : (models.contains(model) ? model : 'omp-default'),
       models: models,
       // No real git here: a base branch just moves the cwd to a plausible
       // worktree path, mirroring the daemon's layout.
       cwd: baseBranch == null
           ? _project(projectId).path
           : '${_project(projectId).path}/../.speeddial-worktrees/'
-              '${_project(projectId).name.toLowerCase()}-$id',
+                '${_project(projectId).name.toLowerCase()}-$id',
       baseBranch: baseBranch,
       // omp advertises its five thinking levels (current `max`); other
       // providers expose none.
@@ -366,6 +400,97 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<Session> forkSession(String sessionId, int seq) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final Session source = _sessions[sessionId]!;
+    final List<SessionEvent> sourceHistory =
+        _history[sessionId] ?? const <SessionEvent>[];
+    SessionEvent? boundary;
+    for (final SessionEvent event in sourceHistory) {
+      if (event.seq == seq) {
+        boundary = event;
+        break;
+      }
+    }
+    if (boundary is! UserMessageEvent && boundary is! AgentMessageChunkEvent) {
+      throw const DaemonError(
+        -32602,
+        'seq must identify a user or agent message event',
+      );
+    }
+
+    final DateTime now = DateTime.now().toUtc();
+    final String id = 'sess-${_sessionCounter++}';
+    final Session fork = Session(
+      id: id,
+      projectId: source.projectId,
+      providerId: source.providerId,
+      title: 'Fork of ${source.title}',
+      status: SessionStatus.idle,
+      mode: source.mode,
+      model: source.model,
+      models: source.models,
+      cwd: source.cwd,
+      baseBranch: source.baseBranch,
+      thinkingLevel: source.thinkingLevel,
+      thinkingLevels: source.thinkingLevels,
+      yolo: source.yolo,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    final copiedEvents = <SessionEvent>[];
+    final copiedAttachments = <String, AttachmentData>{};
+    var attachmentCounter = 0;
+    for (final SessionEvent event in sourceHistory) {
+      final int? eventSeq = event.seq;
+      if (eventSeq == null || eventSeq > seq) break;
+      final SessionEvent copy;
+      if (event case UserMessageEvent(:final text, :final attachments)) {
+        final metadata = <Attachment>[];
+        for (final Attachment attachment in attachments) {
+          final AttachmentData? data =
+              _attachmentsBySession[sessionId]?[attachment.id];
+          if (data == null) {
+            throw StateError('Missing attachment payload for ${attachment.id}');
+          }
+          final String attachmentId = 'att-${++attachmentCounter}';
+          final cloned = AttachmentData(
+            id: attachmentId,
+            name: data.name,
+            mimeType: data.mimeType,
+            size: data.size,
+            data: data.data,
+          );
+          copiedAttachments[attachmentId] = cloned;
+          metadata.add(cloned);
+        }
+        copy = UserMessageEvent(
+          text: text,
+          attachments: metadata,
+          seq: eventSeq,
+          timestamp: event.timestamp,
+        );
+      } else {
+        copy = SessionEvent.fromJson(event.toJson());
+      }
+      copiedEvents.add(copy);
+    }
+
+    _sessions[id] = fork;
+    _history[id] = copiedEvents;
+    _seqBySession[id] = seq;
+    if (copiedAttachments.isNotEmpty) {
+      _attachmentsBySession[id] = copiedAttachments;
+      _attachmentCounters[id] = attachmentCounter;
+    }
+    _sessionUpdatesController.add(fork);
+    return fork;
+  }
+
+  @override
   Future<void> sendMessage(
     String sessionId,
     String text, {
@@ -380,9 +505,8 @@ class FakeDaemonClient implements DaemonClient {
     // within the session; message events carry only the metadata.
     final List<Attachment> metadata = <Attachment>[];
     if (attachments.isNotEmpty) {
-      final Map<String, AttachmentData> store =
-          _attachmentsBySession.putIfAbsent(
-              sessionId, () => <String, AttachmentData>{});
+      final Map<String, AttachmentData> store = _attachmentsBySession
+          .putIfAbsent(sessionId, () => <String, AttachmentData>{});
       for (final OutgoingAttachment outgoing in attachments) {
         final int n = (_attachmentCounters[sessionId] ?? 0) + 1;
         _attachmentCounters[sessionId] = n;
@@ -395,12 +519,14 @@ class FakeDaemonClient implements DaemonClient {
           data: outgoing.data,
         );
         store[stored.id] = stored;
-        metadata.add(Attachment(
-          id: stored.id,
-          name: stored.name,
-          mimeType: stored.mimeType,
-          size: stored.size,
-        ));
+        metadata.add(
+          Attachment(
+            id: stored.id,
+            name: stored.name,
+            mimeType: stored.mimeType,
+            size: stored.size,
+          ),
+        );
       }
     }
     _runningScripts.add(sessionId);
@@ -447,50 +573,54 @@ class FakeDaemonClient implements DaemonClient {
   @override
   Future<Session> renameSession(String sessionId, String title) async {
     _ensureSeeded();
-    final Session session = _updateSession(sessionId,
-        (Session s) => Session(
-              id: s.id,
-              projectId: s.projectId,
-              providerId: s.providerId,
-              title: title,
-              status: s.status,
-              mode: s.mode,
-              model: s.model,
-              models: s.models,
-              cwd: s.cwd,
-              baseBranch: s.baseBranch,
-              thinkingLevel: s.thinkingLevel,
-              thinkingLevels: s.thinkingLevels,
-              yolo: s.yolo,
-              archived: s.archived,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-            ));
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: title,
+        status: s.status,
+        mode: s.mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        yolo: s.yolo,
+        archived: s.archived,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
     return session;
   }
 
   @override
   Future<Session> archiveSession(String sessionId, bool archived) async {
     _ensureSeeded();
-    final Session session = _updateSession(sessionId,
-        (Session s) => Session(
-              id: s.id,
-              projectId: s.projectId,
-              providerId: s.providerId,
-              title: s.title,
-              status: s.status,
-              mode: s.mode,
-              model: s.model,
-              models: s.models,
-              cwd: s.cwd,
-              baseBranch: s.baseBranch,
-              thinkingLevel: s.thinkingLevel,
-              thinkingLevels: s.thinkingLevels,
-              yolo: s.yolo,
-              archived: archived,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-            ));
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: s.mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        yolo: s.yolo,
+        archived: archived,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
     return session;
   }
 
@@ -504,25 +634,27 @@ class FakeDaemonClient implements DaemonClient {
   @override
   Future<Session> setMode(String sessionId, SessionMode mode) async {
     _ensureSeeded();
-    final Session session = _updateSession(sessionId,
-        (Session s) => Session(
-              id: s.id,
-              projectId: s.projectId,
-              providerId: s.providerId,
-              title: s.title,
-              status: s.status,
-              mode: mode,
-              model: s.model,
-              models: s.models,
-              cwd: s.cwd,
-              baseBranch: s.baseBranch,
-              thinkingLevel: s.thinkingLevel,
-              thinkingLevels: s.thinkingLevels,
-              yolo: s.yolo,
-              archived: s.archived,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-            ));
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        yolo: s.yolo,
+        archived: s.archived,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
     return session;
   }
 
@@ -532,28 +664,32 @@ class FakeDaemonClient implements DaemonClient {
     _requireSession(sessionId);
     final Session current = _sessions[sessionId]!;
     if (current.models.isNotEmpty && !current.models.contains(model)) {
-      throw DaemonError(-32602,
-          'invalid model: $model; must be one of ${current.models}');
+      throw DaemonError(
+        -32602,
+        'invalid model: $model; must be one of ${current.models}',
+      );
     }
-    final Session session = _updateSession(sessionId,
-        (Session s) => Session(
-              id: s.id,
-              projectId: s.projectId,
-              providerId: s.providerId,
-              title: s.title,
-              status: s.status,
-              mode: s.mode,
-              model: model,
-              models: s.models,
-              cwd: s.cwd,
-              baseBranch: s.baseBranch,
-              thinkingLevel: s.thinkingLevel,
-              thinkingLevels: s.thinkingLevels,
-              yolo: s.yolo,
-              archived: s.archived,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-            ));
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: s.mode,
+        model: model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        yolo: s.yolo,
+        archived: s.archived,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
     return session;
   }
 
@@ -564,28 +700,32 @@ class FakeDaemonClient implements DaemonClient {
     final Session current = _sessions[sessionId]!;
     if (current.thinkingLevels.isEmpty ||
         !current.thinkingLevels.contains(level)) {
-      throw DaemonError(-32602,
-          'invalid thinking level: $level; must be one of ${current.thinkingLevels}');
+      throw DaemonError(
+        -32602,
+        'invalid thinking level: $level; must be one of ${current.thinkingLevels}',
+      );
     }
-    final Session session = _updateSession(sessionId,
-        (Session s) => Session(
-              id: s.id,
-              projectId: s.projectId,
-              providerId: s.providerId,
-              title: s.title,
-              status: s.status,
-              mode: s.mode,
-              model: s.model,
-              models: s.models,
-              cwd: s.cwd,
-              baseBranch: s.baseBranch,
-              thinkingLevel: level,
-              thinkingLevels: s.thinkingLevels,
-              yolo: s.yolo,
-              archived: s.archived,
-              createdAt: s.createdAt,
-              updatedAt: s.updatedAt,
-            ));
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: s.mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: level,
+        thinkingLevels: s.thinkingLevels,
+        yolo: s.yolo,
+        archived: s.archived,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
     return session;
   }
 
@@ -597,8 +737,9 @@ class FakeDaemonClient implements DaemonClient {
   }) async {
     _ensureSeeded();
     _requireSession(sessionId);
-    final List<SessionEvent> all =
-        List<SessionEvent>.of(_history[sessionId] ?? const <SessionEvent>[]);
+    final List<SessionEvent> all = List<SessionEvent>.of(
+      _history[sessionId] ?? const <SessionEvent>[],
+    );
     // Strictly below beforeSeq (mirrors the daemon's listEvents paging).
     final List<SessionEvent> filtered = beforeSeq == null
         ? all
@@ -655,7 +796,10 @@ class FakeDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
-  Future<List<FileEntry>> listFiles(String projectId, [String path = '.']) async {
+  Future<List<FileEntry>> listFiles(
+    String projectId, [
+    String path = '.',
+  ]) async {
     _ensureSeeded();
     _project(projectId);
     final List<FileEntry>? entries = _fileTree[path];
@@ -726,33 +870,44 @@ class FakeDaemonClient implements DaemonClient {
         _gitDiffs[_gitRoot(projectId, sessionId)] ?? const <GitDiff>[];
     if (path == null) return List<GitDiff>.unmodifiable(diffs);
     return List<GitDiff>.unmodifiable(
-        diffs.where((GitDiff d) => d.path == path));
+      diffs.where((GitDiff d) => d.path == path),
+    );
   }
 
   @override
-  Future<List<Branch>> gitBranches(String projectId,
-      {String? sessionId}) async {
+  Future<List<Branch>> gitBranches(
+    String projectId, {
+    String? sessionId,
+  }) async {
     _ensureSeeded();
     return List<Branch>.unmodifiable(
-        _gitBranches[_gitRoot(projectId, sessionId)] ?? const <Branch>[]);
+      _gitBranches[_gitRoot(projectId, sessionId)] ?? const <Branch>[],
+    );
   }
 
   @override
-  Future<void> gitCheckout(String projectId, String branch,
-      {String? sessionId}) async {
+  Future<void> gitCheckout(
+    String projectId,
+    String branch, {
+    String? sessionId,
+  }) async {
     _ensureSeeded();
     final String root = _gitRoot(projectId, sessionId);
     final List<Branch> branches = _gitBranches[root]!;
     if (!branches.any((Branch b) => b.name == branch)) {
       throw DaemonError(kErrGit, 'no such branch: $branch');
     }
-    _gitBranches[root] = List<Branch>.unmodifiable(branches
-        .map((Branch b) => Branch(
+    _gitBranches[root] = List<Branch>.unmodifiable(
+      branches
+          .map(
+            (Branch b) => Branch(
               name: b.name,
               isCurrent: b.name == branch,
               upstream: b.upstream,
-            ))
-        .toList());
+            ),
+          )
+          .toList(),
+    );
     final GitStatus status = _gitStatus[root]!;
     _gitStatus[root] = GitStatus(
       branch: branch,
@@ -792,8 +947,10 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<MergeResult> gitMergeToBase(String projectId,
-      {required String sessionId}) async {
+  Future<MergeResult> gitMergeToBase(
+    String projectId, {
+    required String sessionId,
+  }) async {
     _ensureSeeded();
     final String root = _gitRoot(projectId, sessionId);
     final Session session = _sessions[sessionId]!;
@@ -811,8 +968,10 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<RebaseResult> gitRebaseOntoBase(String projectId,
-      {required String sessionId}) async {
+  Future<RebaseResult> gitRebaseOntoBase(
+    String projectId, {
+    required String sessionId,
+  }) async {
     _ensureSeeded();
     final String root = _gitRoot(projectId, sessionId);
     final Session session = _sessions[sessionId]!;
@@ -872,7 +1031,9 @@ class FakeDaemonClient implements DaemonClient {
     _requireSession(sessionId);
     return _eventControllers
         .putIfAbsent(
-            sessionId, () => StreamController<SessionEvent>.broadcast())
+          sessionId,
+          () => StreamController<SessionEvent>.broadcast(),
+        )
         .stream;
   }
 
@@ -967,15 +1128,16 @@ class FakeDaemonClient implements DaemonClient {
 
     await _delay();
     if (_isCancelled(sessionId)) return;
-    _emit(sessionId, ToolCallEvent(toolCall: _toolCall(ToolCallStatus.running)));
+    _emit(
+      sessionId,
+      ToolCallEvent(toolCall: _toolCall(ToolCallStatus.running)),
+    );
 
     await _delay();
     if (_isCancelled(sessionId)) return;
     _emit(
       sessionId,
-      ToolCallEvent(
-        toolCall: _toolCall(ToolCallStatus.completed),
-      ),
+      ToolCallEvent(toolCall: _toolCall(ToolCallStatus.completed)),
     );
 
     await _delay();
@@ -1016,8 +1178,10 @@ class FakeDaemonClient implements DaemonClient {
     await _emitTurnTail(sessionId);
   }
 
-  Future<void> _emitTurnTail(String sessionId,
-      {String stopReason = 'end_turn'}) async {
+  Future<void> _emitTurnTail(
+    String sessionId, {
+    String stopReason = 'end_turn',
+  }) async {
     await _delay();
     if (_disposed || !_sessions.containsKey(sessionId)) return;
     _emit(
@@ -1035,8 +1199,9 @@ class FakeDaemonClient implements DaemonClient {
     if (_disposed || !_sessions.containsKey(sessionId)) return;
     // A pending cancel turns this into the cancelled tail; consume the flag
     // so the racing cancelSession path does not emit a second tail.
-    final String reason =
-        _cancelRequested.remove(sessionId) ? 'cancelled' : stopReason;
+    final String reason = _cancelRequested.remove(sessionId)
+        ? 'cancelled'
+        : stopReason;
     _emit(sessionId, TurnCompleteEvent(stopReason: reason));
     _pendingPermissions.remove(sessionId);
     _runningScripts.remove(sessionId);
@@ -1046,46 +1211,46 @@ class FakeDaemonClient implements DaemonClient {
   bool _isCancelled(String sessionId) => _cancelRequested.contains(sessionId);
 
   ToolCall _toolCall(ToolCallStatus status) => ToolCall(
-        id: 'tc-exec-1',
-        title: 'Run tests',
-        kind: 'execute',
-        status: status,
-        content: status == ToolCallStatus.completed
-            ? const <ToolCallContent>[ToolCallText(text: 'exit 0')]
-            : const <ToolCallContent>[],
-        locations: const <String>[],
-      );
+    id: 'tc-exec-1',
+    title: 'Run tests',
+    kind: 'execute',
+    status: status,
+    content: status == ToolCallStatus.completed
+        ? const <ToolCallContent>[ToolCallText(text: 'exit 0')]
+        : const <ToolCallContent>[],
+    locations: const <String>[],
+  );
 
   List<PlanEntry> _planEntries() => const <PlanEntry>[
-        PlanEntry(
-          content: 'Update the build script',
-          priority: PlanPriority.high,
-          status: PlanEntryStatus.pending,
-        ),
-        PlanEntry(
-          content: 'Run the test suite',
-          priority: PlanPriority.medium,
-          status: PlanEntryStatus.pending,
-        ),
-      ];
+    PlanEntry(
+      content: 'Update the build script',
+      priority: PlanPriority.high,
+      status: PlanEntryStatus.pending,
+    ),
+    PlanEntry(
+      content: 'Run the test suite',
+      priority: PlanPriority.medium,
+      status: PlanEntryStatus.pending,
+    ),
+  ];
 
   PermissionRequest _permissionRequest() => const PermissionRequest(
-        requestId: 'pr-1',
-        toolCallId: 'tc-exec-1',
-        title: 'Allow running `flutter test`?',
-        options: <PermissionOption>[
-          PermissionOption(
-            optionId: 'allow-once',
-            name: 'Allow once',
-            kind: PermissionKind.allowOnce,
-          ),
-          PermissionOption(
-            optionId: 'reject',
-            name: 'Reject',
-            kind: PermissionKind.rejectOnce,
-          ),
-        ],
-      );
+    requestId: 'pr-1',
+    toolCallId: 'tc-exec-1',
+    title: 'Allow running `flutter test`?',
+    options: <PermissionOption>[
+      PermissionOption(
+        optionId: 'allow-once',
+        name: 'Allow once',
+        kind: PermissionKind.allowOnce,
+      ),
+      PermissionOption(
+        optionId: 'reject',
+        name: 'Reject',
+        kind: PermissionKind.rejectOnce,
+      ),
+    ],
+  );
 
   // ---------------------------------------------------------------------
   // Internals
@@ -1128,8 +1293,11 @@ class FakeDaemonClient implements DaemonClient {
   /// whitespace-collapsed, capped at 60 characters; empty when the message
   /// carries no text.
   static String _titleFromMessage(String text) {
-    final String firstLine =
-        text.split('\n').first.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final String firstLine = text
+        .split('\n')
+        .first
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
     return firstLine.length <= 60
         ? firstLine
         : '${firstLine.substring(0, 60)}…';
@@ -1168,8 +1336,9 @@ class FakeDaemonClient implements DaemonClient {
     _pendingPermissions.remove(sessionId);
     _attachmentsBySession.remove(sessionId);
     _attachmentCounters.remove(sessionId);
-    final StreamController<SessionEvent>? controller =
-        _eventControllers.remove(sessionId);
+    final StreamController<SessionEvent>? controller = _eventControllers.remove(
+      sessionId,
+    );
     if (_disposed) return;
     _sessionRemovalsController.add(sessionId);
     if (controller != null && !controller.isClosed) {
@@ -1184,7 +1353,8 @@ class FakeDaemonClient implements DaemonClient {
     final SessionEvent stamped = _withSeq(event, seq, DateTime.now().toUtc());
     // History is the source for backfill and always records, listeners or not.
     _history.putIfAbsent(sessionId, () => <SessionEvent>[]).add(stamped);
-    final StreamController<SessionEvent>? controller = _eventControllers[sessionId];
+    final StreamController<SessionEvent>? controller =
+        _eventControllers[sessionId];
     if (controller != null && !controller.isClosed) {
       controller.add(stamped);
     }
@@ -1193,23 +1363,56 @@ class FakeDaemonClient implements DaemonClient {
   SessionEvent _withSeq(SessionEvent event, int seq, DateTime timestamp) =>
       switch (event) {
         UserMessageEvent e => UserMessageEvent(
-            text: e.text, attachments: e.attachments, seq: seq, timestamp: timestamp),
-        AgentMessageChunkEvent e =>
-          AgentMessageChunkEvent(text: e.text, seq: seq, timestamp: timestamp),
-        AgentThoughtChunkEvent e =>
-          AgentThoughtChunkEvent(text: e.text, seq: seq, timestamp: timestamp),
-        ToolCallEvent e =>
-          ToolCallEvent(toolCall: e.toolCall, seq: seq, timestamp: timestamp),
-        PlanEvent e => PlanEvent(entries: e.entries, seq: seq, timestamp: timestamp),
+          text: e.text,
+          attachments: e.attachments,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        AgentMessageChunkEvent e => AgentMessageChunkEvent(
+          text: e.text,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        AgentThoughtChunkEvent e => AgentThoughtChunkEvent(
+          text: e.text,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        ToolCallEvent e => ToolCallEvent(
+          toolCall: e.toolCall,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        PlanEvent e => PlanEvent(
+          entries: e.entries,
+          seq: seq,
+          timestamp: timestamp,
+        ),
         PermissionRequestEvent e => PermissionRequestEvent(
-            request: e.request, seq: seq, timestamp: timestamp),
+          request: e.request,
+          seq: seq,
+          timestamp: timestamp,
+        ),
         PermissionResolvedEvent e => PermissionResolvedEvent(
-            requestId: e.requestId, optionId: e.optionId, seq: seq, timestamp: timestamp),
-        UsageEvent e =>
-          UsageEvent(usage: e.usage, seq: seq, timestamp: timestamp),
-        TurnCompleteEvent e =>
-          TurnCompleteEvent(stopReason: e.stopReason, seq: seq, timestamp: timestamp),
-        SessionErrorEvent e =>
-          SessionErrorEvent(message: e.message, seq: seq, timestamp: timestamp),
+          requestId: e.requestId,
+          optionId: e.optionId,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        UsageEvent e => UsageEvent(
+          usage: e.usage,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        TurnCompleteEvent e => TurnCompleteEvent(
+          stopReason: e.stopReason,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        SessionErrorEvent e => SessionErrorEvent(
+          message: e.message,
+          seq: seq,
+          timestamp: timestamp,
+        ),
       };
 }

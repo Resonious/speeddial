@@ -108,9 +108,9 @@ void main() {
   /// level' tooltip, scoped by tooltip so it never matches an unrelated
   /// dropdown.
   Finder thinkingDropdown() => find.descendant(
-        of: find.byTooltip('Thinking level'),
-        matching: find.byType(DropdownButton<String>),
-      );
+    of: find.byTooltip('Thinking level'),
+    matching: find.byType(DropdownButton<String>),
+  );
 
   /// The model selector: searchable picker trigger under the 'Model'
   /// tooltip.
@@ -123,7 +123,7 @@ void main() {
     WidgetTester tester, {
     required AttachmentPicker picker,
     Future<void> Function(String text, List<OutgoingAttachment> attachments)?
-        onSend,
+    onSend,
   }) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -136,7 +136,8 @@ void main() {
             status: SessionStatus.idle,
             mode: SessionMode.build,
             attachmentPicker: picker,
-            onSend: onSend ??
+            onSend:
+                onSend ??
                 (String text, List<OutgoingAttachment> attachments) async {},
             onStop: () {},
             onModeChanged: (SessionMode _) {},
@@ -147,59 +148,97 @@ void main() {
   }
 
   testWidgets(
-      'session already selected when the pane first mounts still renders its history',
-      (WidgetTester tester) async {
-    // Seed a completed turn BEFORE the pane ever mounts, then select the
-    // session; the pane must watch it on its initial build (not only on a
-    // later selection change) and backfill the persisted history.
-    SharedPreferences.setMockInitialValues(<String, Object>{});
+    'session already selected when the pane first mounts still renders its history',
+    (WidgetTester tester) async {
+      // Seed a completed turn BEFORE the pane ever mounts, then select the
+      // session; the pane must watch it on its initial build (not only on a
+      // later selection change) and backfill the persisted history.
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final FakeDaemonClient fake = FakeDaemonClient(
+        eventDelay: const Duration(milliseconds: 1),
+      );
+      final AppData app = AppData()..registerClient('fake', fake);
+      await app.sessions.refresh('fake');
+      final Project project = (await fake.listProjects()).first;
+      final Session session = (await fake.listSessions()).first;
+
+      await fake.sendMessage(session.id, 'hello seeded');
+      await tester.pump(const Duration(seconds: 1)); // run the scripted turn
+
+      app.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = project.id
+        ..selectedSessionId = session.id;
+
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        AppScope(
+          data: app,
+          child: MaterialApp(
+            theme: buildSpeedDialTheme(),
+            home: const Scaffold(body: ChatPane()),
+          ),
+        ),
+      );
+      await tester.pump();
+      await pumpUntil(
+        tester,
+        () => find.text('hello seeded').evaluate().isNotEmpty,
+      );
+
+      expect(find.text('hello seeded'), findsOneWidget);
+      expect(
+        find.textContaining('Working on it', findRichText: true),
+        findsOneWidget,
+      );
+      // Drain stream + settle timers so the test ends clean.
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 350));
+    },
+  );
+
+  testWidgets('fork action creates and selects history through that message', (
+    WidgetTester tester,
+  ) async {
     final FakeDaemonClient fake = FakeDaemonClient(
       eventDelay: const Duration(milliseconds: 1),
     );
-    final AppData app = AppData()..registerClient('fake', fake);
-    await app.sessions.refresh('fake');
-    final Project project = (await fake.listProjects()).first;
-    final Session session = (await fake.listSessions()).first;
-
-    await fake.sendMessage(session.id, 'hello seeded');
-    await tester.pump(const Duration(seconds: 1)); // run the scripted turn
-
-    app.selection
-      ..selectedDaemonId = 'fake'
-      ..selectedProjectId = project.id
-      ..selectedSessionId = session.id;
-
-    tester.view.physicalSize = const Size(1200, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      AppScope(
-        data: app,
-        child: MaterialApp(
-          theme: buildSpeedDialTheme(),
-          home: const Scaffold(body: ChatPane()),
-        ),
-      ),
-    );
-    await tester.pump();
+    fake.seedHistory('sess-1', const <SessionEvent>[
+      UserMessageEvent(text: 'Fork boundary'),
+      AgentMessageChunkEvent(text: 'Excluded answer'),
+      TurnCompleteEvent(stopReason: 'end_turn'),
+    ]);
+    final (AppData app, _) = await pumpChat(tester, fake: fake);
     await pumpUntil(
       tester,
-      () => find.text('hello seeded').evaluate().isNotEmpty,
+      () => find.byKey(const ValueKey<String>('fork-message-1')).hasFound,
     );
 
-    expect(find.text('hello seeded'), findsOneWidget);
-    expect(
-      find.textContaining('Working on it', findRichText: true),
-      findsOneWidget,
+    await tester.tap(find.byKey(const ValueKey<String>('fork-message-1')));
+    await pumpUntil(tester, () => app.selection.selectedSessionId != 'sess-1');
+
+    final String forkId = app.selection.selectedSessionId!;
+    final Session? fork = app.sessions.byId(forkId);
+    expect(fork, isNotNull);
+    expect(fork!.title, 'Fork of Build the feature');
+    final List<SessionEvent> history = (await fake.history(forkId)).events;
+    expect(history, hasLength(1));
+    expect((history.single as UserMessageEvent).text, 'Fork boundary');
+    await pumpUntil(
+      tester,
+      () =>
+          find.text('Fork boundary').evaluate().isNotEmpty &&
+          find.text('Excluded answer').evaluate().isEmpty,
     );
-    // Drain stream + settle timers so the test ends clean.
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('Excluded answer'), findsNothing);
   });
 
-  testWidgets('empty state shows the select-session placeholder',
-      (WidgetTester tester) async {
+  testWidgets('empty state shows the select-session placeholder', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester, selectSession: false);
 
     expect(find.text('Select or create a session'), findsOneWidget);
@@ -210,8 +249,7 @@ void main() {
   testWidgets('history in flight shows a loading surface, never an empty '
       'session', (WidgetTester tester) async {
     final _GatedFake gated = _GatedFake();
-    final String sessionId =
-        (await gated.listSessions()).first.id;
+    final String sessionId = (await gated.listSessions()).first.id;
     gated.seedHistory(sessionId, <SessionEvent>[
       UserMessageEvent(text: 'from disk'),
     ]);
@@ -226,20 +264,17 @@ void main() {
 
     gated.blockHistory = false;
     gated.releaseHistory();
-    await pumpUntil(
-      tester,
-      () => find.text('from disk').evaluate().isNotEmpty,
-    );
+    await pumpUntil(tester, () => find.text('from disk').evaluate().isNotEmpty);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('from disk'), findsOneWidget);
     await tester.pumpAndSettle();
   });
 
-  testWidgets('a failed history load offers a retry that recovers',
-      (WidgetTester tester) async {
+  testWidgets('a failed history load offers a retry that recovers', (
+    WidgetTester tester,
+  ) async {
     final _GatedFake gated = _GatedFake();
-    final String sessionId =
-        (await gated.listSessions()).first.id;
+    final String sessionId = (await gated.listSessions()).first.id;
     gated.seedHistory(sessionId, <SessionEvent>[
       UserMessageEvent(text: 'from disk'),
     ]);
@@ -258,17 +293,15 @@ void main() {
     // Daemon back: the retry button refetches and the content arrives.
     gated.failHistory = false;
     await tester.tap(find.byKey(const Key('history-retry')));
-    await pumpUntil(
-      tester,
-      () => find.text('from disk').evaluate().isNotEmpty,
-    );
+    await pumpUntil(tester, () => find.text('from disk').evaluate().isNotEmpty);
     expect(find.text('Could not load history'), findsNothing);
     expect(find.text('from disk'), findsOneWidget);
     await tester.pumpAndSettle();
   });
 
-  testWidgets('streaming fake events render markdown, tool card and plan',
-      (WidgetTester tester) async {
+  testWidgets('streaming fake events render markdown, tool card and plan', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester);
 
     // PROTOCOL.md: events only start flowing after `sessions.send` starts a
@@ -302,8 +335,9 @@ void main() {
     expect(find.textContaining('tokens'), findsOneWidget);
   });
 
-  testWidgets('thinking indicator pulses while streaming, settles muted',
-      (WidgetTester tester) async {
+  testWidgets('thinking indicator pulses while streaming, settles muted', (
+    WidgetTester tester,
+  ) async {
     // Slow script: the thought run stays open long enough to inspect.
     final (AppData app, FakeDaemonClient _) = await pumpChat(
       tester,
@@ -331,7 +365,10 @@ void main() {
     // the icon and the title.
     Icon icon = tester.widget(find.byIcon(Icons.psychology_outlined));
     expect(icon.color, scheme.primary);
-    expect(find.byKey(const ValueKey<String>('thought-pulse')), findsNWidgets(2));
+    expect(
+      find.byKey(const ValueKey<String>('thought-pulse')),
+      findsNWidgets(2),
+    );
     final FadeTransition pulse = tester.widget(
       find.byKey(const ValueKey<String>('thought-pulse')).first,
     );
@@ -362,8 +399,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('timeline text is selectable and copyable',
-      (WidgetTester tester) async {
+  testWidgets('timeline text is selectable and copyable', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester);
 
     await tester.enterText(find.byType(TextField), 'hello');
@@ -411,16 +449,16 @@ void main() {
     );
     expect(writes, hasLength(1));
     final String copied =
-        (writes.single.arguments! as Map<Object?, Object?>)['text']!
-            as String;
+        (writes.single.arguments! as Map<Object?, Object?>)['text']! as String;
     expect(copied, contains('hello'));
     expect(copied, contains('Working on it'));
     expect(copied, contains('void main()'));
     expect(copied, contains('Done.'));
   });
 
-  testWidgets('typing and Enter sends a message; user bubble appears',
-      (WidgetTester tester) async {
+  testWidgets('typing and Enter sends a message; user bubble appears', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester);
 
     await tester.enterText(find.byType(TextField), 'hello world');
@@ -428,15 +466,19 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.text('hello world').evaluate().isNotEmpty);
+    await pumpUntil(
+      tester,
+      () => find.text('hello world').evaluate().isNotEmpty,
+    );
     expect(find.text('hello world'), findsOneWidget);
 
     // Drain stream + settle timers.
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('Shift+Enter inserts a newline instead of sending',
-      (WidgetTester tester) async {
+  testWidgets('Shift+Enter inserts a newline instead of sending', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester);
 
     await tester.enterText(find.byType(TextField), 'line one');
@@ -446,8 +488,7 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await tester.pump();
 
-    final TextField field =
-        tester.widget<TextField>(find.byType(TextField));
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller!.text, 'line one\n');
     // The newline landed in the field; nothing was sent — the exact text
     // appears only in the field itself, not as an extra user bubble.
@@ -456,12 +497,10 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('stop button shows while running and cancels back to idle',
-      (WidgetTester tester) async {
-    await pumpChat(
-      tester,
-      eventDelay: const Duration(milliseconds: 50),
-    );
+  testWidgets('stop button shows while running and cancels back to idle', (
+    WidgetTester tester,
+  ) async {
+    await pumpChat(tester, eventDelay: const Duration(milliseconds: 50));
 
     await tester.enterText(find.byType(TextField), 'run this');
     await tester.pump();
@@ -489,8 +528,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('permission script shows banner; allow resolves the request',
-      (WidgetTester tester) async {
+  testWidgets('permission script shows banner; allow resolves the request', (
+    WidgetTester tester,
+  ) async {
     final (AppData app, _) = await pumpChat(
       tester,
       eventDelay: const Duration(milliseconds: 10),
@@ -501,19 +541,26 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byType(PermissionBanner).evaluate().isNotEmpty);
+    await pumpUntil(
+      tester,
+      () => find.byType(PermissionBanner).evaluate().isNotEmpty,
+    );
     expect(find.byType(PermissionBanner), findsOneWidget);
 
     // Allow options are the banner's FilledButtons (rejects are outlined).
     await tester.tap(find.byType(FilledButton).first, warnIfMissed: false);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byType(PermissionBanner).evaluate().isEmpty);
+    await pumpUntil(
+      tester,
+      () => find.byType(PermissionBanner).evaluate().isEmpty,
+    );
     expect(find.byType(PermissionBanner), findsNothing);
 
     // Turn completed: observed status back to idle (lands at turnComplete,
     // a beat after the banner hides on permissionResolved).
-    final String sessionId = (await app.clientFor('fake').listSessions()).first.id;
+    final String sessionId =
+        (await app.clientFor('fake').listSessions()).first.id;
     await pumpUntil(
       tester,
       () => app.chat.statusOf(sessionId) == SessionStatus.idle,
@@ -523,8 +570,9 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('send failure shows a SnackBar and restores the composer text',
-      (WidgetTester tester) async {
+  testWidgets('send failure shows a SnackBar and restores the composer text', (
+    WidgetTester tester,
+  ) async {
     await pumpChat(tester, fake: _FailingSendFake());
 
     await tester.enterText(find.byType(TextField), 'hello');
@@ -532,10 +580,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(
-      tester,
-      () => find.byType(SnackBar).evaluate().isNotEmpty,
-    );
+    await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
     // DaemonError surfaced as a SnackBar...
     expect(find.text('a turn is already running'), findsOneWidget);
     // ...and the draft was restored into the field.
@@ -557,10 +602,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(
-      tester,
-      () => find.byType(SnackBar).evaluate().isNotEmpty,
-    );
+    await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
     // The drop self-heals (auto-reconnect + resync): transient copy only.
     expect(find.text(kConnectionLostMessage), findsOneWidget);
     expect(find.text('peer closed'), findsNothing);
@@ -579,8 +621,9 @@ void main() {
     'DwAChwGA60e6kgAAAABJRU5ErkJggg==',
   );
 
-  testWidgets('attach button stages chips including an image thumbnail',
-      (WidgetTester tester) async {
+  testWidgets('attach button stages chips including an image thumbnail', (
+    WidgetTester tester,
+  ) async {
     await pumpComposer(
       tester,
       picker: () async => <({String name, Uint8List bytes})>[
@@ -614,8 +657,9 @@ void main() {
     expect(field.controller!.text, isEmpty);
   });
 
-  testWidgets('removing a staged chip drops it and re-disables send',
-      (WidgetTester tester) async {
+  testWidgets('removing a staged chip drops it and re-disables send', (
+    WidgetTester tester,
+  ) async {
     await pumpComposer(
       tester,
       picker: () async => <({String name, Uint8List bytes})>[
@@ -645,8 +689,7 @@ void main() {
     expect(send.onPressed, isNull);
   });
 
-  testWidgets(
-      'send with empty text and an attachment delivers attachments and '
+  testWidgets('send with empty text and an attachment delivers attachments and '
       'clears the chips', (WidgetTester tester) async {
     String? sentText;
     List<OutgoingAttachment>? sentAttachments;
@@ -684,8 +727,9 @@ void main() {
     expect(send.onPressed, isNull);
   });
 
-  testWidgets('a failed send restores both the text and the attachments',
-      (WidgetTester tester) async {
+  testWidgets('a failed send restores both the text and the attachments', (
+    WidgetTester tester,
+  ) async {
     await pumpComposer(
       tester,
       picker: () async => <({String name, Uint8List bytes})>[
@@ -714,8 +758,7 @@ void main() {
     expect(find.byIcon(Icons.send), findsOneWidget);
   });
 
-  testWidgets(
-      'a user message with attachments renders file chips and an image '
+  testWidgets('a user message with attachments renders file chips and an image '
       'thumbnail from readAttachment', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final FakeDaemonClient fake = FakeDaemonClient(
@@ -754,10 +797,7 @@ void main() {
     expect(find.text('2 B'), findsOneWidget);
 
     // Image thumbnail arrives once readAttachment resolves and decodes.
-    await pumpUntil(
-      tester,
-      () => find.byType(Image).evaluate().isNotEmpty,
-    );
+    await pumpUntil(tester, () => find.byType(Image).evaluate().isNotEmpty);
     expect(find.byType(Image), findsOneWidget);
 
     // Drain stream + settle timers so the test ends clean.
@@ -777,15 +817,12 @@ void main() {
     // Open the selector: every advertised level appears, and nothing else.
     await tester.tap(thinkingDropdown());
     await tester.pumpAndSettle();
-    for (final String label in <String>[
-      'Off',
-      'Auto',
-      'Low',
-      'High',
-      'Max',
-    ]) {
-      expect(find.text(label).evaluate(), isNotEmpty,
-          reason: 'expected "$label" in the thinking dropdown');
+    for (final String label in <String>['Off', 'Auto', 'Low', 'High', 'Max']) {
+      expect(
+        find.text(label).evaluate(),
+        isNotEmpty,
+        reason: 'expected "$label" in the thinking dropdown',
+      );
     }
     expect(find.text('Thinking'), findsNothing);
 
@@ -794,8 +831,9 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('selecting a thinking level calls through and updates the UI',
-      (WidgetTester tester) async {
+  testWidgets('selecting a thinking level calls through and updates the UI', (
+    WidgetTester tester,
+  ) async {
     final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
 
     await tester.tap(thinkingDropdown());
@@ -804,11 +842,17 @@ void main() {
     await tester.pumpAndSettle();
 
     // The fake client's session reflects the choice…
-    final Session updated =
-        (await fake.listSessions()).firstWhere((Session s) => s.id == 'sess-1');
+    final Session updated = (await fake.listSessions()).firstWhere(
+      (Session s) => s.id == 'sess-1',
+    );
     expect(updated.thinkingLevel, 'low');
-    expect(updated.thinkingLevels,
-        const <String>['off', 'auto', 'low', 'high', 'max']);
+    expect(updated.thinkingLevels, const <String>[
+      'off',
+      'auto',
+      'low',
+      'high',
+      'max',
+    ]);
 
     // …and the closed dropdown button now shows the new level.
     expect(thinkingDropdown(), findsOneWidget);
@@ -816,8 +860,9 @@ void main() {
     expect(find.text('Max'), findsNothing);
   });
 
-  testWidgets('a session without advertised options renders no selectors',
-      (WidgetTester tester) async {
+  testWidgets('a session without advertised options renders no selectors', (
+    WidgetTester tester,
+  ) async {
     final (AppData app, _) = await pumpChat(tester);
 
     // sess-2 keeps the defaults (no advertised thinking levels or models).
@@ -829,12 +874,16 @@ void main() {
 
     expect(find.byType(DropdownButton<String>), findsNothing);
     expect(find.byTooltip('Model'), findsNothing);
-    expect(find.text('omp-default'), findsNothing,
-        reason: 'no static model text either — model is null');
+    expect(
+      find.text('omp-default'),
+      findsNothing,
+      reason: 'no static model text either — model is null',
+    );
   });
 
-  testWidgets('a session with models lists exactly the advertised ids',
-      (WidgetTester tester) async {
+  testWidgets('a session with models lists exactly the advertised ids', (
+    WidgetTester tester,
+  ) async {
     // Default pumpChat selects sess-1, which advertises three omp models.
     await pumpChat(tester);
 
@@ -846,11 +895,17 @@ void main() {
     await tester.tap(modelPicker());
     await tester.pumpAndSettle();
     for (final String id in <String>['omp-default', 'kimi-k3', 'gpt-5.2']) {
-      expect(find.text(id).evaluate(), isNotEmpty,
-          reason: 'expected "$id" in the model picker');
+      expect(
+        find.text(id).evaluate(),
+        isNotEmpty,
+        reason: 'expected "$id" in the model picker',
+      );
     }
-    expect(find.text('omp-fast'), findsNothing,
-        reason: 'only advertised ids, not the provider\'s full list');
+    expect(
+      find.text('omp-fast'),
+      findsNothing,
+      reason: 'only advertised ids, not the provider\'s full list',
+    );
     expect(find.text('claude-sonnet'), findsNothing);
 
     // Close the picker so the test ends clean.
@@ -858,8 +913,9 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('selecting a model calls through and updates the UI',
-      (WidgetTester tester) async {
+  testWidgets('selecting a model calls through and updates the UI', (
+    WidgetTester tester,
+  ) async {
     final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
 
     await tester.tap(modelPicker());
@@ -868,11 +924,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // The fake client's session reflects the choice…
-    final Session updated =
-        (await fake.listSessions()).firstWhere((Session s) => s.id == 'sess-1');
+    final Session updated = (await fake.listSessions()).firstWhere(
+      (Session s) => s.id == 'sess-1',
+    );
     expect(updated.model, 'kimi-k3');
-    expect(updated.models,
-        const <String>['omp-default', 'kimi-k3', 'gpt-5.2']);
+    expect(updated.models, const <String>['omp-default', 'kimi-k3', 'gpt-5.2']);
 
     // …and the closed picker button now shows the new id.
     expect(modelPicker(), findsOneWidget);
@@ -880,8 +936,9 @@ void main() {
     expect(find.text('omp-default'), findsNothing);
   });
 
-  testWidgets('the picker searches; Enter picks, Escape keeps the current',
-      (WidgetTester tester) async {
+  testWidgets('the picker searches; Enter picks, Escape keeps the current', (
+    WidgetTester tester,
+  ) async {
     final (AppData _, FakeDaemonClient fake) = await pumpChat(tester);
     final Finder queryField = find.byKey(const Key('model-picker-query'));
 
@@ -892,9 +949,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('kimi-k3'), findsOneWidget);
     expect(
-        find.text('omp-default'),
-        findsOneWidget,
-        reason: 'filtered out of the list; only the trigger label remains');
+      find.text('omp-default'),
+      findsOneWidget,
+      reason: 'filtered out of the list; only the trigger label remains',
+    );
     expect(find.text('gpt-5.2'), findsNothing);
 
     // A query with no matches shows the empty state, and Enter is a no-op.
@@ -945,8 +1003,11 @@ class _FailingSendFake extends FakeDaemonClient {
 /// the pane's softened connection-lost notice.
 class _DroppedConnectionFake extends FakeDaemonClient {
   @override
-  Future<void> sendMessage(String sessionId, String text,
-      {List<OutgoingAttachment>? attachments}) async {
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment>? attachments,
+  }) async {
     throw const DaemonConnectionError('peer closed');
   }
 }

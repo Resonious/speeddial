@@ -53,7 +53,10 @@ abstract class DaemonClient {
   // ---------------------------------------------------------------------
 
   /// Sessions, optionally filtered by project / archive state.
-  Future<List<Session>> listSessions({String? projectId, bool includeArchived = false});
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  });
 
   /// Creates a session and returns it; also surfaces on [sessionUpdates].
   /// When [baseBranch] is given the daemon fetches `origin/<baseBranch>` and
@@ -68,6 +71,10 @@ abstract class DaemonClient {
     String? baseBranch,
     bool yolo = false,
   });
+
+  /// Forks [sessionId] into a new session whose history ends at the message
+  /// event identified by [seq].
+  Future<Session> forkSession(String sessionId, int seq);
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].
   ///
@@ -112,7 +119,11 @@ abstract class DaemonClient {
   });
 
   /// Resolves a pending permission request; errors `-32002` if unknown/expired.
-  Future<void> respondPermission(String sessionId, String requestId, String optionId);
+  Future<void> respondPermission(
+    String sessionId,
+    String requestId,
+    String optionId,
+  );
 
   // ---------------------------------------------------------------------
   // Files
@@ -122,7 +133,11 @@ abstract class DaemonClient {
   Future<List<FileEntry>> listFiles(String projectId, [String path = '.']);
 
   /// Reads a file, optionally capping the returned bytes.
-  Future<FileReadResult> readFile(String projectId, String path, {int? maxBytes});
+  Future<FileReadResult> readFile(
+    String projectId,
+    String path, {
+    int? maxBytes,
+  });
 
   // ---------------------------------------------------------------------
   // Git
@@ -132,27 +147,49 @@ abstract class DaemonClient {
   // runs the operation in that session's cwd (its worktree) instead of the
   // project path. The session must belong to the project.
   Future<GitStatus> gitStatus(String projectId, {String? sessionId});
-  Future<List<GitDiff>> gitDiff(String projectId,
-      {String? sessionId, String? path, bool staged = false});
+  Future<List<GitDiff>> gitDiff(
+    String projectId, {
+    String? sessionId,
+    String? path,
+    bool staged = false,
+  });
   Future<List<Branch>> gitBranches(String projectId, {String? sessionId});
-  Future<void> gitCheckout(String projectId, String branch, {String? sessionId});
-  Future<String> gitCommit(String projectId, String message,
-      {String? sessionId, bool stageAll = false});
+  Future<void> gitCheckout(
+    String projectId,
+    String branch, {
+    String? sessionId,
+  });
+  Future<String> gitCommit(
+    String projectId,
+    String message, {
+    String? sessionId,
+    bool stageAll = false,
+  });
   Future<void> gitPush(String projectId, {String? sessionId});
 
   /// Merges the session's worktree branch back into the base branch it was
   /// created from; fast-forwards the local base to origin first when the
   /// remote moved ahead.
-  Future<MergeResult> gitMergeToBase(String projectId,
-      {required String sessionId});
+  Future<MergeResult> gitMergeToBase(
+    String projectId, {
+    required String sessionId,
+  });
 
   /// Rebases the session's worktree branch onto the base branch it was
   /// created from; fast-forwards the local base to origin first when the
   /// remote moved ahead.
-  Future<RebaseResult> gitRebaseOntoBase(String projectId,
-      {required String sessionId});
-  Future<String> gitCreatePr(String projectId,
-      {String? sessionId, String? title, String? body, String? base, bool draft = false});
+  Future<RebaseResult> gitRebaseOntoBase(
+    String projectId, {
+    required String sessionId,
+  });
+  Future<String> gitCreatePr(
+    String projectId, {
+    String? sessionId,
+    String? title,
+    String? body,
+    String? base,
+    bool draft = false,
+  });
 
   /// Per-session git summaries (dirty / ahead-of-base / merged-into-base)
   /// for every non-archived session of [projectId] — the left-rail badges.

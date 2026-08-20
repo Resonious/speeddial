@@ -216,6 +216,16 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
     local label as before.
   — without `title`, the session starts as `New session`; the first user message sent to it
     replaces that placeholder (see `sessions.send`).
+- `sessions.fork {sessionId: string, seq: int}` → `{session: Session}` — creates a new idle
+  session containing the source session's persisted history through `seq`. `seq` must identify a
+  `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
+  side of any visible exchange. The fork inherits the source provider, project, cwd/worktree,
+  base branch, mode, model, thinking level, and yolo setting; it is titled `Fork of <source title>`.
+  Attachment payloads referenced by copied user messages are cloned into the new session.
+  The daemon starts a fresh provider session and supplies the copied user/agent conversation as
+  inherited context with the fork's first new turn. This provider-independent handoff makes
+  arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
+  The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
   attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon

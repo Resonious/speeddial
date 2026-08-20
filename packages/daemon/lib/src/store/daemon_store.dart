@@ -12,9 +12,11 @@
 ///                      status, mode, model NULL, models TEXT JSON-array
 ///                      (default '[]'), cwd, base_branch NULL,
 ///                      acp_session_id NULL (provider-side id for resume),
-///                      thinking_level NULL, thinking_levels TEXT JSON-array
-///                      (default '[]'), yolo INT (auto-approve permissions),
-///                      archived INT, created_at, updated_at
+///                      fork_context_seq NULL (copied history to inject into
+///                      the fork's first provider turn), thinking_level NULL,
+///                      thinking_levels TEXT JSON-array (default '[]'),
+///                      yolo INT (auto-approve permissions), archived INT,
+///                      created_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
@@ -64,15 +66,14 @@ class DaemonStore {
         models TEXT NOT NULL DEFAULT '[]',
         cwd TEXT NOT NULL,
         base_branch TEXT,
+        fork_context_seq INTEGER,
         archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     ''');
-    // Pre-merge-back databases have no base_branch column; pre-resume
-    // databases have no acp_session_id column; pre-yolo databases have no
-    // yolo column; pre-thinking-level databases have no thinking columns;
-    // pre-config-option databases have no models column.
+    // Older databases may lack columns introduced after their initial
+    // release. Add each one in place without rewriting existing rows.
     final sessionColumns = _db
         .select('PRAGMA table_info(sessions)')
         .map((row) => row['name'] as String)
@@ -101,6 +102,9 @@ class DaemonStore {
       _db.execute(
         'ALTER TABLE sessions ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0',
       );
+    }
+    if (!sessionColumns.contains('fork_context_seq')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN fork_context_seq INTEGER');
     }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
@@ -175,10 +179,10 @@ class DaemonStore {
 
   /// Bumps a project's `last_active_at` to now.
   void touchProject(String id) {
-    _db.execute(
-      'UPDATE projects SET last_active_at = ? WHERE id = ?',
-      [_ts(DateTime.now()), id],
-    );
+    _db.execute('UPDATE projects SET last_active_at = ? WHERE id = ?', [
+      _ts(DateTime.now()),
+      id,
+    ]);
   }
 
   /// Removes [id] and archives all of its sessions (the filesystem is never
@@ -193,7 +197,9 @@ class DaemonStore {
     _db.execute('PRAGMA foreign_keys = OFF;');
     try {
       _db.execute('BEGIN;');
-      _db.execute('UPDATE sessions SET archived = 1 WHERE project_id = ?', [id]);
+      _db.execute('UPDATE sessions SET archived = 1 WHERE project_id = ?', [
+        id,
+      ]);
       _db.execute('DELETE FROM projects WHERE id = ?', [id]);
       _db.execute('COMMIT;');
     } on Object {
@@ -316,10 +322,10 @@ class DaemonStore {
   /// session can be resumed (ACP `session/load`) after a daemon restart.
   /// Throws `DaemonError(kErrNotFound)` for an unknown id.
   void setAcpSessionId(String sessionId, String acpSessionId) {
-    _db.execute(
-      'UPDATE sessions SET acp_session_id = ? WHERE id = ?',
-      [acpSessionId, sessionId],
-    );
+    _db.execute('UPDATE sessions SET acp_session_id = ? WHERE id = ?', [
+      acpSessionId,
+      sessionId,
+    ]);
     if (_db.updatedRows == 0) {
       throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
     }
@@ -334,6 +340,29 @@ class DaemonStore {
     );
     if (rows.isEmpty) return null;
     return rows.first['acp_session_id'] as String?;
+  }
+
+  /// The copied-history boundary that must be supplied as inherited context
+  /// with this session's first new provider turn. Null for ordinary sessions
+  /// and forks whose handoff has completed.
+  int? forkContextSeqOf(String sessionId) {
+    final rows = _db.select(
+      'SELECT fork_context_seq FROM sessions WHERE id = ?',
+      [sessionId],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['fork_context_seq'] as int?;
+  }
+
+  /// Sets or clears the pending fork-context boundary for [sessionId].
+  void setForkContextSeq(String sessionId, int? seq) {
+    _db.execute('UPDATE sessions SET fork_context_seq = ? WHERE id = ?', [
+      seq,
+      sessionId,
+    ]);
+    if (_db.updatedRows == 0) {
+      throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -365,6 +394,35 @@ class DaemonStore {
     return SessionEvent.fromJson(json);
   }
 
+  /// The event at exactly [seq], or null when that sequence is absent.
+  SessionEvent? eventAt(String sessionId, int seq) {
+    final rows = _db.select(
+      'SELECT json FROM session_events WHERE session_id = ? AND seq = ?',
+      [sessionId, seq],
+    );
+    if (rows.isEmpty) return null;
+    return SessionEvent.fromJson(
+      jsonDecode(rows.first['json'] as String) as Map<String, Object?>,
+    );
+  }
+
+  /// Every event from the start of [sessionId] through [throughSeq],
+  /// inclusive and ordered ascending. Used only when materializing a fork.
+  List<SessionEvent> eventsThrough(String sessionId, int throughSeq) {
+    final rows = _db.select(
+      'SELECT json FROM session_events '
+      'WHERE session_id = ? AND seq <= ? ORDER BY seq ASC',
+      [sessionId, throughSeq],
+    );
+    return rows
+        .map(
+          (row) => SessionEvent.fromJson(
+            jsonDecode(row['json'] as String) as Map<String, Object?>,
+          ),
+        )
+        .toList(growable: false);
+  }
+
   /// Events of [sessionId] in ascending `seq` order.
   ///
   /// Without [beforeSeq] this returns the newest page; with it, the page of
@@ -385,9 +443,11 @@ class DaemonStore {
     final hasMore = rows.length > limit;
     final kept = hasMore ? rows.sublist(0, limit) : rows;
     final events = kept.reversed
-        .map((row) => SessionEvent.fromJson(
-              jsonDecode(row['json'] as String) as Map<String, Object?>,
-            ))
+        .map(
+          (row) => SessionEvent.fromJson(
+            jsonDecode(row['json'] as String) as Map<String, Object?>,
+          ),
+        )
         .toList(growable: false);
     return (events: events, hasMore: hasMore);
   }
@@ -441,31 +501,31 @@ class DaemonStore {
   // -------------------------------------------------------------------------
 
   Project _projectFromRow(Row row) => Project(
-        id: row['id'] as String,
-        name: row['name'] as String,
-        path: row['path'] as String,
-        addedAt: _fromTs(row['added_at'] as int),
-        lastActiveAt: _fromTs(row['last_active_at'] as int),
-      );
+    id: row['id'] as String,
+    name: row['name'] as String,
+    path: row['path'] as String,
+    addedAt: _fromTs(row['added_at'] as int),
+    lastActiveAt: _fromTs(row['last_active_at'] as int),
+  );
 
   Session _sessionFromRow(Row row) => Session(
-        id: row['id'] as String,
-        projectId: row['project_id'] as String,
-        providerId: row['provider_id'] as String,
-        title: row['title'] as String,
-        status: SessionStatus.parse(row['status'] as String),
-        mode: SessionMode.parse(row['mode'] as String),
-        model: row['model'] as String?,
-        models: _models(row['models'] as String?),
-        cwd: row['cwd'] as String,
-        baseBranch: row['base_branch'] as String?,
-        thinkingLevel: row['thinking_level'] as String?,
-        thinkingLevels: _thinkingLevels(row['thinking_levels'] as String?),
-        yolo: (row['yolo'] as int? ?? 0) != 0,
-        archived: (row['archived'] as int) != 0,
-        createdAt: _fromTs(row['created_at'] as int),
-        updatedAt: _fromTs(row['updated_at'] as int),
-      );
+    id: row['id'] as String,
+    projectId: row['project_id'] as String,
+    providerId: row['provider_id'] as String,
+    title: row['title'] as String,
+    status: SessionStatus.parse(row['status'] as String),
+    mode: SessionMode.parse(row['mode'] as String),
+    model: row['model'] as String?,
+    models: _models(row['models'] as String?),
+    cwd: row['cwd'] as String,
+    baseBranch: row['base_branch'] as String?,
+    thinkingLevel: row['thinking_level'] as String?,
+    thinkingLevels: _thinkingLevels(row['thinking_levels'] as String?),
+    yolo: (row['yolo'] as int? ?? 0) != 0,
+    archived: (row['archived'] as int) != 0,
+    createdAt: _fromTs(row['created_at'] as int),
+    updatedAt: _fromTs(row['updated_at'] as int),
+  );
 
   /// Decodes a stored `models` JSON-array string; anything malformed
   /// degrades to an empty list.

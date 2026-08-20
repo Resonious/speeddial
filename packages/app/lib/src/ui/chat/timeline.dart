@@ -16,6 +16,7 @@ class UserMessageItem extends TimelineItem {
   const UserMessageItem({
     required this.text,
     this.attachments = const <Attachment>[],
+    this.forkSeq,
   });
 
   final String text;
@@ -23,12 +24,18 @@ class UserMessageItem extends TimelineItem {
   /// Files attached to the message (metadata; payloads are fetched lazily
   /// through the timeline's `attachmentLoader`).
   final List<Attachment> attachments;
+
+  /// Sequence of this message event; null for unpersisted/test-only items.
+  final int? forkSeq;
 }
 
 /// A merged run of consecutive agent message chunks.
 class AgentMessageItem extends TimelineItem {
-  const AgentMessageItem({required this.text});
+  const AgentMessageItem({required this.text, this.forkSeq});
   final String text;
+
+  /// Last chunk sequence in this rendered agent message.
+  final int? forkSeq;
 }
 
 /// A merged run of consecutive agent thought chunks.
@@ -99,11 +106,15 @@ List<TimelineItem> deriveTimelineItems(
   final Map<String, int> toolIndexes = <String, int>{};
   final StringBuffer message = StringBuffer();
   final StringBuffer thought = StringBuffer();
+  int? messageForkSeq;
 
   void flushMessage() {
     if (message.isEmpty) return;
-    items.add(AgentMessageItem(text: message.toString()));
+    items.add(
+      AgentMessageItem(text: message.toString(), forkSeq: messageForkSeq),
+    );
     message.clear();
+    messageForkSeq = null;
   }
 
   void flushThought({bool active = false}) {
@@ -118,10 +129,15 @@ List<TimelineItem> deriveTimelineItems(
         flushMessage();
         flushThought();
         items.add(
-          UserMessageItem(text: e.text, attachments: e.attachments),
+          UserMessageItem(
+            text: e.text,
+            attachments: e.attachments,
+            forkSeq: e.seq,
+          ),
         );
       case AgentMessageChunkEvent e:
         message.write(e.text);
+        messageForkSeq = e.seq;
       case AgentThoughtChunkEvent e:
         thought.write(e.text);
       case ToolCallEvent e:
@@ -163,9 +179,8 @@ List<TimelineItem> deriveTimelineItems(
   }
   flushMessage();
   flushThought(
-    active: running &&
-        events.isNotEmpty &&
-        events.last is AgentThoughtChunkEvent,
+    active:
+        running && events.isNotEmpty && events.last is AgentThoughtChunkEvent,
   );
   return items;
 }
@@ -176,7 +191,12 @@ List<TimelineItem> deriveTimelineItems(
 /// cache it per session revision so every chunk notification does not
 /// re-scan the full raw event list.
 class Timeline extends StatelessWidget {
-  const Timeline({super.key, required this.items, this.attachmentLoader});
+  const Timeline({
+    super.key,
+    required this.items,
+    this.attachmentLoader,
+    this.onFork,
+  });
 
   final List<TimelineItem> items;
 
@@ -184,6 +204,9 @@ class Timeline extends StatelessWidget {
   /// null, attachment chips render without loading their bytes (defensive
   /// default for standalone timelines).
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
+
+  /// Forks the selected session through the message event at [seq].
+  final void Function(int seq)? onFork;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +223,7 @@ class Timeline extends StatelessWidget {
         itemBuilder: (BuildContext context, int index) => _TimelineRow(
           item: items[items.length - 1 - index],
           attachmentLoader: attachmentLoader,
+          onFork: onFork,
         ),
       ),
     );
@@ -207,22 +231,33 @@ class Timeline extends StatelessWidget {
 }
 
 class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.item, this.attachmentLoader});
+  const _TimelineRow({required this.item, this.attachmentLoader, this.onFork});
 
   final TimelineItem item;
 
   /// See [Timeline.attachmentLoader].
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
+  final void Function(int seq)? onFork;
 
   @override
   Widget build(BuildContext context) {
     return switch (item) {
-      UserMessageItem i => UserMessageBubble(
+      UserMessageItem i => _ForkableMessage(
+        isUser: true,
+        seq: i.forkSeq,
+        onFork: onFork,
+        child: UserMessageBubble(
           text: i.text,
           attachments: i.attachments,
           attachmentLoader: attachmentLoader,
         ),
-      AgentMessageItem i => AgentMessageView(text: i.text),
+      ),
+      AgentMessageItem i => _ForkableMessage(
+        isUser: false,
+        seq: i.forkSeq,
+        onFork: onFork,
+        child: AgentMessageView(text: i.text),
+      ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
@@ -231,6 +266,43 @@ class _TimelineRow extends StatelessWidget {
       TurnCompleteItem _ => _TurnDivider(),
       SessionErrorItem i => _ErrorBanner(message: i.message),
     };
+  }
+}
+
+/// Adds one compact fork action to a user/agent message without changing the
+/// bubble widgets or making non-message timeline rows forkable.
+class _ForkableMessage extends StatelessWidget {
+  const _ForkableMessage({
+    required this.child,
+    required this.isUser,
+    required this.seq,
+    required this.onFork,
+  });
+
+  final Widget child;
+  final bool isUser;
+  final int? seq;
+  final void Function(int seq)? onFork;
+
+  @override
+  Widget build(BuildContext context) {
+    final int? messageSeq = seq;
+    final void Function(int seq)? callback = onFork;
+    if (messageSeq == null || callback == null) return child;
+    final Widget button = IconButton(
+      key: ValueKey<String>('fork-message-$messageSeq'),
+      tooltip: 'Fork from this message',
+      visualDensity: VisualDensity.compact,
+      iconSize: 18,
+      onPressed: () => callback(messageSeq),
+      icon: const Icon(Icons.fork_right),
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: isUser
+          ? <Widget>[Expanded(child: child), button]
+          : <Widget>[button, Expanded(child: child)],
+    );
   }
 }
 
@@ -246,8 +318,9 @@ class _InlinePermissionRecord extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Text(
         'Permission requested: ${request.title}',
-        style: theme.textTheme.bodySmall
-            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -265,8 +338,9 @@ class _ResolvedRecord extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Text(
         'Chose $optionId',
-        style: theme.textTheme.bodySmall
-            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -306,9 +380,7 @@ class _ErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
+              style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: colors.error),
             ),
           ),

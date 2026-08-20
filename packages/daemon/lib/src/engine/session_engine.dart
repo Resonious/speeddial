@@ -97,15 +97,21 @@ class _PreparedAttachment {
   final List<int> bytes;
 }
 
+/// Provider prompt context prepared from the copied history of a fork.
+typedef _ForkContext = ({
+  String transcript,
+  List<_PreparedAttachment> attachments,
+});
+
 /// Orchestrates ACP agent processes and the project session lifecycle.
 class SessionEngine {
   SessionEngine({
     required DaemonStore store,
     required ProviderRegistry providers,
     GitService? git,
-  })  : _store = store, // ignore: prefer_initializing_formals — public API name
-        _providers = providers, // ignore: prefer_initializing_formals — public API name
-        _git = git; // ignore: prefer_initializing_formals — public API name
+  }) : _store = store, // ignore: prefer_initializing_formals
+       _providers = providers, // ignore: prefer_initializing_formals
+       _git = git; // ignore: prefer_initializing_formals
 
   final DaemonStore _store;
   final ProviderRegistry _providers;
@@ -128,7 +134,7 @@ class SessionEngine {
   // after the emitting method (which does real I/O: spawning an agent, awaiting
   // the turn, disposing the process) completes, so listeners see it too late.
   final StreamController<({String sessionId, int seq, SessionEvent event})>
-      _eventsController = StreamController.broadcast(sync: true);
+  _eventsController = StreamController.broadcast(sync: true);
   final StreamController<Session> _sessionChangesController =
       StreamController.broadcast(sync: true);
   final StreamController<String> _sessionRemovalsController =
@@ -168,8 +174,7 @@ class SessionEngine {
         ),
       );
       if (!_eventsController.isClosed) {
-        _eventsController
-            .add((sessionId: session.id, seq: seq, event: event));
+        _eventsController.add((sessionId: session.id, seq: seq, event: event));
       }
       if (!_sessionChangesController.isClosed) {
         _sessionChangesController.add(updated);
@@ -202,7 +207,10 @@ class SessionEngine {
   }) async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
-      throw DaemonError(kErrProviderUnavailable, 'Unknown provider: $providerId');
+      throw DaemonError(
+        kErrProviderUnavailable,
+        'Unknown provider: $providerId',
+      );
     }
     if (!_providers.isAvailable(providerId)) {
       throw DaemonError(
@@ -250,8 +258,10 @@ class SessionEngine {
       if (git == null) {
         throw DaemonError(kErrGit, 'worktree sessions are not supported');
       }
-      final String baseRef =
-          await git.worktreeBaseRef(project.path, baseBranch);
+      final String baseRef = await git.worktreeBaseRef(
+        project.path,
+        baseBranch,
+      );
       worktreePath = p.join(
         p.dirname(project.path),
         '.speeddial-worktrees',
@@ -283,6 +293,111 @@ class SessionEngine {
       createdAt: now,
       updatedAt: now,
     );
+    return _createPreparedSession(
+      baseSession,
+      requestedModel: model,
+      rollbackProjectPath: project.path,
+      rollbackWorktreePath: worktreePath,
+    );
+  }
+
+  /// Creates a fresh provider session whose visible history is copied from
+  /// [sourceSessionId] through the user/agent message event [throughSeq].
+  ///
+  /// The provider itself starts empty. The copied conversation is retained as
+  /// a pending inherited context and injected with the fork's first new turn,
+  /// which makes arbitrary-message forks independent of ACP `session/fork`.
+  Future<Session> forkSession({
+    required String sourceSessionId,
+    required int throughSeq,
+  }) async {
+    final Session? source = _store.getSession(sourceSessionId);
+    if (source == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sourceSessionId');
+    }
+    final SessionEvent? boundary = _store.eventAt(sourceSessionId, throughSeq);
+    if (boundary is! UserMessageEvent && boundary is! AgentMessageChunkEvent) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'seq must identify a user or agent message event',
+      );
+    }
+    final ProviderSpec? spec = _providers.byId(source.providerId);
+    if (spec == null || !_providers.isAvailable(source.providerId)) {
+      throw DaemonError(
+        kErrProviderUnavailable,
+        'Provider "${source.providerId}" is not available on this host',
+      );
+    }
+    if (_store.getProject(source.projectId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown project: ${source.projectId}');
+    }
+
+    final now = DateTime.now().toUtc();
+    final baseSession = Session(
+      id: _uuid.v4(),
+      projectId: source.projectId,
+      providerId: source.providerId,
+      title: 'Fork of ${source.title}',
+      status: SessionStatus.idle,
+      mode: source.mode,
+      model: source.model,
+      cwd: source.cwd,
+      baseBranch: source.baseBranch,
+      yolo: source.yolo,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final Session created = await _createPreparedSession(
+      baseSession,
+      requestedModel: source.model,
+    );
+    try {
+      _copyForkHistory(source.id, created.id, throughSeq);
+      _store.setForkContextSeq(created.id, throughSeq);
+
+      // session/new starts in provider defaults. Preserve the source mode and
+      // thinking selection when the new agent accepts them; these settings
+      // are advisory for the same reason as resume-time reapplication.
+      if (source.mode != SessionMode.build) {
+        try {
+          await setMode(created.id, source.mode);
+        } on Object {
+          // The persisted mode already matches the source.
+        }
+      }
+      final String? thinkingLevel = source.thinkingLevel;
+      if (thinkingLevel != null &&
+          created.thinkingLevels.contains(thinkingLevel)) {
+        try {
+          await setThinkingLevel(created.id, thinkingLevel);
+        } on Object {
+          // Keep the provider-reported default when it rejects the source.
+        }
+      }
+      return _store.getSession(created.id)!;
+    } on Object {
+      // The fork was never announced as created. Tear it down without
+      // publishing a removal notification for an id clients never observed.
+      final _LiveSession? live = _live.remove(created.id);
+      if (live != null) {
+        live.closed = true;
+        await live.client.dispose();
+      }
+      _store.deleteSession(created.id);
+      rethrow;
+    }
+  }
+
+  /// Starts the ACP side of an already validated protocol session, adopts its
+  /// config options, persists both ids, and publishes the created session.
+  Future<Session> _createPreparedSession(
+    Session baseSession, {
+    String? requestedModel,
+    String? rollbackProjectPath,
+    String? rollbackWorktreePath,
+  }) async {
     final client = _spawnAgent(baseSession);
     final String acpSessionId;
     final Session session;
@@ -293,21 +408,17 @@ class SessionEngine {
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
-      final created = await client.newSession(cwd: workingDir);
+      final created = await client.newSession(cwd: baseSession.cwd);
       acpSessionId = created.sessionId;
       modelOption = _modelOptionOf(created.configOptions);
       thinking = _thinkingOptionOf(created.configOptions);
-      // An explicitly requested model is applied best-effort — the agent
-      // may reject a fuzzy id, which must never fail creation; the
-      // response is then the authoritative snapshot for all config-backed
-      // fields.
       var adoptedOptions = created.configOptions;
-      if (modelOption != null && model != null) {
+      if (modelOption != null && requestedModel != null) {
         try {
           adoptedOptions = await client.setConfigOption(
             acpSessionId,
             modelOption.configId,
-            model,
+            requestedModel,
           );
         } on Object {
           // Fall through to the pre-call reported state.
@@ -315,10 +426,8 @@ class SessionEngine {
       }
       var snapshot = _configSnapshotOf(adoptedOptions);
       if (modelOption == null) {
-        // No model option advertised: keep the legacy behavior — the
-        // requested model stays a plain local label and models stay empty.
         snapshot = (
-          model: model,
+          model: requestedModel,
           models: const <String>[],
           thinkingLevel: snapshot.thinkingLevel,
           thinkingLevels: snapshot.thinkingLevels,
@@ -326,23 +435,20 @@ class SessionEngine {
       }
       session = _withConfigOptions(baseSession, snapshot);
     } on Object catch (error) {
-      // Never leak a half-initialized agent process or its worktree.
       await client.dispose();
-      if (worktreePath != null) {
+      if (rollbackWorktreePath != null && rollbackProjectPath != null) {
         try {
-          await _git!.removeWorktree(project.path, worktreePath);
+          await _git!.removeWorktree(rollbackProjectPath, rollbackWorktreePath);
         } on Object {
           // Rollback is best-effort; the spawn error is the real failure.
         }
       }
       throw DaemonError(
         kErrAgentProcess,
-        'Failed to start provider "$providerId": $error',
+        'Failed to start provider "${baseSession.providerId}": $error',
       );
     }
     _store.insertSession(session);
-    // Persisted so [sendMessage] can resume the agent (ACP `session/load`)
-    // after a daemon restart.
     _store.setAcpSessionId(session.id, acpSessionId);
     _live[session.id] = _LiveSession(
       session: session,
@@ -355,6 +461,50 @@ class SessionEngine {
       _sessionChangesController.add(session);
     }
     return session;
+  }
+
+  /// Copies visible history and attachment payloads into a fork. Event
+  /// sequence numbers remain identical through the boundary, so the copied
+  /// transcript is immediately page-compatible with the source.
+  void _copyForkHistory(
+    String sourceSessionId,
+    String targetSessionId,
+    int throughSeq,
+  ) {
+    for (final SessionEvent event in _store.eventsThrough(
+      sourceSessionId,
+      throughSeq,
+    )) {
+      final SessionEvent copy;
+      if (event case UserMessageEvent(:final text, :final attachments)) {
+        final copiedAttachments = <Attachment>[];
+        for (final Attachment attachment in attachments) {
+          final AttachmentData? data = _store.getAttachment(
+            sourceSessionId,
+            attachment.id,
+          );
+          if (data == null) {
+            throw StateError('Missing attachment payload for ${attachment.id}');
+          }
+          final copied = AttachmentData(
+            id: _uuid.v4(),
+            name: data.name,
+            mimeType: data.mimeType,
+            size: data.size,
+            data: data.data,
+          );
+          _store.insertAttachment(targetSessionId, copied);
+          copiedAttachments.add(copied);
+        }
+        copy = UserMessageEvent(text: text, attachments: copiedAttachments);
+      } else {
+        final json = Map<String, Object?>.from(event.toJson())
+          ..remove('seq')
+          ..remove('timestamp');
+        copy = SessionEvent.fromJson(json);
+      }
+      _store.appendEvent(targetSessionId, event.seq!, copy);
+    }
   }
 
   /// Spawns the ACP agent for [session]'s provider in its cwd, wired to this
@@ -374,6 +524,7 @@ class SessionEngine {
           _writeTextFile(session.id, path, content),
     );
   }
+
   /// Starts a turn for [text] with the attached files. When the session's
   /// agent process is gone (daemon restarted), the agent is first respawned
   /// and resumed via ACP `session/load` — see [_resume]. Errors
@@ -410,6 +561,7 @@ class SessionEngine {
         'A turn is already running for session "$sessionId"',
       );
     }
+    final _ForkContext? forkContext = _prepareForkContext(sessionId);
     // Decode and persist each attachment before the turn starts so the
     // metadata rides on the user message event and the payload is fetchable
     // via `attachments.read`. The wire handler has already validated the
@@ -446,14 +598,85 @@ class SessionEngine {
     // turn that dies after it started is the session's problem, not the
     // sender's, and the client already cleared its draft on ack.
     final active = live;
-    active.turn = _driveTurn(active, text, prepared).whenComplete(() {
-      active.turn = null;
-    });
+    active.turn = _driveTurn(active, text, prepared, forkContext).whenComplete(
+      () {
+        active.turn = null;
+      },
+    );
   }
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
   /// [sendMessage] calls from each spawning their own agent process.
   final Map<String, Future<_LiveSession>> _resuming = {};
+
+  /// Materializes a fork's copied user/agent messages as one structured
+  /// context block plus the copied attachment payloads. Ordinary sessions
+  /// and forks that already completed a new turn return null.
+  _ForkContext? _prepareForkContext(String sessionId) {
+    final int? throughSeq = _store.forkContextSeqOf(sessionId);
+    if (throughSeq == null) return null;
+
+    final messages = <Map<String, String>>[];
+    final inheritedAttachments = <_PreparedAttachment>[];
+    final assistant = StringBuffer();
+
+    void flushAssistant() {
+      if (assistant.isEmpty) return;
+      messages.add(<String, String>{
+        'role': 'assistant',
+        'content': assistant.toString(),
+      });
+      assistant.clear();
+    }
+
+    for (final SessionEvent event in _store.eventsThrough(
+      sessionId,
+      throughSeq,
+    )) {
+      switch (event) {
+        case UserMessageEvent e:
+          flushAssistant();
+          final content = StringBuffer(e.text);
+          for (final Attachment attachment in e.attachments) {
+            final AttachmentData? data = _store.getAttachment(
+              sessionId,
+              attachment.id,
+            );
+            if (data == null) {
+              throw StateError(
+                'Missing attachment payload for ${attachment.id}',
+              );
+            }
+            if (content.isNotEmpty) content.writeln();
+            content.write(
+              '[Attachment: ${data.name}; ${data.mimeType}; ${data.size} bytes]',
+            );
+            inheritedAttachments.add(
+              _PreparedAttachment(data: data, bytes: base64Decode(data.data)),
+            );
+          }
+          messages.add(<String, String>{
+            'role': 'user',
+            'content': content.toString(),
+          });
+        case AgentMessageChunkEvent e:
+          assistant.write(e.text);
+        default:
+          // Thoughts, tools, plans, and lifecycle events remain visible in
+          // the copied timeline but are not conversational model messages.
+          break;
+      }
+    }
+    flushAssistant();
+    return (
+      transcript:
+          'This session was forked from an earlier conversation. '
+          'The JSON array below is inherited conversation history, not a new '
+          'user request. Continue from that point and answer only the new user '
+          'content that follows.\n${jsonEncode(messages)}',
+      attachments: inheritedAttachments,
+    );
+  }
 
   /// Respawns the agent for a session whose process is gone and reloads its
   /// ACP session, making persisted sessions usable across daemon restarts.
@@ -503,8 +726,10 @@ class SessionEngine {
           'restart (no ACP session/load support); create a new session',
         );
       }
-      configOptions =
-          await client.loadSession(sessionId: acpSessionId, cwd: session.cwd);
+      configOptions = await client.loadSession(
+        sessionId: acpSessionId,
+        cwd: session.cwd,
+      );
     } on Object catch (error) {
       await client.dispose();
       if (error is DaemonError) rethrow;
@@ -598,10 +823,7 @@ class SessionEngine {
         !_sameStringLists(session.models, reported.models) ||
         session.thinkingLevel != reported.thinkingLevel ||
         !_sameStringLists(session.thinkingLevels, reported.thinkingLevels)) {
-      await _updateSession(
-        sessionId,
-        (s) => _withConfigOptions(s, reported),
-      );
+      await _updateSession(sessionId, (s) => _withConfigOptions(s, reported));
     }
     return live;
   }
@@ -662,7 +884,7 @@ class SessionEngine {
       throw DaemonError(
         _kErrInvalidParams,
         'Unknown model "$model" for provider "${session.providerId}" '
-            '(${models.length} models advertised)',
+        '(${models.length} models advertised)',
       );
     }
     final live = _live[sessionId];
@@ -679,7 +901,8 @@ class SessionEngine {
       // can carry new thinking levels); its report is adopted wholesale.
       return _updateSession(
         sessionId,
-        (current) => _withConfigOptions(current, _configSnapshotOf(configOptions)),
+        (current) =>
+            _withConfigOptions(current, _configSnapshotOf(configOptions)),
       );
     }
     // No live agent (or no model option): a local preference, models
@@ -727,7 +950,8 @@ class SessionEngine {
       // config-backed field; its report is adopted wholesale.
       return _updateSession(
         sessionId,
-        (current) => _withConfigOptions(current, _configSnapshotOf(configOptions)),
+        (current) =>
+            _withConfigOptions(current, _configSnapshotOf(configOptions)),
       );
     }
     // No live agent: persist the requested level locally (levels unchanged);
@@ -812,7 +1036,9 @@ class SessionEngine {
     _toolCalls.clear();
     if (!_eventsController.isClosed) _eventsController.close();
     if (!_sessionChangesController.isClosed) _sessionChangesController.close();
-    if (!_sessionRemovalsController.isClosed) _sessionRemovalsController.close();
+    if (!_sessionRemovalsController.isClosed) {
+      _sessionRemovalsController.close();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -864,6 +1090,7 @@ class SessionEngine {
     _LiveSession live,
     String text,
     List<_PreparedAttachment> attachments,
+    _ForkContext? forkContext,
   ) async {
     final updates = live.client.sessionUpdates(live.acpSessionId);
     final subscription = updates.listen((update) {
@@ -874,8 +1101,11 @@ class SessionEngine {
     try {
       final result = await live.client.prompt(
         live.acpSessionId,
-        _promptBlocks(text, attachments),
+        _promptBlocks(text, attachments, forkContext: forkContext),
       );
+      if (forkContext != null) {
+        _store.setForkContextSeq(live.sessionId, null);
+      }
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
       _setStatus(live, SessionStatus.idle);
     } on Object catch (error) {
@@ -892,42 +1122,54 @@ class SessionEngine {
     }
   }
 
-  /// The ACP prompt content blocks for a turn: an optional leading text block
-  /// (only when [text] is non-empty), then one block per [attachments] — an
-  /// `image` block for images, and an embedded `resource` block for anything
-  /// else (inline `text` for text mime types, base64 `blob` otherwise). The
-  /// resource URI is stable per attachment id so an agent can reference the
-  /// file across requests.
+  /// The ACP prompt content blocks for a turn. A fork's inherited transcript
+  /// and copied attachments lead the first new prompt; the user's current
+  /// text and attachments follow. Attachments become `image` blocks or
+  /// embedded `resource` blocks according to their mime type.
   static List<Map<String, Object?>> _promptBlocks(
     String text,
-    List<_PreparedAttachment> attachments,
-  ) {
+    List<_PreparedAttachment> attachments, {
+    _ForkContext? forkContext,
+  }) {
     final blocks = <Map<String, Object?>>[];
+
+    void appendAttachments(List<_PreparedAttachment> preparedAttachments) {
+      for (final prepared in preparedAttachments) {
+        final data = prepared.data;
+        if (isImageMimeType(data.mimeType)) {
+          blocks.add(<String, Object?>{
+            'type': 'image',
+            'data': data.data,
+            'mimeType': data.mimeType,
+          });
+          continue;
+        }
+        final resource = <String, Object?>{
+          'uri':
+              'speeddial-attachment:///${data.id}/'
+              '${Uri.encodeComponent(data.name)}',
+          'mimeType': data.mimeType,
+        };
+        if (isTextMimeType(data.mimeType)) {
+          resource['text'] = utf8.decode(prepared.bytes);
+        } else {
+          resource['blob'] = data.data;
+        }
+        blocks.add(<String, Object?>{'type': 'resource', 'resource': resource});
+      }
+    }
+
+    if (forkContext != null) {
+      blocks.add(<String, Object?>{
+        'type': 'text',
+        'text': forkContext.transcript,
+      });
+      appendAttachments(forkContext.attachments);
+    }
     if (text.isNotEmpty) {
       blocks.add(<String, Object?>{'type': 'text', 'text': text});
     }
-    for (final prepared in attachments) {
-      final data = prepared.data;
-      if (isImageMimeType(data.mimeType)) {
-        blocks.add(<String, Object?>{
-          'type': 'image',
-          'data': data.data,
-          'mimeType': data.mimeType,
-        });
-        continue;
-      }
-      final resource = <String, Object?>{
-        'uri': 'speeddial-attachment:///${data.id}/'
-            '${Uri.encodeComponent(data.name)}',
-        'mimeType': data.mimeType,
-      };
-      if (isTextMimeType(data.mimeType)) {
-        resource['text'] = utf8.decode(prepared.bytes);
-      } else {
-        resource['blob'] = data.data;
-      }
-      blocks.add(<String, Object?>{'type': 'resource', 'resource': resource});
-    }
+    appendAttachments(attachments);
     return blocks;
   }
 
@@ -963,7 +1205,10 @@ class SessionEngine {
         final prior = _toolCalls[sessionId]?[toolCallId];
         final merged = prior == null
             ? toolCallFromAcpUpdate(
-                toolCallId, toolCallUpdate.fields, cwd: live.cwd)
+                toolCallId,
+                toolCallUpdate.fields,
+                cwd: live.cwd,
+              )
             : mergeToolCallUpdate(prior, toolCallUpdate, cwd: live.cwd);
         _toolCalls[sessionId]?[toolCallId] = merged;
         // The persisted/broadcast snapshot drops raw fields while the call
@@ -1046,7 +1291,10 @@ class SessionEngine {
     );
     _setStatus(live, SessionStatus.waitingPermission);
     final optionId = await completer.future;
-    _emit(live, PermissionResolvedEvent(requestId: requestId, optionId: optionId));
+    _emit(
+      live,
+      PermissionResolvedEvent(requestId: requestId, optionId: optionId),
+    );
     _setStatus(live, SessionStatus.running);
     return optionId;
   }
@@ -1105,8 +1353,11 @@ class SessionEngine {
   /// new-session sheet behavior). Empty when the message carries no text
   /// (e.g. attachments only).
   static String _titleFromMessage(String text) {
-    final String firstLine =
-        text.split('\n').first.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final String firstLine = text
+        .split('\n')
+        .first
+        .trim()
+        .replaceAll(RegExp(r'\s+'), ' ');
     return firstLine.length <= 60
         ? firstLine
         : '${firstLine.substring(0, 60)}…';
@@ -1130,9 +1381,7 @@ class SessionEngine {
     if (candidate == cwdNorm || candidate.startsWith(prefix)) {
       return File(candidate);
     }
-    throw const FormatException(
-      'Path escapes the session working directory',
-    );
+    throw const FormatException('Path escapes the session working directory');
   }
 
   // -------------------------------------------------------------------------
@@ -1195,99 +1444,99 @@ class SessionEngine {
   }
 
   Session _withStatus(Session session, SessionStatus status) => Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: session.title,
-        status: status,
-        mode: session.mode,
-        model: session.model,
-        models: session.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: session.thinkingLevel,
-        thinkingLevels: session.thinkingLevels,
-        yolo: session.yolo,
-        archived: session.archived,
-        createdAt: session.createdAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: status,
+    mode: session.mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    yolo: session.yolo,
+    archived: session.archived,
+    createdAt: session.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withTitle(Session session, String title) => Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: title,
-        status: session.status,
-        mode: session.mode,
-        model: session.model,
-        models: session.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: session.thinkingLevel,
-        thinkingLevels: session.thinkingLevels,
-        yolo: session.yolo,
-        archived: session.archived,
-        createdAt: session.createdAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: title,
+    status: session.status,
+    mode: session.mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    yolo: session.yolo,
+    archived: session.archived,
+    createdAt: session.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withArchived(Session session, bool archived) => Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: session.title,
-        status: session.status,
-        mode: session.mode,
-        model: session.model,
-        models: session.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: session.thinkingLevel,
-        thinkingLevels: session.thinkingLevels,
-        yolo: session.yolo,
-        archived: archived,
-        createdAt: session.createdAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    mode: session.mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    yolo: session.yolo,
+    archived: archived,
+    createdAt: session.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withMode(Session session, SessionMode mode) => Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: session.title,
-        status: session.status,
-        mode: mode,
-        model: session.model,
-        models: session.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: session.thinkingLevel,
-        thinkingLevels: session.thinkingLevels,
-        yolo: session.yolo,
-        archived: session.archived,
-        createdAt: session.createdAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    mode: mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    yolo: session.yolo,
+    archived: session.archived,
+    createdAt: session.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withModel(Session session, String model) => Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: session.title,
-        status: session.status,
-        mode: session.mode,
-        model: model,
-        models: session.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: session.thinkingLevel,
-        thinkingLevels: session.thinkingLevels,
-        yolo: session.yolo,
-        archived: session.archived,
-        createdAt: session.createdAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    mode: session.mode,
+    model: model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    yolo: session.yolo,
+    archived: session.archived,
+    createdAt: session.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withThinking(Session session, String? level, List<String> levels) =>
       Session(
@@ -1339,7 +1588,7 @@ class SessionEngine {
   /// options list count. [current] is the option's currentValue (null when
   /// empty); [levels] are the option values in order.
   static ({String configId, String? current, List<String> levels})?
-      _thinkingOptionOf(List<AcpConfigOption> options) {
+  _thinkingOptionOf(List<AcpConfigOption> options) {
     AcpConfigOption? thinking;
     for (final option in options) {
       if (option.type == 'select' &&
@@ -1374,7 +1623,7 @@ class SessionEngine {
   /// the option's currentValue (null when empty); [levels] are the option
   /// values in order.
   static ({String configId, String? current, List<String> levels})?
-      _modelOptionOf(List<AcpConfigOption> options) {
+  _modelOptionOf(List<AcpConfigOption> options) {
     AcpConfigOption? model;
     for (final option in options) {
       if (option.type == 'select' &&

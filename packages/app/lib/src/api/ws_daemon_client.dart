@@ -54,7 +54,7 @@ class WsDaemonClient implements DaemonClient {
 
   /// Every decoded `session.event` notification, keyed by session id.
   final StreamController<({String sessionId, SessionEvent event})>
-      _sessionEventFeed = StreamController.broadcast();
+  _sessionEventFeed = StreamController.broadcast();
   final StreamController<Session> _sessionUpdatesController =
       StreamController<Session>.broadcast();
 
@@ -107,8 +107,8 @@ class WsDaemonClient implements DaemonClient {
     if (connState.value == DaemonConnectionState.connected) {
       return Future<void>.value();
     }
-    final Future<void> attempt =
-        _establish(initial: true).whenComplete(() => _inFlightConnect = null);
+    final Future<void> attempt = _establish(initial: true)
+        .whenComplete(() => _inFlightConnect = null);
     _inFlightConnect = attempt;
     return attempt;
   }
@@ -129,10 +129,9 @@ class WsDaemonClient implements DaemonClient {
       if (_disposed) return;
       final String? token = this.token;
       if (token != null) {
-        await _peer!.call(
-          'auth.authenticate',
-          <String, Object?>{'token': token},
-        );
+        await _peer!.call('auth.authenticate', <String, Object?>{
+          'token': token,
+        });
       }
       if (_disposed) return;
       connState.value = DaemonConnectionState.connected;
@@ -209,7 +208,11 @@ class WsDaemonClient implements DaemonClient {
   Future<void> _openSocket() async {
     final Uri uri = Uri.parse(url);
     if (uri.scheme != 'ws' && uri.scheme != 'wss') {
-      throw ArgumentError.value(url, 'url', 'WebSocket URL must use ws:// or wss://');
+      throw ArgumentError.value(
+        url,
+        'url',
+        'WebSocket URL must use ws:// or wss://',
+      );
     }
     final WebSocketChannel channel = WebSocketChannel.connect(uri);
     _channel = channel;
@@ -278,9 +281,11 @@ class WsDaemonClient implements DaemonClient {
     if (_disposed) return;
     final int attempt = _reconnectAttempt++;
     var ms = reconnectBase.inMilliseconds;
-    for (var i = 0;
-        i < attempt && ms < _maxReconnectDelay.inMilliseconds;
-        i++) {
+    for (
+      var i = 0;
+      i < attempt && ms < _maxReconnectDelay.inMilliseconds;
+      i++
+    ) {
       ms *= 2;
     }
     if (ms > _maxReconnectDelay.inMilliseconds) {
@@ -357,8 +362,9 @@ class WsDaemonClient implements DaemonClient {
         final Object? session = params['session'];
         if (session is Map) {
           try {
-            _sessionUpdatesController
-                .add(Session.fromJson(Map<String, Object?>.from(session)));
+            _sessionUpdatesController.add(
+              Session.fromJson(Map<String, Object?>.from(session)),
+            );
           } on Object {
             // Malformed session: drop.
           }
@@ -383,12 +389,13 @@ class WsDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
-  Stream<SessionEvent> sessionEvents(String sessionId) =>
-      _sessionEventFeed.stream
-          .where((({String sessionId, SessionEvent event}) entry) =>
-              entry.sessionId == sessionId)
-          .map((({String sessionId, SessionEvent event}) entry) =>
-              entry.event);
+  Stream<SessionEvent> sessionEvents(String sessionId) => _sessionEventFeed
+      .stream
+      .where(
+        (({String sessionId, SessionEvent event}) entry) =>
+            entry.sessionId == sessionId,
+      )
+      .map((({String sessionId, SessionEvent event}) entry) => entry.event);
 
   @override
   Stream<Session> get sessionUpdates => _sessionUpdatesController.stream;
@@ -480,24 +487,31 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<Session> forkSession(String sessionId, int seq) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.fork',
+      <String, Object?>{'sessionId': sessionId, 'seq': seq},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
   Future<void> sendMessage(
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const [],
   }) async {
-    await _requirePeer().call(
-      'sessions.send',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'text': text,
-        // PROTOCOL.md: the wire param is omitted entirely when empty; the
-        // daemon rejects `sessions.send` without text *and* without
-        // attachments, so clients never send a bare attachment list here.
-        if (attachments.isNotEmpty)
-          'attachments':
-              attachments.map((OutgoingAttachment a) => a.toJson()).toList(growable: false),
-      },
-    );
+    await _requirePeer().call('sessions.send', <String, Object?>{
+      'sessionId': sessionId,
+      'text': text,
+      // PROTOCOL.md: the wire param is omitted entirely when empty; the
+      // daemon rejects `sessions.send` without text *and* without
+      // attachments, so clients never send a bare attachment list here.
+      if (attachments.isNotEmpty)
+        'attachments': attachments
+            .map((OutgoingAttachment a) => a.toJson())
+            .toList(growable: false),
+    });
   }
 
   @override
@@ -509,13 +523,16 @@ class WsDaemonClient implements DaemonClient {
       'attachments.read',
       <String, Object?>{'sessionId': sessionId, 'attachmentId': attachmentId},
     );
-    return AttachmentData.fromJson(_resultMap(_resultField(result, 'attachment')));
+    return AttachmentData.fromJson(
+      _resultMap(_resultField(result, 'attachment')),
+    );
   }
 
   @override
   Future<void> cancelSession(String sessionId) async {
-    await _requirePeer()
-        .call('sessions.cancel', <String, Object?>{'sessionId': sessionId});
+    await _requirePeer().call('sessions.cancel', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   @override
@@ -538,10 +555,9 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Future<void> deleteSession(String sessionId) async {
-    await _requirePeer().call(
-      'sessions.delete',
-      <String, Object?>{'sessionId': sessionId},
-    );
+    await _requirePeer().call('sessions.delete', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   @override
@@ -586,7 +602,10 @@ class WsDaemonClient implements DaemonClient {
       },
     );
     return (
-      events: _decodeList(_resultField(result, 'events'), SessionEvent.fromJson),
+      events: _decodeList(
+        _resultField(result, 'events'),
+        SessionEvent.fromJson,
+      ),
       hasMore: _resultField(result, 'hasMore') == true,
     );
   }
@@ -597,14 +616,11 @@ class WsDaemonClient implements DaemonClient {
     String requestId,
     String optionId,
   ) async {
-    await _requirePeer().call(
-      'sessions.respondPermission',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'optionId': optionId,
-      },
-    );
+    await _requirePeer().call('sessions.respondPermission', <String, Object?>{
+      'sessionId': sessionId,
+      'requestId': requestId,
+      'optionId': optionId,
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -612,8 +628,10 @@ class WsDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
-  Future<List<FileEntry>> listFiles(String projectId,
-      [String path = '.']) async {
+  Future<List<FileEntry>> listFiles(
+    String projectId, [
+    String path = '.',
+  ]) async {
     final Object? result = await _requirePeer().call(
       'fs.list',
       <String, Object?>{'projectId': projectId, 'path': path},
@@ -671,8 +689,10 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<List<Branch>> gitBranches(String projectId,
-      {String? sessionId}) async {
+  Future<List<Branch>> gitBranches(
+    String projectId, {
+    String? sessionId,
+  }) async {
     final Object? result = await _requirePeer().call(
       'git.branches',
       <String, Object?>{'projectId': projectId, 'sessionId': ?sessionId},
@@ -681,16 +701,16 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<void> gitCheckout(String projectId, String branch,
-      {String? sessionId}) async {
-    await _requirePeer().call(
-      'git.checkout',
-      <String, Object?>{
-        'projectId': projectId,
-        'sessionId': ?sessionId,
-        'branch': branch,
-      },
-    );
+  Future<void> gitCheckout(
+    String projectId,
+    String branch, {
+    String? sessionId,
+  }) async {
+    await _requirePeer().call('git.checkout', <String, Object?>{
+      'projectId': projectId,
+      'sessionId': ?sessionId,
+      'branch': branch,
+    });
   }
 
   @override
@@ -714,14 +734,17 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Future<void> gitPush(String projectId, {String? sessionId}) async {
-    await _requirePeer().call(
-        'git.push',
-        <String, Object?>{'projectId': projectId, 'sessionId': ?sessionId});
+    await _requirePeer().call('git.push', <String, Object?>{
+      'projectId': projectId,
+      'sessionId': ?sessionId,
+    });
   }
 
   @override
-  Future<MergeResult> gitMergeToBase(String projectId,
-      {required String sessionId}) async {
+  Future<MergeResult> gitMergeToBase(
+    String projectId, {
+    required String sessionId,
+  }) async {
     final Object? result = await _requirePeer().call(
       'git.mergeToBase',
       <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
@@ -730,8 +753,10 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<RebaseResult> gitRebaseOntoBase(String projectId,
-      {required String sessionId}) async {
+  Future<RebaseResult> gitRebaseOntoBase(
+    String projectId, {
+    required String sessionId,
+  }) async {
     final Object? result = await _requirePeer().call(
       'git.rebaseOntoBase',
       <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
@@ -769,7 +794,9 @@ class WsDaemonClient implements DaemonClient {
       <String, Object?>{'projectId': projectId},
     );
     return _decodeList(
-        _resultField(result, 'summaries'), SessionGitSummary.fromJson);
+      _resultField(result, 'summaries'),
+      SessionGitSummary.fromJson,
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -807,8 +834,6 @@ class WsDaemonClient implements DaemonClient {
     if (raw is! List) {
       throw DaemonError(kErrInternal, 'malformed result: expected a list');
     }
-    return <T>[
-      for (final Object? item in raw) fromJson(_resultMap(item)),
-    ];
+    return <T>[for (final Object? item in raw) fromJson(_resultMap(item))];
   }
 }

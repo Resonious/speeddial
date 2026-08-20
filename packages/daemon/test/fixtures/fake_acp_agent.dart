@@ -50,7 +50,13 @@ import 'package:path/path.dart' as p;
 const String sessionId = 's1';
 
 /// The thinking level values the fake advertises, in order.
-const List<String> _thinkingValues = <String>['off', 'auto', 'low', 'high', 'max'];
+const List<String> _thinkingValues = <String>[
+  'off',
+  'auto',
+  'low',
+  'high',
+  'max',
+];
 
 /// The fake's in-memory current thinking level, reported as the thinking
 /// config option's currentValue and updated by `session/set_config_option`.
@@ -77,7 +83,8 @@ int _nextId = 1;
 void main() {
   // The target path travels via the environment: argv is unreliable across
   // Dart VM wrappers (flags like --executable_name can be spliced in).
-  final targetPath = Platform.environment['FAKE_ACP_TARGET'] ??
+  final targetPath =
+      Platform.environment['FAKE_ACP_TARGET'] ??
       '${Directory.current.path}/example.txt';
   unawaited(_serve(targetPath));
 }
@@ -94,11 +101,12 @@ Future<void> _serve(String targetPath) async {
     }
     if (decoded is! Map) continue;
     unawaited(
-      _dispatch(decoded.cast<String, Object?>(), targetPath).catchError(
-        (Object error, StackTrace stack) {
-          stderr.writeln('fake agent error: $error\n$stack');
-        },
-      ),
+      _dispatch(decoded.cast<String, Object?>(), targetPath).catchError((
+        Object error,
+        StackTrace stack,
+      ) {
+        stderr.writeln('fake agent error: $error\n$stack');
+      }),
     );
   }
 }
@@ -114,11 +122,7 @@ Future<void> _send(Object message) {
 }
 
 Future<void> _sendResponse(Object id, Map<String, Object?> result) {
-  return _send(<String, Object?>{
-    'jsonrpc': '2.0',
-    'id': id,
-    'result': result,
-  });
+  return _send(<String, Object?>{'jsonrpc': '2.0', 'id': id, 'result': result});
 }
 
 Future<void> _sendError(Object id, int code, String message) {
@@ -157,20 +161,23 @@ Future<Map<String, Object?>> _request(
 void _resolvePrompt(Object promptId, String stopReason) {
   if (_pendingPrompts[promptId] == true) return;
   _pendingPrompts[promptId] = true;
-  unawaited(_sendResponse(promptId, <String, Object?>{'stopReason': stopReason}));
+  unawaited(
+    _sendResponse(promptId, <String, Object?>{'stopReason': stopReason}),
+  );
 }
 
 String _promptText(Map<String, Object?> params) {
   final blocks = params['prompt'];
+  String text = '';
   if (blocks is List) {
     for (final block in blocks) {
       if (block is Map && block['type'] == 'text') {
-        final text = block['text'];
-        if (text is String) return text;
+        final value = block['text'];
+        if (value is String) text = value;
       }
     }
   }
-  return '';
+  return text;
 }
 
 Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
@@ -190,7 +197,9 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
     } else {
       final result = message['result'];
       completer.complete(
-        result is Map ? result.cast<String, Object?>() : const <String, Object?>{},
+        result is Map
+            ? result.cast<String, Object?>()
+            : const <String, Object?>{},
       );
     }
     return;
@@ -198,16 +207,16 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
 
   switch (method) {
     case 'initialize':
-      _modelEnabled =
-          !File('${Directory.current.path}/agent.no_model').existsSync();
-      _thinkingEnabled =
-          !File('${Directory.current.path}/agent.no_thinking').existsSync();
+      _modelEnabled = !File('${Directory.current.path}/agent.no_model')
+          .existsSync();
+      _thinkingEnabled = !File('${Directory.current.path}/agent.no_thinking')
+          .existsSync();
       await _sendResponse(id!, <String, Object?>{
         'protocolVersion': 1,
         'agentCapabilities': <String, Object?>{
           'loadSession': !File(
-                  '${Directory.current.path}/agent.no_load_session')
-              .existsSync(),
+            '${Directory.current.path}/agent.no_load_session',
+          ).existsSync(),
           'promptCapabilities': <String, Object?>{
             'image': false,
             'audio': false,
@@ -280,7 +289,8 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
             !File(p.join(cwd, '.git')).existsSync()) {
           // Recorded so tests can observe that the agent really applied the
           // value (e.g. a resumption reapplying a persisted choice).
-          File(p.join(cwd, 'agent.thinking')).writeAsStringSync(_thinkingCurrent);
+          File(p.join(cwd, 'agent.thinking'))
+              .writeAsStringSync(_thinkingCurrent);
         }
         await _sendResponse(id!, <String, Object?>{
           'configOptions': _configOptions(),
@@ -291,7 +301,13 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
     case 'session/set_mode':
       await _sendResponse(id!, const <String, Object?>{});
     case 'session/prompt':
-      unawaited(_runTurn(id!, params(message), targetPath));
+      final promptParams = params(message);
+      final cwd = Directory.current.path;
+      if (File(p.join(cwd, 'agent.capture_prompt')).existsSync()) {
+        File(p.join(cwd, 'agent.prompt'))
+            .writeAsStringSync(jsonEncode(promptParams['prompt']));
+      }
+      unawaited(_runTurn(id!, promptParams, targetPath));
     case 'session/cancel':
       for (final promptId in _pendingPrompts.keys.toList()) {
         _resolvePrompt(promptId, 'cancelled');
@@ -402,8 +418,7 @@ Future<void> _runTurn(
         ],
       }).catchError((Object _) => <String, Object?>{}),
     );
-    final dieFile =
-        File('${Directory.current.path}/agent.turn.die');
+    final dieFile = File('${Directory.current.path}/agent.turn.die');
     while (!dieFile.existsSync()) {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
@@ -411,7 +426,10 @@ Future<void> _runTurn(
   }
   if (text == 'weird') {
     // Unknown update variant: the client must drop it without crashing.
-    await _sendUpdate(<String, Object?>{'sessionUpdate': 'experimental_update', 'payload': 'hi'});
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'experimental_update',
+      'payload': 'hi',
+    });
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'usage_update',
       'size': 100,
@@ -457,13 +475,19 @@ Future<void> _runTurn(
   try {
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'agent_message_chunk',
-      'content': <String, Object?>{'type': 'text', 'text': 'I will inspect the target file.'},
+      'content': <String, Object?>{
+        'type': 'text',
+        'text': 'I will inspect the target file.',
+      },
       'messageId': 'm1',
     });
     if (_cancelled(promptId)) return;
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'agent_message_chunk',
-      'content': <String, Object?>{'type': 'text', 'text': 'Reading its contents first.'},
+      'content': <String, Object?>{
+        'type': 'text',
+        'text': 'Reading its contents first.',
+      },
       'messageId': 'm1',
     });
     if (_cancelled(promptId)) return;
@@ -482,10 +506,10 @@ Future<void> _runTurn(
     });
     if (_cancelled(promptId)) return;
 
-    final readResult = await _request(
-      'fs/read_text_file',
-      <String, Object?>{'sessionId': sessionId, 'path': targetPath},
-    );
+    final readResult = await _request('fs/read_text_file', <String, Object?>{
+      'sessionId': sessionId,
+      'path': targetPath,
+    });
     if (_cancelled(promptId)) return;
     final content = readResult['content'] as String? ?? '';
 

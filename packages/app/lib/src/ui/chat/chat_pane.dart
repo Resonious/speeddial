@@ -150,6 +150,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   List<TimelineItem> _items = const <TimelineItem>[];
   PermissionRequest? _pending;
+  bool _forking = false;
 
   @override
   Widget build(BuildContext context) {
@@ -195,6 +196,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             items: _items,
             attachmentLoader: (String attachmentId) =>
                 chat.attachmentData(daemonId, sessionId, attachmentId),
+            onFork: _forking
+                ? null
+                : (int seq) {
+                    unawaited(_forkFrom(seq));
+                  },
           );
         }
 
@@ -219,7 +225,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               // Keep the composer above the system navigation area on
               // edge-to-edge Android; the chat surface extends behind it.
               padding: EdgeInsets.only(
-                  bottom: MediaQuery.viewPaddingOf(context).bottom),
+                bottom: MediaQuery.viewPaddingOf(context).bottom,
+              ),
               child: Composer(
                 status: status,
                 mode: mode,
@@ -252,6 +259,25 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     );
   }
 
+  Future<void> _forkFrom(int seq) async {
+    if (_forking) return;
+    setState(() => _forking = true);
+    try {
+      final Session fork = await widget.data.sessions.fork(
+        widget.daemonId,
+        widget.sessionId,
+        seq,
+      );
+      widget.data.selection
+        ..selectedProjectId = fork.projectId
+        ..selectedSessionId = fork.id;
+    } on DaemonError catch (error) {
+      await _showError(error);
+    } finally {
+      if (mounted) setState(() => _forking = false);
+    }
+  }
+
   Future<void> _sendMessage(
     String text,
     List<OutgoingAttachment> attachments,
@@ -281,8 +307,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   Future<void> _switchMode(SessionMode next) async {
     try {
-      await widget.data.sessions
-          .setMode(widget.daemonId, widget.sessionId, next);
+      await widget.data.sessions.setMode(
+        widget.daemonId,
+        widget.sessionId,
+        next,
+      );
     } on DaemonError catch (error) {
       await _showError(error);
     }
@@ -290,8 +319,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   Future<void> _setThinkingLevel(String level) async {
     try {
-      await widget.data.sessions
-          .setThinkingLevel(widget.daemonId, widget.sessionId, level);
+      await widget.data.sessions.setThinkingLevel(
+        widget.daemonId,
+        widget.sessionId,
+        level,
+      );
     } on DaemonError catch (error) {
       await _showError(error);
     }
@@ -299,7 +331,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   Future<void> _setModel(String model) async {
     try {
-      await widget.data.sessions.setModel(widget.daemonId, widget.sessionId, model);
+      await widget.data.sessions.setModel(
+        widget.daemonId,
+        widget.sessionId,
+        model,
+      );
     } on DaemonError catch (error) {
       await _showError(error);
     }
@@ -312,8 +348,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     final String text = error is DaemonConnectionError
         ? kConnectionLostMessage
         : error.message;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(text)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
   static PermissionRequest? _resolveLatest(List<SessionEvent> events) {
@@ -341,9 +376,7 @@ class _EmptyState extends StatelessWidget {
     return Center(
       child: Text(
         'Select or create a session',
-        style: Theme.of(context)
-            .textTheme
-            .bodyMedium
+        style: Theme.of(context).textTheme.bodyMedium
             ?.copyWith(color: scheme.onSurfaceVariant),
       ),
     );
@@ -370,9 +403,7 @@ class _HistoryLoading extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             'Loading history…',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
+            style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
@@ -409,8 +440,9 @@ class _HistoryError extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           const SizedBox(height: 12),
