@@ -13,18 +13,13 @@ import 'package:test/test.dart';
 DaemonStore openStore(Directory dir) =>
     DaemonStore(p.join(dir.path, 'speeddial.db'));
 
-Project project({
-  String id = 'p1',
-  String? path,
-  DateTime? addedAt,
-}) =>
-    Project(
-      id: id,
-      name: 'Project $id',
-      path: path ?? p.join(Directory.systemTemp.path, 'proj-$id'),
-      addedAt: addedAt ?? DateTime.utc(2026, 1, 1),
-      lastActiveAt: addedAt ?? DateTime.utc(2026, 1, 2),
-    );
+Project project({String id = 'p1', String? path, DateTime? addedAt}) => Project(
+  id: id,
+  name: 'Project $id',
+  path: path ?? p.join(Directory.systemTemp.path, 'proj-$id'),
+  addedAt: addedAt ?? DateTime.utc(2026, 1, 1),
+  lastActiveAt: addedAt ?? DateTime.utc(2026, 1, 2),
+);
 
 Session session({
   required String id,
@@ -39,25 +34,24 @@ Session session({
   List<String> models = const <String>[],
   bool yolo = false,
   bool archived = false,
-}) =>
-    Session(
-      id: id,
-      projectId: projectId,
-      providerId: providerId,
-      title: title,
-      status: status,
-      mode: mode,
-      model: null,
-      models: models,
-      cwd: p.join(Directory.systemTemp.path, 'cwd'),
-      baseBranch: baseBranch,
-      thinkingLevel: thinkingLevel,
-      thinkingLevels: thinkingLevels,
-      yolo: yolo,
-      archived: archived,
-      createdAt: DateTime.utc(2026, 1, 2),
-      updatedAt: DateTime.utc(2026, 1, 2),
-    );
+}) => Session(
+  id: id,
+  projectId: projectId,
+  providerId: providerId,
+  title: title,
+  status: status,
+  mode: mode,
+  model: null,
+  models: models,
+  cwd: p.join(Directory.systemTemp.path, 'cwd'),
+  baseBranch: baseBranch,
+  thinkingLevel: thinkingLevel,
+  thinkingLevels: thinkingLevels,
+  yolo: yolo,
+  archived: archived,
+  createdAt: DateTime.utc(2026, 1, 2),
+  updatedAt: DateTime.utc(2026, 1, 2),
+);
 
 void main() {
   late Directory tempDir;
@@ -113,16 +107,16 @@ void main() {
 
   test('session CRUD roundtrips and list filtering', () {
     store.insertProject(project());
-    store.insertProject(
-      project(id: 'p2', path: p.join(tempDir.path, 'other')),
-    );
+    store.insertProject(project(id: 'p2', path: p.join(tempDir.path, 'other')));
     store.insertSession(session(id: 's1'));
-    store.insertSession(session(
-      id: 's2',
-      title: 'Archived one',
-      status: SessionStatus.closed,
-      archived: true,
-    ));
+    store.insertSession(
+      session(
+        id: 's2',
+        title: 'Archived one',
+        status: SessionStatus.closed,
+        archived: true,
+      ),
+    );
     store.insertSession(
       session(id: 's3', projectId: 'p2', status: SessionStatus.running),
     );
@@ -133,15 +127,15 @@ void main() {
 
     // Archived sessions hidden unless explicitly requested.
     expect(store.listSessions().map((s) => s.id), <String>['s1', 's3']);
-    expect(
-      store.listSessions(includeArchived: true).map((s) => s.id),
-      <String>['s1', 's2', 's3'],
-    );
+    expect(store.listSessions(includeArchived: true).map((s) => s.id), <String>[
+      's1',
+      's2',
+      's3',
+    ]);
     // Project filter.
-    expect(
-      store.listSessions(projectId: 'p2').map((s) => s.id),
-      <String>['s3'],
-    );
+    expect(store.listSessions(projectId: 'p2').map((s) => s.id), <String>[
+      's3',
+    ]);
 
     // updateSession persists the new state and bumps nothing implicitly.
     final update = Session(
@@ -171,10 +165,13 @@ void main() {
     expect(reloaded.models, <String>['fake-fast', 'fake-smart']);
     expect(reloaded.baseBranch, 'main');
     expect(reloaded.thinkingLevel, 'high');
-    expect(
-      reloaded.thinkingLevels,
-      <String>['off', 'auto', 'low', 'high', 'max'],
-    );
+    expect(reloaded.thinkingLevels, <String>[
+      'off',
+      'auto',
+      'low',
+      'high',
+      'max',
+    ]);
     expect(reloaded.yolo, isTrue);
     expect(reloaded.archived, isTrue);
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
@@ -235,44 +232,60 @@ void main() {
     store = openStore(tempDir);
     final migrated = store.getSession('s1')!;
     expect(migrated.title, 'Legacy');
-    expect(migrated.baseBranch, isNull,
-        reason: 'legacy rows gain a null base branch');
-    expect(migrated.yolo, isFalse,
-        reason: 'legacy rows default to yolo off');
-    expect(migrated.thinkingLevel, isNull,
-        reason: 'legacy rows gain a null thinking level');
-    expect(migrated.thinkingLevels, isEmpty,
-        reason: 'legacy rows default to no thinking levels');
-    expect(migrated.models, isEmpty,
-        reason: 'legacy rows default to no advertised models');
-    expect(store.acpSessionIdOf('s1'), isNull,
-        reason: 'legacy rows have no resumable ACP session id');
+    expect(
+      migrated.baseBranch,
+      isNull,
+      reason: 'legacy rows gain a null base branch',
+    );
+    expect(migrated.yolo, isFalse, reason: 'legacy rows default to yolo off');
+    expect(
+      migrated.thinkingLevel,
+      isNull,
+      reason: 'legacy rows gain a null thinking level',
+    );
+    expect(
+      migrated.thinkingLevels,
+      isEmpty,
+      reason: 'legacy rows default to no thinking levels',
+    );
+    expect(
+      migrated.models,
+      isEmpty,
+      reason: 'legacy rows default to no advertised models',
+    );
+    expect(
+      store.acpSessionIdOf('s1'),
+      isNull,
+      reason: 'legacy rows have no resumable ACP session id',
+    );
 
     // New inserts carry the base branch, the yolo flag, the thinking level
     // fields, and the advertised models.
-    store.insertSession(session(
-      id: 's2',
-      baseBranch: 'main',
-      yolo: true,
-      thinkingLevel: 'auto',
-      thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
-      models: const <String>['fake-fast', 'fake-smart'],
-    ));
+    store.insertSession(
+      session(
+        id: 's2',
+        baseBranch: 'main',
+        yolo: true,
+        thinkingLevel: 'auto',
+        thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
+        models: const <String>['fake-fast', 'fake-smart'],
+      ),
+    );
     expect(store.getSession('s2')!.baseBranch, 'main');
     expect(store.getSession('s2')!.yolo, isTrue);
     expect(store.getSession('s2')!.thinkingLevel, 'auto');
-    expect(
-      store.getSession('s2')!.thinkingLevels,
-      <String>['off', 'auto', 'low', 'high', 'max'],
-    );
-    expect(
-      store.getSession('s2')!.models,
-      <String>['fake-fast', 'fake-smart'],
-    );
-    expect(
-      store.listSessions().map((s) => s.baseBranch),
-      <String?>[null, 'main'],
-    );
+    expect(store.getSession('s2')!.thinkingLevels, <String>[
+      'off',
+      'auto',
+      'low',
+      'high',
+      'max',
+    ]);
+    expect(store.getSession('s2')!.models, <String>['fake-fast', 'fake-smart']);
+    expect(store.listSessions().map((s) => s.baseBranch), <String?>[
+      null,
+      'main',
+    ]);
 
     // The migrated schema accepts ACP session ids.
     store.setAcpSessionId('s2', 'acp-42');
@@ -294,8 +307,10 @@ void main() {
     expect(store.acpSessionIdOf('s1'), 'acp-2');
 
     // The wire-facing Session model never carries the id.
-    expect(store.getSession('s1')!.toJson().containsKey('acpSessionId'),
-        isFalse);
+    expect(
+      store.getSession('s1')!.toJson().containsKey('acpSessionId'),
+      isFalse,
+    );
 
     expect(
       () => store.setAcpSessionId('missing', 'acp-x'),
@@ -349,6 +364,50 @@ void main() {
     expect((events.events.last as UserMessageEvent).text, 'y');
   });
 
+  test('searchSessions finds titles and history while excluding caller', () {
+    store.insertProject(project());
+    store.insertProject(project(id: 'p2', path: p.join(tempDir.path, 'p2')));
+    store.insertSession(session(id: 'current', title: 'Current'));
+    store.insertSession(session(id: 'by-title', title: 'Release Planning'));
+    store.insertSession(session(id: 'by-history', projectId: 'p2'));
+    store.insertSession(
+      session(id: 'archived', title: 'Release archive', archived: true),
+    );
+    store.appendEvent(
+      'by-history',
+      1,
+      UserMessageEvent(text: 'Investigate the release blocker'),
+    );
+    store.appendEvent(
+      'current',
+      1,
+      UserMessageEvent(text: 'release content from the caller'),
+    );
+
+    final List<Map<String, Object?>> matches = store.searchSessions(
+      query: 'RELEASE',
+      excludeSessionId: 'current',
+    );
+    expect(matches.map((Map<String, Object?> row) => row['id']), {
+      'by-title',
+      'by-history',
+    });
+    final Map<String, Object?> historyMatch = matches.singleWhere(
+      (Map<String, Object?> row) => row['id'] == 'by-history',
+    );
+    expect(historyMatch['projectName'], 'Project p2');
+    expect(historyMatch['excerpt'], 'Investigate the release blocker');
+
+    final List<Map<String, Object?>> filtered = store.searchSessions(
+      query: '',
+      excludeSessionId: 'current',
+      projectId: 'p2',
+    );
+    expect(filtered.map((Map<String, Object?> row) => row['id']), <String>[
+      'by-history',
+    ]);
+  });
+
   test('listEvents pages newest-first with beforeSeq and hasMore', () {
     store.insertProject(project());
     store.insertSession(session(id: 'a'));
@@ -357,39 +416,49 @@ void main() {
     }
     final all = store.listEvents('a');
     expect(all.hasMore, isFalse);
-    expect(
-      all.events.map((e) => (e as UserMessageEvent).text),
-      <String>['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10'],
-    );
+    expect(all.events.map((e) => (e as UserMessageEvent).text), <String>[
+      'm1',
+      'm2',
+      'm3',
+      'm4',
+      'm5',
+      'm6',
+      'm7',
+      'm8',
+      'm9',
+      'm10',
+    ]);
 
     final page1 = store.listEvents('a', limit: 3);
     expect(page1.hasMore, isTrue);
-    expect(
-      page1.events.map((e) => (e as UserMessageEvent).text),
-      <String>['m8', 'm9', 'm10'],
-    );
+    expect(page1.events.map((e) => (e as UserMessageEvent).text), <String>[
+      'm8',
+      'm9',
+      'm10',
+    ]);
     expect(page1.events.first.seq, 8);
 
     final page2 = store.listEvents('a', limit: 3, beforeSeq: 8);
     expect(page2.hasMore, isTrue);
-    expect(
-      page2.events.map((e) => (e as UserMessageEvent).text),
-      <String>['m5', 'm6', 'm7'],
-    );
+    expect(page2.events.map((e) => (e as UserMessageEvent).text), <String>[
+      'm5',
+      'm6',
+      'm7',
+    ]);
 
     final page3 = store.listEvents('a', limit: 3, beforeSeq: 5);
     expect(page3.hasMore, isTrue);
-    expect(
-      page3.events.map((e) => (e as UserMessageEvent).text),
-      <String>['m2', 'm3', 'm4'],
-    );
+    expect(page3.events.map((e) => (e as UserMessageEvent).text), <String>[
+      'm2',
+      'm3',
+      'm4',
+    ]);
 
     final page4 = store.listEvents('a', limit: 3, beforeSeq: 2);
     expect(page4.hasMore, isFalse);
-    expect(
-      page4.events.map((e) => (e as UserMessageEvent).text),
-      <String>['m1'],
-    );
+    expect(page4.events.map((e) => (e as UserMessageEvent).text), <String>[
+      'm1',
+    ]);
   });
 
   test('all event types round-trip through the store', () {
@@ -412,13 +481,15 @@ void main() {
       AgentMessageChunkEvent(text: 'chunk'),
       AgentThoughtChunkEvent(text: 'thought'),
       ToolCallEvent(toolCall: toolCall),
-      PlanEvent(entries: const <PlanEntry>[
-        PlanEntry(
-          content: 'step',
-          priority: PlanPriority.high,
-          status: PlanEntryStatus.inProgress,
-        ),
-      ]),
+      PlanEvent(
+        entries: const <PlanEntry>[
+          PlanEntry(
+            content: 'step',
+            priority: PlanPriority.high,
+            status: PlanEntryStatus.inProgress,
+          ),
+        ],
+      ),
       PermissionRequestEvent(
         request: PermissionRequest(
           requestId: 'r1',
@@ -456,8 +527,11 @@ void main() {
     final replayed = store.listEvents('a').events;
     expect(replayed, hasLength(events.length));
     for (var i = 0; i < events.length; i++) {
-      expect(replayed[i].runtimeType, events[i].runtimeType,
-          reason: 'event $i keeps its type');
+      expect(
+        replayed[i].runtimeType,
+        events[i].runtimeType,
+        reason: 'event $i keeps its type',
+      );
     }
     final replayedTool = (replayed[3] as ToolCallEvent).toolCall;
     expect(replayedTool.id, 'tc1');
@@ -499,45 +573,47 @@ void main() {
     expect(store.listEvents('a').events, isEmpty);
   });
 
-  test('attachments round-trip including binary bytes and survive a reopen',
-      () {
-    store.insertProject(project());
-    store.insertSession(session(id: 's1'));
-    // Bytes that are not valid UTF-8: the payload must round-trip verbatim.
-    final binaryBytes = <int>[0, 1, 2, 250, 251, 255, 128, 0];
-    store.insertAttachment(
-      's1',
-      AttachmentData(
-        id: 'a1',
-        name: 'blob.bin',
-        mimeType: 'application/octet-stream',
-        size: binaryBytes.length,
-        data: base64Encode(binaryBytes),
-      ),
-    );
-    final loaded = store.getAttachment('s1', 'a1')!;
-    expect(loaded.id, 'a1');
-    expect(loaded.name, 'blob.bin');
-    expect(loaded.mimeType, 'application/octet-stream');
-    expect(loaded.size, binaryBytes.length);
-    expect(base64Decode(loaded.data), binaryBytes);
+  test(
+    'attachments round-trip including binary bytes and survive a reopen',
+    () {
+      store.insertProject(project());
+      store.insertSession(session(id: 's1'));
+      // Bytes that are not valid UTF-8: the payload must round-trip verbatim.
+      final binaryBytes = <int>[0, 1, 2, 250, 251, 255, 128, 0];
+      store.insertAttachment(
+        's1',
+        AttachmentData(
+          id: 'a1',
+          name: 'blob.bin',
+          mimeType: 'application/octet-stream',
+          size: binaryBytes.length,
+          data: base64Encode(binaryBytes),
+        ),
+      );
+      final loaded = store.getAttachment('s1', 'a1')!;
+      expect(loaded.id, 'a1');
+      expect(loaded.name, 'blob.bin');
+      expect(loaded.mimeType, 'application/octet-stream');
+      expect(loaded.size, binaryBytes.length);
+      expect(base64Decode(loaded.data), binaryBytes);
 
-    // Unknown ids and unknown sessions read as null.
-    expect(store.getAttachment('s1', 'nope'), isNull);
-    expect(store.getAttachment('nope', 'a1'), isNull);
+      // Unknown ids and unknown sessions read as null.
+      expect(store.getAttachment('s1', 'nope'), isNull);
+      expect(store.getAttachment('nope', 'a1'), isNull);
 
-    // Attachments are scoped to their session.
-    store.insertSession(session(id: 's2'));
-    expect(store.getAttachment('s2', 'a1'), isNull);
+      // Attachments are scoped to their session.
+      store.insertSession(session(id: 's2'));
+      expect(store.getAttachment('s2', 'a1'), isNull);
 
-    // The payload survives a reopen (it is stored as a BLOB, not re-decoded
-    // from the base64 metadata).
-    store.dispose();
-    store = openStore(tempDir);
-    final reloaded = store.getAttachment('s1', 'a1')!;
-    expect(reloaded.name, 'blob.bin');
-    expect(base64Decode(reloaded.data), binaryBytes);
-  });
+      // The payload survives a reopen (it is stored as a BLOB, not re-decoded
+      // from the base64 metadata).
+      store.dispose();
+      store = openStore(tempDir);
+      final reloaded = store.getAttachment('s1', 'a1')!;
+      expect(reloaded.name, 'blob.bin');
+      expect(base64Decode(reloaded.data), binaryBytes);
+    },
+  );
 
   test('deleteSession cascades attachments', () {
     store.insertProject(project());
@@ -555,7 +631,10 @@ void main() {
     expect(store.getAttachment('s1', 'a1'), isNotNull);
 
     store.deleteSession('s1');
-    expect(store.getAttachment('s1', 'a1'), isNull,
-        reason: 'attachments die with their session (ON DELETE CASCADE)');
+    expect(
+      store.getAttachment('s1', 'a1'),
+      isNull,
+      reason: 'attachments die with their session (ON DELETE CASCADE)',
+    );
   });
 }

@@ -96,16 +96,23 @@ class SessionsCreateCommand extends Command<int> {
       ..addOption('project', help: 'Project id (required).')
       ..addOption('provider', help: 'Provider id (required).')
       ..addOption('model', help: 'Model id.')
-      ..addOption('mode',
-          allowed: const ['build', 'plan'],
-          help: 'Session mode (default: build).')
+      ..addOption(
+        'mode',
+        allowed: const ['build', 'plan'],
+        help: 'Session mode (default: build).',
+      )
       ..addOption('title', help: 'Session title.')
-      ..addOption('base',
-          help: 'Base branch for a new session worktree: fetches '
-              'origin/<base> and runs the agent in a worktree branched off '
-              'the remote tip.')
-      ..addFlag('yolo',
-          help: 'Auto-approve every permission request from the agent.');
+      ..addOption(
+        'base',
+        help:
+            'Base branch for a new session worktree: fetches '
+            'origin/<base> and runs the agent in a worktree branched off '
+            'the remote tip.',
+      )
+      ..addFlag(
+        'yolo',
+        help: 'Auto-approve every permission request from the agent.',
+      );
   }
 
   @override
@@ -181,11 +188,13 @@ class SessionsSendCommand extends Command<int> {
       final bytes = await _readAttachment(path);
       if (bytes == null) return Exit.usage; // Error already printed.
       final name = p.basename(path);
-      attachments.add(OutgoingAttachment(
-        name: name,
-        mimeType: mimeTypeForFileName(name),
-        data: base64Encode(bytes),
-      ));
+      attachments.add(
+        OutgoingAttachment(
+          name: name,
+          mimeType: mimeTypeForFileName(name),
+          data: base64Encode(bytes),
+        ),
+      );
     }
     final conn = resolveConnection(globalResults!);
     final output = Output(json: conn.json);
@@ -284,8 +293,10 @@ class SessionsDeleteCommand extends Command<int> {
 /// `speeddial sessions history <id> [--limit n]`
 class SessionsHistoryCommand extends Command<int> {
   SessionsHistoryCommand() {
-    argParser.addOption('limit',
-        help: 'Maximum number of events (default: 200, max: 1000).');
+    argParser.addOption(
+      'limit',
+      help: 'Maximum number of events (default: 200, max: 1000).',
+    );
   }
 
   @override
@@ -392,18 +403,21 @@ class SessionsAttachCommand extends Command<int> {
 String summarizeSessionEvent(SessionEvent event) {
   final summary = switch (event) {
     UserMessageEvent(:final text) => 'user: ${_oneLine(text)}',
+    ImageEvent(:final attachment) => '[image] ${attachment.name}',
     AgentMessageChunkEvent(:final text) => _oneLine(text),
     AgentThoughtChunkEvent(:final text) => '[thought] ${_oneLine(text)}',
     ToolCallEvent(:final toolCall) =>
       '[tool] ${toolCall.title} (${toolCall.status.wire})',
-    PlanEvent(:final entries) => '[plan] ${entries.length} '
-        '${entries.length == 1 ? 'entry' : 'entries'}',
+    PlanEvent(:final entries) =>
+      '[plan] ${entries.length} '
+          '${entries.length == 1 ? 'entry' : 'entries'}',
     PermissionRequestEvent(:final request) => '[permission] ${request.title}',
     PermissionResolvedEvent(:final requestId, :final optionId) =>
       '[resolved] $requestId -> $optionId',
-    UsageEvent(:final usage) => '[usage] in=${usage.inputTokens} '
-        'out=${usage.outputTokens} total=${usage.totalTokens}'
-        '${usage.cost == null ? '' : ' cost=\$${usage.cost}'}',
+    UsageEvent(:final usage) =>
+      '[usage] in=${usage.inputTokens} '
+          'out=${usage.outputTokens} total=${usage.totalTokens}'
+          '${usage.cost == null ? '' : ' cost=\$${usage.cost}'}',
     TurnCompleteEvent(:final stopReason) => '[done] $stopReason',
     SessionErrorEvent(:final message) => '[error] ${_oneLine(message)}',
   };
@@ -411,16 +425,16 @@ String summarizeSessionEvent(SessionEvent event) {
 }
 
 Map<String, Object?> _sessionRecord(Session session) => <String, Object?>{
-      'id': session.id,
-      'projectId': session.projectId,
-      'providerId': session.providerId,
-      'title': session.title,
-      'status': session.status.wire,
-      'mode': session.mode.wire,
-      'model': session.model ?? '',
-      'cwd': session.cwd,
-      'archived': session.archived ? 'yes' : 'no',
-    };
+  'id': session.id,
+  'projectId': session.projectId,
+  'providerId': session.providerId,
+  'title': session.title,
+  'status': session.status.wire,
+  'mode': session.mode.wire,
+  'model': session.model ?? '',
+  'cwd': session.cwd,
+  'archived': session.archived ? 'yes' : 'no',
+};
 
 /// Reads an attached file's bytes, printing the error to stderr (matching
 /// the CLI's error style) and returning null when the file is missing or

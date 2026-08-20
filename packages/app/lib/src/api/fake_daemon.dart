@@ -1368,6 +1368,11 @@ class FakeDaemonClient implements DaemonClient {
           seq: seq,
           timestamp: timestamp,
         ),
+        ImageEvent e => ImageEvent(
+          attachment: e.attachment,
+          seq: seq,
+          timestamp: timestamp,
+        ),
         AgentMessageChunkEvent e => AgentMessageChunkEvent(
           text: e.text,
           seq: seq,

@@ -103,6 +103,15 @@ Future<WsClient> connect(int port) async {
 Map<String, Object?> j(Object? result) =>
     (result! as Map).cast<String, Object?>();
 
+Map<String, String> mcpEnvironment(Map<String, Object?> config) {
+  final Map<String, String> environment = <String, String>{};
+  for (final Object? raw in config['env']! as List<Object?>) {
+    final Map<String, Object?> entry = (raw! as Map).cast<String, Object?>();
+    environment[entry['name']! as String] = entry['value']! as String;
+  }
+  return environment;
+}
+
 /// Completes with the params of the first `session.event` notification whose
 /// event satisfies [predicate]; designed to be awaited *after* the turn that
 /// produces it is requested. Listens on the client's peer directly so no
@@ -710,6 +719,246 @@ void main() {
       );
       await client.close();
     });
+
+    test('built-in MCP bridge is session-bound and displays images', () async {
+      await startServer();
+      final WsClient client = await connect(server!.port);
+      final Directory dir = Directory(p.join(tempDir.path, 'mcp-project'))
+        ..createSync();
+      File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      final Project project = Project.fromJson(
+        (j(
+                  await client.peer.call('projects.add', <String, Object?>{
+                    'path': dir.path,
+                    'name': 'MCP Project',
+                  }),
+                )['project']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final Session owner = Session.fromJson(
+        (j(
+                  await client.peer.call('sessions.create', <String, Object?>{
+                    'projectId': project.id,
+                    'providerId': 'fake',
+                    'title': 'Owning session',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final List<Object?> configs = jsonDecode(
+        File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+      ) as List<Object?>;
+      final Map<String, Object?> config = (configs.single! as Map)
+          .cast<String, Object?>();
+      final Map<String, String> environment = mcpEnvironment(config);
+
+      final Session other = Session.fromJson(
+        (j(
+                  await client.peer.call('sessions.create', <String, Object?>{
+                    'projectId': project.id,
+                    'providerId': 'fake',
+                    'title': 'Searchable release notes',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final List<Object?> otherConfigs = jsonDecode(
+        File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+      ) as List<Object?>;
+      final Map<String, String> otherEnvironment = mcpEnvironment(
+        (otherConfigs.single! as Map).cast<String, Object?>(),
+      );
+      expect(
+        otherEnvironment['SPEEDDIAL_MCP_SECRET'],
+        isNot(environment['SPEEDDIAL_MCP_SECRET']),
+      );
+      final WsClient mcp = await connect(server!.port);
+      final Map<String, Object?> authenticated = j(
+        await mcp.peer.call('internal.mcpAuthenticate', <String, Object?>{
+          'secret': environment['SPEEDDIAL_MCP_SECRET'],
+          'sessionId': owner.id,
+        }),
+      );
+      expect(authenticated['ok'], isTrue);
+      final WsClient crossSession = await connect(server!.port);
+      await expectLater(
+        crossSession.peer.call('internal.mcpAuthenticate', <String, Object?>{
+          'secret': environment['SPEEDDIAL_MCP_SECRET'],
+          'sessionId': other.id,
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrUnauthenticated,
+          ),
+        ),
+      );
+      await crossSession.close();
+      await expectLater(
+        mcp.peer.call('projects.list'),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrUnauthenticated,
+          ),
+        ),
+      );
+
+      final Map<String, Object?> projects = j(
+        await mcp.peer.call('internal.mcpSearchProjects', <String, Object?>{
+          'query': 'mcp',
+        }),
+      );
+      expect(projects['projects'], hasLength(1));
+      final Map<String, Object?> sessions = j(
+        await mcp.peer.call('internal.mcpSearchSessions', <String, Object?>{
+          'query': 'release',
+          'limit': 20,
+        }),
+      );
+      final List<Object?> matches = sessions['sessions']! as List<Object?>;
+      expect(matches, hasLength(1));
+      expect((matches.single! as Map)['title'], 'Searchable release notes');
+
+      const String imageData =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+      await mcp.peer.call('internal.mcpDisplayImage', <String, Object?>{
+        'name': 'result.png',
+        'mimeType': 'image/png',
+        'data': imageData,
+      });
+      await untilRecorded(client, 'session.event', 1);
+      final Map<String, Object?> history = j(
+        await client.peer.call('sessions.history', <String, Object?>{
+          'sessionId': owner.id,
+        }),
+      );
+      final ImageEvent image = SessionEvent.fromJson(
+        ((history['events']! as List<Object?>).single! as Map)
+            .cast<String, Object?>(),
+      ) as ImageEvent;
+      expect(image.attachment.name, 'result.png');
+      final Map<String, Object?> attachment = j(
+        await client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': owner.id,
+          'attachmentId': image.attachment.id,
+        }),
+      );
+      expect((attachment['attachment']! as Map)['data'], imageData);
+
+      await mcp.close();
+      await client.close();
+    });
+
+    test(
+      'built-in MCP stdio subprocess serves tools through the daemon',
+      () async {
+        await startServer();
+        final WsClient client = await connect(server!.port);
+        final Directory dir = Directory(p.join(tempDir.path, 'mcp-smoke'))
+          ..createSync();
+        File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
+        final Project project = Project.fromJson(
+          (j(
+                    await client.peer.call('projects.add', <String, Object?>{
+                      'path': dir.path,
+                      'name': 'Subprocess Project',
+                    }),
+                  )['project']!
+                  as Map)
+              .cast<String, Object?>(),
+        );
+        await client.peer.call('sessions.create', <String, Object?>{
+          'projectId': project.id,
+          'providerId': 'fake',
+        });
+        final List<Object?> configs = jsonDecode(
+          File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+        ) as List<Object?>;
+        final Map<String, Object?> config = (configs.single! as Map)
+            .cast<String, Object?>();
+        final Map<String, String> environment = mcpEnvironment(config);
+        final String packageRoot = p.dirname(
+          p.dirname(p.dirname(resolveFixture())),
+        );
+        final Process process = await Process.start(
+          Platform.resolvedExecutable,
+          const <String>['run', 'bin/speeddial.dart', '_internal-mcp'],
+          workingDirectory: packageRoot,
+          environment: <String, String>{
+            ...Platform.environment,
+            ...environment,
+          },
+        );
+        final StreamIterator<String> output = StreamIterator<String>(
+          process.stdout
+              .transform(utf8.decoder)
+              .transform(const LineSplitter()),
+        );
+        final Future<String> stderrOutput = process.stderr
+            .transform(utf8.decoder)
+            .join();
+
+        Future<Map<String, Object?>> request(
+          int id,
+          String method,
+          Map<String, Object?> params,
+        ) async {
+          process.stdin.writeln(
+            jsonEncode(<String, Object?>{
+              'jsonrpc': '2.0',
+              'id': id,
+              'method': method,
+              'params': params,
+            }),
+          );
+          expect(
+            await output.moveNext().timeout(const Duration(seconds: 10)),
+            isTrue,
+          );
+          return (jsonDecode(output.current) as Map).cast<String, Object?>();
+        }
+
+        final Map<String, Object?> initialized = await request(
+          1,
+          'initialize',
+          <String, Object?>{'protocolVersion': '2025-11-25'},
+        );
+        expect(
+          (initialized['result']! as Map)['protocolVersion'],
+          '2025-11-25',
+        );
+        final Map<String, Object?> listed = await request(
+          2,
+          'tools/list',
+          const <String, Object?>{},
+        );
+        expect((listed['result']! as Map)['tools'], hasLength(3));
+        final Map<String, Object?> searched = await request(
+          3,
+          'tools/call',
+          <String, Object?>{
+            'name': 'search_projects',
+            'arguments': <String, Object?>{'query': 'subprocess'},
+          },
+        );
+        expect(jsonEncode(searched['result']), contains('Subprocess Project'));
+
+        await process.stdin.close();
+        expect(
+          await process.exitCode.timeout(const Duration(seconds: 10)),
+          0,
+          reason: await stderrOutput,
+        );
+        await output.cancel();
+        await client.close();
+      },
+    );
 
     test(
       'sessions.create with yolo auto-approves permission requests',

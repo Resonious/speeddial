@@ -36,13 +36,19 @@ Entrypoint `bin/speeddial.dart`, package name `speeddial_daemon`.
 ```
 lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JSON-RPC
                     stdio. Spec: https://agentclientprotocol.com — implements:
-                    initialize, authenticate, session/new, session/load (skip),
+                    initialize, authenticate, session/new, session/load,
                     session/prompt, session/cancel, session/set_mode, session/set_model;
                     notifications session/update (variants: user_message_chunk,
                     agent_message_chunk, agent_thought_chunk, tool_call, tool_call_update,
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+lib/src/mcp/        BuiltInMcpServer: stdio MCP JSON-RPC subprocess injected into every
+                    ACP new/load request. Search tools bridge over an authenticated,
+                    session-bound loopback WebSocket to query projects/session history;
+                    display_image persists an attachment and emits an image event.
+                    The same hidden subprocess entry works from the daemon CLI and the
+                    native Flutter executable used by the embedded daemon.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"]
@@ -56,9 +62,10 @@ lib/src/engine/     SessionEngine: owns live ACP processes per session, maps ACP
                     respondPermission), cancel, process exit, turn lifecycle.
 lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (override with
                     --db or SPEEDIAL_DB). Tables: projects, sessions, session_events,
-                    attachments (message-attachment payloads, FK-cascaded with their
-                    session; events carry metadata only, `attachments.read` serves blobs).
-                    WAL mode, foreign keys on. Events stored as JSON blobs + seq.
+                    attachments (message and MCP-displayed image payloads, FK-cascaded
+                    with their session; events carry metadata only, `attachments.read`
+                    serves blobs). WAL mode, foreign keys on. Events stored as JSON
+                    blobs + seq. Session/event substring queries back MCP search.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
                     for status, --no-color unified diffs, branch lists; fetch and
                     worktree add/remove back per-session worktrees. mergeIntoBase
@@ -98,7 +105,7 @@ stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context
 `speeddial_daemon` (path dep — the desktop build embeds the daemon in-process).
 
 ```
-lib/main.dart                runApp; desktop builds start an embedded in-process daemon
+lib/main.dart                hidden native MCP subprocess dispatch, then runApp; desktop builds start an embedded in-process daemon
                              (lib/src/local_daemon/) and auto-add a non-persistent
                              "This computer" endpoint; web/mobile skip embedding.
                              SpeedDialApp is a WidgetsBindingObserver that stops the
@@ -128,6 +135,7 @@ lib/src/ui/left/             daemon/project/session rail: connection status dot,
                              model/thinking are picked in the composer on the live
                              session), rename/archive/delete menus
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
+                             MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              plan panel, permission banner with option buttons, composer

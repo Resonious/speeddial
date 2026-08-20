@@ -14,6 +14,7 @@ import 'package:speeddial_app/src/ui/chat/composer.dart';
 import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
 import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
+import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_app/src/ui/daemon_error_text.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -803,6 +804,42 @@ void main() {
     // Drain stream + settle timers so the test ends clean.
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 350));
+  });
+
+  testWidgets('an MCP image event renders its persisted attachment', (
+    WidgetTester tester,
+  ) async {
+    const Attachment attachment = Attachment(
+      id: 'mcp-image',
+      name: 'analysis.png',
+      mimeType: 'image/png',
+      size: 70,
+    );
+    tester.view.physicalSize = const Size(800, 600);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: deriveTimelineItems(<SessionEvent>[
+              const ImageEvent(attachment: attachment, seq: 1),
+            ]),
+            attachmentLoader: (String attachmentId) async => AttachmentData(
+              id: attachmentId,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              size: pngBytes.length,
+              data: base64Encode(pngBytes),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.text('analysis.png'), findsOneWidget);
   });
 
   testWidgets('a session with thinking levels lists exactly the advertised '

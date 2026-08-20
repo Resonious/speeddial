@@ -33,6 +33,7 @@ import 'package:uuid/uuid.dart';
 import '../acp/acp_client.dart';
 import '../acp/acp_types.dart';
 import '../git/git_service.dart';
+import '../mcp/built_in_mcp_server.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'event_mapper.dart';
@@ -102,6 +103,12 @@ typedef _ForkContext = ({
   String transcript,
   List<_PreparedAttachment> attachments,
 });
+typedef _BuiltInMcpConfig = ({
+  String daemonUrl,
+  String Function(String sessionId) secretForSession,
+  String command,
+  List<String> args,
+});
 
 /// Orchestrates ACP agent processes and the project session lifecycle.
 class SessionEngine {
@@ -122,6 +129,47 @@ class SessionEngine {
   final Uuid _uuid = const Uuid();
 
   final Map<String, _LiveSession> _live = {};
+  _BuiltInMcpConfig? _builtInMcp;
+
+  /// Configures the daemon-owned MCP stdio server that is included in every
+  /// subsequent ACP session/new and session/load request.
+  void configureBuiltInMcp({
+    required String daemonUrl,
+    required String Function(String sessionId) secretForSession,
+    required String command,
+    required List<String> args,
+  }) {
+    _builtInMcp = (
+      daemonUrl: daemonUrl,
+      secretForSession: secretForSession,
+      command: command,
+      args: List<String>.unmodifiable(args),
+    );
+  }
+
+  List<Map<String, Object?>> _mcpServersFor(Session session) {
+    final _BuiltInMcpConfig? config = _builtInMcp;
+    if (config == null) return const <Map<String, Object?>>[];
+    return <Map<String, Object?>>[
+      <String, Object?>{
+        'name': kMcpServerName,
+        'command': config.command,
+        'args': config.args,
+        'env': <Object?>[
+          <String, Object?>{
+            'name': kMcpDaemonUrlEnv,
+            'value': config.daemonUrl,
+          },
+          <String, Object?>{
+            'name': kMcpSecretEnv,
+            'value': config.secretForSession(session.id),
+          },
+          <String, Object?>{'name': kMcpSessionIdEnv, 'value': session.id},
+          <String, Object?>{'name': kMcpSessionCwdEnv, 'value': session.cwd},
+        ],
+      },
+    ];
+  }
 
   /// Per-session in-flight tool call state (toolCallId → protocol ToolCall),
   /// cleared at the start of every turn.
@@ -408,7 +456,10 @@ class SessionEngine {
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
-      final created = await client.newSession(cwd: baseSession.cwd);
+      final created = await client.newSession(
+        cwd: baseSession.cwd,
+        mcpServers: _mcpServersFor(baseSession),
+      );
       acpSessionId = created.sessionId;
       modelOption = _modelOptionOf(created.configOptions);
       thinking = _thinkingOptionOf(created.configOptions);
@@ -471,32 +522,37 @@ class SessionEngine {
     String targetSessionId,
     int throughSeq,
   ) {
+    Attachment copyAttachment(Attachment attachment) {
+      final AttachmentData? data = _store.getAttachment(
+        sourceSessionId,
+        attachment.id,
+      );
+      if (data == null) {
+        throw StateError('Missing attachment payload for ${attachment.id}');
+      }
+      final AttachmentData copied = AttachmentData(
+        id: _uuid.v4(),
+        name: data.name,
+        mimeType: data.mimeType,
+        size: data.size,
+        data: data.data,
+      );
+      _store.insertAttachment(targetSessionId, copied);
+      return copied;
+    }
+
     for (final SessionEvent event in _store.eventsThrough(
       sourceSessionId,
       throughSeq,
     )) {
       final SessionEvent copy;
       if (event case UserMessageEvent(:final text, :final attachments)) {
-        final copiedAttachments = <Attachment>[];
-        for (final Attachment attachment in attachments) {
-          final AttachmentData? data = _store.getAttachment(
-            sourceSessionId,
-            attachment.id,
-          );
-          if (data == null) {
-            throw StateError('Missing attachment payload for ${attachment.id}');
-          }
-          final copied = AttachmentData(
-            id: _uuid.v4(),
-            name: data.name,
-            mimeType: data.mimeType,
-            size: data.size,
-            data: data.data,
-          );
-          _store.insertAttachment(targetSessionId, copied);
-          copiedAttachments.add(copied);
-        }
-        copy = UserMessageEvent(text: text, attachments: copiedAttachments);
+        copy = UserMessageEvent(
+          text: text,
+          attachments: attachments.map(copyAttachment).toList(growable: false),
+        );
+      } else if (event case ImageEvent(:final attachment)) {
+        copy = ImageEvent(attachment: copyAttachment(attachment));
       } else {
         final json = Map<String, Object?>.from(event.toJson())
           ..remove('seq')
@@ -522,6 +578,47 @@ class SessionEngine {
       readTextFile: (acpSessionId, path) => _readTextFile(session.id, path),
       writeTextFile: (acpSessionId, path, content) =>
           _writeTextFile(session.id, path, content),
+    );
+  }
+
+  /// Persists an agent-requested image and emits it into the session timeline.
+  /// This does not start/resume the provider process or change turn state.
+  Future<void> displayImage(
+    String sessionId, {
+    required String name,
+    required String mimeType,
+    required String data,
+  }) async {
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(data);
+    } on FormatException {
+      throw DaemonError(_kErrInvalidParams, 'Invalid base64 image data');
+    }
+    if (!isImageMimeType(mimeType) || bytes.length > kMaxAttachmentBytes) {
+      throw DaemonError(_kErrInvalidParams, 'Invalid image attachment');
+    }
+    final AttachmentData attachment = AttachmentData(
+      id: _uuid.v4(),
+      name: name,
+      mimeType: mimeType,
+      size: bytes.length,
+      data: data,
+    );
+    _store.insertAttachment(sessionId, attachment);
+    _emitForSession(
+      sessionId,
+      ImageEvent(
+        attachment: Attachment(
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+        ),
+      ),
     );
   }
 
@@ -729,6 +826,7 @@ class SessionEngine {
       configOptions = await client.loadSession(
         sessionId: acpSessionId,
         cwd: session.cwd,
+        mcpServers: _mcpServersFor(session),
       );
     } on Object catch (error) {
       await client.dispose();
@@ -1410,14 +1508,14 @@ class SessionEngine {
   /// (sessionId, seq, event) tuple. Fully synchronous: store access and
   /// stream delivery cannot interleave.
   void _emit(_LiveSession live, SessionEvent event) {
-    final seq = _store.nextSeq(live.sessionId);
-    final persisted = _store.appendEvent(live.sessionId, seq, event);
+    _emitForSession(live.sessionId, event);
+  }
+
+  void _emitForSession(String sessionId, SessionEvent event) {
+    final int seq = _store.nextSeq(sessionId);
+    final SessionEvent persisted = _store.appendEvent(sessionId, seq, event);
     if (!_eventsController.isClosed) {
-      _eventsController.add((
-        sessionId: live.sessionId,
-        seq: seq,
-        event: persisted,
-      ));
+      _eventsController.add((sessionId: sessionId, seq: seq, event: persisted));
     }
   }
 

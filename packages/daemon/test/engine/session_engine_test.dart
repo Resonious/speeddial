@@ -197,6 +197,65 @@ void main() {
     expect(changes.last.status, SessionStatus.idle);
   });
 
+  test('createSession injects the configured built-in MCP server', () async {
+    File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+    engine.configureBuiltInMcp(
+      daemonUrl: 'ws://127.0.0.1:7331/ws',
+      secretForSession: (String sessionId) => 'test-secret-$sessionId',
+      command: '/bin/speeddial',
+      args: const <String>['_internal-mcp'],
+    );
+
+    final Session session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+    final List<Object?> servers = jsonDecode(
+      File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
+    ) as List<Object?>;
+    final Map<String, Object?> config = (servers.single! as Map)
+        .cast<String, Object?>();
+    expect(config['name'], 'speeddial');
+    expect(config['command'], '/bin/speeddial');
+    expect(config['args'], <String>['_internal-mcp']);
+    final Map<String, String> environment = <String, String>{};
+    for (final Object? raw in config['env']! as List<Object?>) {
+      final Map<String, Object?> entry = (raw! as Map).cast<String, Object?>();
+      environment[entry['name']! as String] = entry['value']! as String;
+    }
+    expect(environment['SPEEDDIAL_MCP_DAEMON_URL'], 'ws://127.0.0.1:7331/ws');
+    expect(environment['SPEEDDIAL_MCP_SECRET'], 'test-secret-${session.id}');
+    expect(environment['SPEEDDIAL_MCP_SESSION_ID'], session.id);
+    expect(environment['SPEEDDIAL_MCP_SESSION_CWD'], tempDir.path);
+  });
+
+  test('displayImage persists payload and emits an image event', () async {
+    final Session session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+    const String data =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+    await engine.displayImage(
+      session.id,
+      name: 'result.png',
+      mimeType: 'image/png',
+      data: data,
+    );
+
+    final ImageEvent image = events.last.event as ImageEvent;
+    expect(events.last.sessionId, session.id);
+    expect(image.attachment.name, 'result.png');
+    expect(image.attachment.mimeType, 'image/png');
+    final AttachmentData stored = store.getAttachment(
+      session.id,
+      image.attachment.id,
+    )!;
+    expect(stored.data, data);
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+  });
+
   test('forkSession copies history and attachments through a message boundary '
       'and hands context to the first new turn', () async {
     final source = await engine.createSession(

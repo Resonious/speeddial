@@ -39,8 +39,10 @@ String? detectCodeLanguage(String source) {
   final String trimmed = source.trimLeft();
   if (trimmed.isEmpty) return null;
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
-  if (RegExp(r'^\s*[A-Za-z][A-Za-z0-9_-]*\s*:', multiLine: true)
-      .hasMatch(source)) {
+  if (RegExp(
+    r'^\s*[A-Za-z][A-Za-z0-9_-]*\s*:',
+    multiLine: true,
+  ).hasMatch(source)) {
     return 'yaml';
   }
   if (RegExp(
@@ -87,18 +89,13 @@ class UserMessageBubble extends StatelessWidget {
       if (hasText)
         Text(
           text,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
+          style: Theme.of(context).textTheme.bodyMedium
               ?.copyWith(color: scheme.onPrimary),
         ),
       if (attachments.isNotEmpty) ...<Widget>[
         if (hasText) const SizedBox(height: 8),
         for (final Attachment attachment in attachments)
-          _AttachmentView(
-            attachment: attachment,
-            loader: attachmentLoader,
-          ),
+          AttachmentView(attachment: attachment, loader: attachmentLoader),
       ],
     ];
     return Align(
@@ -121,10 +118,14 @@ class UserMessageBubble extends StatelessWidget {
   }
 }
 
-/// One rendered attachment inside a user bubble: image thumbnails fetch and
-/// decode their payload; other types render a compact icon+name+size row.
-class _AttachmentView extends StatelessWidget {
-  const _AttachmentView({required this.attachment, required this.loader});
+/// One rendered attachment: image thumbnails fetch and decode their payload;
+/// other types render a compact icon+name+size row.
+class AttachmentView extends StatelessWidget {
+  const AttachmentView({
+    super.key,
+    required this.attachment,
+    required this.loader,
+  });
 
   final Attachment attachment;
 
@@ -185,15 +186,17 @@ class _AttachmentMetaRow extends StatelessWidget {
               attachment.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onPrimary),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onPrimary,
+              ),
             ),
           ),
           const SizedBox(width: 8),
           Text(
             _formatSize(attachment.size),
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: theme.colorScheme.onPrimary),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onPrimary,
+            ),
           ),
         ],
       ),
@@ -221,17 +224,15 @@ class _ImageThumbPlaceholder extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Icon(
-              Icons.image_outlined,
-              color: theme.colorScheme.onPrimary,
-            ),
+            Icon(Icons.image_outlined, color: theme.colorScheme.onPrimary),
             const SizedBox(height: 4),
             Text(
               attachment.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall
-                  ?.copyWith(color: theme.colorScheme.onPrimary),
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onPrimary,
+              ),
             ),
           ],
         ),
@@ -266,9 +267,11 @@ class _ImageThumbnail extends StatelessWidget {
           height: 160,
           fit: BoxFit.cover,
           gaplessPlayback: true,
-          errorBuilder: (BuildContext context, Object error,
-                  StackTrace? stackTrace) =>
-              _AttachmentMetaRow(attachment: attachment),
+          errorBuilder: (
+            BuildContext context,
+            Object error,
+            StackTrace? stackTrace,
+          ) => _AttachmentMetaRow(attachment: attachment),
         ),
       ),
     );
@@ -384,12 +387,14 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   void _kickHighlighter() {
     if (_initStarted) return;
     _initStarted = true;
-    unawaited(_ensureHighlighter().then((bool ready) {
-      if (!mounted) return;
-      _highlighterReady = ready;
-      // Re-parse the body so code blocks pick up the fresh highlighter.
-      setState(() {});
-    }));
+    unawaited(
+      _ensureHighlighter().then((bool ready) {
+        if (!mounted) return;
+        _highlighterReady = ready;
+        // Re-parse the body so code blocks pick up the fresh highlighter.
+        setState(() {});
+      }),
+    );
   }
 
   /// Cached highlighted span for [code], or null while the block must stay
@@ -470,12 +475,16 @@ MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? bodyStyle) {
   // changes by keying the cache on brightness.
   final Brightness brightness = Theme.of(context).brightness;
   if (_cachedStyleSheet == null || _cachedBrightness != brightness) {
-    _cachedStyleSheet = MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-      p: bodyStyle,
-      code: context.speedDialColors.mono.copyWith(fontSize: 12.5),
-      codeblockPadding: const EdgeInsets.all(10),
-      blockquotePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-    );
+    _cachedStyleSheet = MarkdownStyleSheet.fromTheme(Theme.of(context))
+        .copyWith(
+          p: bodyStyle,
+          code: context.speedDialColors.mono.copyWith(fontSize: 12.5),
+          codeblockPadding: const EdgeInsets.all(10),
+          blockquotePadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 4,
+          ),
+        );
     _cachedBrightness = brightness;
   }
   return _cachedStyleSheet!;
@@ -541,12 +550,17 @@ class _AgentThoughtViewState extends State<AgentThoughtView>
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool active = widget.active;
-    final Color color =
-        active ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant;
+    final Color color = active
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
     final TextStyle italic = (theme.textTheme.bodySmall ?? const TextStyle())
         .copyWith(color: color, fontStyle: FontStyle.italic);
 
-    final Widget leading = Icon(Icons.psychology_outlined, size: 16, color: color);
+    final Widget leading = Icon(
+      Icons.psychology_outlined,
+      size: 16,
+      color: color,
+    );
     final Widget title = Text(active ? 'Thinking…' : 'Thought', style: italic);
 
     return Container(

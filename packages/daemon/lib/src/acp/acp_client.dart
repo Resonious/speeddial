@@ -95,12 +95,13 @@ class AcpClient {
     AcpPermissionHandler? requestPermission,
     AcpReadTextFileHandler? readTextFile,
     AcpWriteTextFileHandler? writeTextFile,
-  })  : _command = List<String>.of(command),
-        _cwd = cwd, // ignore: prefer_initializing_formals — public API name
-        _environment = environment, // ignore: prefer_initializing_formals — public API name
-        _permissionHandler = requestPermission,
-        _readTextFileHandler = readTextFile,
-        _writeTextFileHandler = writeTextFile {
+  }) : _command = List<String>.of(command),
+       _cwd = cwd, // ignore: prefer_initializing_formals — public API name
+       // ignore: prefer_initializing_formals — public API name
+       _environment = environment,
+       _permissionHandler = requestPermission,
+       _readTextFileHandler = readTextFile,
+       _writeTextFileHandler = writeTextFile {
     _processFuture = _start();
   }
 
@@ -129,7 +130,8 @@ class AcpClient {
   Completer<void> _writeQueue = Completer<void>()..complete();
 
   /// Completes once `initialize` has been answered; re-uses the first result.
-  Future<InitializeResult> get initialized => _initializedFuture ??= _initialize();
+  Future<InitializeResult> get initialized =>
+      _initializedFuture ??= _initialize();
 
   /// Lines written to the agent's stderr.
   Stream<String> get stderrLines => _stderrController.stream;
@@ -158,13 +160,14 @@ class AcpClient {
           .bind(process.stderr)
           .transform(const LineSplitter())
           .listen(
-        (line) {
-          if (!_stderrController.isClosed) _stderrController.add(line);
-        },
-        onError: (Object _) {},
-        onDone: () => _stderrController.close(),
-        cancelOnError: true,
-      ).asFuture<void>(),
+            (line) {
+              if (!_stderrController.isClosed) _stderrController.add(line);
+            },
+            onError: (Object _) {},
+            onDone: () => _stderrController.close(),
+            cancelOnError: true,
+          )
+          .asFuture<void>(),
     );
     unawaited(process.exitCode.then(_onExit));
     return process;
@@ -190,8 +193,9 @@ class AcpClient {
   }
 
   Future<void> _readResponses(Process process) async {
-    final lines =
-        utf8.decoder.bind(process.stdout).transform(const LineSplitter());
+    final lines = utf8.decoder
+        .bind(process.stdout)
+        .transform(const LineSplitter());
     await for (final line in lines) {
       if (line.trim().isEmpty) continue;
       Object? decoded;
@@ -228,16 +232,21 @@ class AcpClient {
       if (error is Map) {
         final code = (error['code'] as num?)?.toInt() ?? -32000;
         final text = error['message'] as String? ?? 'JSON-RPC error';
-        pending.completer.completeError(AcpJsonRpcException(code, text, error['data']));
+        pending.completer.completeError(
+          AcpJsonRpcException(code, text, error['data']),
+        );
       } else {
-        pending.completer
-            .completeError(const AcpJsonRpcException(-32000, 'Malformed error response'));
+        pending.completer.completeError(
+          const AcpJsonRpcException(-32000, 'Malformed error response'),
+        );
       }
       return;
     }
     final result = message['result'];
     pending.completer.complete(
-      result is Map ? Map<String, Object?>.from(result) : const <String, Object?>{},
+      result is Map
+          ? Map<String, Object?>.from(result)
+          : const <String, Object?>{},
     );
   }
 
@@ -291,7 +300,9 @@ class AcpClient {
     Object? id,
     Map<String, Object?> params,
   ) async {
-    if (id == null) return; // A permission request without an id cannot be answered.
+    if (id == null) {
+      return; // A permission request without an id cannot be answered.
+    }
     final sessionId = params['sessionId'] as String? ?? '';
     final pending = _PendingPermission(sessionId);
     _pendingPermissions[id] = pending;
@@ -308,14 +319,20 @@ class AcpClient {
     if (rawOptions is List) {
       for (final entry in rawOptions) {
         if (entry is Map) {
-          options.add(PermissionOptionData.fromJson(Map<String, Object?>.from(entry)));
+          options.add(
+            PermissionOptionData.fromJson(Map<String, Object?>.from(entry)),
+          );
         }
       }
     }
     final handler = _permissionHandler;
     if (handler == null) {
       _pendingPermissions.remove(id);
-      await _sendResponseError(id, -32601, 'Method not found: session/request_permission');
+      await _sendResponseError(
+        id,
+        -32601,
+        'Method not found: session/request_permission',
+      );
       return;
     }
     String? optionId;
@@ -331,7 +348,11 @@ class AcpClient {
         pending.responded = true;
         _pendingPermissions.remove(id);
         try {
-          await _sendResponseError(id, -32603, 'Permission request handler failed');
+          await _sendResponseError(
+            id,
+            -32603,
+            'Permission request handler failed',
+          );
         } on Object {
           // Agent process is gone; nothing left to report to.
         }
@@ -342,7 +363,10 @@ class AcpClient {
       pending.responded = true;
       _pendingPermissions.remove(id);
       await _sendResponse(id, <String, Object?>{
-        'outcome': <String, Object?>{'outcome': 'selected', 'optionId': optionId},
+        'outcome': <String, Object?>{
+          'outcome': 'selected',
+          'optionId': optionId,
+        },
       });
     }
   }
@@ -356,7 +380,11 @@ class AcpClient {
     final path = params['path'] as String? ?? '';
     final handler = _readTextFileHandler;
     if (handler == null) {
-      await _sendResponseError(id, -32601, 'Method not found: fs/read_text_file');
+      await _sendResponseError(
+        id,
+        -32601,
+        'Method not found: fs/read_text_file',
+      );
       return;
     }
     try {
@@ -377,7 +405,11 @@ class AcpClient {
     final content = params['content'] as String? ?? '';
     final handler = _writeTextFileHandler;
     if (handler == null) {
-      await _sendResponseError(id, -32601, 'Method not found: fs/write_text_file');
+      await _sendResponseError(
+        id,
+        -32601,
+        'Method not found: fs/write_text_file',
+      );
       return;
     }
     try {
@@ -389,21 +421,18 @@ class AcpClient {
   }
 
   Future<InitializeResult> _initialize() async {
-    final result = await _request(
-      'initialize',
-      <String, Object?>{
-        'protocolVersion': 1,
-        'clientCapabilities': <String, Object?>{
-          'fs': <String, Object?>{'readTextFile': true, 'writeTextFile': true},
-          'terminal': false,
-        },
-        'clientInfo': <String, Object?>{
-          'name': 'speeddial',
-          'title': 'SpeedDial',
-          'version': '0.1.0',
-        },
+    final result = await _request('initialize', <String, Object?>{
+      'protocolVersion': 1,
+      'clientCapabilities': <String, Object?>{
+        'fs': <String, Object?>{'readTextFile': true, 'writeTextFile': true},
+        'terminal': false,
       },
-    ).timeout(initTimeout);
+      'clientInfo': <String, Object?>{
+        'name': 'speeddial',
+        'title': 'SpeedDial',
+        'version': '0.1.0',
+      },
+    }).timeout(initTimeout);
     return InitializeResult.fromJson(result);
   }
 
@@ -412,18 +441,16 @@ class AcpClient {
     await _request('authenticate', <String, Object?>{'methodId': methodId});
   }
 
-  /// Creates a new session, returning its id plus the session config options
-  /// the agent advertised (empty when the agent reports none).
+  /// Creates a new session with the supplied MCP server connections,
+  /// returning its id plus the session config options the agent advertised.
   Future<({String sessionId, List<AcpConfigOption> configOptions})> newSession({
     required String cwd,
+    List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   }) async {
-    final result = await _request(
-      'session/new',
-      <String, Object?>{
-        'cwd': cwd,
-        'mcpServers': const <Object?>[],
-      },
-    );
+    final result = await _request('session/new', <String, Object?>{
+      'cwd': cwd,
+      'mcpServers': mcpServers,
+    });
     final sessionId = result['sessionId'];
     if (sessionId is! String || sessionId.isEmpty) {
       throw const FormatException('session/new response missing sessionId');
@@ -440,19 +467,18 @@ class AcpClient {
   /// support it; others answer with a JSON-RPC error.
   ///
   /// Returns the session config options the agent advertised (empty when
-  /// the agent reports none).
+  /// the agent reports none). [mcpServers] reconnects the same tools that
+  /// were present when the session was created.
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
+    List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   }) async {
-    final result = await _request(
-      'session/load',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'cwd': cwd,
-        'mcpServers': const <Object?>[],
-      },
-    );
+    final result = await _request('session/load', <String, Object?>{
+      'sessionId': sessionId,
+      'cwd': cwd,
+      'mcpServers': mcpServers,
+    });
     return AcpConfigOption.listFrom(result['configOptions']);
   }
 
@@ -496,13 +522,10 @@ class AcpClient {
     String sessionId,
     List<Map<String, Object?>> promptBlocks,
   ) async {
-    final result = await _request(
-      'session/prompt',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'prompt': promptBlocks,
-      },
-    );
+    final result = await _request('session/prompt', <String, Object?>{
+      'sessionId': sessionId,
+      'prompt': promptBlocks,
+    });
     return PromptResult.fromJson(result);
   }
 
@@ -523,18 +546,17 @@ class AcpClient {
         });
       }
     }
-    await _sendNotification(
-      'session/cancel',
-      <String, Object?>{'sessionId': sessionId},
-    );
+    await _sendNotification('session/cancel', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   /// Switches the session to the given mode id.
   Future<void> setMode(String sessionId, String modeId) async {
-    await _request(
-      'session/set_mode',
-      <String, Object?>{'sessionId': sessionId, 'modeId': modeId},
-    );
+    await _request('session/set_mode', <String, Object?>{
+      'sessionId': sessionId,
+      'modeId': modeId,
+    });
   }
 
   /// Sends a request and awaits its response.
@@ -582,11 +604,7 @@ class AcpClient {
     });
   }
 
-  Future<void> _sendResponseError(
-    Object id,
-    int code,
-    String message,
-  ) {
+  Future<void> _sendResponseError(Object id, int code, String message) {
     return _sendRaw(<String, Object?>{
       'jsonrpc': '2.0',
       'id': id,
@@ -640,7 +658,9 @@ class AcpClient {
     }
     final error = StateError('AcpClient has been disposed.');
     for (final pending in _pendingRequests.values.toList()) {
-      if (!pending.completer.isCompleted) pending.completer.completeError(error);
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(error);
+      }
     }
     _pendingRequests.clear();
     _pendingPermissions.clear();

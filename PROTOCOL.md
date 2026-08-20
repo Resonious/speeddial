@@ -90,7 +90,7 @@ OutgoingAttachment = {           // client → daemon payload (sessions.send onl
   mimeType: string,              // IANA type; "application/octet-stream" when unknown
   data: string,                  // base64-encoded content
 }
-Attachment = {                   // metadata carried by userMessage events (no payload)
+Attachment = {                   // metadata carried by userMessage/image events (no payload)
   id: string,                    // daemon-assigned, unique within the session
   name: string,
   mimeType: string,
@@ -143,6 +143,7 @@ receive them. `sessions.history` returns events ordered by `seq` ascending.
 ```ts
 SessionEvent =
   | { type: "userMessage", text: string, attachments?: Attachment[] }  // attachments omitted when empty
+  | { type: "image", attachment: Attachment }          // agent-requested image displayed in the UI
   | { type: "agentMessageChunk", text: string }        // streaming delta
   | { type: "agentThoughtChunk", text: string }        // streaming delta, collapsible in UI
   | { type: "toolCall", toolCall: ToolCall }           // created or updated; match by toolCall.id
@@ -221,7 +222,7 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
   side of any visible exchange. The fork inherits the source provider, project, cwd/worktree,
   base branch, mode, model, thinking level, and yolo setting; it is titled `Fork of <source title>`.
-  Attachment payloads referenced by copied user messages are cloned into the new session.
+  Attachment payloads referenced by copied user messages or image events are cloned into the new session.
   The daemon starts a fresh provider session and supplies the copied user/agent conversation as
   inherited context with the fork's first new turn. This provider-independent handoff makes
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
@@ -273,6 +274,30 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `attachments.read {sessionId: string, attachmentId: string}` → `{attachment: AttachmentData}` — fetches one
   attachment's metadata plus base64 payload; `-32002` when the session or attachment is unknown. Payloads are
   persisted by the daemon and survive restarts; they are deleted with their session.
+
+### Built-in MCP bridge (daemon-private)
+
+Every ACP `session/new` and `session/load` request includes a daemon-owned stdio MCP server named
+`speeddial`. It exposes:
+
+- `search_projects {query?: string}` — lists projects whose name/path contains the
+  case-insensitive query; an empty query lists all known projects.
+- `search_sessions {query?: string, projectId?: string, limit?: int}` — searches non-archived
+  session titles and persisted history across the daemon, excluding the calling session. Results
+  contain session/project metadata and a matching excerpt. Default limit 20, maximum 100; an empty
+  query returns recent sessions.
+- `display_image {path?: string, data?: string, mimeType?: string, name?: string}` — requires
+  exactly one of a path confined to the session cwd or a base64 payload. The decoded image is capped
+  at 8 MiB, persisted as an attachment, and emitted as an `image` event; clients fetch it through
+  `attachments.read`. The MCP result also includes MCP image content for the model.
+
+The subprocess connects to `/ws` over loopback and must first call
+`internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret is bound
+to each session and injected with its owning session id only into that session's ACP MCP configuration.
+An authenticated MCP bridge may call only `internal.mcpSearchProjects`,
+`internal.mcpSearchSessions`, and `internal.mcpDisplayImage`; it cannot call the public daemon API
+and receives no broadcasts.
+Public clients cannot use the internal methods without the MCP secret.
 
 ### Files (paths are relative to the project root; absolute rejected with `-32602`)
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending

@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 import '../engine/session_engine.dart';
 import '../git/git_service.dart';
 import '../git/pr_service.dart';
+import '../mcp/built_in_mcp_server.dart';
 import '../paths.dart';
 import '../git/summary_watcher.dart';
 import '../providers/provider_registry.dart';
@@ -72,6 +73,13 @@ const List<String> _kProtocolMethods = <String>[
   'git.sessionSummaries',
 ];
 
+const List<String> _kInternalMcpMethods = <String>[
+  'internal.mcpAuthenticate',
+  'internal.mcpSearchProjects',
+  'internal.mcpSearchSessions',
+  'internal.mcpDisplayImage',
+];
+
 /// One connected client: its peer, socket, and authentication state.
 class _Client {
   _Client({
@@ -83,6 +91,7 @@ class _Client {
   final RpcPeer peer;
   final WebSocket socket;
   bool authenticated;
+  String? mcpSessionId;
 }
 
 /// Implements the SpeedDial daemon wire API over WebSocket JSON-RPC.
@@ -140,6 +149,10 @@ class SpeedDialServer {
   final PrService _pr;
   final FsService _fs = FsService();
   final Uuid _uuid = const Uuid();
+  final Map<String, String> _mcpSecretsBySession = <String, String>{};
+
+  String _mcpSecretForSession(String sessionId) => _mcpSecretsBySession
+      .putIfAbsent(sessionId, () => '${_uuid.v4()}${_uuid.v4()}');
 
   /// How often the summary watcher recomputes session summaries, and how
   /// often it refetches a project's base branches. Injectable for tests.
@@ -224,12 +237,30 @@ class SpeedDialServer {
     });
     _removalsSub = _engine.sessionRemovals.listen((sessionId) {
       _createdBroadcast.remove(sessionId);
+      _mcpSecretsBySession.remove(sessionId);
       _broadcast('session.removed', <String, Object?>{'sessionId': sessionId});
     });
   }
 
   Future<void> _bind(String host, int port) async {
     _httpServer = await HttpServer.bind(host, port);
+    final String loopbackHost =
+        _httpServer!.address.type == InternetAddressType.IPv6
+        ? '::1'
+        : '127.0.0.1';
+    final String daemonUrl = Uri(
+      scheme: 'ws',
+      host: loopbackHost,
+      port: _httpServer!.port,
+      path: '/ws',
+    ).toString();
+    final launch = builtInMcpLaunchCommand();
+    _engine.configureBuiltInMcp(
+      daemonUrl: daemonUrl,
+      secretForSession: _mcpSecretForSession,
+      command: launch.command,
+      args: launch.args,
+    );
     _httpServer!.listen(_handleRequest);
   }
 
@@ -283,6 +314,12 @@ class SpeedDialServer {
     );
     _clients.add(client);
     for (final method in _kProtocolMethods) {
+      client.peer.registerHandler(
+        method,
+        (params) => _dispatch(client, method, params),
+      );
+    }
+    for (final method in _kInternalMcpMethods) {
       client.peer.registerHandler(
         method,
         (params) => _dispatch(client, method, params),
@@ -345,6 +382,23 @@ class SpeedDialServer {
     String method,
     Map<String, Object?> params,
   ) {
+    if (method == 'internal.mcpAuthenticate') {
+      return _mcpAuthenticate(client, params);
+    }
+    if (client.mcpSessionId != null) {
+      return switch (method) {
+        'internal.mcpSearchProjects' => _mcpSearchProjects(client, params),
+        'internal.mcpSearchSessions' => _mcpSearchSessions(client, params),
+        'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
+        _ => throw DaemonError(
+          kErrUnauthenticated,
+          'MCP bridge connections may only call internal MCP methods',
+        ),
+      };
+    }
+    if (method.startsWith('internal.')) {
+      throw DaemonError(kErrUnauthenticated, 'MCP authentication required');
+    }
     if (!client.authenticated) {
       return switch (method) {
         'auth.authenticate' => _authenticate(client, params),
@@ -392,6 +446,91 @@ class SpeedDialServer {
         'Unknown method: $method', // Unreachable: the peer answers -32601.
       ),
     };
+  }
+
+  Object? _mcpAuthenticate(_Client client, Map<String, Object?> params) {
+    final String secret = _requiredString(params, 'secret');
+    final String sessionId = _requiredString(params, 'sessionId');
+    if (_mcpSecretsBySession[sessionId] != secret ||
+        _store.getSession(sessionId) == null) {
+      throw DaemonError(kErrUnauthenticated, 'invalid MCP credentials');
+    }
+    client.authenticated = false;
+    client.mcpSessionId = sessionId;
+    return <String, Object?>{'ok': true};
+  }
+
+  Object? _mcpSearchProjects(_Client client, Map<String, Object?> params) {
+    final String query = (params['query'] as String? ?? '').toLowerCase();
+    final List<Project> projects = _store
+        .listProjects()
+        .where((Project project) {
+          return query.isEmpty ||
+              project.name.toLowerCase().contains(query) ||
+              project.path.toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+    return <String, Object?>{
+      'projects': projects
+          .map((Project project) => project.toJson())
+          .toList(growable: false),
+    };
+  }
+
+  Object? _mcpSearchSessions(_Client client, Map<String, Object?> params) {
+    final String sessionId = client.mcpSessionId!;
+    final Object? rawLimit = params['limit'];
+    final int limit = rawLimit is int ? rawLimit : 20;
+    if (limit < 1 || limit > 100) {
+      throw DaemonError(_kErrInvalidParams, 'limit must be between 1 and 100');
+    }
+    final Object? rawProjectId = params['projectId'];
+    if (rawProjectId != null && rawProjectId is! String) {
+      throw DaemonError(_kErrInvalidParams, 'projectId must be a string');
+    }
+    final Object? rawQuery = params['query'];
+    if (rawQuery != null && rawQuery is! String) {
+      throw DaemonError(_kErrInvalidParams, 'query must be a string');
+    }
+    return <String, Object?>{
+      'sessions': _store.searchSessions(
+        query: rawQuery as String? ?? '',
+        excludeSessionId: sessionId,
+        projectId: rawProjectId as String?,
+        limit: limit,
+      ),
+    };
+  }
+
+  Future<Object?> _mcpDisplayImage(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final String name = _requiredString(params, 'name');
+    final String mimeType = _requiredString(params, 'mimeType');
+    final String data = _requiredString(params, 'data');
+    if (!isImageMimeType(mimeType)) {
+      throw DaemonError(_kErrInvalidParams, 'mimeType must be image/*');
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(data);
+    } on FormatException {
+      throw DaemonError(_kErrInvalidParams, 'data must be valid base64');
+    }
+    if (bytes.length > kMaxAttachmentBytes) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'image exceeds $kMaxAttachmentBytes decoded bytes',
+      );
+    }
+    await _engine.displayImage(
+      client.mcpSessionId!,
+      name: name,
+      mimeType: mimeType,
+      data: data,
+    );
+    return <String, Object?>{'ok': true};
   }
 
   // -------------------------------------------------------------------------

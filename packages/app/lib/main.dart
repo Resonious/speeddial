@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'src/local_daemon/local_daemon.dart';
+import 'src/local_daemon/mcp_entry.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
 import 'src/ui/shell.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  if (await runMcpIfRequested(args)) return;
   WidgetsFlutterBinding.ensureInitialized();
   const bool demoMode = bool.fromEnvironment('demo');
   late final AppData data;
@@ -17,10 +19,7 @@ Future<void> main() async {
   } else {
     final ConnectionsStore connections = ConnectionsStore();
     await connections.init();
-    data = AppData(
-      connections: connections,
-      selection: SelectionStore(),
-    );
+    data = AppData(connections: connections, selection: SelectionStore());
     // Desktop builds start an in-process daemon for an out-of-the-box
     // experience; web/mobile skip this (unsupported) and rely on the user
     // adding a remote daemon. The embedded endpoint is non-persistent: its
@@ -57,7 +56,8 @@ class SpeedDialApp extends StatefulWidget {
   State<SpeedDialApp> createState() => _SpeedDialAppState();
 }
 
-class _SpeedDialAppState extends State<SpeedDialApp> with WidgetsBindingObserver {
+class _SpeedDialAppState extends State<SpeedDialApp>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();

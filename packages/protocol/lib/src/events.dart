@@ -28,6 +28,7 @@ sealed class SessionEvent {
   factory SessionEvent.fromJson(Map<String, Object?> json) =>
       switch (json['type']) {
         'userMessage' => UserMessageEvent.fromJson(json),
+        'image' => ImageEvent.fromJson(json),
         'agentMessageChunk' => AgentMessageChunkEvent.fromJson(json),
         'agentThoughtChunk' => AgentThoughtChunkEvent.fromJson(json),
         'toolCall' => ToolCallEvent.fromJson(json),
@@ -37,7 +38,9 @@ sealed class SessionEvent {
         'usage' => UsageEvent.fromJson(json),
         'turnComplete' => TurnCompleteEvent.fromJson(json),
         'sessionError' => SessionErrorEvent.fromJson(json),
-        _ => throw FormatException('Unknown SessionEvent type: ${json['type']}'),
+        _ => throw FormatException(
+          'Unknown SessionEvent type: ${json['type']}',
+        ),
       };
 
   Map<String, Object?> toJson();
@@ -61,7 +64,8 @@ class UserMessageEvent extends SessionEvent {
   factory UserMessageEvent.fromJson(Map<String, Object?> json) =>
       UserMessageEvent(
         text: json['text']! as String,
-        attachments: (json['attachments'] as List<Object?>?)
+        attachments:
+            (json['attachments'] as List<Object?>?)
                 ?.map((e) => Attachment.fromJson(e! as Map<String, Object?>))
                 .toList(growable: false) ??
             const <Attachment>[],
@@ -77,8 +81,37 @@ class UserMessageEvent extends SessionEvent {
       'type': 'userMessage',
       'text': text,
       if (attachments.isNotEmpty)
-        'attachments':
-            attachments.map((a) => a.toJson()).toList(growable: false),
+        'attachments': attachments
+            .map((a) => a.toJson())
+            .toList(growable: false),
+      'seq': ?localSeq,
+      if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
+    };
+  }
+}
+
+/// An image the agent asked SpeedDial to display directly in the timeline.
+/// Its payload is fetched lazily through `attachments.read`.
+class ImageEvent extends SessionEvent {
+  const ImageEvent({required this.attachment, super.seq, super.timestamp});
+
+  final Attachment attachment;
+
+  factory ImageEvent.fromJson(Map<String, Object?> json) => ImageEvent(
+    attachment: Attachment.fromJson(
+      (json['attachment']! as Map).cast<String, Object?>(),
+    ),
+    seq: json['seq'] as int?,
+    timestamp: _parseTimestamp(json['timestamp']),
+  );
+
+  @override
+  Map<String, Object?> toJson() {
+    final int? localSeq = seq;
+    final DateTime? localTimestamp = timestamp;
+    return <String, Object?>{
+      'type': 'image',
+      'attachment': attachment.toJson(),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };
@@ -87,7 +120,11 @@ class UserMessageEvent extends SessionEvent {
 
 /// A streaming delta of the agent's message.
 class AgentMessageChunkEvent extends SessionEvent {
-  const AgentMessageChunkEvent({required this.text, super.seq, super.timestamp});
+  const AgentMessageChunkEvent({
+    required this.text,
+    super.seq,
+    super.timestamp,
+  });
 
   final String text;
 
@@ -113,7 +150,11 @@ class AgentMessageChunkEvent extends SessionEvent {
 
 /// A streaming delta of the agent's reasoning; collapsible in the UI.
 class AgentThoughtChunkEvent extends SessionEvent {
-  const AgentThoughtChunkEvent({required this.text, super.seq, super.timestamp});
+  const AgentThoughtChunkEvent({
+    required this.text,
+    super.seq,
+    super.timestamp,
+  });
 
   final String text;
 
@@ -144,10 +185,10 @@ class ToolCallEvent extends SessionEvent {
   final ToolCall toolCall;
 
   factory ToolCallEvent.fromJson(Map<String, Object?> json) => ToolCallEvent(
-        toolCall: ToolCall.fromJson(json['toolCall']! as Map<String, Object?>),
-        seq: json['seq'] as int?,
-        timestamp: _parseTimestamp(json['timestamp']),
-      );
+    toolCall: ToolCall.fromJson(json['toolCall']! as Map<String, Object?>),
+    seq: json['seq'] as int?,
+    timestamp: _parseTimestamp(json['timestamp']),
+  );
 
   @override
   Map<String, Object?> toJson() {
@@ -169,12 +210,12 @@ class PlanEvent extends SessionEvent {
   final List<PlanEntry> entries;
 
   factory PlanEvent.fromJson(Map<String, Object?> json) => PlanEvent(
-        entries: (json['entries']! as List<Object?>)
-            .map((e) => PlanEntry.fromJson(e! as Map<String, Object?>))
-            .toList(growable: false),
-        seq: json['seq'] as int?,
-        timestamp: _parseTimestamp(json['timestamp']),
-      );
+    entries: (json['entries']! as List<Object?>)
+        .map((e) => PlanEntry.fromJson(e! as Map<String, Object?>))
+        .toList(growable: false),
+    seq: json['seq'] as int?,
+    timestamp: _parseTimestamp(json['timestamp']),
+  );
 
   @override
   Map<String, Object?> toJson() {
@@ -191,14 +232,19 @@ class PlanEvent extends SessionEvent {
 
 /// The agent is asking the user to allow/reject an action.
 class PermissionRequestEvent extends SessionEvent {
-  const PermissionRequestEvent({required this.request, super.seq, super.timestamp});
+  const PermissionRequestEvent({
+    required this.request,
+    super.seq,
+    super.timestamp,
+  });
 
   final PermissionRequest request;
 
   factory PermissionRequestEvent.fromJson(Map<String, Object?> json) =>
       PermissionRequestEvent(
-        request:
-            PermissionRequest.fromJson(json['request']! as Map<String, Object?>),
+        request: PermissionRequest.fromJson(
+          json['request']! as Map<String, Object?>,
+        ),
         seq: json['seq'] as int?,
         timestamp: _parseTimestamp(json['timestamp']),
       );
@@ -257,10 +303,10 @@ class UsageEvent extends SessionEvent {
   final UsageInfo usage;
 
   factory UsageEvent.fromJson(Map<String, Object?> json) => UsageEvent(
-        usage: UsageInfo.fromJson(json['usage']! as Map<String, Object?>),
-        seq: json['seq'] as int?,
-        timestamp: _parseTimestamp(json['timestamp']),
-      );
+    usage: UsageInfo.fromJson(json['usage']! as Map<String, Object?>),
+    seq: json['seq'] as int?,
+    timestamp: _parseTimestamp(json['timestamp']),
+  );
 
   @override
   Map<String, Object?> toJson() {
@@ -277,7 +323,11 @@ class UsageEvent extends SessionEvent {
 
 /// The agent finished its turn.
 class TurnCompleteEvent extends SessionEvent {
-  const TurnCompleteEvent({required this.stopReason, super.seq, super.timestamp});
+  const TurnCompleteEvent({
+    required this.stopReason,
+    super.seq,
+    super.timestamp,
+  });
 
   /// "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...
   final String stopReason;

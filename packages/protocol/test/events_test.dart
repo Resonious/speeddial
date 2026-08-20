@@ -11,11 +11,7 @@ void main() {
     status: ToolCallStatus.running,
     content: [
       ToolCallText(text: 'Rewriting'),
-      ToolCallDiff(
-        path: 'lib/src/rpc.dart',
-        oldText: 'a',
-        newText: 'b',
-      ),
+      ToolCallDiff(path: 'lib/src/rpc.dart', oldText: 'a', newText: 'b'),
     ],
     locations: const ['lib/src/rpc.dart'],
   );
@@ -58,38 +54,103 @@ void main() {
     cost: '0.0030',
   );
 
+  const attachment = Attachment(
+    id: 'att_1234567890abc',
+    name: 'chart.png',
+    mimeType: 'image/png',
+    size: 128,
+  );
+
   /// Every variant with seq/timestamp set, plus its expected `type` wire.
   final List<({SessionEvent event, String type})> allEvents = [
-    (event: UserMessageEvent(text: 'hello', seq: 1, timestamp: timestamp), type: 'userMessage'),
-    (event: AgentMessageChunkEvent(text: 'Hi', seq: 2, timestamp: timestamp), type: 'agentMessageChunk'),
-    (event: AgentThoughtChunkEvent(text: 'considering', seq: 3, timestamp: timestamp), type: 'agentThoughtChunk'),
-    (event: ToolCallEvent(toolCall: toolCall, seq: 4, timestamp: timestamp), type: 'toolCall'),
-    (event: PlanEvent(entries: planEntries, seq: 5, timestamp: timestamp), type: 'plan'),
-    (event: PermissionRequestEvent(request: permissionRequest, seq: 6, timestamp: timestamp), type: 'permissionRequest'),
-    (event: PermissionResolvedEvent(requestId: 'req_abcdefghijklmno', optionId: 'allow_once', seq: 7, timestamp: timestamp), type: 'permissionResolved'),
-    (event: UsageEvent(usage: usage, seq: 8, timestamp: timestamp), type: 'usage'),
-    (event: TurnCompleteEvent(stopReason: 'end_turn', seq: 9, timestamp: timestamp), type: 'turnComplete'),
-    (event: SessionErrorEvent(message: 'agent crashed', seq: 10, timestamp: timestamp), type: 'sessionError'),
+    (
+      event: UserMessageEvent(text: 'hello', seq: 1, timestamp: timestamp),
+      type: 'userMessage',
+    ),
+    (
+      event: ImageEvent(attachment: attachment, seq: 2, timestamp: timestamp),
+      type: 'image',
+    ),
+    (
+      event: AgentMessageChunkEvent(text: 'Hi', seq: 2, timestamp: timestamp),
+      type: 'agentMessageChunk',
+    ),
+    (
+      event: AgentThoughtChunkEvent(
+        text: 'considering',
+        seq: 3,
+        timestamp: timestamp,
+      ),
+      type: 'agentThoughtChunk',
+    ),
+    (
+      event: ToolCallEvent(toolCall: toolCall, seq: 4, timestamp: timestamp),
+      type: 'toolCall',
+    ),
+    (
+      event: PlanEvent(entries: planEntries, seq: 5, timestamp: timestamp),
+      type: 'plan',
+    ),
+    (
+      event: PermissionRequestEvent(
+        request: permissionRequest,
+        seq: 6,
+        timestamp: timestamp,
+      ),
+      type: 'permissionRequest',
+    ),
+    (
+      event: PermissionResolvedEvent(
+        requestId: 'req_abcdefghijklmno',
+        optionId: 'allow_once',
+        seq: 7,
+        timestamp: timestamp,
+      ),
+      type: 'permissionResolved',
+    ),
+    (
+      event: UsageEvent(usage: usage, seq: 8, timestamp: timestamp),
+      type: 'usage',
+    ),
+    (
+      event: TurnCompleteEvent(
+        stopReason: 'end_turn',
+        seq: 9,
+        timestamp: timestamp,
+      ),
+      type: 'turnComplete',
+    ),
+    (
+      event: SessionErrorEvent(
+        message: 'agent crashed',
+        seq: 10,
+        timestamp: timestamp,
+      ),
+      type: 'sessionError',
+    ),
   ];
 
-  test('roundtrip: every variant preserves type, seq, timestamp, and fields',
-      () {
-    for (final entry in allEvents) {
-      final event = entry.event;
-      final json = event.toJson();
-      expect(json['type'], entry.type);
+  test(
+    'roundtrip: every variant preserves type, seq, timestamp, and fields',
+    () {
+      for (final entry in allEvents) {
+        final event = entry.event;
+        final json = event.toJson();
+        expect(json['type'], entry.type);
 
-      final decoded = SessionEvent.fromJson(json);
-      expect(decoded.runtimeType, event.runtimeType);
-      expect(decoded.seq, event.seq);
-      expect(decoded.timestamp, event.timestamp);
-      expect(decoded.toJson(), json);
-    }
-  });
+        final decoded = SessionEvent.fromJson(json);
+        expect(decoded.runtimeType, event.runtimeType);
+        expect(decoded.seq, event.seq);
+        expect(decoded.timestamp, event.timestamp);
+        expect(decoded.toJson(), json);
+      }
+    },
+  );
 
   test('roundtrip: client-constructed variants omit seq/timestamp', () {
     final variants = <SessionEvent>[
       UserMessageEvent(text: 'hi'),
+      ImageEvent(attachment: attachment),
       AgentMessageChunkEvent(text: 'a'),
       AgentThoughtChunkEvent(text: 't'),
       ToolCallEvent(toolCall: toolCall),
@@ -123,6 +184,19 @@ void main() {
     expect(user.text, 'hello');
     expect(user.seq, 1);
     expect(user.timestamp, DateTime.utc(2026, 8, 18, 14, 30, 15, 250));
+
+    final image = SessionEvent.fromJson(const {
+      'type': 'image',
+      'attachment': {
+        'id': 'att_1234567890abc',
+        'name': 'chart.png',
+        'mimeType': 'image/png',
+        'size': 128,
+      },
+      'seq': 2,
+    }) as ImageEvent;
+    expect(image.attachment.name, 'chart.png');
+    expect(image.attachment.mimeType, 'image/png');
     expect(user.timestamp!.isUtc, isTrue);
 
     final chunk = SessionEvent.fromJson(const {
@@ -157,11 +231,13 @@ void main() {
     expect(const UserMessageEvent(text: 'hi').toJson()['attachments'], isNull);
     expect(decodedUser.text, 'look at this');
     expect(
-      (SessionEvent.fromJson(const {'type': 'userMessage', 'text': 'x'})
-              as UserMessageEvent)
-          .attachments,
+      (SessionEvent.fromJson(const {
+        'type': 'userMessage',
+        'text': 'x',
+      }) as UserMessageEvent).attachments,
       isEmpty,
-    );    final thought = SessionEvent.fromJson(const {
+    );
+    final thought = SessionEvent.fromJson(const {
       'type': 'agentThoughtChunk',
       'text': 'hmm',
     }) as AgentThoughtChunkEvent;
@@ -208,7 +284,12 @@ void main() {
 
     final usageEvent = SessionEvent.fromJson(const {
       'type': 'usage',
-      'usage': {'inputTokens': 1, 'outputTokens': 2, 'totalTokens': 3, 'cost': null},
+      'usage': {
+        'inputTokens': 1,
+        'outputTokens': 2,
+        'totalTokens': 3,
+        'cost': null,
+      },
     }) as UsageEvent;
     expect(usageEvent.usage.totalTokens, 3);
     expect(usageEvent.usage.cost, isNull);
@@ -231,10 +312,14 @@ void main() {
       final decoded = SessionEvent.fromJson(entry.event.toJson());
       expect(decoded, isA<SessionEvent>());
     }
-    expect(() => SessionEvent.fromJson(const {'type': 'unknown'}),
-        throwsFormatException);
-    expect(() => SessionEvent.fromJson(const {'type': 'toolCall'}),
-        throwsA(isA<TypeError>()));
+    expect(
+      () => SessionEvent.fromJson(const {'type': 'unknown'}),
+      throwsFormatException,
+    );
+    expect(
+      () => SessionEvent.fromJson(const {'type': 'toolCall'}),
+      throwsA(isA<TypeError>()),
+    );
   });
 
   test('missing timestamp field decodes to null', () {
@@ -276,13 +361,17 @@ void main() {
         ToolCallDiff(path: 'p', oldText: null, newText: 'n').toJson(),
         const {'type': 'diff', 'path': 'p', 'oldText': null, 'newText': 'n'},
       );
-      expect(const ToolCallTerminal(terminalId: 't', output: 'o').toJson(),
-          const {'type': 'terminal', 'terminalId': 't', 'output': 'o'});
+      expect(
+        const ToolCallTerminal(terminalId: 't', output: 'o').toJson(),
+        const {'type': 'terminal', 'terminalId': 't', 'output': 'o'},
+      );
     });
 
     test('unknown type throws FormatException', () {
-      expect(() => ToolCallContent.fromJson(const {'type': 'image'}),
-          throwsFormatException);
+      expect(
+        () => ToolCallContent.fromJson(const {'type': 'image'}),
+        throwsFormatException,
+      );
     });
   });
 }

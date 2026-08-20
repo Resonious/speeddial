@@ -29,6 +29,12 @@ class UserMessageItem extends TimelineItem {
   final int? forkSeq;
 }
 
+/// An image the agent explicitly displayed for the user.
+class DisplayedImageItem extends TimelineItem {
+  const DisplayedImageItem({required this.attachment});
+  final Attachment attachment;
+}
+
 /// A merged run of consecutive agent message chunks.
 class AgentMessageItem extends TimelineItem {
   const AgentMessageItem({required this.text, this.forkSeq});
@@ -135,6 +141,10 @@ List<TimelineItem> deriveTimelineItems(
             forkSeq: e.seq,
           ),
         );
+      case ImageEvent e:
+        flushMessage();
+        flushThought();
+        items.add(DisplayedImageItem(attachment: e.attachment));
       case AgentMessageChunkEvent e:
         message.write(e.text);
         messageForkSeq = e.seq;
@@ -252,6 +262,10 @@ class _TimelineRow extends StatelessWidget {
           attachmentLoader: attachmentLoader,
         ),
       ),
+      DisplayedImageItem i => _DisplayedImage(
+        attachment: i.attachment,
+        attachmentLoader: attachmentLoader,
+      ),
       AgentMessageItem i => _ForkableMessage(
         isUser: false,
         seq: i.forkSeq,
@@ -267,6 +281,33 @@ class _TimelineRow extends StatelessWidget {
       SessionErrorItem i => _ErrorBanner(message: i.message),
     };
   }
+}
+
+class _DisplayedImage extends StatelessWidget {
+  const _DisplayedImage({
+    required this.attachment,
+    required this.attachmentLoader,
+  });
+
+  final Attachment attachment;
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          AttachmentView(attachment: attachment, loader: attachmentLoader),
+          const SizedBox(height: 4),
+          Text(attachment.name, style: Theme.of(context).textTheme.labelSmall),
+        ],
+      ),
+    ),
+  );
 }
 
 /// Adds one compact fork action to a user/agent message without changing the

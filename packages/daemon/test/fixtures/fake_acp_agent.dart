@@ -236,6 +236,7 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
     case 'authenticate':
       await _sendResponse(id!, const <String, Object?>{});
     case 'session/new':
+      _captureMcpServers(params(message));
       await _sendResponse(id!, <String, Object?>{
         'sessionId': sessionId,
         'modes': <String, Object?>{
@@ -248,6 +249,7 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
         'configOptions': _configOptions(),
       });
     case 'session/load':
+      _captureMcpServers(params(message));
       // The fake keeps no state of its own; like a real agent reloading its
       // on-disk session, any id is accepted unless the test planted the
       // failure signal.
@@ -322,6 +324,13 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
 Map<String, Object?> params(Map<String, Object?> message) {
   final raw = message['params'];
   return raw is Map ? raw.cast<String, Object?>() : const <String, Object?>{};
+}
+
+void _captureMcpServers(Map<String, Object?> requestParams) {
+  final String cwd = Directory.current.path;
+  if (!File(p.join(cwd, 'agent.capture_mcp')).existsSync()) return;
+  File(p.join(cwd, 'agent.mcp_servers'))
+      .writeAsStringSync(jsonEncode(requestParams['mcpServers']));
 }
 
 /// The config options advertised by `session/new`, `session/load`, and

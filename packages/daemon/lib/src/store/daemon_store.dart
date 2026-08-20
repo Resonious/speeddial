@@ -365,6 +365,77 @@ class DaemonStore {
     }
   }
 
+  /// Searches non-archived sessions by title and persisted event JSON.
+  /// Results exclude the caller's own session and include a short matching
+  /// conversation excerpt so an MCP caller can decide what to inspect.
+  List<Map<String, Object?>> searchSessions({
+    required String query,
+    required String excludeSessionId,
+    String? projectId,
+    int limit = 20,
+  }) {
+    final String needle = query.toLowerCase();
+    final rows = _db.select(
+      'SELECT s.id, s.project_id, p.name AS project_name, s.provider_id, '
+      's.title, s.status, s.mode, s.updated_at '
+      'FROM sessions s JOIN projects p ON p.id = s.project_id '
+      'WHERE s.id != ? AND s.archived = 0 '
+      'AND (? IS NULL OR s.project_id = ?) '
+      "AND (? = '' OR instr(lower(s.title), ?) > 0 OR EXISTS ("
+      'SELECT 1 FROM session_events e WHERE e.session_id = s.id '
+      'AND instr(lower(e.json), ?) > 0)) '
+      'ORDER BY s.updated_at DESC LIMIT ?',
+      <Object?>[
+        excludeSessionId,
+        projectId,
+        projectId,
+        needle,
+        needle,
+        needle,
+        limit,
+      ],
+    );
+    return rows
+        .map((row) {
+          final String id = row['id'] as String;
+          return <String, Object?>{
+            'id': id,
+            'projectId': row['project_id'] as String,
+            'projectName': row['project_name'] as String,
+            'providerId': row['provider_id'] as String,
+            'title': row['title'] as String,
+            'status': row['status'] as String,
+            'mode': row['mode'] as String,
+            'updatedAt': _fromTs(row['updated_at'] as int).toIso8601String(),
+            'excerpt': _sessionSearchExcerpt(id, needle),
+          };
+        })
+        .toList(growable: false);
+  }
+
+  String _sessionSearchExcerpt(String sessionId, String needle) {
+    final rows = _db.select(
+      'SELECT json FROM session_events WHERE session_id = ? '
+      "AND (? = '' OR instr(lower(json), ?) > 0) "
+      'ORDER BY seq DESC LIMIT 20',
+      <Object?>[sessionId, needle, needle],
+    );
+    for (final row in rows) {
+      final json = jsonDecode(row['json'] as String) as Map<String, Object?>;
+      final Object? rawText = switch (json['type']) {
+        'userMessage' ||
+        'agentMessageChunk' ||
+        'agentThoughtChunk' => json['text'],
+        'sessionError' => json['message'],
+        _ => null,
+      };
+      if (rawText is! String || rawText.isEmpty) continue;
+      final String text = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
+      return text.length <= 240 ? text : '${text.substring(0, 237)}...';
+    }
+    return '';
+  }
+
   // -------------------------------------------------------------------------
   // Session events
   // -------------------------------------------------------------------------
