@@ -130,7 +130,7 @@ void main() {
     final McpServerProfile listed = store.listMcpServers().single;
     expect(listed.secretNames, const <String>['API_TOKEN']);
     expect(listed.toJson().toString(), isNot(contains('secret-one')));
-    expect(store.listEnabledMcpServers().single.secrets, <String, String>{
+    expect(store.listEnabledMcpServersFor('p1').single.secrets, <String, String>{
       'API_TOKEN': 'secret-one',
     });
 
@@ -149,12 +149,64 @@ void main() {
       setSecrets: const <String, String>{'SECOND_TOKEN': 'secret-two'},
       removeSecretNames: const <String>['API_TOKEN'],
     );
-    expect(store.listEnabledMcpServers(), isEmpty);
+    expect(store.listEnabledMcpServersFor('p1'), isEmpty);
     expect(store.listMcpServers().single.secretNames, const <String>[
       'SECOND_TOKEN',
     ]);
     expect(store.deleteMcpServer(profile.id), isTrue);
     expect(store.listMcpServers(), isEmpty);
+  });
+
+  test('project MCP profiles filter by project and delete with it', () {
+    store.insertProject(project());
+    store.insertProject(project(id: 'p2'));
+    final DateTime now = DateTime.utc(2026, 8, 20);
+    store.insertMcpServer(
+      McpServerProfile(
+        id: 'mcp-global',
+        name: 'Global tools',
+        transport: McpTransport.stdio,
+        enabled: true,
+        command: '/bin/global-mcp',
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{},
+    );
+    store.insertMcpServer(
+      McpServerProfile(
+        id: 'mcp-project',
+        projectId: 'p1',
+        name: 'Project tools',
+        transport: McpTransport.stdio,
+        enabled: true,
+        command: '/bin/project-mcp',
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{'TOKEN': 'project-secret'},
+    );
+
+    expect(
+      store
+          .listEnabledMcpServersFor('p1')
+          .map((StoredMcpServer server) => server.profile.id),
+      <String>['mcp-global', 'mcp-project'],
+    );
+    expect(
+      store
+          .listEnabledMcpServersFor('p2')
+          .map((StoredMcpServer server) => server.profile.id),
+      <String>['mcp-global'],
+    );
+
+    store.removeProject('p1');
+    expect(
+      store.listMcpServers().map((McpServerProfile profile) => profile.id),
+      <String>['mcp-global'],
+    );
   });
 
   test('OAuth tokens remain daemon-only and become a bearer header', () {
@@ -202,7 +254,7 @@ void main() {
     expect(listed.toJson().toString(), isNot(contains('access-secret')));
     expect(listed.toJson().toString(), isNot(contains('refresh-secret')));
     expect(listed.toJson().toString(), isNot(contains('client-secret')));
-    expect(store.listEnabledMcpServers(), isEmpty);
+    expect(store.listEnabledMcpServersFor('p1'), isEmpty);
 
     store.setMcpOAuthTokens(
       profile.id,
@@ -211,12 +263,12 @@ void main() {
       expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
       scopes: const <String>['mcp:tools'],
     );
-    expect(store.listEnabledMcpServers().single.secrets, <String, String>{
+    expect(store.listEnabledMcpServersFor('p1').single.secrets, <String, String>{
       'X-Tenant': 'tenant-1',
       'Authorization': 'Bearer access-secret',
     });
     store.clearMcpOAuthTokens(profile.id);
-    expect(store.listEnabledMcpServers(), isEmpty);
+    expect(store.listEnabledMcpServersFor('p1'), isEmpty);
     expect(
       store.getMcpServer(profile.id)!.oauthStatus,
       McpOAuthStatus.notConnected,

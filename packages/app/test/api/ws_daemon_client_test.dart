@@ -43,6 +43,9 @@ class TestDaemonServer {
   /// Every `mcp.oauth.begin` params object received, in call order.
   final List<Map<String, Object?>> oauthBegins = <Map<String, Object?>>[];
 
+  /// Every `mcp.create` params object received, in call order.
+  final List<Map<String, Object?>> mcpCreates = <Map<String, Object?>>[];
+
   /// Attachment payloads keyed by session id then attachment id, served by
   /// the `attachments.read` handler.
   final Map<String, Map<String, Map<String, Object?>>> attachments =
@@ -93,6 +96,27 @@ class TestDaemonServer {
     });
     peer.registerHandler('projects.list', (Map<String, Object?> _) {
       return <String, Object?>{'projects': <Object?>[projectJson()]};
+    });
+    peer.registerHandler('mcp.create', (Map<String, Object?> params) {
+      mcpCreates.add(params);
+      return <String, Object?>{
+        'server': <String, Object?>{
+          'id': 'mcp-1',
+          'projectId': params['projectId'],
+          'name': params['name'],
+          'transport': params['transport'],
+          'enabled': params['enabled'],
+          'command': params['command'],
+          'args': params['args'],
+          'secretNames': const <String>[],
+          'authType': params['authType'],
+          'oauthStatus': 'not_connected',
+          'oauthClientSecretConfigured': false,
+          'oauthScopes': const <String>[],
+          'createdAt': '2026-01-01T00:00:00.000Z',
+          'updatedAt': '2026-01-01T00:00:00.000Z',
+        },
+      };
     });
     peer.registerHandler('mcp.oauth.begin', (Map<String, Object?> params) {
       oauthBegins.add(params);
@@ -284,6 +308,16 @@ void main() {
     // projects.list decoding.
     final List<Project> projects = await client.listProjects();
     expect(projects.single.name, 'Demo');
+    final McpServerProfile mcp = await client.createMcpServer(
+      name: 'Project tools',
+      projectId: 'proj-1',
+      transport: McpTransport.stdio,
+      enabled: true,
+      command: '/bin/project-mcp',
+    );
+    expect(mcp.projectId, 'proj-1');
+    expect(server.mcpCreates.single['projectId'], 'proj-1');
+
 
     // DaemonError codes pass through untouched (sessions.send).
     await expectLater(

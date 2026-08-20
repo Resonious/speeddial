@@ -310,6 +310,14 @@ class FakeDaemonClient implements DaemonClient {
     for (final String sessionId in removed) {
       _removeSession(sessionId);
     }
+    final List<String> removedMcpServers = <String>[
+      for (final McpServerProfile profile in _mcpServers.values)
+        if (profile.projectId == id) profile.id,
+    ];
+    for (final String serverId in removedMcpServers) {
+      _mcpServers.remove(serverId);
+      _mcpSecrets.remove(serverId);
+    }
     _projectsChangedController.add(null);
   }
   // ---------------------------------------------------------------------
@@ -325,6 +333,7 @@ class FakeDaemonClient implements DaemonClient {
     required String name,
     required McpTransport transport,
     required bool enabled,
+    String? projectId,
     String? command,
     List<String> args = const <String>[],
     String? url,
@@ -333,11 +342,13 @@ class FakeDaemonClient implements DaemonClient {
     String? oauthClientId,
     String? oauthClientSecret,
   }) async {
+    if (projectId != null) _project(projectId);
     final DateTime now = DateTime.now().toUtc();
     final String id = 'mcp-${_mcpServerCounter++}';
     _mcpSecrets[id] = Map<String, String>.of(secrets);
     final McpServerProfile profile = McpServerProfile(
       id: id,
+      projectId: projectId,
       name: name,
       transport: transport,
       enabled: enabled,
@@ -388,6 +399,7 @@ class FakeDaemonClient implements DaemonClient {
         current.url != url ||
         (oauthClientId != null && oauthClientId != current.oauthClientId);
     final McpServerProfile profile = McpServerProfile(
+      projectId: current.projectId,
       id: id,
       name: name,
       transport: transport,
@@ -488,6 +500,7 @@ class FakeDaemonClient implements DaemonClient {
     String? error,
   }) => McpServerProfile(
     id: profile.id,
+    projectId: profile.projectId,
     name: profile.name,
     transport: profile.transport,
     enabled: profile.enabled,

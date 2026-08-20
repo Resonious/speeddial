@@ -273,7 +273,9 @@ class SpeedDialServer {
     );
     _oauth = McpOAuthService(
       store: _store,
-      onChanged: (String _) => _engine.reloadMcpServers(),
+      onChanged: (String serverId) => _engine.reloadMcpServers(
+        projectId: _store.getMcpServer(serverId)?.projectId,
+      ),
     );
     _engine.configureMcpAuth(prepare: _oauth!.refreshEnabled);
     _httpServer!.listen(_handleRequest);
@@ -605,13 +607,14 @@ class SpeedDialServer {
     final McpServerProfile profile = _mcpProfileFromParams(
       params,
       id: _uuid.v4(),
+      projectId: _mcpProjectIdFromParams(params),
       createdAt: now,
       updatedAt: now,
     );
     _validateMcpOAuthParams(profile, params);
     _store.insertMcpServer(profile, _mcpSecretsParam(params));
     _configureMcpOAuth(profile, params, reset: true);
-    await _engine.reloadMcpServers();
+    await _engine.reloadMcpServers(projectId: profile.projectId);
     return <String, Object?>{
       'server': _store.getMcpServer(profile.id)!.toJson(),
     };
@@ -626,6 +629,7 @@ class SpeedDialServer {
     final McpServerProfile profile = _mcpProfileFromParams(
       params,
       id: id,
+      projectId: existing.projectId,
       createdAt: existing.createdAt,
       updatedAt: DateTime.now().toUtc(),
     );
@@ -654,16 +658,17 @@ class SpeedDialServer {
       removeSecretNames: _stringListParam(params, 'removeSecretNames'),
     );
     _configureMcpOAuth(profile, params, reset: resetOAuth);
-    await _engine.reloadMcpServers();
+    await _engine.reloadMcpServers(projectId: existing.projectId);
     return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
   }
 
   Future<Object?> _mcpDelete(Map<String, Object?> params) async {
     final String id = _requiredString(params, 'id');
-    if (!_store.deleteMcpServer(id)) {
+    final McpServerProfile? existing = _store.getMcpServer(id);
+    if (existing == null || !_store.deleteMcpServer(id)) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
-    await _engine.reloadMcpServers();
+    await _engine.reloadMcpServers(projectId: existing.projectId);
     return const <String, Object?>{'ok': true};
   }
 
@@ -796,6 +801,7 @@ class SpeedDialServer {
   McpServerProfile _mcpProfileFromParams(
     Map<String, Object?> params, {
     required String id,
+    required String? projectId,
     required DateTime createdAt,
     required DateTime updatedAt,
   }) {
@@ -857,6 +863,7 @@ class SpeedDialServer {
       );
     }
     return McpServerProfile(
+      projectId: projectId,
       id: id,
       name: name,
       transport: transport,
@@ -869,6 +876,18 @@ class SpeedDialServer {
       createdAt: createdAt,
       updatedAt: updatedAt,
     );
+  }
+
+  String? _mcpProjectIdFromParams(Map<String, Object?> params) {
+    final Object? raw = params['projectId'];
+    if (raw == null) return null;
+    if (raw is! String || raw.isEmpty) {
+      throw DaemonError(_kErrInvalidParams, 'projectId must be a string');
+    }
+    if (_store.getProject(raw) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown project: $raw');
+    }
+    return raw;
   }
 
   Map<String, String> _mcpSecretsParam(Map<String, Object?> params) {

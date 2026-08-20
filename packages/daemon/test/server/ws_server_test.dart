@@ -798,6 +798,101 @@ void main() {
       await client.close();
     });
 
+    test('project MCP profiles are injected only into matching sessions',
+        () async {
+      await startServer();
+      final WsClient client = await connect(server!.port);
+      final Directory firstDir = Directory(
+        p.join(tempDir.path, 'project-mcp-first'),
+      )..createSync();
+      final Directory secondDir = Directory(
+        p.join(tempDir.path, 'project-mcp-second'),
+      )..createSync();
+      File(p.join(firstDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      File(p.join(secondDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      final String firstProjectId =
+          (j(
+                await client.peer.call('projects.add', <String, Object?>{
+                  'path': firstDir.path,
+                  'name': 'First MCP project',
+                }),
+              )['project']!
+              as Map)['id']!
+              as String;
+      final String secondProjectId =
+          (j(
+                await client.peer.call('projects.add', <String, Object?>{
+                  'path': secondDir.path,
+                  'name': 'Second MCP project',
+                }),
+              )['project']!
+              as Map)['id']!
+              as String;
+
+      await expectLater(
+        client.peer.call('mcp.create', <String, Object?>{
+          'name': 'unknown-project-tools',
+          'projectId': 'missing',
+          'transport': 'stdio',
+          'enabled': true,
+          'command': '/bin/missing-mcp',
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrNotFound,
+          ),
+        ),
+      );
+      await client.peer.call('mcp.create', <String, Object?>{
+        'name': 'global-tools',
+        'transport': 'stdio',
+        'enabled': true,
+        'command': '/bin/global-mcp',
+      });
+      final Map<String, Object?> scoped = j(
+        await client.peer.call('mcp.create', <String, Object?>{
+          'name': 'first-project-tools',
+          'projectId': firstProjectId,
+          'transport': 'stdio',
+          'enabled': true,
+          'command': '/bin/project-mcp',
+        }),
+      );
+      expect(
+        (scoped['server']! as Map)['projectId'],
+        firstProjectId,
+      );
+
+      await client.peer.call('sessions.create', <String, Object?>{
+        'projectId': firstProjectId,
+        'providerId': 'fake',
+      });
+      await client.peer.call('sessions.create', <String, Object?>{
+        'projectId': secondProjectId,
+        'providerId': 'fake',
+      });
+      List<String> configuredNames(Directory directory) =>
+          (jsonDecode(
+                    File(
+                      p.join(directory.path, 'agent.mcp_servers'),
+                    ).readAsStringSync(),
+                  )
+                  as List<Object?>)
+              .whereType<Map>()
+              .map((Map<Object?, Object?> config) => config['name']! as String)
+              .toList(growable: false);
+
+      expect(
+        configuredNames(firstDir),
+        containsAll(<String>['global-tools', 'first-project-tools']),
+      );
+      expect(configuredNames(secondDir), contains('global-tools'));
+      expect(configuredNames(secondDir), isNot(contains('first-project-tools')));
+      await client.close();
+    });
+
     test('HTTP MCP OAuth authorizes, reports status, and injects token', () async {
       final HttpServer oauthServer = await HttpServer.bind(
         InternetAddress.loopbackIPv4,

@@ -676,6 +676,7 @@ void main() {
     test('McpServerProfile redacted credential roundtrip', () {
       final McpServerProfile model = McpServerProfile(
         id: 'mcp-1',
+        projectId: 'project-1',
         name: 'GitHub',
         transport: McpTransport.http,
         enabled: true,
@@ -693,6 +694,7 @@ void main() {
       final McpServerProfile decoded = McpServerProfile.fromJson(
         model.toJson(),
       );
+      expect(decoded.projectId, 'project-1');
       expect(decoded.transport, McpTransport.http);
       expect(decoded.url, 'https://example.test/mcp');
       expect(decoded.command, isNull);

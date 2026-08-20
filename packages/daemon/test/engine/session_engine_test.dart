@@ -280,6 +280,43 @@ void main() {
     });
   });
 
+  test('project MCP changes park only matching idle sessions', () async {
+    final Directory secondDir = Directory(p.join(tempDir.path, 'second'))
+      ..createSync();
+    final Project secondProject = Project(
+      id: 'p2',
+      name: 'Second Project',
+      path: secondDir.path,
+      addedAt: DateTime.now().toUtc(),
+      lastActiveAt: DateTime.now().toUtc(),
+    );
+    store.insertProject(secondProject);
+    final Session first = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    final Session second = await engine.createSession(
+      projectId: secondProject.id,
+      providerId: 'fake',
+    );
+    File(p.join(tempDir.path, 'agent.load_fails')).createSync();
+    File(p.join(secondDir.path, 'agent.load_fails')).createSync();
+
+    await engine.reloadMcpServers(projectId: project.id);
+
+    await engine.sendMessage(second.id, 'hi');
+    await expectLater(
+      engine.sendMessage(first.id, 'hi'),
+      throwsA(
+        isA<DaemonError>().having(
+          (DaemonError error) => error.code,
+          'code',
+          kErrAgentProcess,
+        ),
+      ),
+    );
+  });
+
   test(
     'HTTP MCP profiles are injected only when the agent supports them',
     () async {

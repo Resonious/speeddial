@@ -1025,6 +1025,7 @@ class McpServerProfile {
     required this.secretNames,
     required this.createdAt,
     required this.updatedAt,
+    this.projectId,
     this.command,
     this.args = const <String>[],
     this.url,
@@ -1038,6 +1039,8 @@ class McpServerProfile {
   });
 
   final String id;
+  /// Project receiving this server, or null when daemon-wide.
+  final String? projectId;
   final String name;
   final McpTransport transport;
   final bool enabled;
@@ -1058,6 +1061,7 @@ class McpServerProfile {
   factory McpServerProfile.fromJson(Map<String, Object?> json) =>
       McpServerProfile(
         id: json['id']! as String,
+        projectId: json['projectId'] as String?,
         name: json['name']! as String,
         transport: McpTransport.parse(json['transport']! as String),
         enabled: json['enabled']! as bool,
@@ -1088,6 +1092,7 @@ class McpServerProfile {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
+    'projectId': ?projectId,
     'name': name,
     'transport': transport.wire,
     'enabled': enabled,

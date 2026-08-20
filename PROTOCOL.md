@@ -61,6 +61,7 @@ McpOAuthStatus = "not_connected" | "authorizing" | "authorized" | "expired" | "e
 
 McpServerProfile = {
   id: string,
+  projectId: string | null,   // null = every project on this daemon
   name: string,
   transport: McpTransport,
   enabled: boolean,
@@ -224,9 +225,10 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `projects.rename {id: string, name: string}` → `{project: Project}`
 ### MCP servers
 - `mcp.list {}` → `{servers: McpServerProfile[]}`
-- `mcp.create {name: string, transport: McpTransport, enabled: boolean, command?: string,
-  args?: string[], url?: string, secrets?: {[name: string]: string}, authType?: McpAuthType,
-  oauthClientId?: string, oauthClientSecret?: string}` → `{server: McpServerProfile}`
+- `mcp.create {name: string, projectId?: string, transport: McpTransport, enabled: boolean,
+  command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
+  authType?: McpAuthType, oauthClientId?: string, oauthClientSecret?: string}` →
+  `{server: McpServerProfile}`
 - `mcp.update {id: string, name: string, transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   removeSecretNames?: string[], authType?: McpAuthType, oauthClientId?: string,
@@ -241,12 +243,16 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 
 `stdio` requires a command; each entry in `secrets` becomes an environment variable. `http`
 requires an absolute HTTP(S) URL; each secret becomes an HTTP header. Secret values are stored only
-on the daemon and never returned—`secretNames` lets clients replace or remove them. Names are unique
-case-insensitively and `speeddial` is reserved for the built-in server. Enabled profiles are appended
-to ACP `session/new` and `session/load`; HTTP profiles are included only when the agent advertises
-`mcpCapabilities.http`. Saving settings parks idle `session/load`-capable agents so their next turn
-resumes with the current list. Running agents are parked before their following turn; agents without
-`session/load` retain their current list, while all new sessions receive the saved configuration.
+on the daemon and never returned—`secretNames` lets clients replace or remove them. `projectId` is
+immutable: when absent the profile applies daemon-wide; when present it must name an existing
+project and applies only to that project's sessions. Daemon-wide and matching project profiles are
+combined. Names remain unique case-insensitively across the daemon, and `speeddial` is reserved for
+the built-in server. Enabled matching profiles are appended to ACP `session/new` and `session/load`;
+HTTP profiles are included only when the agent advertises `mcpCapabilities.http`. A daemon-wide
+change reloads every compatible session; a project change reloads only that project's sessions.
+Idle `session/load`-capable agents are parked immediately and running agents before their following
+turn. Agents without `session/load` retain their current list; all new sessions receive the saved
+configuration.
 
 OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
 RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic

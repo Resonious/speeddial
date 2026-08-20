@@ -50,7 +50,9 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
 
   Future<void> _refresh({bool silent = false}) async {
     try {
-      await AppScope.of(context).mcp.refresh(widget.daemonId);
+      final scope = AppScope.of(context);
+      await scope.projects.refresh(widget.daemonId);
+      await scope.mcp.refresh(widget.daemonId);
     } on Object catch (error) {
       if (!silent && mounted) _showError(error);
     }
@@ -68,6 +70,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
       builder: (BuildContext dialogContext) => _McpServerDialog(
         daemonId: widget.daemonId,
         store: AppScope.of(context).mcp,
+        projects: AppScope.of(context).projects.projectsFor(widget.daemonId),
         existing: existing,
       ),
     );
@@ -176,6 +179,12 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
       body: ListenableBuilder(
         listenable: store,
         builder: (BuildContext context, Widget? child) {
+          final List<Project> projects = AppScope.of(
+            context,
+          ).projects.projectsFor(widget.daemonId);
+          final Map<String, String> projectNames = <String, String>{
+            for (final Project project in projects) project.id: project.name,
+          };
           final List<McpServerProfile> servers = store.serversFor(
             widget.daemonId,
           );
@@ -215,6 +224,11 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
                         ) ...<Widget>[
                           _McpServerTile(
                             profile: servers[index],
+                            scopeLabel:
+                                servers[index].projectId == null
+                                ? 'All projects'
+                                : projectNames[servers[index].projectId] ??
+                                      'Project unavailable',
                             onEnabledChanged: (bool value) =>
                                 _toggle(servers[index], value),
                             onEdit: () => _openEditor(servers[index]),
@@ -260,6 +274,7 @@ class _EmptyMcpServers extends StatelessWidget {
 class _McpServerTile extends StatelessWidget {
   const _McpServerTile({
     required this.profile,
+    required this.scopeLabel,
     required this.onEnabledChanged,
     required this.onEdit,
     required this.onDelete,
@@ -268,6 +283,7 @@ class _McpServerTile extends StatelessWidget {
   });
 
   final McpServerProfile profile;
+  final String scopeLabel;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -284,6 +300,10 @@ class _McpServerTile extends StatelessWidget {
     subtitle: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        Text(
+          scopeLabel,
+          style: Theme.of(context).textTheme.labelMedium,
+        ),
         Text(
           profile.transport == McpTransport.stdio
               ? <String>[profile.command!, ...profile.args].join(' ')
@@ -468,10 +488,12 @@ class _McpServerDialog extends StatefulWidget {
   const _McpServerDialog({
     required this.daemonId,
     required this.store,
+    required this.projects,
     this.existing,
   });
 
   final String daemonId;
+  final List<Project> projects;
   final McpStore store;
   final McpServerProfile? existing;
 
@@ -487,6 +509,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
   late final TextEditingController _oauthClientId;
   late final TextEditingController _oauthClientSecret;
   late McpAuthType _authType;
+  late String _scopeProjectId;
   late McpTransport _transport;
   late bool _enabled;
   late final Set<String> _storedSecrets;
@@ -501,6 +524,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
     final McpServerProfile? existing = widget.existing;
     _transport = existing?.transport ?? McpTransport.stdio;
     _enabled = existing?.enabled ?? true;
+    _scopeProjectId = existing?.projectId ?? '';
     _authType = existing?.authType ?? McpAuthType.none;
     _name = TextEditingController(text: existing?.name);
     _endpoint = TextEditingController(
@@ -570,6 +594,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           name: _name.text.trim(),
           transport: _transport,
           enabled: _enabled,
+          projectId: _scopeProjectId.isEmpty ? null : _scopeProjectId,
           command: _transport == McpTransport.stdio
               ? _endpoint.text.trim()
               : null,
@@ -652,6 +677,30 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                   validator: (String? value) =>
                       value == null || value.trim().isEmpty
                       ? 'Enter a name'
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const Key('mcp-scope'),
+                  initialValue: _scopeProjectId,
+                  decoration: const InputDecoration(labelText: 'Available to'),
+                  items: <DropdownMenuItem<String>>[
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('All projects'),
+                    ),
+                    for (final Project project in widget.projects)
+                      DropdownMenuItem(
+                        value: project.id,
+                        child: Text(project.name),
+                      ),
+                  ],
+                  onChanged: widget.existing == null
+                      ? (String? value) {
+                          if (value != null) {
+                            setState(() => _scopeProjectId = value);
+                          }
+                        }
                       : null,
                 ),
                 const SizedBox(height: 12),

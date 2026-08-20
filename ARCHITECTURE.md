@@ -50,8 +50,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     emits an image event. The same hidden subprocess entry works from the
                     daemon CLI and the native Flutter executable used by the embedded
                     daemon. User-configured stdio and Streamable HTTP MCP profiles are
-                    stored daemon-wide and injected directly into compatible ACP agents;
-                    the built-in server does not proxy their tools. HTTP profiles may use
+                    daemon-managed or project-scoped, then injected directly into
+                    compatible ACP agents; project sessions receive daemon-wide plus
+                    matching project profiles. The built-in server does not proxy their
+                    tools. HTTP profiles may use
                     daemon-managed OAuth 2.1 authorization-code + S256 PKCE; discovery,
                     dynamic client registration, callback handling, and token refresh live
                     in server/mcp_oauth_service.dart.

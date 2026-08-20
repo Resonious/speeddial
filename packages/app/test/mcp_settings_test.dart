@@ -28,6 +28,10 @@ void main() {
     await tester.tap(find.byKey(const Key('mcp-add-server')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('mcp-name')), 'Filesystem');
+    await tester.tap(find.byKey(const Key('mcp-scope')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Demo Project').last);
+    await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('mcp-endpoint')),
       '/usr/local/bin/filesystem-mcp',
@@ -49,8 +53,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Filesystem'), findsOneWidget);
+    expect(find.text('Demo Project'), findsOneWidget);
     expect(find.text('/usr/local/bin/filesystem-mcp --stdio'), findsOneWidget);
     final profiles = await client.listMcpServers();
+    expect(profiles.single.projectId, 'proj-demo');
     expect(profiles.single.secretNames, const <String>['API_TOKEN']);
     expect(profiles.single.toJson().toString(), isNot(contains('top-secret')));
   });

@@ -177,6 +177,7 @@ class DaemonStore {
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        project_id TEXT REFERENCES projects(id),
         transport TEXT NOT NULL,
         enabled INTEGER NOT NULL,
         command TEXT,
@@ -195,6 +196,12 @@ class DaemonStore {
       _db.execute(
         "ALTER TABLE mcp_servers ADD COLUMN auth_type TEXT NOT NULL "
         "DEFAULT 'none'",
+      );
+    }
+    if (!mcpServerColumns.contains('project_id')) {
+      _db.execute(
+        'ALTER TABLE mcp_servers ADD COLUMN project_id TEXT '
+        'REFERENCES projects(id)',
       );
     }
     _db.execute('''
@@ -259,19 +266,21 @@ class DaemonStore {
 
   List<McpServerProfile> listMcpServers() {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
-      'created_at, updated_at FROM mcp_servers ',
+      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'auth_type, created_at, updated_at FROM mcp_servers',
     );
     return rows
         .map((Row row) => _mcpProfileFromRow(row))
         .toList(growable: false);
   }
 
-  List<StoredMcpServer> listEnabledMcpServers() {
+  List<StoredMcpServer> listEnabledMcpServersFor(String projectId) {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
-      'created_at, updated_at FROM mcp_servers WHERE enabled = 1 '
+      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'auth_type, created_at, updated_at FROM mcp_servers '
+      'WHERE enabled = 1 AND (project_id IS NULL OR project_id = ?) '
       'ORDER BY name COLLATE NOCASE, id',
+      <Object?>[projectId],
     );
     final List<StoredMcpServer> servers = <StoredMcpServer>[];
     for (final Row row in rows) {
@@ -292,8 +301,8 @@ class DaemonStore {
 
   McpServerProfile? getMcpServer(String id) {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
-      'created_at, updated_at FROM mcp_servers WHERE id = ?',
+      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'auth_type, created_at, updated_at FROM mcp_servers WHERE id = ?',
       <Object?>[id],
     );
     return rows.isEmpty ? null : _mcpProfileFromRow(rows.first);
@@ -304,10 +313,12 @@ class DaemonStore {
     try {
       _db.execute(
         'INSERT INTO mcp_servers '
-        '(id, name, transport, enabled, command, args, url, auth_type, '
-        'created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        '(id, project_id, name, transport, enabled, command, args, url, '
+        'auth_type, created_at, updated_at) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         <Object?>[
           profile.id,
+          profile.projectId,
           profile.name,
           profile.transport.wire,
           profile.enabled ? 1 : 0,
@@ -403,6 +414,7 @@ class DaemonStore {
     }
     return McpServerProfile(
       id: id,
+      projectId: row['project_id'] as String?,
       name: row['name'] as String,
       transport: McpTransport.parse(row['transport'] as String),
       enabled: (row['enabled'] as int) != 0,
@@ -659,6 +671,7 @@ class DaemonStore {
   /// keeping its archived sessions around, which is exactly what the FK would
   /// forbid. Inserts keep full enforcement (unknown project ids fail).
   void removeProject(String id) {
+    _db.execute('DELETE FROM mcp_servers WHERE project_id = ?', <Object?>[id]);
     _db.execute('PRAGMA foreign_keys = OFF;');
     try {
       _db.execute('BEGIN;');

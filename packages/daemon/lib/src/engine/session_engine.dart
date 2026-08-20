@@ -182,7 +182,8 @@ class SessionEngine {
     final Object? rawCapabilities = info.agentCapabilities['mcpCapabilities'];
     final bool supportsHttp =
         rawCapabilities is Map && rawCapabilities['http'] == true;
-    for (final StoredMcpServer stored in _store.listEnabledMcpServers()) {
+    for (final StoredMcpServer stored
+        in _store.listEnabledMcpServersFor(session.projectId)) {
       final McpServerProfile profile = stored.profile;
       switch (profile.transport) {
         case McpTransport.stdio:
@@ -219,8 +220,9 @@ class SessionEngine {
   /// the current daemon-managed MCP list. Running turns are marked and parked
   /// before their next prompt. Agents without `session/load` keep their current
   /// connections; saved changes still apply to all newly created sessions.
-  Future<void> reloadMcpServers() async {
+  Future<void> reloadMcpServers({String? projectId}) async {
     for (final _LiveSession live in _live.values.toList(growable: false)) {
+      if (projectId != null && live.session.projectId != projectId) continue;
       if (live.turn != null) {
         _mcpReloadPending.add(live.session.id);
         continue;
