@@ -41,6 +41,10 @@ const List<String> _kProtocolMethods = <String>[
   'daemon.info',
   'providers.list',
   'attachments.read',
+  'mcp.list',
+  'mcp.create',
+  'mcp.update',
+  'mcp.delete',
   'projects.list',
   'projects.add',
   'projects.remove',
@@ -410,6 +414,10 @@ class SpeedDialServer {
       'auth.authenticate' => _authenticate(client, params),
       'daemon.info' => _daemonInfo(),
       'providers.list' => _providersList(),
+      'mcp.list' => _mcpList(),
+      'mcp.create' => _mcpCreate(params),
+      'mcp.update' => _mcpUpdate(params),
+      'mcp.delete' => _mcpDelete(params),
       'attachments.read' => _attachmentsRead(params),
       'projects.list' => _projectsList(),
       'projects.add' => _projectsAdd(params),
@@ -560,6 +568,151 @@ class SpeedDialServer {
         .map((info) => info.toJson())
         .toList(growable: false),
   };
+  // -------------------------------------------------------------------------
+  // mcp.*
+  // -------------------------------------------------------------------------
+
+  Object? _mcpList() => <String, Object?>{
+    'servers': _store
+        .listMcpServers()
+        .map((McpServerProfile profile) => profile.toJson())
+        .toList(growable: false),
+  };
+
+  Future<Object?> _mcpCreate(Map<String, Object?> params) async {
+    final DateTime now = DateTime.now().toUtc();
+    final McpServerProfile profile = _mcpProfileFromParams(
+      params,
+      id: _uuid.v4(),
+      createdAt: now,
+      updatedAt: now,
+    );
+    _store.insertMcpServer(profile, _mcpSecretsParam(params));
+    await _engine.reloadMcpServers();
+    return <String, Object?>{
+      'server': _store.getMcpServer(profile.id)!.toJson(),
+    };
+  }
+
+  Future<Object?> _mcpUpdate(Map<String, Object?> params) async {
+    final String id = _requiredString(params, 'id');
+    final McpServerProfile? existing = _store.getMcpServer(id);
+    if (existing == null) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    final McpServerProfile profile = _mcpProfileFromParams(
+      params,
+      id: id,
+      createdAt: existing.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _store.updateMcpServer(
+      profile,
+      setSecrets: _mcpSecretsParam(params),
+      removeSecretNames: _stringListParam(params, 'removeSecretNames'),
+    );
+    await _engine.reloadMcpServers();
+    return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
+  }
+
+  Future<Object?> _mcpDelete(Map<String, Object?> params) async {
+    final String id = _requiredString(params, 'id');
+    if (!_store.deleteMcpServer(id)) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    await _engine.reloadMcpServers();
+    return const <String, Object?>{'ok': true};
+  }
+
+  McpServerProfile _mcpProfileFromParams(
+    Map<String, Object?> params, {
+    required String id,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+  }) {
+    final String name = _requiredString(params, 'name').trim();
+    if (name.isEmpty) {
+      throw DaemonError(_kErrInvalidParams, 'name must not be empty');
+    }
+    if (name.toLowerCase() == kMcpServerName) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        '"$kMcpServerName" is reserved for SpeedDial tools',
+      );
+    }
+    final McpTransport transport;
+    try {
+      transport = McpTransport.parse(_requiredString(params, 'transport'));
+    } on FormatException {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'transport must be "stdio" or "http"',
+      );
+    }
+    final List<String> args = _stringListParam(params, 'args');
+    String? command;
+    String? url;
+    switch (transport) {
+      case McpTransport.stdio:
+        command = _requiredString(params, 'command').trim();
+        if (command.isEmpty) {
+          throw DaemonError(_kErrInvalidParams, 'command must not be empty');
+        }
+      case McpTransport.http:
+        url = _requiredString(params, 'url').trim();
+        final Uri? parsed = Uri.tryParse(url);
+        if (parsed == null ||
+            !parsed.hasAuthority ||
+            (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'url must be an absolute http or https URL',
+          );
+        }
+    }
+    return McpServerProfile(
+      id: id,
+      name: name,
+      transport: transport,
+      enabled: params['enabled'] != false,
+      command: command,
+      args: transport == McpTransport.stdio ? args : const <String>[],
+      url: url,
+      secretNames: const <String>[],
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+    );
+  }
+
+  Map<String, String> _mcpSecretsParam(Map<String, Object?> params) {
+    final Object? raw = params['secrets'];
+    if (raw == null) return const <String, String>{};
+    if (raw is! Map) {
+      throw DaemonError(_kErrInvalidParams, 'secrets must be an object');
+    }
+    final Map<String, String> secrets = <String, String>{};
+    for (final MapEntry<Object?, Object?> entry in raw.entries) {
+      if (entry.key is! String ||
+          (entry.key! as String).trim().isEmpty ||
+          entry.value is! String) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'secret names and values must be strings',
+        );
+      }
+      secrets[(entry.key! as String).trim()] = entry.value! as String;
+    }
+    return secrets;
+  }
+
+  List<String> _stringListParam(Map<String, Object?> params, String field) {
+    final Object? raw = params[field];
+    if (raw == null) return const <String>[];
+    if (raw is! List<Object?> || raw.any((Object? value) => value is! String)) {
+      throw DaemonError(_kErrInvalidParams, '$field must be a string array');
+    }
+    return raw.cast<String>().toList(growable: false);
+  }
 
   // -------------------------------------------------------------------------
   // projects.*

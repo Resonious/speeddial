@@ -11,6 +11,7 @@ import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
+import 'state/mcp_store.dart';
 import 'state/projects_store.dart';
 import 'state/sessions_store.dart';
 
@@ -19,7 +20,13 @@ import 'state/sessions_store.dart';
 /// [reconnecting] the armed backoff retry after a drop or failed attempt,
 /// [failed] a first connect that has not succeeded yet (the retry timer is
 /// still armed — the state is transient). In-memory only; never persisted.
-enum ConnectionStatus { disconnected, connecting, connected, reconnecting, failed }
+enum ConnectionStatus {
+  disconnected,
+  connecting,
+  connected,
+  reconnecting,
+  failed,
+}
 
 /// A configured daemon endpoint. UI-local model (the daemon itself reports a
 /// `DaemonInfo` over the wire); fields are `final`.
@@ -54,12 +61,12 @@ class DaemonEndpoint {
   final bool embedded;
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-        'url': url,
-        'token': token,
-        if (embedded) 'embedded': true,
-      };
+    'id': id,
+    'name': name,
+    'url': url,
+    'token': token,
+    if (embedded) 'embedded': true,
+  };
 }
 
 /// Owns the list of configured daemon endpoints plus their (in-memory)
@@ -73,8 +80,7 @@ class ConnectionsStore extends ChangeNotifier {
   static const String storageKey = 'speeddial.connections.v1';
 
   final List<DaemonEndpoint> _endpoints = <DaemonEndpoint>[];
-  final Map<String, ConnectionStatus> _statuses =
-      <String, ConnectionStatus>{};
+  final Map<String, ConnectionStatus> _statuses = <String, ConnectionStatus>{};
   static int _idCounter = 0;
 
   List<DaemonEndpoint> get endpoints =>
@@ -102,10 +108,12 @@ class ConnectionsStore extends ChangeNotifier {
       if (decoded is! List) return;
       _endpoints
         ..clear()
-        ..addAll(decoded
-            .whereType<Map<String, Object?>>()
-            .map(DaemonEndpoint.fromJson)
-            .where((DaemonEndpoint e) => !e.embedded));
+        ..addAll(
+          decoded
+              .whereType<Map<String, Object?>>()
+              .map(DaemonEndpoint.fromJson)
+              .where((DaemonEndpoint e) => !e.embedded),
+        );
       _statuses.clear();
       for (final DaemonEndpoint e in _endpoints) {
         _statuses[e.id] = ConnectionStatus.disconnected;
@@ -188,8 +196,7 @@ class ConnectionsStore extends ChangeNotifier {
     required String url,
     required String token,
   }) async {
-    final int index =
-        _endpoints.indexWhere((DaemonEndpoint e) => e.id == id);
+    final int index = _endpoints.indexWhere((DaemonEndpoint e) => e.id == id);
     if (index < 0) return;
     _endpoints[index] = DaemonEndpoint(
       id: id,
@@ -200,6 +207,7 @@ class ConnectionsStore extends ChangeNotifier {
     notifyListeners();
     await _persist();
   }
+
   Future<void> _persist() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -256,14 +264,15 @@ class AppData {
     ConnectionsStore? connections,
     SelectionStore? selection,
     DaemonClient Function(String daemonId)? clientFor,
-  })  : connections = connections ?? ConnectionsStore(),
-        selection = selection ?? SelectionStore(),
-        _fallbackClientFor = clientFor {
+  }) : connections = connections ?? ConnectionsStore(),
+       selection = selection ?? SelectionStore(),
+       _fallbackClientFor = clientFor {
     projects = ProjectsStore(clientFor: this.clientFor);
     sessions = SessionsStore(clientFor: this.clientFor);
     chat = ChatStore(clientFor: this.clientFor);
     files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
+    mcp = McpStore(clientFor: this.clientFor);
     // Endpoints added after construction connect on arrival; status-only
     // changes are filtered out by [_connectedEndpointIds] to avoid churn.
     this.connections.addListener(_onConnectionsChanged);
@@ -277,6 +286,7 @@ class AppData {
   late final ChatStore chat;
   late final FilesStore files;
   late final GitStore git;
+  late final McpStore mcp;
 
   /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
   /// sheet seeds its toggle from here and writes back on change, so the
@@ -364,8 +374,7 @@ class AppData {
       final WsDaemonClient? live = _websocketClients[id];
       if (live != null) {
         final DaemonEndpoint endpoint = _endpointFor(id)!;
-        if (live.url != endpoint.url ||
-            (live.token ?? '') != endpoint.token) {
+        if (live.url != endpoint.url || (live.token ?? '') != endpoint.token) {
           _connectedEndpointIds.remove(id);
           _disposeWebSocketClient(id);
         }
@@ -403,6 +412,7 @@ class AppData {
     void listener() {
       connections.setStatus(daemonId, _mapClientState(client.connState.value));
     }
+
     client.connState.addListener(listener);
     _websocketClients[daemonId] = client;
     _statusListeners[daemonId] = listener;
@@ -484,6 +494,7 @@ class AppData {
     chat.dispose();
     files.dispose();
     git.dispose();
+    mcp.dispose();
   }
 }
 
@@ -496,8 +507,8 @@ class AppScope extends InheritedWidget {
   final AppData data;
 
   static AppData of(BuildContext context) {
-    final AppScope? scope =
-        context.dependOnInheritedWidgetOfExactType<AppScope>();
+    final AppScope? scope = context
+        .dependOnInheritedWidgetOfExactType<AppScope>();
     assert(scope != null, 'AppScope is missing from the widget tree');
     return scope!.data;
   }

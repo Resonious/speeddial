@@ -20,21 +20,21 @@ enum SessionStatus {
 
   /// Wire value; `waitingPermission` is the only non-name spelling.
   String get wire => switch (this) {
-        SessionStatus.idle => 'idle',
-        SessionStatus.running => 'running',
-        SessionStatus.waitingPermission => 'waitingPermission',
-        SessionStatus.error => 'error',
-        SessionStatus.closed => 'closed',
-      };
+    SessionStatus.idle => 'idle',
+    SessionStatus.running => 'running',
+    SessionStatus.waitingPermission => 'waitingPermission',
+    SessionStatus.error => 'error',
+    SessionStatus.closed => 'closed',
+  };
 
   static SessionStatus parse(String value) => switch (value) {
-        'idle' => SessionStatus.idle,
-        'running' => SessionStatus.running,
-        'waitingPermission' => SessionStatus.waitingPermission,
-        'error' => SessionStatus.error,
-        'closed' => SessionStatus.closed,
-        _ => throw FormatException('Unknown SessionStatus: "$value"'),
-      };
+    'idle' => SessionStatus.idle,
+    'running' => SessionStatus.running,
+    'waitingPermission' => SessionStatus.waitingPermission,
+    'error' => SessionStatus.error,
+    'closed' => SessionStatus.closed,
+    _ => throw FormatException('Unknown SessionStatus: "$value"'),
+  };
 }
 
 /// What a session is doing: executing changes or planning only.
@@ -43,15 +43,29 @@ enum SessionMode {
   plan;
 
   String get wire => switch (this) {
-        SessionMode.build => 'build',
-        SessionMode.plan => 'plan',
-      };
+    SessionMode.build => 'build',
+    SessionMode.plan => 'plan',
+  };
 
   static SessionMode parse(String value) => switch (value) {
-        'build' => SessionMode.build,
-        'plan' => SessionMode.plan,
-        _ => throw FormatException('Unknown SessionMode: "$value"'),
-      };
+    'build' => SessionMode.build,
+    'plan' => SessionMode.plan,
+    _ => throw FormatException('Unknown SessionMode: "$value"'),
+  };
+}
+
+/// Transport used to connect an ACP agent to an MCP server.
+enum McpTransport {
+  stdio,
+  http;
+
+  String get wire => name;
+
+  static McpTransport parse(String value) => switch (value) {
+    'stdio' => McpTransport.stdio,
+    'http' => McpTransport.http,
+    _ => throw FormatException('Unknown McpTransport: "$value"'),
+  };
 }
 
 /// Execution state of a tool call.
@@ -62,19 +76,19 @@ enum ToolCallStatus {
   failed;
 
   String get wire => switch (this) {
-        ToolCallStatus.pending => 'pending',
-        ToolCallStatus.running => 'running',
-        ToolCallStatus.completed => 'completed',
-        ToolCallStatus.failed => 'failed',
-      };
+    ToolCallStatus.pending => 'pending',
+    ToolCallStatus.running => 'running',
+    ToolCallStatus.completed => 'completed',
+    ToolCallStatus.failed => 'failed',
+  };
 
   static ToolCallStatus parse(String value) => switch (value) {
-        'pending' => ToolCallStatus.pending,
-        'running' => ToolCallStatus.running,
-        'completed' => ToolCallStatus.completed,
-        'failed' => ToolCallStatus.failed,
-        _ => throw FormatException('Unknown ToolCallStatus: "$value"'),
-      };
+    'pending' => ToolCallStatus.pending,
+    'running' => ToolCallStatus.running,
+    'completed' => ToolCallStatus.completed,
+    'failed' => ToolCallStatus.failed,
+    _ => throw FormatException('Unknown ToolCallStatus: "$value"'),
+  };
 }
 
 /// Priority of a plan step.
@@ -84,17 +98,17 @@ enum PlanPriority {
   low;
 
   String get wire => switch (this) {
-        PlanPriority.high => 'high',
-        PlanPriority.medium => 'medium',
-        PlanPriority.low => 'low',
-      };
+    PlanPriority.high => 'high',
+    PlanPriority.medium => 'medium',
+    PlanPriority.low => 'low',
+  };
 
   static PlanPriority parse(String value) => switch (value) {
-        'high' => PlanPriority.high,
-        'medium' => PlanPriority.medium,
-        'low' => PlanPriority.low,
-        _ => throw FormatException('Unknown PlanPriority: "$value"'),
-      };
+    'high' => PlanPriority.high,
+    'medium' => PlanPriority.medium,
+    'low' => PlanPriority.low,
+    _ => throw FormatException('Unknown PlanPriority: "$value"'),
+  };
 }
 
 /// Progress state of a plan step; `inProgress` serializes as `in_progress`.
@@ -104,17 +118,17 @@ enum PlanEntryStatus {
   completed;
 
   String get wire => switch (this) {
-        PlanEntryStatus.pending => 'pending',
-        PlanEntryStatus.inProgress => 'in_progress',
-        PlanEntryStatus.completed => 'completed',
-      };
+    PlanEntryStatus.pending => 'pending',
+    PlanEntryStatus.inProgress => 'in_progress',
+    PlanEntryStatus.completed => 'completed',
+  };
 
   static PlanEntryStatus parse(String value) => switch (value) {
-        'pending' => PlanEntryStatus.pending,
-        'in_progress' => PlanEntryStatus.inProgress,
-        'completed' => PlanEntryStatus.completed,
-        _ => throw FormatException('Unknown PlanEntryStatus: "$value"'),
-      };
+    'pending' => PlanEntryStatus.pending,
+    'in_progress' => PlanEntryStatus.inProgress,
+    'completed' => PlanEntryStatus.completed,
+    _ => throw FormatException('Unknown PlanEntryStatus: "$value"'),
+  };
 }
 
 /// How a permission request option resolves; snake_case on the wire.
@@ -125,19 +139,19 @@ enum PermissionKind {
   rejectAlways;
 
   String get wire => switch (this) {
-        PermissionKind.allowOnce => 'allow_once',
-        PermissionKind.allowAlways => 'allow_always',
-        PermissionKind.rejectOnce => 'reject_once',
-        PermissionKind.rejectAlways => 'reject_always',
-      };
+    PermissionKind.allowOnce => 'allow_once',
+    PermissionKind.allowAlways => 'allow_always',
+    PermissionKind.rejectOnce => 'reject_once',
+    PermissionKind.rejectAlways => 'reject_always',
+  };
 
   static PermissionKind parse(String value) => switch (value) {
-        'allow_once' => PermissionKind.allowOnce,
-        'allow_always' => PermissionKind.allowAlways,
-        'reject_once' => PermissionKind.rejectOnce,
-        'reject_always' => PermissionKind.rejectAlways,
-        _ => throw FormatException('Unknown PermissionKind: "$value"'),
-      };
+    'allow_once' => PermissionKind.allowOnce,
+    'allow_always' => PermissionKind.allowAlways,
+    'reject_once' => PermissionKind.rejectOnce,
+    'reject_always' => PermissionKind.rejectAlways,
+    _ => throw FormatException('Unknown PermissionKind: "$value"'),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +168,8 @@ sealed class ToolCallContent {
         'diff' => ToolCallDiff.fromJson(json),
         'terminal' => ToolCallTerminal.fromJson(json),
         _ => throw FormatException(
-            'Unknown ToolCallContent type: ${json['type']}'),
+          'Unknown ToolCallContent type: ${json['type']}',
+        ),
       };
 
   Map<String, Object?> toJson();
@@ -171,9 +186,9 @@ class ToolCallText extends ToolCallContent {
 
   @override
   Map<String, Object?> toJson() => <String, Object?>{
-        'type': 'text',
-        'text': text,
-      };
+    'type': 'text',
+    'text': text,
+  };
 }
 
 /// File edit content of a tool call.
@@ -192,18 +207,18 @@ class ToolCallDiff extends ToolCallContent {
   final String newText;
 
   factory ToolCallDiff.fromJson(Map<String, Object?> json) => ToolCallDiff(
-        path: json['path']! as String,
-        oldText: json['oldText'] as String?,
-        newText: json['newText']! as String,
-      );
+    path: json['path']! as String,
+    oldText: json['oldText'] as String?,
+    newText: json['newText']! as String,
+  );
 
   @override
   Map<String, Object?> toJson() => <String, Object?>{
-        'type': 'diff',
-        'path': path,
-        'oldText': oldText,
-        'newText': newText,
-      };
+    'type': 'diff',
+    'path': path,
+    'oldText': oldText,
+    'newText': newText,
+  };
 }
 
 /// Terminal output content of a tool call.
@@ -223,10 +238,10 @@ class ToolCallTerminal extends ToolCallContent {
 
   @override
   Map<String, Object?> toJson() => <String, Object?>{
-        'type': 'terminal',
-        'terminalId': terminalId,
-        'output': output,
-      };
+    'type': 'terminal',
+    'terminalId': terminalId,
+    'output': output,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -266,30 +281,30 @@ class ToolCall {
   final Object? rawOutput;
 
   factory ToolCall.fromJson(Map<String, Object?> json) => ToolCall(
-        id: json['id']! as String,
-        title: json['title']! as String,
-        kind: json['kind']! as String,
-        status: ToolCallStatus.parse(json['status']! as String),
-        content: (json['content']! as List<Object?>)
-            .map((e) => ToolCallContent.fromJson(e! as Map<String, Object?>))
-            .toList(growable: false),
-        locations: (json['locations']! as List<Object?>)
-            .map((e) => e! as String)
-            .toList(growable: false),
-        rawInput: json['rawInput'],
-        rawOutput: json['rawOutput'],
-      );
+    id: json['id']! as String,
+    title: json['title']! as String,
+    kind: json['kind']! as String,
+    status: ToolCallStatus.parse(json['status']! as String),
+    content: (json['content']! as List<Object?>)
+        .map((e) => ToolCallContent.fromJson(e! as Map<String, Object?>))
+        .toList(growable: false),
+    locations: (json['locations']! as List<Object?>)
+        .map((e) => e! as String)
+        .toList(growable: false),
+    rawInput: json['rawInput'],
+    rawOutput: json['rawOutput'],
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'title': title,
-        'kind': kind,
-        'status': status.wire,
-        'content': content.map((e) => e.toJson()).toList(growable: false),
-        'locations': locations,
-        'rawInput': rawInput,
-        'rawOutput': rawOutput,
-      };
+    'id': id,
+    'title': title,
+    'kind': kind,
+    'status': status.wire,
+    'content': content.map((e) => e.toJson()).toList(growable: false),
+    'locations': locations,
+    'rawInput': rawInput,
+    'rawOutput': rawOutput,
+  };
 }
 
 /// One step of an agent plan.
@@ -305,16 +320,16 @@ class PlanEntry {
   final PlanEntryStatus status;
 
   factory PlanEntry.fromJson(Map<String, Object?> json) => PlanEntry(
-        content: json['content']! as String,
-        priority: PlanPriority.parse(json['priority']! as String),
-        status: PlanEntryStatus.parse(json['status']! as String),
-      );
+    content: json['content']! as String,
+    priority: PlanPriority.parse(json['priority']! as String),
+    status: PlanEntryStatus.parse(json['status']! as String),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'content': content,
-        'priority': priority.wire,
-        'status': status.wire,
-      };
+    'content': content,
+    'priority': priority.wire,
+    'status': status.wire,
+  };
 }
 
 /// One selectable option of a permission request.
@@ -340,10 +355,10 @@ class PermissionOption {
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'optionId': optionId,
-        'name': name,
-        'kind': kind.wire,
-      };
+    'optionId': optionId,
+    'name': name,
+    'kind': kind.wire,
+  };
 }
 
 /// A request from the agent for the user to allow/reject a pending action.
@@ -374,11 +389,11 @@ class PermissionRequest {
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'requestId': requestId,
-        'toolCallId': toolCallId,
-        'title': title,
-        'options': options.map((e) => e.toJson()).toList(growable: false),
-      };
+    'requestId': requestId,
+    'toolCallId': toolCallId,
+    'title': title,
+    'options': options.map((e) => e.toJson()).toList(growable: false),
+  };
 }
 
 /// Token usage of a turn; `cost` is a decimal USD string when known.
@@ -396,18 +411,18 @@ class UsageInfo {
   final String? cost;
 
   factory UsageInfo.fromJson(Map<String, Object?> json) => UsageInfo(
-        inputTokens: json['inputTokens']! as int,
-        outputTokens: json['outputTokens']! as int,
-        totalTokens: json['totalTokens']! as int,
-        cost: json['cost'] as String?,
-      );
+    inputTokens: json['inputTokens']! as int,
+    outputTokens: json['outputTokens']! as int,
+    totalTokens: json['totalTokens']! as int,
+    cost: json['cost'] as String?,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'inputTokens': inputTokens,
-        'outputTokens': outputTokens,
-        'totalTokens': totalTokens,
-        'cost': cost,
-      };
+    'inputTokens': inputTokens,
+    'outputTokens': outputTokens,
+    'totalTokens': totalTokens,
+    'cost': cost,
+  };
 }
 
 /// The title a session carries when created without an explicit one
@@ -476,51 +491,53 @@ class Session {
   final DateTime updatedAt;
 
   factory Session.fromJson(Map<String, Object?> json) => Session(
-        id: json['id']! as String,
-        projectId: json['projectId']! as String,
-        providerId: json['providerId']! as String,
-        title: json['title']! as String,
-        status: SessionStatus.parse(json['status']! as String),
-        mode: SessionMode.parse(json['mode']! as String),
-        model: json['model'] as String?,
-        // Absent on pre-config-option daemons.
-        models: (json['models'] as List?)
-                ?.whereType<String>()
-                .toList(growable: false) ??
-            const <String>[],
-        cwd: json['cwd']! as String,
-        baseBranch: json['baseBranch'] as String?,
-        // Absent on pre-thinking-level daemons.
-        thinkingLevel: json['thinkingLevel'] as String?,
-        thinkingLevels: (json['thinkingLevels'] as List?)
-                ?.whereType<String>()
-                .toList(growable: false) ??
-            const <String>[],
-        // Absent on pre-yolo daemons.
-        yolo: json['yolo'] as bool? ?? false,
-        archived: json['archived']! as bool,
-        createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
-        updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
-      );
+    id: json['id']! as String,
+    projectId: json['projectId']! as String,
+    providerId: json['providerId']! as String,
+    title: json['title']! as String,
+    status: SessionStatus.parse(json['status']! as String),
+    mode: SessionMode.parse(json['mode']! as String),
+    model: json['model'] as String?,
+    // Absent on pre-config-option daemons.
+    models:
+        (json['models'] as List?)?.whereType<String>().toList(
+          growable: false,
+        ) ??
+        const <String>[],
+    cwd: json['cwd']! as String,
+    baseBranch: json['baseBranch'] as String?,
+    // Absent on pre-thinking-level daemons.
+    thinkingLevel: json['thinkingLevel'] as String?,
+    thinkingLevels:
+        (json['thinkingLevels'] as List?)?.whereType<String>().toList(
+          growable: false,
+        ) ??
+        const <String>[],
+    // Absent on pre-yolo daemons.
+    yolo: json['yolo'] as bool? ?? false,
+    archived: json['archived']! as bool,
+    createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
+    updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'projectId': projectId,
-        'providerId': providerId,
-        'title': title,
-        'status': status.wire,
-        'mode': mode.wire,
-        'model': model,
-        'models': models,
-        'cwd': cwd,
-        'baseBranch': baseBranch,
-        'thinkingLevel': thinkingLevel,
-        'thinkingLevels': thinkingLevels,
-        'yolo': yolo,
-        'archived': archived,
-        'createdAt': createdAt.toUtc().toIso8601String(),
-        'updatedAt': updatedAt.toUtc().toIso8601String(),
-      };
+    'id': id,
+    'projectId': projectId,
+    'providerId': providerId,
+    'title': title,
+    'status': status.wire,
+    'mode': mode.wire,
+    'model': model,
+    'models': models,
+    'cwd': cwd,
+    'baseBranch': baseBranch,
+    'thinkingLevel': thinkingLevel,
+    'thinkingLevels': thinkingLevels,
+    'yolo': yolo,
+    'archived': archived,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
 }
 
 /// An entry in a project's file listing.
@@ -546,20 +563,20 @@ class FileEntry {
   final DateTime modifiedAt;
 
   factory FileEntry.fromJson(Map<String, Object?> json) => FileEntry(
-        name: json['name']! as String,
-        path: json['path']! as String,
-        isDir: json['isDir']! as bool,
-        size: json['size']! as int,
-        modifiedAt: DateTime.parse(json['modifiedAt']! as String).toUtc(),
-      );
+    name: json['name']! as String,
+    path: json['path']! as String,
+    isDir: json['isDir']! as bool,
+    size: json['size']! as int,
+    modifiedAt: DateTime.parse(json['modifiedAt']! as String).toUtc(),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'name': name,
-        'path': path,
-        'isDir': isDir,
-        'size': size,
-        'modifiedAt': modifiedAt.toUtc().toIso8601String(),
-      };
+    'name': name,
+    'path': path,
+    'isDir': isDir,
+    'size': size,
+    'modifiedAt': modifiedAt.toUtc().toIso8601String(),
+  };
 }
 
 /// Result of `fs.read`.
@@ -575,16 +592,16 @@ class FileReadResult {
   final bool isBinary;
 
   factory FileReadResult.fromJson(Map<String, Object?> json) => FileReadResult(
-        content: json['content']! as String,
-        truncated: json['truncated']! as bool,
-        isBinary: json['isBinary']! as bool,
-      );
+    content: json['content']! as String,
+    truncated: json['truncated']! as bool,
+    isBinary: json['isBinary']! as bool,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'content': content,
-        'truncated': truncated,
-        'isBinary': isBinary,
-      };
+    'content': content,
+    'truncated': truncated,
+    'isBinary': isBinary,
+  };
 }
 
 /// One file's git state, as reported by `git status --porcelain=v2`.
@@ -609,18 +626,18 @@ class GitStatusFile {
   final bool staged;
 
   factory GitStatusFile.fromJson(Map<String, Object?> json) => GitStatusFile(
-        path: json['path']! as String,
-        indexStatus: json['indexStatus']! as String,
-        worktreeStatus: json['worktreeStatus']! as String,
-        staged: json['staged']! as bool,
-      );
+    path: json['path']! as String,
+    indexStatus: json['indexStatus']! as String,
+    worktreeStatus: json['worktreeStatus']! as String,
+    staged: json['staged']! as bool,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'path': path,
-        'indexStatus': indexStatus,
-        'worktreeStatus': worktreeStatus,
-        'staged': staged,
-      };
+    'path': path,
+    'indexStatus': indexStatus,
+    'worktreeStatus': worktreeStatus,
+    'staged': staged,
+  };
 }
 
 /// Repository status: current branch, divergence, and changed files.
@@ -643,20 +660,20 @@ class GitStatus {
   final List<GitStatusFile> files;
 
   factory GitStatus.fromJson(Map<String, Object?> json) => GitStatus(
-        branch: json['branch']! as String,
-        ahead: json['ahead']! as int,
-        behind: json['behind']! as int,
-        files: (json['files']! as List<Object?>)
-            .map((e) => GitStatusFile.fromJson(e! as Map<String, Object?>))
-            .toList(growable: false),
-      );
+    branch: json['branch']! as String,
+    ahead: json['ahead']! as int,
+    behind: json['behind']! as int,
+    files: (json['files']! as List<Object?>)
+        .map((e) => GitStatusFile.fromJson(e! as Map<String, Object?>))
+        .toList(growable: false),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'branch': branch,
-        'ahead': ahead,
-        'behind': behind,
-        'files': files.map((e) => e.toJson()).toList(growable: false),
-      };
+    'branch': branch,
+    'ahead': ahead,
+    'behind': behind,
+    'files': files.map((e) => e.toJson()).toList(growable: false),
+  };
 }
 
 /// A unified diff for a single file.
@@ -682,20 +699,20 @@ class GitDiff {
   final bool isBinary;
 
   factory GitDiff.fromJson(Map<String, Object?> json) => GitDiff(
-        path: json['path']! as String,
-        patch: json['patch']! as String,
-        isNew: json['isNew']! as bool,
-        isDeleted: json['isDeleted']! as bool,
-        isBinary: json['isBinary']! as bool,
-      );
+    path: json['path']! as String,
+    patch: json['patch']! as String,
+    isNew: json['isNew']! as bool,
+    isDeleted: json['isDeleted']! as bool,
+    isBinary: json['isBinary']! as bool,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'path': path,
-        'patch': patch,
-        'isNew': isNew,
-        'isDeleted': isDeleted,
-        'isBinary': isBinary,
-      };
+    'path': path,
+    'patch': patch,
+    'isNew': isNew,
+    'isDeleted': isDeleted,
+    'isBinary': isBinary,
+  };
 }
 
 /// A git branch in a project's repository.
@@ -711,16 +728,16 @@ class Branch {
   final String? upstream;
 
   factory Branch.fromJson(Map<String, Object?> json) => Branch(
-        name: json['name']! as String,
-        isCurrent: json['isCurrent']! as bool,
-        upstream: json['upstream'] as String?,
-      );
+    name: json['name']! as String,
+    isCurrent: json['isCurrent']! as bool,
+    upstream: json['upstream'] as String?,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'name': name,
-        'isCurrent': isCurrent,
-        'upstream': upstream,
-      };
+    'name': name,
+    'isCurrent': isCurrent,
+    'upstream': upstream,
+  };
 }
 
 /// Outcome of `git.mergeToBase`: the session's worktree branch merged back
@@ -755,22 +772,22 @@ class MergeResult {
   final String commit;
 
   factory MergeResult.fromJson(Map<String, Object?> json) => MergeResult(
-        baseBranch: json['baseBranch']! as String,
-        sessionBranch: json['sessionBranch']! as String,
-        baseFastForwarded: json['baseFastForwarded']! as bool,
-        alreadyUpToDate: json['alreadyUpToDate']! as bool,
-        fastForward: json['fastForward']! as bool,
-        commit: json['commit']! as String,
-      );
+    baseBranch: json['baseBranch']! as String,
+    sessionBranch: json['sessionBranch']! as String,
+    baseFastForwarded: json['baseFastForwarded']! as bool,
+    alreadyUpToDate: json['alreadyUpToDate']! as bool,
+    fastForward: json['fastForward']! as bool,
+    commit: json['commit']! as String,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'baseBranch': baseBranch,
-        'sessionBranch': sessionBranch,
-        'baseFastForwarded': baseFastForwarded,
-        'alreadyUpToDate': alreadyUpToDate,
-        'fastForward': fastForward,
-        'commit': commit,
-      };
+    'baseBranch': baseBranch,
+    'sessionBranch': sessionBranch,
+    'baseFastForwarded': baseFastForwarded,
+    'alreadyUpToDate': alreadyUpToDate,
+    'fastForward': fastForward,
+    'commit': commit,
+  };
 }
 
 /// Outcome of `git.rebaseOntoBase`: the session's worktree branch rebased
@@ -802,20 +819,20 @@ class RebaseResult {
   final String commit;
 
   factory RebaseResult.fromJson(Map<String, Object?> json) => RebaseResult(
-        baseBranch: json['baseBranch']! as String,
-        sessionBranch: json['sessionBranch']! as String,
-        baseFastForwarded: json['baseFastForwarded']! as bool,
-        alreadyUpToDate: json['alreadyUpToDate']! as bool,
-        commit: json['commit']! as String,
-      );
+    baseBranch: json['baseBranch']! as String,
+    sessionBranch: json['sessionBranch']! as String,
+    baseFastForwarded: json['baseFastForwarded']! as bool,
+    alreadyUpToDate: json['alreadyUpToDate']! as bool,
+    commit: json['commit']! as String,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'baseBranch': baseBranch,
-        'sessionBranch': sessionBranch,
-        'baseFastForwarded': baseFastForwarded,
-        'alreadyUpToDate': alreadyUpToDate,
-        'commit': commit,
-      };
+    'baseBranch': baseBranch,
+    'sessionBranch': sessionBranch,
+    'baseFastForwarded': baseFastForwarded,
+    'alreadyUpToDate': alreadyUpToDate,
+    'commit': commit,
+  };
 }
 
 /// Per-session git summary for the left rail (see `git.sessionSummaries`):
@@ -867,12 +884,12 @@ class SessionGitSummary {
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'sessionId': sessionId,
-        'dirty': dirty,
-        'aheadOfBase': aheadOfBase,
-        'behindBase': behindBase,
-        'mergedIntoBase': mergedIntoBase,
-      };
+    'sessionId': sessionId,
+    'dirty': dirty,
+    'aheadOfBase': aheadOfBase,
+    'behindBase': behindBase,
+    'mergedIntoBase': mergedIntoBase,
+  };
 }
 
 /// An added project on the daemon host.
@@ -895,20 +912,20 @@ class Project {
   final DateTime lastActiveAt;
 
   factory Project.fromJson(Map<String, Object?> json) => Project(
-        id: json['id']! as String,
-        name: json['name']! as String,
-        path: json['path']! as String,
-        addedAt: DateTime.parse(json['addedAt']! as String).toUtc(),
-        lastActiveAt: DateTime.parse(json['lastActiveAt']! as String).toUtc(),
-      );
+    id: json['id']! as String,
+    name: json['name']! as String,
+    path: json['path']! as String,
+    addedAt: DateTime.parse(json['addedAt']! as String).toUtc(),
+    lastActiveAt: DateTime.parse(json['lastActiveAt']! as String).toUtc(),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-        'path': path,
-        'addedAt': addedAt.toUtc().toIso8601String(),
-        'lastActiveAt': lastActiveAt.toUtc().toIso8601String(),
-      };
+    'id': id,
+    'name': name,
+    'path': path,
+    'addedAt': addedAt.toUtc().toIso8601String(),
+    'lastActiveAt': lastActiveAt.toUtc().toIso8601String(),
+  };
 }
 
 /// A provider that can run agent sessions.
@@ -937,22 +954,83 @@ class ProviderInfo {
   final List<String> models;
 
   factory ProviderInfo.fromJson(Map<String, Object?> json) => ProviderInfo(
+    id: json['id']! as String,
+    name: json['name']! as String,
+    available: json['available']! as bool,
+    command: json['command']! as String,
+    models: (json['models']! as List<Object?>)
+        .map((e) => e! as String)
+        .toList(growable: false),
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'available': available,
+    'command': command,
+    'models': models,
+  };
+}
+
+/// Daemon-managed MCP server configuration.
+///
+/// Secret environment/header values never appear on the wire. Only their
+/// names are returned so clients can preserve, replace, or remove them.
+class McpServerProfile {
+  const McpServerProfile({
+    required this.id,
+    required this.name,
+    required this.transport,
+    required this.enabled,
+    required this.secretNames,
+    required this.createdAt,
+    required this.updatedAt,
+    this.command,
+    this.args = const <String>[],
+    this.url,
+  });
+
+  final String id;
+  final String name;
+  final McpTransport transport;
+  final bool enabled;
+  final String? command;
+  final List<String> args;
+  final String? url;
+  final List<String> secretNames;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory McpServerProfile.fromJson(Map<String, Object?> json) =>
+      McpServerProfile(
         id: json['id']! as String,
         name: json['name']! as String,
-        available: json['available']! as bool,
-        command: json['command']! as String,
-        models: (json['models']! as List<Object?>)
-            .map((e) => e! as String)
+        transport: McpTransport.parse(json['transport']! as String),
+        enabled: json['enabled']! as bool,
+        command: json['command'] as String?,
+        args: (json['args']! as List<Object?>)
+            .map((Object? value) => value! as String)
             .toList(growable: false),
+        url: json['url'] as String?,
+        secretNames: (json['secretNames']! as List<Object?>)
+            .map((Object? value) => value! as String)
+            .toList(growable: false),
+        createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
+        updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-        'available': available,
-        'command': command,
-        'models': models,
-      };
+    'id': id,
+    'name': name,
+    'transport': transport.wire,
+    'enabled': enabled,
+    'command': ?command,
+    'args': args,
+    'url': ?url,
+    'secretNames': secretNames,
+    'createdAt': createdAt.toUtc().toIso8601String(),
+    'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -993,18 +1071,18 @@ class Attachment {
   final int size;
 
   factory Attachment.fromJson(Map<String, Object?> json) => Attachment(
-        id: json['id']! as String,
-        name: json['name']! as String,
-        mimeType: json['mimeType']! as String,
-        size: json['size']! as int,
-      );
+    id: json['id']! as String,
+    name: json['name']! as String,
+    mimeType: json['mimeType']! as String,
+    size: json['size']! as int,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'id': id,
-        'name': name,
-        'mimeType': mimeType,
-        'size': size,
-      };
+    'id': id,
+    'name': name,
+    'mimeType': mimeType,
+    'size': size,
+  };
 }
 
 /// An [Attachment] with its base64-encoded payload, as returned by
@@ -1021,20 +1099,19 @@ class AttachmentData extends Attachment {
   /// Base64-encoded file content.
   final String data;
 
-  factory AttachmentData.fromJson(Map<String, Object?> json) =>
-      AttachmentData(
-        id: json['id']! as String,
-        name: json['name']! as String,
-        mimeType: json['mimeType']! as String,
-        size: json['size']! as int,
-        data: json['data']! as String,
-      );
+  factory AttachmentData.fromJson(Map<String, Object?> json) => AttachmentData(
+    id: json['id']! as String,
+    name: json['name']! as String,
+    mimeType: json['mimeType']! as String,
+    size: json['size']! as int,
+    data: json['data']! as String,
+  );
 
   @override
   Map<String, Object?> toJson() => <String, Object?>{
-        ...super.toJson(),
-        'data': data,
-      };
+    ...super.toJson(),
+    'data': data,
+  };
 }
 
 /// A file the client attaches to an outgoing `sessions.send` message.
@@ -1062,10 +1139,10 @@ class OutgoingAttachment {
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'name': name,
-        'mimeType': mimeType,
-        'data': data,
-      };
+    'name': name,
+    'mimeType': mimeType,
+    'data': data,
+  };
 }
 
 /// Best-effort IANA media type for a file name, from its extension. Falls
@@ -1087,7 +1164,9 @@ bool isImageMimeType(String mimeType) =>
 bool isTextMimeType(String mimeType) {
   final String type = mimeType.toLowerCase();
   if (type.startsWith('text/')) return true;
-  if (type.endsWith('+json') || type.endsWith('+xml') || type.endsWith('+yaml')) {
+  if (type.endsWith('+json') ||
+      type.endsWith('+xml') ||
+      type.endsWith('+yaml')) {
     return true;
   }
   return _kTextMimeTypes.contains(type);
@@ -1177,18 +1256,18 @@ class DaemonInfo {
   final List<ProviderInfo> providers;
 
   factory DaemonInfo.fromJson(Map<String, Object?> json) => DaemonInfo(
-        version: json['version']! as String,
-        protocolVersion: json['protocolVersion']! as int,
-        authRequired: json['authRequired']! as bool,
-        providers: (json['providers']! as List<Object?>)
-            .map((e) => ProviderInfo.fromJson(e! as Map<String, Object?>))
-            .toList(growable: false),
-      );
+    version: json['version']! as String,
+    protocolVersion: json['protocolVersion']! as int,
+    authRequired: json['authRequired']! as bool,
+    providers: (json['providers']! as List<Object?>)
+        .map((e) => ProviderInfo.fromJson(e! as Map<String, Object?>))
+        .toList(growable: false),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'version': version,
-        'protocolVersion': protocolVersion,
-        'authRequired': authRequired,
-        'providers': providers.map((e) => e.toJson()).toList(growable: false),
-      };
+    'version': version,
+    'protocolVersion': protocolVersion,
+    'authRequired': authRequired,
+    'providers': providers.map((e) => e.toJson()).toList(growable: false),
+  };
 }

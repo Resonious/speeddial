@@ -18,8 +18,10 @@ void main() {
       );
       expect(SessionStatus.parse('error'), SessionStatus.error);
       expect(SessionStatus.parse('closed'), SessionStatus.closed);
-      expect(() => SessionStatus.parse('waiting_permission'),
-          throwsFormatException);
+      expect(
+        () => SessionStatus.parse('waiting_permission'),
+        throwsFormatException,
+      );
       expect(() => SessionStatus.parse('nope'), throwsFormatException);
     });
 
@@ -70,7 +72,10 @@ void main() {
       expect(PermissionKind.parse('allow_once'), PermissionKind.allowOnce);
       expect(PermissionKind.parse('allow_always'), PermissionKind.allowAlways);
       expect(PermissionKind.parse('reject_once'), PermissionKind.rejectOnce);
-      expect(PermissionKind.parse('reject_always'), PermissionKind.rejectAlways);
+      expect(
+        PermissionKind.parse('reject_always'),
+        PermissionKind.rejectAlways,
+      );
       expect(() => PermissionKind.parse('allowOnce'), throwsFormatException);
     });
   });
@@ -154,10 +159,16 @@ void main() {
       expect(session.mode, SessionMode.plan);
       expect(session.model, isNull);
       expect(session.cwd, '/home/nigel/p/speeddial');
-      expect(session.baseBranch, isNull,
-          reason: 'baseBranch is absent on pre-merge-back daemons');
-      expect(session.yolo, isFalse,
-          reason: 'yolo is absent on pre-yolo daemons');
+      expect(
+        session.baseBranch,
+        isNull,
+        reason: 'baseBranch is absent on pre-merge-back daemons',
+      );
+      expect(
+        session.yolo,
+        isFalse,
+        reason: 'yolo is absent on pre-yolo daemons',
+      );
       expect(session.archived, isFalse);
       expect(session.createdAt.isUtc, isTrue);
 
@@ -194,7 +205,13 @@ void main() {
       expect(decoded.models, <String>['gpt-5', 'gpt-5-mini']);
       expect(decoded.baseBranch, 'main');
       expect(decoded.thinkingLevel, 'auto');
-      expect(decoded.thinkingLevels, <String>['off', 'auto', 'low', 'high', 'max']);
+      expect(decoded.thinkingLevels, <String>[
+        'off',
+        'auto',
+        'low',
+        'high',
+        'max',
+      ]);
       expect(decoded.yolo, isTrue);
       expect(decoded.archived, isTrue);
       expect(decoded.toJson(), model.toJson());
@@ -217,12 +234,21 @@ void main() {
         'updatedAt': '2026-01-01T00:00:00Z',
       };
       final session = Session.fromJson(json);
-      expect(session.models, isEmpty,
-          reason: 'models is absent on pre-config-option daemons');
-      expect(session.thinkingLevel, isNull,
-          reason: 'thinkingLevel is absent on pre-thinking-level daemons');
-      expect(session.thinkingLevels, isEmpty,
-          reason: 'thinkingLevels is absent on pre-thinking-level daemons');
+      expect(
+        session.models,
+        isEmpty,
+        reason: 'models is absent on pre-config-option daemons',
+      );
+      expect(
+        session.thinkingLevel,
+        isNull,
+        reason: 'thinkingLevel is absent on pre-thinking-level daemons',
+      );
+      expect(
+        session.thinkingLevels,
+        isEmpty,
+        reason: 'thinkingLevels is absent on pre-thinking-level daemons',
+      );
       expect(session.toJson()['thinkingLevels'], isEmpty);
     });
 
@@ -266,12 +292,15 @@ void main() {
         branch: 'main',
         ahead: 2,
         behind: 0,
-        files: [file, GitStatusFile(
-          path: 'README.md',
-          indexStatus: '.',
-          worktreeStatus: 'M',
-          staged: false,
-        )],
+        files: [
+          file,
+          GitStatusFile(
+            path: 'README.md',
+            indexStatus: '.',
+            worktreeStatus: 'M',
+            staged: false,
+          ),
+        ],
       );
       final decodedStatus = GitStatus.fromJson(status.toJson());
       expect(decodedStatus.branch, 'main');
@@ -585,11 +614,7 @@ void main() {
       expect(decoded.cost, '0.0421');
       expect(decoded.toJson(), model.toJson());
 
-      final noCost = UsageInfo(
-        inputTokens: 1,
-        outputTokens: 2,
-        totalTokens: 3,
-      );
+      final noCost = UsageInfo(inputTokens: 1, outputTokens: 2, totalTokens: 3);
       expect(noCost.toJson(), {
         'inputTokens': 1,
         'outputTokens': 2,
@@ -648,6 +673,27 @@ void main() {
       expect(decoded.data, 'AAE=');
       expect(decoded.toJson(), model.toJson());
     });
+    test('McpServerProfile redacted credential roundtrip', () {
+      final McpServerProfile model = McpServerProfile(
+        id: 'mcp-1',
+        name: 'GitHub',
+        transport: McpTransport.http,
+        enabled: true,
+        url: 'https://example.test/mcp',
+        secretNames: const <String>['Authorization'],
+        createdAt: DateTime.utc(2026, 8, 20),
+        updatedAt: DateTime.utc(2026, 8, 20, 1),
+      );
+      final McpServerProfile decoded = McpServerProfile.fromJson(
+        model.toJson(),
+      );
+      expect(decoded.transport, McpTransport.http);
+      expect(decoded.url, 'https://example.test/mcp');
+      expect(decoded.command, isNull);
+      expect(decoded.secretNames, const <String>['Authorization']);
+      expect(decoded.toJson(), model.toJson());
+      expect(decoded.toJson(), isNot(contains('secrets')));
+    });
   });
 
   group('attachment MIME helpers', () {
@@ -660,12 +706,14 @@ void main() {
       expect(mimeTypeForFileName('archive.tar.gz'), 'application/gzip');
     });
 
-    test('mimeTypeForFileName falls back for unknown or missing extensions',
-        () {
-      expect(mimeTypeForFileName('README'), 'application/octet-stream');
-      expect(mimeTypeForFileName('trailing.'), 'application/octet-stream');
-      expect(mimeTypeForFileName('x.weirdext'), 'application/octet-stream');
-    });
+    test(
+      'mimeTypeForFileName falls back for unknown or missing extensions',
+      () {
+        expect(mimeTypeForFileName('README'), 'application/octet-stream');
+        expect(mimeTypeForFileName('trailing.'), 'application/octet-stream');
+        expect(mimeTypeForFileName('x.weirdext'), 'application/octet-stream');
+      },
+    );
 
     test('isImageMimeType / isTextMimeType classify', () {
       expect(isImageMimeType('image/png'), isTrue);

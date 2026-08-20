@@ -228,6 +228,101 @@ void main() {
     expect(environment['SPEEDDIAL_MCP_SESSION_ID'], session.id);
     expect(environment['SPEEDDIAL_MCP_SESSION_CWD'], tempDir.path);
   });
+  test('MCP changes reload an idle session before its next turn', () async {
+    File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+    final Session session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+    final DateTime now = DateTime.utc(2026, 8, 20);
+    store.insertMcpServer(
+      McpServerProfile(
+        id: 'mcp-1',
+        name: 'workspace',
+        transport: McpTransport.stdio,
+        enabled: true,
+        command: '/bin/workspace-mcp',
+        args: const <String>['--stdio'],
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{'TOKEN': 'daemon-secret'},
+    );
+
+    final Completer<void> completed = Completer<void>();
+    final StreamSubscription<({String sessionId, int seq, SessionEvent event})>
+    completionSub = engine.events.listen((update) {
+      if (update.sessionId == session.id &&
+          update.event is TurnCompleteEvent &&
+          !completed.isCompleted) {
+        completed.complete();
+      }
+    });
+    await engine.reloadMcpServers();
+    await engine.sendMessage(session.id, 'weird');
+    await completed.future;
+    await completionSub.cancel();
+
+    final List<Object?> servers = jsonDecode(
+      File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
+    ) as List<Object?>;
+    final Map<String, Object?> config = (servers.single! as Map)
+        .cast<String, Object?>();
+    expect(config['name'], 'workspace');
+    expect(config['command'], '/bin/workspace-mcp');
+    final Map<String, Object?> environment =
+        ((config['env']! as List<Object?>).single! as Map)
+            .cast<String, Object?>();
+    expect(environment, <String, Object?>{
+      'name': 'TOKEN',
+      'value': 'daemon-secret',
+    });
+  });
+
+  test(
+    'HTTP MCP profiles are injected only when the agent supports them',
+    () async {
+      File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      final DateTime now = DateTime.utc(2026, 8, 20);
+      store.insertMcpServer(
+        McpServerProfile(
+          id: 'mcp-http',
+          name: 'remote',
+          transport: McpTransport.http,
+          enabled: true,
+          url: 'https://example.test/mcp',
+          secretNames: const <String>[],
+          createdAt: now,
+          updatedAt: now,
+        ),
+        const <String, String>{'Authorization': 'Bearer daemon-secret'},
+      );
+
+      await engine.createSession(projectId: 'p1', providerId: 'fake');
+      expect(
+        jsonDecode(
+          File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
+        ),
+        isEmpty,
+      );
+
+      File(p.join(tempDir.path, 'agent.http_mcp')).writeAsStringSync('');
+      await engine.createSession(projectId: 'p1', providerId: 'fake');
+      final List<Object?> servers = jsonDecode(
+        File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
+      ) as List<Object?>;
+      final Map<String, Object?> config = (servers.single! as Map)
+          .cast<String, Object?>();
+      expect(config['name'], 'remote');
+      expect(config['type'], 'http');
+      expect(config['url'], 'https://example.test/mcp');
+      expect((config['headers']! as List<Object?>).single, <String, Object?>{
+        'name': 'Authorization',
+        'value': 'Bearer daemon-secret',
+      });
+    },
+  );
 
   test('displayImage persists payload and emits an image event', () async {
     final Session session = await engine.createSession(

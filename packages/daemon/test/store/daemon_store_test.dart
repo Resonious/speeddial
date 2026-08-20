@@ -104,6 +104,52 @@ void main() {
       throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
     );
   });
+  test('MCP profiles persist credentials without exposing values', () {
+    final DateTime createdAt = DateTime.utc(2026, 8, 20);
+    final McpServerProfile profile = McpServerProfile(
+      id: 'mcp-1',
+      name: 'Filesystem',
+      transport: McpTransport.stdio,
+      enabled: true,
+      command: '/bin/mcp',
+      args: const <String>['--stdio'],
+      secretNames: const <String>[],
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    store.insertMcpServer(profile, const <String, String>{
+      'API_TOKEN': 'secret-one',
+    });
+
+    final McpServerProfile listed = store.listMcpServers().single;
+    expect(listed.secretNames, const <String>['API_TOKEN']);
+    expect(listed.toJson().toString(), isNot(contains('secret-one')));
+    expect(store.listEnabledMcpServers().single.secrets, <String, String>{
+      'API_TOKEN': 'secret-one',
+    });
+
+    store.updateMcpServer(
+      McpServerProfile(
+        id: profile.id,
+        name: 'Filesystem tools',
+        transport: profile.transport,
+        enabled: false,
+        command: profile.command,
+        args: profile.args,
+        secretNames: listed.secretNames,
+        createdAt: profile.createdAt,
+        updatedAt: createdAt.add(const Duration(minutes: 1)),
+      ),
+      setSecrets: const <String, String>{'SECOND_TOKEN': 'secret-two'},
+      removeSecretNames: const <String>['API_TOKEN'],
+    );
+    expect(store.listEnabledMcpServers(), isEmpty);
+    expect(store.listMcpServers().single.secretNames, const <String>[
+      'SECOND_TOKEN',
+    ]);
+    expect(store.deleteMcpServer(profile.id), isTrue);
+    expect(store.listMcpServers(), isEmpty);
+  });
 
   test('session CRUD roundtrips and list filtering', () {
     store.insertProject(project());

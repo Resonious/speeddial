@@ -28,6 +28,11 @@ import 'dart:convert';
 import 'package:sqlite3/sqlite3.dart' hide Session;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+typedef StoredMcpServer = ({
+  McpServerProfile profile,
+  Map<String, String> secrets,
+});
+
 /// SQLite extended result code for a UNIQUE/PK constraint violation.
 const int _sqliteConstraintUnique = 2067;
 
@@ -125,6 +130,188 @@ class DaemonStore {
         data BLOB NOT NULL
       );
     ''');
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        transport TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        command TEXT,
+        args TEXT NOT NULL DEFAULT '[]',
+        url TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    ''');
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS mcp_secrets (
+        server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (server_id, name)
+      );
+    ''');
+  }
+
+  // -------------------------------------------------------------------------
+  // MCP servers
+  // -------------------------------------------------------------------------
+
+  List<McpServerProfile> listMcpServers() {
+    final rows = _db.select(
+      'SELECT id, name, transport, enabled, command, args, url, created_at, '
+      'updated_at FROM mcp_servers ORDER BY name COLLATE NOCASE, id',
+    );
+    return rows
+        .map((Row row) => _mcpProfileFromRow(row))
+        .toList(growable: false);
+  }
+
+  List<StoredMcpServer> listEnabledMcpServers() {
+    final rows = _db.select(
+      'SELECT id, name, transport, enabled, command, args, url, created_at, '
+      'updated_at FROM mcp_servers WHERE enabled = 1 '
+      'ORDER BY name COLLATE NOCASE, id',
+    );
+    return rows
+        .map(
+          (Row row) => (
+            profile: _mcpProfileFromRow(row),
+            secrets: _mcpSecrets(row['id'] as String),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  McpServerProfile? getMcpServer(String id) {
+    final rows = _db.select(
+      'SELECT id, name, transport, enabled, command, args, url, created_at, '
+      'updated_at FROM mcp_servers WHERE id = ?',
+      <Object?>[id],
+    );
+    return rows.isEmpty ? null : _mcpProfileFromRow(rows.first);
+  }
+
+  void insertMcpServer(McpServerProfile profile, Map<String, String> secrets) {
+    _db.execute('BEGIN');
+    try {
+      _db.execute(
+        'INSERT INTO mcp_servers '
+        '(id, name, transport, enabled, command, args, url, created_at, '
+        'updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[
+          profile.id,
+          profile.name,
+          profile.transport.wire,
+          profile.enabled ? 1 : 0,
+          profile.command,
+          jsonEncode(profile.args),
+          profile.url,
+          _ts(profile.createdAt),
+          _ts(profile.updatedAt),
+        ],
+      );
+      _setMcpSecrets(profile.id, secrets);
+      _db.execute('COMMIT');
+    } on SqliteException catch (error) {
+      _db.execute('ROLLBACK');
+      if (error.extendedResultCode == _sqliteConstraintUnique) {
+        throw DaemonError(
+          kErrConflict,
+          'An MCP server named "${profile.name}" already exists',
+        );
+      }
+      rethrow;
+    } on Object {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  void updateMcpServer(
+    McpServerProfile profile, {
+    Map<String, String> setSecrets = const <String, String>{},
+    List<String> removeSecretNames = const <String>[],
+  }) {
+    _db.execute('BEGIN');
+    try {
+      _db.execute(
+        'UPDATE mcp_servers SET name = ?, transport = ?, enabled = ?, '
+        'command = ?, args = ?, url = ?, updated_at = ? WHERE id = ?',
+        <Object?>[
+          profile.name,
+          profile.transport.wire,
+          profile.enabled ? 1 : 0,
+          profile.command,
+          jsonEncode(profile.args),
+          profile.url,
+          _ts(profile.updatedAt),
+          profile.id,
+        ],
+      );
+      for (final String name in removeSecretNames) {
+        _db.execute(
+          'DELETE FROM mcp_secrets WHERE server_id = ? AND name = ?',
+          <Object?>[profile.id, name],
+        );
+      }
+      _setMcpSecrets(profile.id, setSecrets);
+      _db.execute('COMMIT');
+    } on SqliteException catch (error) {
+      _db.execute('ROLLBACK');
+      if (error.extendedResultCode == _sqliteConstraintUnique) {
+        throw DaemonError(
+          kErrConflict,
+          'An MCP server named "${profile.name}" already exists',
+        );
+      }
+      rethrow;
+    } on Object {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  bool deleteMcpServer(String id) {
+    _db.execute('DELETE FROM mcp_servers WHERE id = ?', <Object?>[id]);
+    return _db.updatedRows != 0;
+  }
+
+  McpServerProfile _mcpProfileFromRow(Row row) {
+    final String id = row['id'] as String;
+    final List<String> secretNames = _mcpSecrets(id).keys.toList()..sort();
+    return McpServerProfile(
+      id: id,
+      name: row['name'] as String,
+      transport: McpTransport.parse(row['transport'] as String),
+      enabled: (row['enabled'] as int) != 0,
+      command: row['command'] as String?,
+      args: _models(row['args'] as String?),
+      url: row['url'] as String?,
+      secretNames: secretNames,
+      createdAt: _fromTs(row['created_at'] as int),
+      updatedAt: _fromTs(row['updated_at'] as int),
+    );
+  }
+
+  Map<String, String> _mcpSecrets(String serverId) {
+    final rows = _db.select(
+      'SELECT name, value FROM mcp_secrets WHERE server_id = ? ORDER BY name',
+      <Object?>[serverId],
+    );
+    return <String, String>{
+      for (final Row row in rows) row['name'] as String: row['value'] as String,
+    };
+  }
+
+  void _setMcpSecrets(String serverId, Map<String, String> secrets) {
+    for (final MapEntry<String, String> secret in secrets.entries) {
+      _db.execute(
+        'INSERT INTO mcp_secrets (server_id, name, value) VALUES (?, ?, ?) '
+        'ON CONFLICT(server_id, name) DO UPDATE SET value = excluded.value',
+        <Object?>[serverId, secret.key, secret.value],
+      );
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -441,6 +441,81 @@ class WsDaemonClient implements DaemonClient {
   Future<void> removeProject(String id) async {
     await _requirePeer().call('projects.remove', <String, Object?>{'id': id});
   }
+  // ---------------------------------------------------------------------
+  // MCP servers
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<List<McpServerProfile>> listMcpServers() async {
+    final Object? result = await _requirePeer().call('mcp.list');
+    return _decodeList(
+      _resultField(result, 'servers'),
+      McpServerProfile.fromJson,
+    );
+  }
+
+  @override
+  Future<McpServerProfile> createMcpServer({
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'mcp.create',
+      <String, Object?>{
+        'name': name,
+        'transport': transport.wire,
+        'enabled': enabled,
+        'command': ?command,
+        'args': args,
+        'url': ?url,
+        'secrets': secrets,
+      },
+    );
+    return McpServerProfile.fromJson(
+      _resultMap(_resultField(result, 'server')),
+    );
+  }
+
+  @override
+  Future<McpServerProfile> updateMcpServer({
+    required String id,
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+    List<String> removeSecretNames = const <String>[],
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'mcp.update',
+      <String, Object?>{
+        'id': id,
+        'name': name,
+        'transport': transport.wire,
+        'enabled': enabled,
+        'command': ?command,
+        'args': args,
+        'url': ?url,
+        'secrets': secrets,
+        'removeSecretNames': removeSecretNames,
+      },
+    );
+    return McpServerProfile.fromJson(
+      _resultMap(_resultField(result, 'server')),
+    );
+  }
+
+  @override
+  Future<void> deleteMcpServer(String id) async {
+    await _requirePeer().call('mcp.delete', <String, Object?>{'id': id});
+  }
 
   // ---------------------------------------------------------------------
   // Sessions

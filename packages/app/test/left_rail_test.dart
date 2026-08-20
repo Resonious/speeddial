@@ -33,10 +33,7 @@ Future<AppData> pumpRail(WidgetTester tester) async {
     MaterialApp(
       theme: buildSpeedDialTheme(),
       home: Scaffold(
-        body: AppScope(
-          data: app,
-          child: const LeftRail(),
-        ),
+        body: AppScope(data: app, child: const LeftRail()),
       ),
     ),
   );
@@ -53,7 +50,9 @@ Future<AppData> selectFakeDaemon(WidgetTester tester, AppData app) async {
 }
 
 void main() {
-  testWidgets('empty state before any daemon is selected', (WidgetTester tester) async {
+  testWidgets('empty state before any daemon is selected', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
 
     expect(find.text('Daemons'), findsOneWidget);
@@ -64,9 +63,23 @@ void main() {
     expect(find.text('Demo Project'), findsNothing);
     expect(app.selection.selectedDaemonId, isNull);
   });
+  testWidgets('daemon actions open its MCP settings page', (
+    WidgetTester tester,
+  ) async {
+    await pumpRail(tester);
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-action-settings')));
+    await tester.pumpAndSettle();
 
-  testWidgets('selecting the fake daemon loads and lists the seeded project',
-      (WidgetTester tester) async {
+    expect(find.text('Fake daemon settings'), findsOneWidget);
+    expect(find.text('MCP servers'), findsOneWidget);
+    expect(find.byKey(const Key('mcp-add-server')), findsOneWidget);
+  });
+
+  testWidgets('selecting the fake daemon loads and lists the seeded project', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
 
     await selectFakeDaemon(tester, app);
@@ -78,30 +91,33 @@ void main() {
     expect(app.projects.projectsFor('fake'), hasLength(1));
   });
 
-  testWidgets('expanding the project shows the seeded sessions with status chips',
-      (WidgetTester tester) async {
-    final AppData app = await pumpRail(tester);
-    await selectFakeDaemon(tester, app);
+  testWidgets(
+    'expanding the project shows the seeded sessions with status chips',
+    (WidgetTester tester) async {
+      final AppData app = await pumpRail(tester);
+      await selectFakeDaemon(tester, app);
 
-    await tester.tap(find.text('Demo Project'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Demo Project'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Build the feature'), findsOneWidget);
-    expect(find.text('Plan the refactor'), findsOneWidget);
-    // Status chips for the two idle sessions.
-    expect(find.text('idle'), findsNWidgets(2));
-    // Provider badge + mode label per session.
-    expect(find.text('omp'), findsNWidgets(2));
-    expect(find.text('build'), findsOneWidget);
-    expect(find.text('plan'), findsOneWidget);
-    // Expanding selects the project.
-    final Project demo = app.projects.projectsFor('fake').single;
-    expect(demo.name, 'Demo Project');
-    expect(app.selection.selectedProjectId, demo.id);
-  });
+      expect(find.text('Build the feature'), findsOneWidget);
+      expect(find.text('Plan the refactor'), findsOneWidget);
+      // Status chips for the two idle sessions.
+      expect(find.text('idle'), findsNWidgets(2));
+      // Provider badge + mode label per session.
+      expect(find.text('omp'), findsNWidgets(2));
+      expect(find.text('build'), findsOneWidget);
+      expect(find.text('plan'), findsOneWidget);
+      // Expanding selects the project.
+      final Project demo = app.projects.projectsFor('fake').single;
+      expect(demo.name, 'Demo Project');
+      expect(app.selection.selectedProjectId, demo.id);
+    },
+  );
 
-  testWidgets('session rows show git badges from the daemon summaries',
-      (WidgetTester tester) async {
+  testWidgets('session rows show git badges from the daemon summaries', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
 
@@ -148,8 +164,9 @@ void main() {
     expect(find.text('↓3'), findsOneWidget);
   });
 
-  testWidgets('a failed endpoint offers Retry now in its actions menu',
-      (WidgetTester tester) async {
+  testWidgets('a failed endpoint offers Retry now in its actions menu', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
 
     // A healthy endpoint has no retry entry.
@@ -175,30 +192,32 @@ void main() {
     expect(find.text('Retry now'), findsNothing); // menu closed
   });
 
-  testWidgets('+ Project adds a project row; a project without sessions says so',
-      (WidgetTester tester) async {
-    final AppData app = await pumpRail(tester);
-    await selectFakeDaemon(tester, app);
+  testWidgets(
+    '+ Project adds a project row; a project without sessions says so',
+    (WidgetTester tester) async {
+      final AppData app = await pumpRail(tester);
+      await selectFakeDaemon(tester, app);
 
-    await tester.tap(find.byKey(const Key('add-project')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('add-project-path')),
-      '/tmp/x',
-    );
-    await tester.tap(find.byKey(const Key('add-project-submit')));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('add-project')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('add-project-path')),
+        '/tmp/x',
+      );
+      await tester.tap(find.byKey(const Key('add-project-submit')));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Demo Project'), findsOneWidget);
-    expect(find.text('x'), findsOneWidget);
-    expect(find.text('/tmp/x'), findsOneWidget);
-    expect(app.projects.projectsFor('fake'), hasLength(2));
+      expect(find.text('Demo Project'), findsOneWidget);
+      expect(find.text('x'), findsOneWidget);
+      expect(find.text('/tmp/x'), findsOneWidget);
+      expect(app.projects.projectsFor('fake'), hasLength(2));
 
-    // Empty project expands to a "No sessions" hint.
-    await tester.tap(find.text('x'));
-    await tester.pumpAndSettle();
-    expect(find.text('No sessions'), findsOneWidget);
-  });
+      // Empty project expands to a "No sessions" hint.
+      await tester.tap(find.text('x'));
+      await tester.pumpAndSettle();
+      expect(find.text('No sessions'), findsOneWidget);
+    },
+  );
 
   testWidgets('new-session sheet creates a worktree session with no prompt, '
       'model or mode fields', (WidgetTester tester) async {
@@ -237,12 +256,19 @@ void main() {
     final List<Session> sessions = app.sessions.sessionsFor(demo.id);
     expect(sessions, hasLength(3));
     final Session created = sessions.lastWhere(
-        (Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+      (Session s) => s.id != 'sess-1' && s.id != 'sess-2',
+    );
     expect(created.title, 'New session');
-    expect(created.model, 'omp-default',
-        reason: 'no model picked up front; the agent default applies');
-    expect(created.cwd, contains('.speeddial-worktrees'),
-        reason: 'a base branch routes the session into a worktree');
+    expect(
+      created.model,
+      'omp-default',
+      reason: 'no model picked up front; the agent default applies',
+    );
+    expect(
+      created.cwd,
+      contains('.speeddial-worktrees'),
+      reason: 'a base branch routes the session into a worktree',
+    );
     expect(created.projectId, demo.id);
     expect(app.selection.selectedSessionId, created.id);
     expect(app.selection.selectedProjectId, demo.id);
@@ -280,8 +306,9 @@ void main() {
     expect(created.cwd, demo.path);
   });
 
-  testWidgets('base branch selector filters the branch list by text',
-      (WidgetTester tester) async {
+  testWidgets('base branch selector filters the branch list by text', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     await tester.tap(find.text('Demo Project'));
@@ -295,7 +322,9 @@ void main() {
     await tester.tap(find.byKey(const Key('new-session-base-branch')));
     await tester.pumpAndSettle();
     await tester.enterText(
-        find.byKey(const Key('new-session-base-branch')), 'feat');
+      find.byKey(const Key('new-session-base-branch')),
+      'feat',
+    );
     await tester.pumpAndSettle();
     expect(find.text('feature/x'), findsOneWidget);
     expect(find.text('main'), findsNothing);
@@ -313,8 +342,9 @@ void main() {
     expect(created.cwd, contains('.speeddial-worktrees'));
   });
 
-  testWidgets('deleting the selected session clears the selection',
-      (WidgetTester tester) async {
+  testWidgets('deleting the selected session clears the selection', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     await tester.tap(find.text('Demo Project'));
@@ -345,8 +375,9 @@ void main() {
     expect(find.text('Plan the refactor'), findsOneWidget);
   });
 
-  testWidgets('archiving a session removes it from the default list',
-      (WidgetTester tester) async {
+  testWidgets('archiving a session removes it from the default list', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     await tester.tap(find.text('Demo Project'));
@@ -367,14 +398,12 @@ void main() {
 
     final Project demo = app.projects.projectsFor('fake').single;
     expect(app.sessions.sessionsFor(demo.id), hasLength(1));
-    expect(
-      app.sessions.sessionsFor(demo.id).single.title,
-      'Plan the refactor',
-    );
+    expect(app.sessions.sessionsFor(demo.id).single.title, 'Plan the refactor');
   });
 
-  testWidgets('renaming via the session menu updates the row',
-      (WidgetTester tester) async {
+  testWidgets('renaming via the session menu updates the row', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     await tester.tap(find.text('Demo Project'));
@@ -391,12 +420,15 @@ void main() {
     await tester.pumpAndSettle();
 
     // The dialog opens prefilled with the current title.
-    final TextField field = tester
-        .widget<TextField>(find.byKey(const Key('session-rename-field')));
+    final TextField field = tester.widget<TextField>(
+      find.byKey(const Key('session-rename-field')),
+    );
     expect(field.controller!.text, 'Build the feature');
 
     await tester.enterText(
-        find.byKey(const Key('session-rename-field')), 'Ship it');
+      find.byKey(const Key('session-rename-field')),
+      'Ship it',
+    );
     await tester.tap(find.byKey(const Key('session-rename-submit')));
     await tester.pumpAndSettle();
 
@@ -405,16 +437,23 @@ void main() {
     expect(app.sessions.byId('sess-1')!.title, 'Ship it');
   });
 
-  testWidgets('add daemon dialog still adds an endpoint to the rail',
-      (WidgetTester tester) async {
+  testWidgets('add daemon dialog still adds an endpoint to the rail', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
 
     await tester.tap(find.text('Add daemon'));
     await tester.pumpAndSettle();
-    expect(find.text('Add daemon'), findsNWidgets(2)); // rail button + dialog title.
+    expect(
+      find.text('Add daemon'),
+      findsNWidgets(2),
+    ); // rail button + dialog title.
 
     await tester.enterText(find.byKey(const Key('add-daemon-name')), 'Local');
-    await tester.enterText(find.byKey(const Key('add-daemon-url')), 'localhost:7331');
+    await tester.enterText(
+      find.byKey(const Key('add-daemon-url')),
+      'localhost:7331',
+    );
     await tester.enterText(find.byKey(const Key('add-daemon-token')), 'secret');
     await tester.tap(find.byKey(const Key('add-daemon-submit')));
     await tester.pumpAndSettle();
@@ -428,13 +467,17 @@ void main() {
     // never `connected`, only failed/hanging in the real app.
     expect(
       app.connections.statusOf(
-        app.connections.endpoints.lastWhere((DaemonEndpoint e) => e.id != 'fake').id,
+        app.connections.endpoints
+            .lastWhere((DaemonEndpoint e) => e.id != 'fake')
+            .id,
       ),
       isNot(ConnectionStatus.connected),
     );
   });
 
-  testWidgets('endpoint menu edits a daemon in place', (WidgetTester tester) async {
+  testWidgets('endpoint menu edits a daemon in place', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
 
@@ -461,7 +504,9 @@ void main() {
     );
 
     await tester.enterText(
-        find.byKey(const Key('add-daemon-name')), 'Renamed daemon');
+      find.byKey(const Key('add-daemon-name')),
+      'Renamed daemon',
+    );
     await tester.tap(find.byKey(const Key('add-daemon-submit')));
     await tester.pumpAndSettle();
 
@@ -473,8 +518,9 @@ void main() {
     expect(app.selection.selectedDaemonId, 'fake');
   });
 
-  testWidgets('endpoint menu removes a daemon after confirmation',
-      (WidgetTester tester) async {
+  testWidgets('endpoint menu removes a daemon after confirmation', (
+    WidgetTester tester,
+  ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     expect(app.selection.selectedDaemonId, 'fake');
@@ -487,9 +533,9 @@ void main() {
     // Confirmation names the endpoint; cancelling keeps it.
     expect(find.text('Remove daemon'), findsOneWidget);
     expect(
-        find.textContaining(
-            'Its sessions and projects stay on the daemon'),
-        findsOneWidget);
+      find.textContaining('Its sessions and projects stay on the daemon'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(app.connections.endpoints, hasLength(1));

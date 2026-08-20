@@ -20,9 +20,14 @@ class FakeDaemonClient implements DaemonClient {
   bool _seeded = false;
   int _projectCounter = 1;
   int _sessionCounter = 3;
+  int _mcpServerCounter = 1;
 
   final List<Project> _projects = <Project>[];
   final Map<String, Session> _sessions = <String, Session>{};
+  final Map<String, McpServerProfile> _mcpServers =
+      <String, McpServerProfile>{};
+  final Map<String, Map<String, String>> _mcpSecrets =
+      <String, Map<String, String>>{};
   final Map<String, List<SessionEvent>> _history =
       <String, List<SessionEvent>>{};
   final Map<String, int> _seqBySession = <String, int>{};
@@ -306,6 +311,90 @@ class FakeDaemonClient implements DaemonClient {
       _removeSession(sessionId);
     }
     _projectsChangedController.add(null);
+  }
+  // ---------------------------------------------------------------------
+  // MCP servers
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<List<McpServerProfile>> listMcpServers() async =>
+      List<McpServerProfile>.unmodifiable(_mcpServers.values);
+
+  @override
+  Future<McpServerProfile> createMcpServer({
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+  }) async {
+    final DateTime now = DateTime.now().toUtc();
+    final String id = 'mcp-${_mcpServerCounter++}';
+    _mcpSecrets[id] = Map<String, String>.of(secrets);
+    final McpServerProfile profile = McpServerProfile(
+      id: id,
+      name: name,
+      transport: transport,
+      enabled: enabled,
+      command: command,
+      args: List<String>.unmodifiable(args),
+      url: url,
+      secretNames: secrets.keys.toList(growable: false)..sort(),
+      createdAt: now,
+      updatedAt: now,
+    );
+    _mcpServers[id] = profile;
+    return profile;
+  }
+
+  @override
+  Future<McpServerProfile> updateMcpServer({
+    required String id,
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+    List<String> removeSecretNames = const <String>[],
+  }) async {
+    final McpServerProfile? current = _mcpServers[id];
+    if (current == null) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    final Map<String, String> stored = _mcpSecrets.putIfAbsent(
+      id,
+      () => <String, String>{},
+    );
+    for (final String secretName in removeSecretNames) {
+      stored.remove(secretName);
+    }
+    stored.addAll(secrets);
+    final McpServerProfile profile = McpServerProfile(
+      id: id,
+      name: name,
+      transport: transport,
+      enabled: enabled,
+      command: command,
+      args: List<String>.unmodifiable(args),
+      url: url,
+      secretNames: stored.keys.toList(growable: false)..sort(),
+      createdAt: current.createdAt,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    _mcpServers[id] = profile;
+    return profile;
+  }
+
+  @override
+  Future<void> deleteMcpServer(String id) async {
+    if (_mcpServers.remove(id) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    _mcpSecrets.remove(id);
   }
 
   // ---------------------------------------------------------------------

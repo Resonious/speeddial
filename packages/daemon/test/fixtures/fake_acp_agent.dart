@@ -222,7 +222,11 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
             'audio': false,
             'embeddedContext': false,
           },
-          'mcpCapabilities': <String, Object?>{'http': false, 'sse': false},
+          'mcpCapabilities': <String, Object?>{
+            'http': File('${Directory.current.path}/agent.http_mcp')
+                .existsSync(),
+            'sse': false,
+          },
           'sessionCapabilities': <String, Object?>{},
           'auth': <String, Object?>{},
         },

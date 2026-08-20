@@ -6,6 +6,7 @@ import '../../state/projects_store.dart';
 import '../../theme.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
+import '../settings/mcp_settings_page.dart';
 
 /// Daemon rail: configured endpoints, then the project/session tree of the
 /// selected daemon, plus an "Add daemon" action. Rendered inside the
@@ -21,7 +22,10 @@ class LeftRail extends StatelessWidget {
     return Material(
       color: scheme.surfaceContainer,
       child: ListenableBuilder(
-        listenable: Listenable.merge(<Listenable>[data.connections, data.selection]),
+        listenable: Listenable.merge(<Listenable>[
+          data.connections,
+          data.selection,
+        ]),
         builder: (BuildContext context, Widget? _) {
           final List<DaemonEndpoint> endpoints = data.connections.endpoints;
           return Column(
@@ -31,9 +35,7 @@ class LeftRail extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
                   'Daemons',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelMedium
+                  style: Theme.of(context).textTheme.labelMedium
                       ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
               ),
@@ -42,9 +44,7 @@ class LeftRail extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: Text(
                     'No daemons yet',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
+                    style: Theme.of(context).textTheme.bodySmall
                         ?.copyWith(color: scheme.onSurfaceVariant),
                   ),
                 )
@@ -64,6 +64,8 @@ class LeftRail extends StatelessWidget {
                             data.selection.selectedDaemonId == endpoint.id,
                         onTap: () => _selectDaemon(context, endpoint),
                         onRetry: () => data.reconnect(endpoint.id),
+                        onSettings: () =>
+                            _showDaemonSettings(context, endpoint),
                         onEdit: () => _showDaemonDialog(context, endpoint),
                         onRemove: () => _removeDaemon(context, endpoint),
                       );
@@ -76,7 +78,11 @@ class LeftRail extends StatelessWidget {
                 // Keep the button above the system navigation area on
                 // edge-to-edge Android; the rail surface extends behind it.
                 padding: EdgeInsets.fromLTRB(
-                    12, 12, 12, 12 + MediaQuery.viewPaddingOf(context).bottom),
+                  12,
+                  12,
+                  12,
+                  12 + MediaQuery.viewPaddingOf(context).bottom,
+                ),
                 child: OutlinedButton.icon(
                   onPressed: () => _showAddDaemonDialog(context),
                   icon: const Icon(Icons.add, size: 18),
@@ -116,8 +122,10 @@ class LeftRail extends StatelessWidget {
 
   /// Shows the add/edit dialog; [existing] prefills the fields and switches
   /// the submit path to [ConnectionsStore.updateEndpoint].
-  Future<void> _showDaemonDialog(BuildContext context,
-      [DaemonEndpoint? existing]) {
+  Future<void> _showDaemonDialog(
+    BuildContext context, [
+    DaemonEndpoint? existing,
+  ]) {
     // Resolve the store graph on the rail's context; the dialog route's own
     // context sits above [AppScope], so AppScope.of must not run in it.
     final ConnectionsStore connections = AppScope.of(context).connections;
@@ -128,16 +136,38 @@ class LeftRail extends StatelessWidget {
     );
   }
 
-  Future<void> _removeDaemon(
-      BuildContext context, DaemonEndpoint endpoint) async {
+  Future<void> _showDaemonSettings(
+    BuildContext context,
+    DaemonEndpoint endpoint,
+  ) {
     final AppData data = AppScope.of(context);
-    final bool confirmed = await showDialog<bool>(
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AppScope(
+          data: data,
+          child: McpSettingsPage(
+            daemonId: endpoint.id,
+            daemonName: endpoint.name,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _removeDaemon(
+    BuildContext context,
+    DaemonEndpoint endpoint,
+  ) async {
+    final AppData data = AppScope.of(context);
+    final bool confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (BuildContext context) => AlertDialog(
             title: const Text('Remove daemon'),
             content: Text(
-                'Remove "${endpoint.name}" (${endpoint.url})? Its sessions and '
-                'projects stay on the daemon.'),
+              'Remove "${endpoint.name}" (${endpoint.url})? Its sessions and '
+              'projects stay on the daemon.',
+            ),
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -189,8 +219,9 @@ class _ProjectTree extends StatelessWidget {
           return Center(
             child: Text(
               'Add a daemon to begin',
-              style:
-                  textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           );
         }
@@ -206,8 +237,9 @@ class _ProjectTree extends StatelessWidget {
                   Expanded(
                     child: Text(
                       'Projects',
-                      style: textTheme.labelMedium
-                          ?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -221,9 +253,7 @@ class _ProjectTree extends StatelessWidget {
               ),
             ),
             if (data.projects.isLoading(daemonId))
-              const Expanded(
-                child: Center(child: CircularProgressIndicator()),
-              )
+              const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (projects.isEmpty)
               Expanded(
                 child: Center(
@@ -236,14 +266,16 @@ class _ProjectTree extends StatelessWidget {
                           child: Text(
                             _errorText(data.projects.lastError!),
                             textAlign: TextAlign.center,
-                            style: textTheme.bodySmall
-                                ?.copyWith(color: scheme.error),
+                            style: textTheme.bodySmall?.copyWith(
+                              color: scheme.error,
+                            ),
                           ),
                         ),
                       Text(
                         'No projects yet',
-                        style: textTheme.bodySmall
-                            ?.copyWith(color: scheme.onSurfaceVariant),
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -353,8 +385,9 @@ class _ProjectTileState extends State<_ProjectTile> {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (BuildContext context) => Padding(
-        padding:
-            EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
         child: NewSessionSheet(
           data: data,
           daemonId: daemonId,
@@ -366,7 +399,8 @@ class _ProjectTileState extends State<_ProjectTile> {
 
   Future<void> _removeProject(BuildContext context) async {
     final AppData data = AppScope.of(context);
-    final bool confirmed = await showDialog<bool>(
+    final bool confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (BuildContext context) => AlertDialog(
             title: const Text('Remove project'),
@@ -417,8 +451,9 @@ class _ProjectTileState extends State<_ProjectTile> {
               project.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: textTheme.bodyMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              style: textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           IconButton(
@@ -439,11 +474,11 @@ class _ProjectTileState extends State<_ProjectTile> {
             },
             itemBuilder: (BuildContext context) =>
                 const <PopupMenuEntry<_ProjectAction>>[
-              PopupMenuItem<_ProjectAction>(
-                value: _ProjectAction.remove,
-                child: Text('Remove'),
-              ),
-            ],
+                  PopupMenuItem<_ProjectAction>(
+                    value: _ProjectAction.remove,
+                    child: Text('Remove'),
+                  ),
+                ],
           ),
         ],
       ),
@@ -509,10 +544,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
   Future<void> _submit() async {
     final String path = _path.text.trim();
     if (path.isEmpty) return;
-    await widget.projects.add(
-          widget.daemonId,
-          path,
-        );
+    await widget.projects.add(widget.daemonId, path);
     if (!mounted) return;
     Navigator.of(context).pop();
   }
@@ -547,7 +579,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
 }
 
 /// Menu entries on a daemon endpoint tile.
-enum _EndpointAction { retry, edit, remove }
+enum _EndpointAction { retry, settings, edit, remove }
 
 class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
@@ -556,6 +588,7 @@ class _EndpointTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onRetry,
+    required this.onSettings,
     required this.onEdit,
     required this.onRemove,
   });
@@ -568,6 +601,7 @@ class _EndpointTile extends StatelessWidget {
   /// Resets the reconnect backoff and retries immediately ([AppData.reconnect]).
   final VoidCallback onRetry;
   final VoidCallback onEdit;
+  final VoidCallback onSettings;
   final VoidCallback onRemove;
 
   @override
@@ -576,13 +610,11 @@ class _EndpointTile extends StatelessWidget {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Retry matters while the endpoint is down or mid-retry; a connected
     // endpoint has nothing to retry.
-    final bool canRetry = status == ConnectionStatus.failed ||
+    final bool canRetry =
+        status == ConnectionStatus.failed ||
         status == ConnectionStatus.reconnecting;
-    // The embedded in-process daemon can't be edited or removed (its URL/port
-    // is ephemeral and it is always present on desktop); only a retry action
-    // is ever shown for it.
+    // Embedded daemons expose settings and retry, but not URL editing/removal.
     final bool embedded = endpoint.embedded;
-    final bool hasMenu = canRetry || !embedded;
     return ListTile(
       dense: true,
       leading: SizedBox(
@@ -602,37 +634,41 @@ class _EndpointTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
-      trailing: hasMenu
-          ? PopupMenuButton<_EndpointAction>(
-              key: Key('endpoint-actions-${endpoint.id}'),
-              tooltip: 'Daemon actions',
-              icon: const Icon(Icons.more_vert, size: 18),
-              itemBuilder: (BuildContext context) =>
-                  <PopupMenuEntry<_EndpointAction>>[
-                if (canRetry)
-                  const PopupMenuItem<_EndpointAction>(
-                    key: Key('endpoint-action-retry'),
-                    value: _EndpointAction.retry,
-                    child: Text('Retry now'),
-                  ),
-                if (!embedded)
-                  const PopupMenuItem<_EndpointAction>(
-                    value: _EndpointAction.edit,
-                    child: Text('Edit'),
-                  ),
-                if (!embedded)
-                  const PopupMenuItem<_EndpointAction>(
-                    value: _EndpointAction.remove,
-                    child: Text('Remove'),
-                  ),
-              ],
-              onSelected: (_EndpointAction action) => switch (action) {
-                _EndpointAction.retry => onRetry(),
-                _EndpointAction.edit => onEdit(),
-                _EndpointAction.remove => onRemove(),
-              },
-            )
-          : null,
+      trailing: PopupMenuButton<_EndpointAction>(
+        key: Key('endpoint-actions-${endpoint.id}'),
+        tooltip: 'Daemon actions',
+        icon: const Icon(Icons.more_vert, size: 18),
+        itemBuilder: (BuildContext context) =>
+            <PopupMenuEntry<_EndpointAction>>[
+              const PopupMenuItem<_EndpointAction>(
+                key: Key('endpoint-action-settings'),
+                value: _EndpointAction.settings,
+                child: Text('Settings'),
+              ),
+              if (canRetry)
+                const PopupMenuItem<_EndpointAction>(
+                  key: Key('endpoint-action-retry'),
+                  value: _EndpointAction.retry,
+                  child: Text('Retry now'),
+                ),
+              if (!embedded)
+                const PopupMenuItem<_EndpointAction>(
+                  value: _EndpointAction.edit,
+                  child: Text('Edit'),
+                ),
+              if (!embedded)
+                const PopupMenuItem<_EndpointAction>(
+                  value: _EndpointAction.remove,
+                  child: Text('Remove'),
+                ),
+            ],
+        onSelected: (_EndpointAction action) => switch (action) {
+          _EndpointAction.retry => onRetry(),
+          _EndpointAction.settings => onSettings(),
+          _EndpointAction.edit => onEdit(),
+          _EndpointAction.remove => onRemove(),
+        },
+      ),
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       onTap: onTap,
@@ -749,8 +785,8 @@ class _DaemonDialogState extends State<_DaemonDialog> {
               ),
               validator: (String? value) =>
                   (value == null || value.trim().isEmpty)
-                      ? 'Host or URL is required'
-                      : null,
+                  ? 'Host or URL is required'
+                  : null,
             ),
             const SizedBox(height: 12),
             TextFormField(

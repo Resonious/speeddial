@@ -43,12 +43,15 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
-lib/src/mcp/        BuiltInMcpServer: stdio MCP JSON-RPC subprocess injected into every
-                    ACP new/load request. Search tools bridge over an authenticated,
-                    session-bound loopback WebSocket to query projects/session history;
-                    display_image persists an attachment and emits an image event.
-                    The same hidden subprocess entry works from the daemon CLI and the
-                    native Flutter executable used by the embedded daemon.
+lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
+                    into every ACP new/load request. Search tools bridge over an
+                    authenticated, session-bound loopback WebSocket to query
+                    projects/session history; display_image persists an attachment and
+                    emits an image event. The same hidden subprocess entry works from the
+                    daemon CLI and the native Flutter executable used by the embedded
+                    daemon. User-configured stdio and Streamable HTTP MCP profiles are
+                    stored daemon-wide and injected directly into compatible ACP agents;
+                    the built-in server does not proxy their tools.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"]
@@ -64,8 +67,10 @@ lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (overr
                     --db or SPEEDIAL_DB). Tables: projects, sessions, session_events,
                     attachments (message and MCP-displayed image payloads, FK-cascaded
                     with their session; events carry metadata only, `attachments.read`
-                    serves blobs). WAL mode, foreign keys on. Events stored as JSON
-                    blobs + seq. Session/event substring queries back MCP search.
+                    serves blobs), mcp_servers, and mcp_secrets. MCP secret values stay
+                    daemon-side; public reads expose configured names only. WAL mode,
+                    foreign keys on. Events stored as JSON blobs + seq. Session/event
+                    substring queries back MCP search.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
                     for status, --no-color unified diffs, branch lists; fetch and
                     worktree add/remove back per-session worktrees. mergeIntoBase
@@ -125,7 +130,7 @@ lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditi
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental chunk append),
-                             FilesStore, GitStore. Stores NEVER hold BuildContext.
+                             FilesStore, GitStore, McpStore. Stores NEVER hold BuildContext.
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
                              chat flexible, right 360, both collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
@@ -134,6 +139,9 @@ lib/src/ui/left/             daemon/project/session rail: connection status dot,
                              new-session sheet (provider, worktree branch, yolo only —
                              model/thinking are picked in the composer on the live
                              session), rename/archive/delete menus
+lib/src/ui/settings/         daemon-scoped MCP profile list/editor; stdio command/env and
+                             remote HTTP URL/header values are written to the daemon,
+                             while stored secret values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, collapsible

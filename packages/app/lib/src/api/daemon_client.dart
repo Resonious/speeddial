@@ -47,6 +47,35 @@ abstract class DaemonClient {
 
   /// Removes a project and archives its sessions. Does not touch the filesystem.
   Future<void> removeProject(String id);
+  // ---------------------------------------------------------------------
+  // MCP servers
+  // ---------------------------------------------------------------------
+
+  Future<List<McpServerProfile>> listMcpServers();
+
+  Future<McpServerProfile> createMcpServer({
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+  });
+
+  Future<McpServerProfile> updateMcpServer({
+    required String id,
+    required String name,
+    required McpTransport transport,
+    required bool enabled,
+    String? command,
+    List<String> args = const <String>[],
+    String? url,
+    Map<String, String> secrets = const <String, String>{},
+    List<String> removeSecretNames = const <String>[],
+  });
+
+  Future<void> deleteMcpServer(String id);
 
   // ---------------------------------------------------------------------
   // Sessions

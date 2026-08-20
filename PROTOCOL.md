@@ -55,6 +55,21 @@ Project = {
   addedAt: string,
   lastActiveAt: string,
 }
+McpTransport = "stdio" | "http"
+
+McpServerProfile = {
+  id: string,
+  name: string,
+  transport: McpTransport,
+  enabled: boolean,
+  command: string | null,      // stdio only
+  args: string[],              // stdio only
+  url: string | null,          // HTTP only
+  secretNames: string[],       // configured env/header names; values are never returned
+  createdAt: string,
+  updatedAt: string,
+}
+
 
 SessionStatus = "idle" | "running" | "waitingPermission" | "error" | "closed"
 SessionMode   = "build" | "plan"
@@ -193,6 +208,25 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 - `projects.add {path: string, name?: string}` → `{project: Project}` — errors `-32602` if path missing or not a directory; a leading `~` or `~/` expands to the daemon user's home (`$HOME`, else `%USERPROFILE%`)
 - `projects.remove {id: string}` → `{}` — also archives its sessions; does NOT touch the filesystem
 - `projects.rename {id: string, name: string}` → `{project: Project}`
+### MCP servers
+- `mcp.list {}` → `{servers: McpServerProfile[]}`
+- `mcp.create {name: string, transport: McpTransport, enabled: boolean, command?: string,
+  args?: string[], url?: string, secrets?: {[name: string]: string}}`
+  → `{server: McpServerProfile}`
+- `mcp.update {id: string, name: string, transport: McpTransport, enabled: boolean,
+  command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
+  removeSecretNames?: string[]}` → `{server: McpServerProfile}`
+- `mcp.delete {id: string}` → `{ok: true}`
+
+`stdio` requires a command; each entry in `secrets` becomes an environment variable. `http`
+requires an absolute HTTP(S) URL; each secret becomes an HTTP header. Secret values are stored only
+on the daemon and never returned—`secretNames` lets clients replace or remove them. Names are unique
+case-insensitively and `speeddial` is reserved for the built-in server. Enabled profiles are appended
+to ACP `session/new` and `session/load`; HTTP profiles are included only when the agent advertises
+`mcpCapabilities.http`. Saving settings parks idle `session/load`-capable agents so their next turn
+resumes with the current list. Running agents are parked before their following turn; agents without
+`session/load` retain their current list, while all new sessions receive the saved configuration.
+
 
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`

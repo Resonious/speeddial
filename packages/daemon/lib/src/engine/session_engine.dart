@@ -147,28 +147,91 @@ class SessionEngine {
     );
   }
 
-  List<Map<String, Object?>> _mcpServersFor(Session session) {
-    final _BuiltInMcpConfig? config = _builtInMcp;
-    if (config == null) return const <Map<String, Object?>>[];
-    return <Map<String, Object?>>[
-      <String, Object?>{
+  List<Map<String, Object?>> _mcpServersFor(
+    Session session,
+    InitializeResult info,
+  ) {
+    final List<Map<String, Object?>> servers = <Map<String, Object?>>[];
+    final _BuiltInMcpConfig? builtIn = _builtInMcp;
+    if (builtIn != null) {
+      servers.add(<String, Object?>{
         'name': kMcpServerName,
-        'command': config.command,
-        'args': config.args,
+        'command': builtIn.command,
+        'args': builtIn.args,
         'env': <Object?>[
           <String, Object?>{
             'name': kMcpDaemonUrlEnv,
-            'value': config.daemonUrl,
+            'value': builtIn.daemonUrl,
           },
           <String, Object?>{
             'name': kMcpSecretEnv,
-            'value': config.secretForSession(session.id),
+            'value': builtIn.secretForSession(session.id),
           },
           <String, Object?>{'name': kMcpSessionIdEnv, 'value': session.id},
           <String, Object?>{'name': kMcpSessionCwdEnv, 'value': session.cwd},
         ],
-      },
-    ];
+      });
+    }
+    final Object? rawCapabilities = info.agentCapabilities['mcpCapabilities'];
+    final bool supportsHttp =
+        rawCapabilities is Map && rawCapabilities['http'] == true;
+    for (final StoredMcpServer stored in _store.listEnabledMcpServers()) {
+      final McpServerProfile profile = stored.profile;
+      switch (profile.transport) {
+        case McpTransport.stdio:
+          servers.add(<String, Object?>{
+            'name': profile.name,
+            'command': profile.command!,
+            'args': profile.args,
+            'env': <Object?>[
+              for (final MapEntry<String, String> secret
+                  in stored.secrets.entries)
+                <String, Object?>{'name': secret.key, 'value': secret.value},
+            ],
+          });
+        case McpTransport.http:
+          if (!supportsHttp) continue;
+          servers.add(<String, Object?>{
+            'name': profile.name,
+            'type': 'http',
+            'url': profile.url!,
+            'headers': <Object?>[
+              for (final MapEntry<String, String> secret
+                  in stored.secrets.entries)
+                <String, Object?>{'name': secret.key, 'value': secret.value},
+            ],
+          });
+      }
+    }
+    return servers;
+  }
+
+  final Set<String> _mcpReloadPending = <String>{};
+
+  /// Disconnects idle, reload-capable agents so their next turn resumes with
+  /// the current daemon-managed MCP list. Running turns are marked and parked
+  /// before their next prompt. Agents without `session/load` keep their current
+  /// connections; saved changes still apply to all newly created sessions.
+  Future<void> reloadMcpServers() async {
+    for (final _LiveSession live in _live.values.toList(growable: false)) {
+      if (live.turn != null) {
+        _mcpReloadPending.add(live.session.id);
+        continue;
+      }
+      await _parkForMcpReload(live);
+    }
+  }
+
+  Future<bool> _parkForMcpReload(_LiveSession live) async {
+    final InitializeResult info = await live.client.initialized;
+    if (info.agentCapabilities['loadSession'] != true) return false;
+    final String sessionId = live.session.id;
+    if (!identical(_live[sessionId], live)) return false;
+    _live.remove(sessionId);
+    _mcpReloadPending.remove(sessionId);
+    live.closed = true;
+    await live.client.dispose();
+    return true;
   }
 
   /// Per-session in-flight tool call state (toolCallId → protocol ToolCall),
@@ -458,7 +521,7 @@ class SessionEngine {
       }
       final created = await client.newSession(
         cwd: baseSession.cwd,
-        mcpServers: _mcpServersFor(baseSession),
+        mcpServers: _mcpServersFor(baseSession, info),
       );
       acpSessionId = created.sessionId;
       modelOption = _modelOptionOf(created.configOptions);
@@ -643,6 +706,17 @@ class SessionEngine {
   }) async {
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
+    if (live != null && _mcpReloadPending.contains(sessionId)) {
+      if (live.turn != null) {
+        throw DaemonError(
+          kErrConflict,
+          'A turn is already running for session "$sessionId"',
+        );
+      }
+      final bool parked = await _parkForMcpReload(live);
+      _mcpReloadPending.remove(sessionId);
+      if (parked) live = null;
+    }
     live ??= await _resuming.putIfAbsent(
       sessionId,
       () => _resume(sessionId).whenComplete(() {
@@ -826,7 +900,7 @@ class SessionEngine {
       configOptions = await client.loadSession(
         sessionId: acpSessionId,
         cwd: session.cwd,
-        mcpServers: _mcpServersFor(session),
+        mcpServers: _mcpServersFor(session, info),
       );
     } on Object catch (error) {
       await client.dispose();
@@ -1132,6 +1206,7 @@ class SessionEngine {
     }
     _live.clear();
     _toolCalls.clear();
+    _mcpReloadPending.clear();
     if (!_eventsController.isClosed) _eventsController.close();
     if (!_sessionChangesController.isClosed) _sessionChangesController.close();
     if (!_sessionRemovalsController.isClosed) {

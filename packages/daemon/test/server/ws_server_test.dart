@@ -720,6 +720,80 @@ void main() {
       await client.close();
     });
 
+    test('MCP profiles are redacted and injected into new sessions', () async {
+      await startServer();
+      final WsClient client = await connect(server!.port);
+      final Map<String, Object?> created = j(
+        await client.peer.call('mcp.create', <String, Object?>{
+          'name': 'filesystem',
+          'transport': 'stdio',
+          'enabled': true,
+          'command': '/bin/filesystem-mcp',
+          'args': <String>['--stdio'],
+          'secrets': <String, String>{'API_TOKEN': 'top-secret'},
+        }),
+      );
+      final String profileId = (created['server']! as Map)['id']! as String;
+      final Map<String, Object?> listing = j(
+        await client.peer.call('mcp.list'),
+      );
+      expect(listing.toString(), isNot(contains('top-secret')));
+      expect(
+        (((listing['servers']! as List).single as Map)['secretNames'] as List),
+        const <String>['API_TOKEN'],
+      );
+
+      final Directory dir = Directory(p.join(tempDir.path, 'managed-mcp'))
+        ..createSync();
+      File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      final Map<String, Object?> project = j(
+        await client.peer.call('projects.add', <String, Object?>{
+          'path': dir.path,
+          'name': 'Managed MCP',
+        }),
+      );
+      final String projectId = (project['project']! as Map)['id']! as String;
+      await client.peer.call('sessions.create', <String, Object?>{
+        'projectId': projectId,
+        'providerId': 'fake',
+      });
+      final List<Object?> configs = jsonDecode(
+        File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+      ) as List<Object?>;
+      final Map<String, Object?> managed = configs
+          .whereType<Map>()
+          .map((Map config) => config.cast<String, Object?>())
+          .singleWhere(
+            (Map<String, Object?> config) => config['name'] == 'filesystem',
+          );
+      expect(managed['command'], '/bin/filesystem-mcp');
+      expect(managed['args'], const <String>['--stdio']);
+      expect(mcpEnvironment(managed)['API_TOKEN'], 'top-secret');
+
+      await client.peer.call('mcp.update', <String, Object?>{
+        'id': profileId,
+        'name': 'filesystem',
+        'transport': 'stdio',
+        'enabled': false,
+        'command': '/bin/filesystem-mcp',
+        'args': <String>['--stdio'],
+        'removeSecretNames': <String>['API_TOKEN'],
+      });
+      final Map<String, Object?> updated = j(
+        await client.peer.call('mcp.list'),
+      );
+      expect(
+        ((updated['servers']! as List).single as Map)['secretNames'],
+        isEmpty,
+      );
+      await client.peer.call('mcp.delete', <String, Object?>{'id': profileId});
+      expect(
+        (j(await client.peer.call('mcp.list'))['servers']! as List),
+        isEmpty,
+      );
+      await client.close();
+    });
+
     test('built-in MCP bridge is session-bound and displays images', () async {
       await startServer();
       final WsClient client = await connect(server!.port);
