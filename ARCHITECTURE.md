@@ -73,6 +73,10 @@ lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer)
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing.
 lib/src/client.dart DaemonClient: Dart client for the same protocol (used by the CLI
                     subcommands to talk to a running daemon).
+lib/src/local_daemon.dart  LocalDaemon: in-process daemon (same engine/store/server as
+                    `serve`) without CLI arg parsing, discovery file, or signal handling.
+                    Binds 127.0.0.1 on an OS-chosen port with no auth. Started/stopped
+                    by the embedding app; exported via the public library.
 ```
 
 CLI (`speeddial <command>`), all bookkeeping commands talk to the running daemon over
@@ -90,10 +94,15 @@ WebSocket except `serve` and `token`:
 Package name `speeddial_app`. No third-party state management: plain `ChangeNotifier`
 stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context)`
 (lib/src/scope.dart) exposing the store graph. Deps: `web_socket_channel`,
-`shared_preferences`, `flutter_markdown_plus`, `syntax_highlight`, `collection`.
+`shared_preferences`, `flutter_markdown_plus`, `syntax_highlight`, `collection`,
+`speeddial_daemon` (path dep — the desktop build embeds the daemon in-process).
 
 ```
-lib/main.dart                runApp, loads persisted daemon list, builds AppScope
+lib/main.dart                runApp; desktop builds start an embedded in-process daemon
+                             (lib/src/local_daemon/) and auto-add a non-persistent
+                             "This computer" endpoint; web/mobile skip embedding.
+                             SpeedDialApp is a WidgetsBindingObserver that stops the
+                             embedded daemon on app shutdown.
 lib/src/scope.dart           AppScope inherited widget + store graph
 lib/src/theme.dart           dark-first Material 3 theme, monospace accents, dense
 lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PROTOCOL.md
@@ -101,6 +110,11 @@ lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PR
                                   stream, seq-gap detection + history refetch)
 lib/src/api/fake_daemon.dart      FakeDaemonClient: in-memory scripted implementation used
                                   by widget tests AND by --demo mode; simulates streaming
+lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditional
+                             import: local_daemon_native.dart (linux/macos/windows)
+                             backs LocalDaemonController with speeddial_daemon's
+                             LocalDaemon; local_daemon_stub.dart (web/mobile) reports
+                             unsupported. embeddedDaemonSupported gates startup.
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental chunk append),

@@ -578,6 +578,11 @@ class _EndpointTile extends StatelessWidget {
     // endpoint has nothing to retry.
     final bool canRetry = status == ConnectionStatus.failed ||
         status == ConnectionStatus.reconnecting;
+    // The embedded in-process daemon can't be edited or removed (its URL/port
+    // is ephemeral and it is always present on desktop); only a retry action
+    // is ever shown for it.
+    final bool embedded = endpoint.embedded;
+    final bool hasMenu = canRetry || !embedded;
     return ListTile(
       dense: true,
       leading: SizedBox(
@@ -597,32 +602,37 @@ class _EndpointTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       ),
-      trailing: PopupMenuButton<_EndpointAction>(
-        key: Key('endpoint-actions-${endpoint.id}'),
-        tooltip: 'Daemon actions',
-        icon: const Icon(Icons.more_vert, size: 18),
-        itemBuilder: (BuildContext context) => <PopupMenuEntry<_EndpointAction>>[
-          if (canRetry)
-            const PopupMenuItem<_EndpointAction>(
-              key: Key('endpoint-action-retry'),
-              value: _EndpointAction.retry,
-              child: Text('Retry now'),
-            ),
-          const PopupMenuItem<_EndpointAction>(
-            value: _EndpointAction.edit,
-            child: Text('Edit'),
-          ),
-          const PopupMenuItem<_EndpointAction>(
-            value: _EndpointAction.remove,
-            child: Text('Remove'),
-          ),
-        ],
-        onSelected: (_EndpointAction action) => switch (action) {
-          _EndpointAction.retry => onRetry(),
-          _EndpointAction.edit => onEdit(),
-          _EndpointAction.remove => onRemove(),
-        },
-      ),
+      trailing: hasMenu
+          ? PopupMenuButton<_EndpointAction>(
+              key: Key('endpoint-actions-${endpoint.id}'),
+              tooltip: 'Daemon actions',
+              icon: const Icon(Icons.more_vert, size: 18),
+              itemBuilder: (BuildContext context) =>
+                  <PopupMenuEntry<_EndpointAction>>[
+                if (canRetry)
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-retry'),
+                    value: _EndpointAction.retry,
+                    child: Text('Retry now'),
+                  ),
+                if (!embedded)
+                  const PopupMenuItem<_EndpointAction>(
+                    value: _EndpointAction.edit,
+                    child: Text('Edit'),
+                  ),
+                if (!embedded)
+                  const PopupMenuItem<_EndpointAction>(
+                    value: _EndpointAction.remove,
+                    child: Text('Remove'),
+                  ),
+              ],
+              onSelected: (_EndpointAction action) => switch (action) {
+                _EndpointAction.retry => onRetry(),
+                _EndpointAction.edit => onEdit(),
+                _EndpointAction.remove => onRemove(),
+              },
+            )
+          : null,
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       onTap: onTap,

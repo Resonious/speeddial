@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api/daemon_client.dart';
 import 'api/fake_daemon.dart';
 import 'api/ws_daemon_client.dart';
+import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
@@ -29,6 +30,7 @@ class DaemonEndpoint {
     required this.name,
     required this.url,
     required this.token,
+    this.embedded = false,
   });
 
   factory DaemonEndpoint.fromJson(Map<String, Object?> json) {
@@ -37,6 +39,7 @@ class DaemonEndpoint {
       name: json['name']! as String,
       url: json['url']! as String,
       token: json['token']! as String,
+      embedded: (json['embedded'] as bool?) ?? false,
     );
   }
 
@@ -45,11 +48,17 @@ class DaemonEndpoint {
   final String url;
   final String token;
 
+  /// True for the in-process daemon the desktop build starts itself. Such
+  /// endpoints are never persisted (their URL/port is ephemeral) and are
+  /// excluded from the add/edit/remove UI.
+  final bool embedded;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
         'name': name,
         'url': url,
         'token': token,
+        if (embedded) 'embedded': true,
       };
 }
 
@@ -95,7 +104,8 @@ class ConnectionsStore extends ChangeNotifier {
         ..clear()
         ..addAll(decoded
             .whereType<Map<String, Object?>>()
-            .map(DaemonEndpoint.fromJson));
+            .map(DaemonEndpoint.fromJson)
+            .where((DaemonEndpoint e) => !e.embedded));
       _statuses.clear();
       for (final DaemonEndpoint e in _endpoints) {
         _statuses[e.id] = ConnectionStatus.disconnected;
@@ -131,12 +141,17 @@ class ConnectionsStore extends ChangeNotifier {
   /// Adds an endpoint. When [id] is given it is used verbatim (tests and
   /// demo mode register clients under such ids); otherwise one is generated.
   /// [url] is normalized (see [normalizeEndpointUrl]) so dialogs and tests
-  /// can pass bare hosts.
+  /// can pass bare hosts. When [persist] is false the endpoint is kept
+  /// in-memory only (used by the embedded in-process daemon, whose URL/port
+  /// is ephemeral); when [embedded] is true the endpoint is marked as such
+  /// so the UI hides its edit/remove actions.
   Future<void> addEndpoint({
     required String name,
     required String url,
     required String token,
     String? id,
+    bool persist = true,
+    bool embedded = false,
   }) async {
     final String resolvedId =
         id ??
@@ -147,11 +162,12 @@ class ConnectionsStore extends ChangeNotifier {
         name: name,
         url: normalizeEndpointUrl(url),
         token: token,
+        embedded: embedded,
       ),
     );
     _statuses[resolvedId] = ConnectionStatus.disconnected;
     notifyListeners();
-    await _persist();
+    if (persist) await _persist();
   }
 
   Future<void> removeEndpoint(String id) async {
@@ -184,13 +200,13 @@ class ConnectionsStore extends ChangeNotifier {
     notifyListeners();
     await _persist();
   }
-
   Future<void> _persist() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       storageKey,
       jsonEncode(<Object?>[
-        for (final DaemonEndpoint e in _endpoints) e.toJson(),
+        for (final DaemonEndpoint e in _endpoints)
+          if (!e.embedded) e.toJson(),
       ]),
     );
   }
@@ -268,6 +284,11 @@ class AppData {
   /// not persisted across launches, since yolo auto-approves every
   /// permission request.
   bool newSessionYolo = false;
+
+  /// The in-process daemon controller set by [main] on desktop builds; null
+  /// on web/mobile or in demo mode. Stopped via [stopLocalDaemon] on
+  /// [dispose] / app shutdown.
+  LocalDaemonController? localDaemon;
 
   final Map<String, DaemonClient> _clients = <String, DaemonClient>{};
 
@@ -426,6 +447,16 @@ class AppData {
     unawaited(_connectQuietly(daemonId));
   }
 
+  /// Stops the embedded in-process daemon, if any. Best-effort and
+  /// idempotent: safe to call when none was started, or after [dispose].
+  /// Called on app shutdown so agent processes are killed and the WebSocket
+  /// server closed.
+  Future<void> stopLocalDaemon() async {
+    final LocalDaemonController? daemon = localDaemon;
+    localDaemon = null;
+    if (daemon != null) await daemon.stop();
+  }
+
   /// True after [dispose]; async startup work must check this between awaits.
   bool get isDisposed => _disposed;
   bool _disposed = false;
@@ -433,6 +464,7 @@ class AppData {
   /// Releases every store in the graph plus any lazily created WebSocket
   /// clients. Registered clients (fakes) are left to their owners.
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     connections.removeListener(_onConnectionsChanged);
     for (final MapEntry<String, VoidCallback> entry

@@ -38,6 +38,10 @@ dependencies:
   shared_preferences: ^2.5.3
   flutter_markdown_plus: ^1.0.5
   syntax_highlight: ^0.4.0
+  # The desktop build embeds the daemon in-process (see lib/src/local_daemon).
+  # No code generation; the daemon is plain Dart + dart:io.
+  speeddial_daemon:
+    path: ../daemon
   collection: ^1.19.1
   # Flutter SDK ships no cross-platform file picker; file_picker covers
   # desktop/mobile/web and returns bytes via withData: true.
