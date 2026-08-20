@@ -56,6 +56,8 @@ Project = {
   lastActiveAt: string,
 }
 McpTransport = "stdio" | "http"
+McpAuthType = "none" | "oauth"
+McpOAuthStatus = "not_connected" | "authorizing" | "authorized" | "expired" | "error"
 
 McpServerProfile = {
   id: string,
@@ -66,8 +68,20 @@ McpServerProfile = {
   args: string[],              // stdio only
   url: string | null,          // HTTP only
   secretNames: string[],       // configured env/header names; values are never returned
+  authType: McpAuthType,
+  oauthStatus: McpOAuthStatus,
+  oauthClientId: string | null,
+  oauthClientSecretConfigured: boolean,
+  oauthScopes: string[],
+  oauthExpiresAt: string | null,
+  oauthError: string | null,
   createdAt: string,
   updatedAt: string,
+}
+
+McpOAuthFlow = {
+  flowId: string,
+  authorizationUrl: string,
 }
 
 
@@ -211,12 +225,19 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
 ### MCP servers
 - `mcp.list {}` → `{servers: McpServerProfile[]}`
 - `mcp.create {name: string, transport: McpTransport, enabled: boolean, command?: string,
-  args?: string[], url?: string, secrets?: {[name: string]: string}}`
-  → `{server: McpServerProfile}`
+  args?: string[], url?: string, secrets?: {[name: string]: string}, authType?: McpAuthType,
+  oauthClientId?: string, oauthClientSecret?: string}` → `{server: McpServerProfile}`
 - `mcp.update {id: string, name: string, transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
-  removeSecretNames?: string[]}` → `{server: McpServerProfile}`
+  removeSecretNames?: string[], authType?: McpAuthType, oauthClientId?: string,
+  oauthClientSecret?: string}` → `{server: McpServerProfile}`
 - `mcp.delete {id: string}` → `{ok: true}`
+- `mcp.oauth.begin {id: string, redirectUri: string}` → `{flow: McpOAuthFlow}` — discovers
+  protected-resource and authorization-server metadata, dynamically registers a public client
+  when no client ID is configured, and returns an authorization-code URL with S256 PKCE
+- `mcp.oauth.status {id: string, flowId: string}` → `{server: McpServerProfile}`
+- `mcp.oauth.disconnect {id: string}` → `{server: McpServerProfile}` — deletes access and refresh
+  tokens while retaining client registration settings
 
 `stdio` requires a command; each entry in `secrets` becomes an environment variable. `http`
 requires an absolute HTTP(S) URL; each secret becomes an HTTP header. Secret values are stored only
@@ -226,6 +247,17 @@ to ACP `session/new` and `session/load`; HTTP profiles are included only when th
 `mcpCapabilities.http`. Saving settings parks idle `session/load`-capable agents so their next turn
 resumes with the current list. Running agents are parked before their following turn; agents without
 `session/load` retain their current list, while all new sessions receive the saved configuration.
+
+OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
+RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic
+client registration, RFC 8707 resource indicators, refresh tokens, and the token endpoint
+authentication methods `none`, `client_secret_post`, and `client_secret_basic`. The app derives
+`redirectUri` from its daemon WebSocket URL (`ws` → `http`, `wss` → `https`) at
+`/oauth/callback`; remote HTTPS deployments must route that path to the daemon alongside `/ws`.
+Plain HTTP callbacks are accepted only on loopback. Client secrets, access tokens, and refresh
+tokens remain in daemon SQLite and never cross the public RPC surface. The daemon injects an
+`Authorization: Bearer ...` header only while constructing ACP session configuration and refreshes
+expiring tokens before session creation/resume and periodically while running.
 
 
 ### Sessions

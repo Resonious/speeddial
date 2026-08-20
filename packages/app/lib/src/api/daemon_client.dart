@@ -61,6 +61,9 @@ abstract class DaemonClient {
     List<String> args = const <String>[],
     String? url,
     Map<String, String> secrets = const <String, String>{},
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   });
 
   Future<McpServerProfile> updateMcpServer({
@@ -73,9 +76,18 @@ abstract class DaemonClient {
     String? url,
     Map<String, String> secrets = const <String, String>{},
     List<String> removeSecretNames = const <String>[],
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   });
 
   Future<void> deleteMcpServer(String id);
+
+  Future<McpOAuthFlow> beginMcpOAuth(String id);
+
+  Future<McpServerProfile> mcpOAuthStatus(String id, String flowId);
+
+  Future<McpServerProfile> disconnectMcpOAuth(String id);
 
   // ---------------------------------------------------------------------
   // Sessions

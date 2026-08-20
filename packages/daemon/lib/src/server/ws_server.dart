@@ -25,6 +25,7 @@ import '../git/summary_watcher.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'fs_service.dart';
+import 'mcp_oauth_service.dart';
 
 /// Daemon semver reported by `daemon.info`; keep in sync with pubspec.yaml.
 const String kDaemonVersion = '0.1.0';
@@ -45,6 +46,9 @@ const List<String> _kProtocolMethods = <String>[
   'mcp.create',
   'mcp.update',
   'mcp.delete',
+  'mcp.oauth.begin',
+  'mcp.oauth.status',
+  'mcp.oauth.disconnect',
   'projects.list',
   'projects.add',
   'projects.remove',
@@ -154,6 +158,7 @@ class SpeedDialServer {
   final FsService _fs = FsService();
   final Uuid _uuid = const Uuid();
   final Map<String, String> _mcpSecretsBySession = <String, String>{};
+  McpOAuthService? _oauth;
 
   String _mcpSecretForSession(String sessionId) => _mcpSecretsBySession
       .putIfAbsent(sessionId, () => '${_uuid.v4()}${_uuid.v4()}');
@@ -203,6 +208,7 @@ class SpeedDialServer {
       );
     }
     _clients.clear();
+    _oauth?.close();
     await _httpServer?.close(force: true);
   }
 
@@ -265,6 +271,11 @@ class SpeedDialServer {
       command: launch.command,
       args: launch.args,
     );
+    _oauth = McpOAuthService(
+      store: _store,
+      onChanged: (String _) => _engine.reloadMcpServers(),
+    );
+    _engine.configureMcpAuth(prepare: _oauth!.refreshEnabled);
     _httpServer!.listen(_handleRequest);
   }
 
@@ -273,6 +284,10 @@ class SpeedDialServer {
   // -------------------------------------------------------------------------
 
   Future<void> _handleRequest(HttpRequest request) async {
+    if (request.method == 'GET' && request.uri.path == '/oauth/callback') {
+      await _oauth!.handleCallback(request);
+      return;
+    }
     if (request.uri.path == '/ws' &&
         WebSocketTransformer.isUpgradeRequest(request)) {
       // Cross-Site WebSocket Hijacking: a browser page on any origin can open
@@ -349,10 +364,13 @@ class SpeedDialServer {
   /// ::1). Malformed or opaque origins ("null") have no host and are not
   /// loopback.
   bool _isLoopbackOrigin(String origin) {
-    final uri = Uri.tryParse(origin);
-    if (uri == null) return false;
-    final host = uri.host.toLowerCase();
-    return host == 'localhost' || host == '127.0.0.1' || host == '::1';
+    final Uri? uri = Uri.tryParse(origin);
+    return uri != null && _isLoopbackHost(uri.host);
+  }
+
+  bool _isLoopbackHost(String host) {
+    if (host.toLowerCase() == 'localhost') return true;
+    return InternetAddress.tryParse(host)?.isLoopback ?? false;
   }
 
   void _dropClient(_Client client, StreamController<Object?> incoming) {
@@ -418,6 +436,9 @@ class SpeedDialServer {
       'mcp.create' => _mcpCreate(params),
       'mcp.update' => _mcpUpdate(params),
       'mcp.delete' => _mcpDelete(params),
+      'mcp.oauth.begin' => _mcpOAuthBegin(params),
+      'mcp.oauth.status' => _mcpOAuthStatus(params),
+      'mcp.oauth.disconnect' => _mcpOAuthDisconnect(params),
       'attachments.read' => _attachmentsRead(params),
       'projects.list' => _projectsList(),
       'projects.add' => _projectsAdd(params),
@@ -587,7 +608,9 @@ class SpeedDialServer {
       createdAt: now,
       updatedAt: now,
     );
+    _validateMcpOAuthParams(profile, params);
     _store.insertMcpServer(profile, _mcpSecretsParam(params));
+    _configureMcpOAuth(profile, params, reset: true);
     await _engine.reloadMcpServers();
     return <String, Object?>{
       'server': _store.getMcpServer(profile.id)!.toJson(),
@@ -606,11 +629,31 @@ class SpeedDialServer {
       createdAt: existing.createdAt,
       updatedAt: DateTime.now().toUtc(),
     );
+    _validateMcpOAuthParams(
+      profile,
+      params,
+      existingClientId: existing.oauthClientId,
+    );
+    final Object? rawClientId = params['oauthClientId'];
+    final String? requestedClientId = switch (rawClientId) {
+      final String value when value.trim().isNotEmpty => value.trim(),
+      final String _ => null,
+      _ => existing.oauthClientId,
+    };
+    final Object? rawClientSecret = params['oauthClientSecret'];
+    final bool clientSecretChanged =
+        rawClientSecret is String && rawClientSecret.isNotEmpty;
+    final bool resetOAuth =
+        existing.authType != profile.authType ||
+        existing.url != profile.url ||
+        requestedClientId != existing.oauthClientId ||
+        clientSecretChanged;
     _store.updateMcpServer(
       profile,
       setSecrets: _mcpSecretsParam(params),
       removeSecretNames: _stringListParam(params, 'removeSecretNames'),
     );
+    _configureMcpOAuth(profile, params, reset: resetOAuth);
     await _engine.reloadMcpServers();
     return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
   }
@@ -622,6 +665,132 @@ class SpeedDialServer {
     }
     await _engine.reloadMcpServers();
     return const <String, Object?>{'ok': true};
+  }
+
+  Future<Object?> _mcpOAuthBegin(Map<String, Object?> params) async {
+    final String id = _requiredString(params, 'id');
+    final String rawRedirectUri = _requiredString(params, 'redirectUri');
+    final Uri? redirectUri = Uri.tryParse(rawRedirectUri);
+    if (redirectUri == null ||
+        !redirectUri.hasAuthority ||
+        redirectUri.hasFragment ||
+        redirectUri.path != '/oauth/callback' ||
+        (redirectUri.scheme != 'https' &&
+            !(redirectUri.scheme == 'http' &&
+                _isLoopbackHost(redirectUri.host)))) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'redirectUri must be HTTPS or loopback HTTP at /oauth/callback',
+      );
+    }
+    final McpOAuthFlow flow = await _oauth!.begin(id, redirectUri);
+    return <String, Object?>{'flow': flow.toJson()};
+  }
+
+  Object? _mcpOAuthStatus(Map<String, Object?> params) {
+    final String id = _requiredString(params, 'id');
+    final String flowId = _requiredString(params, 'flowId');
+    final McpServerProfile? profile = _store.getMcpServer(id);
+    if (profile == null) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    final Map<String, Object?> json = profile.toJson();
+    if (_oauth!.isAuthorizing(id, flowId)) {
+      json['oauthStatus'] = McpOAuthStatus.authorizing.wire;
+      json.remove('oauthError');
+    }
+    return <String, Object?>{'server': json};
+  }
+
+  Future<Object?> _mcpOAuthDisconnect(Map<String, Object?> params) async {
+    final String id = _requiredString(params, 'id');
+    await _oauth!.disconnect(id);
+    return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
+  }
+
+  void _validateMcpOAuthParams(
+    McpServerProfile profile,
+    Map<String, Object?> params, {
+    String? existingClientId,
+  }) {
+    final Object? rawClientId = params['oauthClientId'];
+    final Object? rawClientSecret = params['oauthClientSecret'];
+    if (rawClientId != null && rawClientId is! String) {
+      throw DaemonError(_kErrInvalidParams, 'oauthClientId must be a string');
+    }
+    if (rawClientSecret != null && rawClientSecret is! String) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'oauthClientSecret must be a string',
+      );
+    }
+    final String? clientId = switch (rawClientId) {
+      final String value when value.trim().isNotEmpty => value.trim(),
+      final String _ => null,
+      _ => existingClientId,
+    };
+    if (profile.authType == McpAuthType.oauth &&
+        rawClientSecret is String &&
+        rawClientSecret.isNotEmpty &&
+        clientId == null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'oauthClientSecret requires oauthClientId',
+      );
+    }
+  }
+
+  void _configureMcpOAuth(
+    McpServerProfile profile,
+    Map<String, Object?> params, {
+    required bool reset,
+  }) {
+    final StoredMcpOAuth? existing = _store.getMcpOAuth(profile.id);
+    final Object? rawClientId = params['oauthClientId'];
+    final Object? rawClientSecret = params['oauthClientSecret'];
+    if (rawClientId != null && rawClientId is! String) {
+      throw DaemonError(_kErrInvalidParams, 'oauthClientId must be a string');
+    }
+    if (rawClientSecret != null && rawClientSecret is! String) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'oauthClientSecret must be a string',
+      );
+    }
+    final String? clientId = switch (rawClientId) {
+      final String value when value.trim().isNotEmpty => value.trim(),
+      _ => reset ? null : existing?.clientId,
+    };
+    if (profile.authType == McpAuthType.oauth &&
+        rawClientSecret is String &&
+        rawClientSecret.isNotEmpty &&
+        clientId == null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'oauthClientSecret requires oauthClientId',
+      );
+    }
+
+    if (reset) _store.resetMcpOAuth(profile.id);
+    if (profile.authType != McpAuthType.oauth) return;
+    if (clientId == null) {
+      _store.setMcpOAuthStatus(profile.id, McpOAuthStatus.notConnected);
+      return;
+    }
+    _store.setMcpOAuthClient(
+      profile.id,
+      clientId: clientId,
+      clientSecret: rawClientSecret is String && rawClientSecret.isNotEmpty
+          ? rawClientSecret
+          : reset
+          ? null
+          : existing?.clientSecret,
+      tokenEndpointAuthMethod: reset ? null : existing?.tokenEndpointAuthMethod,
+      redirectUri: reset ? null : existing?.redirectUri,
+    );
+    if (reset) {
+      _store.setMcpOAuthStatus(profile.id, McpOAuthStatus.notConnected);
+    }
   }
 
   McpServerProfile _mcpProfileFromParams(
@@ -670,6 +839,23 @@ class SpeedDialServer {
           );
         }
     }
+    final McpAuthType authType;
+    try {
+      authType = McpAuthType.parse(
+        (params['authType'] as String?) ?? McpAuthType.none.wire,
+      );
+    } on Object {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'authType must be "none" or "oauth"',
+      );
+    }
+    if (transport == McpTransport.stdio && authType != McpAuthType.none) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'OAuth is available only for HTTP MCP servers',
+      );
+    }
     return McpServerProfile(
       id: id,
       name: name,
@@ -678,6 +864,7 @@ class SpeedDialServer {
       command: command,
       args: transport == McpTransport.stdio ? args : const <String>[],
       url: url,
+      authType: authType,
       secretNames: const <String>[],
       createdAt: createdAt,
       updatedAt: updatedAt,

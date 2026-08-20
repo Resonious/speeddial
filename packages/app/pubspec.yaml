@@ -46,6 +46,7 @@ dependencies:
   # Flutter SDK ships no cross-platform file picker; file_picker covers
   # desktop/mobile/web and returns bytes via withData: true.
   file_picker: ^10.3.8
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

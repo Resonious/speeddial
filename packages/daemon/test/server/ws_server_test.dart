@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
@@ -103,9 +104,12 @@ Future<WsClient> connect(int port) async {
 Map<String, Object?> j(Object? result) =>
     (result! as Map).cast<String, Object?>();
 
-Map<String, String> mcpEnvironment(Map<String, Object?> config) {
+Map<String, String> mcpEnvironment(
+  Map<String, Object?> config, {
+  String field = 'env',
+}) {
   final Map<String, String> environment = <String, String>{};
-  for (final Object? raw in config['env']! as List<Object?>) {
+  for (final Object? raw in config[field]! as List<Object?>) {
     final Map<String, Object?> entry = (raw! as Map).cast<String, Object?>();
     environment[entry['name']! as String] = entry['value']! as String;
   }
@@ -790,6 +794,353 @@ void main() {
       expect(
         (j(await client.peer.call('mcp.list'))['servers']! as List),
         isEmpty,
+      );
+      await client.close();
+    });
+
+    test('HTTP MCP OAuth authorizes, reports status, and injects token', () async {
+      final HttpServer oauthServer = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final Uri oauthBase = Uri.parse('http://127.0.0.1:${oauthServer.port}');
+      Map<String, Object?>? registrationBody;
+      int registrationCount = 0;
+      Map<String, String>? authorizationQuery;
+      final List<Map<String, String>> tokenForms = <Map<String, String>>[];
+      final List<String?> tokenAuthorizations = <String?>[];
+      final StreamSubscription<HttpRequest> oauthSub = oauthServer.listen((
+        HttpRequest request,
+      ) {
+        unawaited(() async {
+          if (request.uri.path == '/mcp') {
+            await utf8.decoder.bind(request).join();
+            request.response
+              ..statusCode = HttpStatus.unauthorized
+              ..headers.set(
+                HttpHeaders.wwwAuthenticateHeader,
+                'Bearer resource_metadata="'
+                '${oauthBase.resolve('/.well-known/oauth-protected-resource/mcp')}", '
+                'scope="mcp:tools"',
+              );
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path == '/.well-known/oauth-protected-resource/mcp') {
+            request.response
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode(<String, Object?>{
+                  'resource': oauthBase.resolve('/mcp').toString(),
+                  'authorization_servers': <String>[oauthBase.toString()],
+                  'scopes_supported': const <String>['ignored:scope'],
+                }),
+              );
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path == '/.well-known/oauth-authorization-server') {
+            request.response
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode(<String, Object?>{
+                  'issuer': oauthBase.toString(),
+                  'authorization_endpoint': oauthBase
+                      .resolve('/authorize')
+                      .toString(),
+                  'token_endpoint': oauthBase.resolve('/token').toString(),
+                  'registration_endpoint': oauthBase
+                      .resolve('/register')
+                      .toString(),
+                  'code_challenge_methods_supported': const <String>['S256'],
+                  'token_endpoint_auth_methods_supported': const <String>[
+                    'none',
+                    'client_secret_basic',
+                  ],
+                }),
+              );
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path == '/register') {
+            registrationCount++;
+            registrationBody = (jsonDecode(
+              await utf8.decoder.bind(request).join(),
+            ) as Map).cast<String, Object?>();
+            request.response
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode(<String, Object?>{
+                  'client_id': 'speeddial-test-client',
+                  'token_endpoint_auth_method': 'none',
+                }),
+              );
+            await request.response.close();
+            return;
+          }
+          if (request.uri.path == '/authorize') {
+            authorizationQuery = request.uri.queryParameters;
+            final Uri redirect =
+                Uri.parse(request.uri.queryParameters['redirect_uri']!).replace(
+                  queryParameters: <String, String>{
+                    'code': 'authorization-code',
+                    'state': request.uri.queryParameters['state']!,
+                  },
+                );
+            await request.response.redirect(redirect);
+            return;
+          }
+          if (request.uri.path == '/token') {
+            final Map<String, String> form = Uri.splitQueryString(
+              await utf8.decoder.bind(request).join(),
+            );
+            tokenForms.add(form);
+            tokenAuthorizations.add(
+              request.headers.value(HttpHeaders.authorizationHeader),
+            );
+            final bool refresh = form['grant_type'] == 'refresh_token';
+            request.response
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode(<String, Object?>{
+                  'access_token': refresh
+                      ? 'oauth-refreshed-token'
+                      : 'oauth-access-token',
+                  if (!refresh) 'refresh_token': 'oauth-refresh-token',
+                  'token_type': 'Bearer',
+                  'expires_in': refresh ? 3600 : 2,
+                  'scope': 'mcp:tools',
+                }),
+              );
+            await request.response.close();
+            return;
+          }
+          request.response
+            ..statusCode = HttpStatus.notFound
+            ..close();
+        }());
+      });
+      addTearDown(() async {
+        await oauthSub.cancel();
+        await oauthServer.close(force: true);
+      });
+
+      await startServer();
+      final WsClient client = await connect(server!.port);
+      final String redirectUri =
+          'http://127.0.0.1:${server!.port}/oauth/callback';
+      final Map<String, Object?> created = j(
+        await client.peer.call('mcp.create', <String, Object?>{
+          'name': 'oauth-tools',
+          'transport': 'http',
+          'enabled': true,
+          'url': oauthBase.resolve('/mcp').toString(),
+          'authType': 'oauth',
+        }),
+      );
+      final String profileId = (created['server']! as Map)['id']! as String;
+      expect((created['server']! as Map)['oauthStatus'], 'not_connected');
+      await expectLater(
+        client.peer.call('mcp.oauth.begin', <String, Object?>{
+          'id': profileId,
+          'redirectUri': 'http://remote.example/oauth/callback',
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            -32602,
+          ),
+        ),
+      );
+
+      final Map<String, Object?> begun = j(
+        await client.peer.call('mcp.oauth.begin', <String, Object?>{
+          'id': profileId,
+          'redirectUri': redirectUri,
+        }),
+      );
+      final Map<String, Object?> flow = (begun['flow']! as Map)
+          .cast<String, Object?>();
+      final Map<String, Object?> pendingStatus = j(
+        await client.peer.call('mcp.oauth.status', <String, Object?>{
+          'id': profileId,
+          'flowId': flow['flowId'],
+        }),
+      );
+      expect((pendingStatus['server']! as Map)['oauthStatus'], 'authorizing');
+      final HttpClient browser = HttpClient();
+      addTearDown(() => browser.close(force: true));
+      final HttpClientResponse callback = await browser
+          .getUrl(Uri.parse(flow['authorizationUrl']! as String))
+          .then((HttpClientRequest request) => request.close());
+      final String callbackPage = await utf8.decoder.bind(callback).join();
+      expect(callback.statusCode, HttpStatus.ok);
+      expect(callbackPage, contains('Authorization complete'));
+
+      final Map<String, Object?> status = j(
+        await client.peer.call('mcp.oauth.status', <String, Object?>{
+          'id': profileId,
+          'flowId': flow['flowId'],
+        }),
+      );
+      final Map<String, Object?> authorized = (status['server']! as Map)
+          .cast<String, Object?>();
+      expect(authorized['oauthStatus'], 'authorized');
+      expect(authorized['oauthScopes'], const <String>['mcp:tools']);
+      expect(authorized['oauthClientSecretConfigured'], isFalse);
+      expect(status.toString(), isNot(contains('oauth-access-token')));
+      expect(status.toString(), isNot(contains('oauth-refresh-token')));
+
+      expect(registrationBody!['redirect_uris'], <String>[redirectUri]);
+      expect(authorizationQuery!['scope'], 'mcp:tools');
+      expect(
+        authorizationQuery!['resource'],
+        oauthBase.resolve('/mcp').toString(),
+      );
+      final Map<String, String> authorizationForm = tokenForms.single;
+      expect(
+        authorizationForm['resource'],
+        oauthBase.resolve('/mcp').toString(),
+      );
+      expect(authorizationForm['client_id'], 'speeddial-test-client');
+      final String verifier = authorizationForm['code_verifier']!;
+      final String expectedChallenge = base64Url
+          .encode(sha256.convert(ascii.encode(verifier)).bytes)
+          .replaceAll('=', '');
+      expect(authorizationQuery!['code_challenge'], expectedChallenge);
+
+      final Directory dir = Directory(p.join(tempDir.path, 'oauth-mcp'))
+        ..createSync();
+      File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
+      File(p.join(dir.path, 'agent.http_mcp')).writeAsStringSync('');
+      final Map<String, Object?> project = j(
+        await client.peer.call('projects.add', <String, Object?>{
+          'path': dir.path,
+          'name': 'OAuth MCP',
+        }),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2100));
+      await client.peer.call('sessions.create', <String, Object?>{
+        'projectId': (project['project']! as Map)['id'],
+        'providerId': 'fake',
+      });
+      final List<Object?> configs = jsonDecode(
+        File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+      ) as List<Object?>;
+      final Map<String, Object?> oauthConfig = configs
+          .whereType<Map>()
+          .map((Map config) => config.cast<String, Object?>())
+          .singleWhere(
+            (Map<String, Object?> config) => config['name'] == 'oauth-tools',
+          );
+      expect(
+        mcpEnvironment(oauthConfig, field: 'headers')['Authorization'],
+        'Bearer oauth-refreshed-token',
+      );
+      expect(tokenForms, hasLength(2));
+      expect(tokenForms.last['grant_type'], 'refresh_token');
+      expect(tokenForms.last['refresh_token'], 'oauth-refresh-token');
+
+      final Map<String, Object?> disconnected = j(
+        await client.peer.call('mcp.oauth.disconnect', <String, Object?>{
+          'id': profileId,
+        }),
+      );
+      expect((disconnected['server']! as Map)['oauthStatus'], 'not_connected');
+      final Map<String, Object?> deniedBegin = j(
+        await client.peer.call('mcp.oauth.begin', <String, Object?>{
+          'id': profileId,
+          'redirectUri': redirectUri,
+        }),
+      );
+      final Map<String, Object?> deniedFlow = (deniedBegin['flow']! as Map)
+          .cast<String, Object?>();
+      final HttpClientResponse deniedCallback = await browser
+          .getUrl(
+            Uri.parse(redirectUri).replace(
+              queryParameters: <String, String>{
+                'error': 'access_denied',
+                'error_description': 'The user declined access',
+                'state': deniedFlow['flowId']! as String,
+              },
+            ),
+          )
+          .then((HttpClientRequest request) => request.close());
+      await deniedCallback.drain<void>();
+      expect(deniedCallback.statusCode, HttpStatus.badRequest);
+      final Map<String, Object?> deniedStatus = j(
+        await client.peer.call('mcp.oauth.status', <String, Object?>{
+          'id': profileId,
+          'flowId': deniedFlow['flowId'],
+        }),
+      );
+      expect((deniedStatus['server']! as Map)['oauthStatus'], 'error');
+      expect(
+        (deniedStatus['server']! as Map)['oauthError'],
+        contains('The user declined access'),
+      );
+
+      final Map<String, Object?> staticCreated = j(
+        await client.peer.call('mcp.create', <String, Object?>{
+          'name': 'confidential-oauth-tools',
+          'transport': 'http',
+          'enabled': true,
+          'url': oauthBase.resolve('/mcp').toString(),
+          'authType': 'oauth',
+          'oauthClientId': 'configured:id',
+          'oauthClientSecret': 'secret value',
+        }),
+      );
+      final String staticId =
+          (staticCreated['server']! as Map)['id']! as String;
+      final Map<String, Object?> staticBegin = j(
+        await client.peer.call('mcp.oauth.begin', <String, Object?>{
+          'id': staticId,
+          'redirectUri': redirectUri,
+        }),
+      );
+      final Map<String, Object?> staticFlow = (staticBegin['flow']! as Map)
+          .cast<String, Object?>();
+      final HttpClientResponse staticCallback = await browser
+          .getUrl(Uri.parse(staticFlow['authorizationUrl']! as String))
+          .then((HttpClientRequest request) => request.close());
+      await staticCallback.drain<void>();
+      expect(staticCallback.statusCode, HttpStatus.ok);
+      final Map<String, Object?> staticStatus = j(
+        await client.peer.call('mcp.oauth.status', <String, Object?>{
+          'id': staticId,
+          'flowId': staticFlow['flowId'],
+        }),
+      );
+      expect(
+        (staticStatus['server']! as Map)['oauthClientSecretConfigured'],
+        isTrue,
+      );
+      expect(staticStatus.toString(), isNot(contains('secret value')));
+      expect(registrationCount, 1);
+      final String expectedCredentials =
+          '${Uri.encodeQueryComponent('configured:id')}:'
+          '${Uri.encodeQueryComponent('secret value')}';
+      expect(
+        tokenAuthorizations.last,
+        'Basic ${base64Encode(ascii.encode(expectedCredentials))}',
+      );
+      final Map<String, Object?> staticUpdated = j(
+        await client.peer.call('mcp.update', <String, Object?>{
+          'id': staticId,
+          'name': 'renamed-confidential-tools',
+          'transport': 'http',
+          'enabled': true,
+          'url': oauthBase.resolve('/mcp').toString(),
+          'authType': 'oauth',
+          'oauthClientId': 'configured:id',
+        }),
+      );
+      expect((staticUpdated['server']! as Map)['oauthStatus'], 'authorized');
+      expect(
+        (staticUpdated['server']! as Map)['oauthClientSecretConfigured'],
+        isTrue,
       );
       await client.close();
     });

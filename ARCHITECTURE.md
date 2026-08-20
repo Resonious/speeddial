@@ -51,7 +51,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     daemon CLI and the native Flutter executable used by the embedded
                     daemon. User-configured stdio and Streamable HTTP MCP profiles are
                     stored daemon-wide and injected directly into compatible ACP agents;
-                    the built-in server does not proxy their tools.
+                    the built-in server does not proxy their tools. HTTP profiles may use
+                    daemon-managed OAuth 2.1 authorization-code + S256 PKCE; discovery,
+                    dynamic client registration, callback handling, and token refresh live
+                    in server/mcp_oauth_service.dart.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"]
@@ -67,10 +70,13 @@ lib/src/store/      SQLite (package:sqlite3) at ~/.speeddial/speeddial.db (overr
                     --db or SPEEDIAL_DB). Tables: projects, sessions, session_events,
                     attachments (message and MCP-displayed image payloads, FK-cascaded
                     with their session; events carry metadata only, `attachments.read`
-                    serves blobs), mcp_servers, and mcp_secrets. MCP secret values stay
-                    daemon-side; public reads expose configured names only. WAL mode,
-                    foreign keys on. Events stored as JSON blobs + seq. Session/event
-                    substring queries back MCP search.
+                    serves blobs), mcp_servers, mcp_secrets, and mcp_oauth. MCP static
+                    secrets, OAuth client secrets, and access/refresh tokens stay
+                    daemon-side; public reads expose only credential names and OAuth
+                    connection metadata. SQLite database/WAL files are restricted to
+                    owner access (0600) on POSIX hosts. WAL mode, foreign keys on. Events
+                    are stored as JSON blobs + seq. Session/event substring queries back
+                    MCP search.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
                     for status, --no-color unified diffs, branch lists; fetch and
                     worktree add/remove back per-session worktrees. mergeIntoBase

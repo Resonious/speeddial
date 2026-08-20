@@ -23,6 +23,8 @@
 ///                      name, mime_type, size, data
 library;
 
+import 'dart:io';
+
 import 'dart:convert';
 
 import 'package:sqlite3/sqlite3.dart' hide Session;
@@ -32,6 +34,46 @@ typedef StoredMcpServer = ({
   McpServerProfile profile,
   Map<String, String> secrets,
 });
+
+/// Daemon-only OAuth state. Token and client-secret values never cross the
+/// public wire API.
+class StoredMcpOAuth {
+  const StoredMcpOAuth({
+    required this.status,
+    required this.scopes,
+    required this.clientSecretConfigured,
+    this.clientId,
+    this.clientSecret,
+    this.tokenEndpointAuthMethod,
+    this.authorizationServer,
+    this.authorizationEndpoint,
+    this.tokenEndpoint,
+    this.registrationEndpoint,
+    this.resource,
+    this.redirectUri,
+    this.accessToken,
+    this.refreshToken,
+    this.expiresAt,
+    this.error,
+  });
+
+  final McpOAuthStatus status;
+  final String? clientId;
+  final String? clientSecret;
+  final bool clientSecretConfigured;
+  final String? tokenEndpointAuthMethod;
+  final String? authorizationServer;
+  final String? authorizationEndpoint;
+  final String? tokenEndpoint;
+  final String? resource;
+  final String? registrationEndpoint;
+  final String? redirectUri;
+  final String? accessToken;
+  final String? refreshToken;
+  final DateTime? expiresAt;
+  final List<String> scopes;
+  final String? error;
+}
 
 /// SQLite extended result code for a UNIQUE/PK constraint violation.
 const int _sqliteConstraintUnique = 2067;
@@ -43,6 +85,7 @@ const int _sqliteConstraintUnique = 2067;
 class DaemonStore {
   DaemonStore(String path) : _db = sqlite3.open(path) {
     _init();
+    _restrictDatabasePermissions(path);
   }
 
   final Database _db;
@@ -139,10 +182,21 @@ class DaemonStore {
         command TEXT,
         args TEXT NOT NULL DEFAULT '[]',
         url TEXT,
+        auth_type TEXT NOT NULL DEFAULT 'none',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     ''');
+    final Set<String> mcpServerColumns = _db
+        .select('PRAGMA table_info(mcp_servers)')
+        .map((Row row) => row['name'] as String)
+        .toSet();
+    if (!mcpServerColumns.contains('auth_type')) {
+      _db.execute(
+        "ALTER TABLE mcp_servers ADD COLUMN auth_type TEXT NOT NULL "
+        "DEFAULT 'none'",
+      );
+    }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS mcp_secrets (
         server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
@@ -151,6 +205,52 @@ class DaemonStore {
         PRIMARY KEY (server_id, name)
       );
     ''');
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS mcp_oauth (
+        server_id TEXT PRIMARY KEY
+          REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'not_connected',
+        client_id TEXT,
+        client_secret TEXT,
+        token_endpoint_auth_method TEXT,
+        authorization_server TEXT,
+        authorization_endpoint TEXT,
+        token_endpoint TEXT,
+        registration_endpoint TEXT,
+        resource TEXT,
+        redirect_uri TEXT,
+        access_token TEXT,
+        refresh_token TEXT,
+        expires_at INTEGER,
+        scopes TEXT NOT NULL DEFAULT '[]',
+        error TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    ''');
+    final Set<String> mcpOAuthColumns = _db
+        .select('PRAGMA table_info(mcp_oauth)')
+        .map((Row row) => row['name'] as String)
+        .toSet();
+    if (!mcpOAuthColumns.contains('resource')) {
+      _db.execute('ALTER TABLE mcp_oauth ADD COLUMN resource TEXT');
+    }
+    _db.execute(
+      "UPDATE mcp_oauth SET status = 'not_connected', "
+      "error = 'Authorization was interrupted by a daemon restart' "
+      "WHERE status = 'authorizing'",
+    );
+  }
+
+  void _restrictDatabasePermissions(String path) {
+    if ((!Platform.isLinux && !Platform.isMacOS) || path == ':memory:') return;
+    for (final String candidate in <String>[path, '$path-wal', '$path-shm']) {
+      if (!File(candidate).existsSync()) continue;
+      try {
+        Process.runSync('chmod', <String>['0600', candidate]);
+      } on ProcessException {
+        // Best-effort. SQLite remains usable on hosts without chmod.
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -159,8 +259,8 @@ class DaemonStore {
 
   List<McpServerProfile> listMcpServers() {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, created_at, '
-      'updated_at FROM mcp_servers ORDER BY name COLLATE NOCASE, id',
+      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
+      'created_at, updated_at FROM mcp_servers ',
     );
     return rows
         .map((Row row) => _mcpProfileFromRow(row))
@@ -169,24 +269,31 @@ class DaemonStore {
 
   List<StoredMcpServer> listEnabledMcpServers() {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, created_at, '
-      'updated_at FROM mcp_servers WHERE enabled = 1 '
+      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
+      'created_at, updated_at FROM mcp_servers WHERE enabled = 1 '
       'ORDER BY name COLLATE NOCASE, id',
     );
-    return rows
-        .map(
-          (Row row) => (
-            profile: _mcpProfileFromRow(row),
-            secrets: _mcpSecrets(row['id'] as String),
-          ),
-        )
-        .toList(growable: false);
+    final List<StoredMcpServer> servers = <StoredMcpServer>[];
+    for (final Row row in rows) {
+      final McpServerProfile profile = _mcpProfileFromRow(row);
+      final Map<String, String> secrets = _mcpSecrets(profile.id);
+      if (profile.authType == McpAuthType.oauth) {
+        final StoredMcpOAuth? oauth = getMcpOAuth(profile.id);
+        if (profile.oauthStatus != McpOAuthStatus.authorized ||
+            oauth?.accessToken == null) {
+          continue;
+        }
+        secrets['Authorization'] = 'Bearer ${oauth!.accessToken}';
+      }
+      servers.add((profile: profile, secrets: secrets));
+    }
+    return servers;
   }
 
   McpServerProfile? getMcpServer(String id) {
     final rows = _db.select(
-      'SELECT id, name, transport, enabled, command, args, url, created_at, '
-      'updated_at FROM mcp_servers WHERE id = ?',
+      'SELECT id, name, transport, enabled, command, args, url, auth_type, '
+      'created_at, updated_at FROM mcp_servers WHERE id = ?',
       <Object?>[id],
     );
     return rows.isEmpty ? null : _mcpProfileFromRow(rows.first);
@@ -197,8 +304,8 @@ class DaemonStore {
     try {
       _db.execute(
         'INSERT INTO mcp_servers '
-        '(id, name, transport, enabled, command, args, url, created_at, '
-        'updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        '(id, name, transport, enabled, command, args, url, auth_type, '
+        'created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         <Object?>[
           profile.id,
           profile.name,
@@ -207,6 +314,7 @@ class DaemonStore {
           profile.command,
           jsonEncode(profile.args),
           profile.url,
+          profile.authType.wire,
           _ts(profile.createdAt),
           _ts(profile.updatedAt),
         ],
@@ -237,7 +345,8 @@ class DaemonStore {
     try {
       _db.execute(
         'UPDATE mcp_servers SET name = ?, transport = ?, enabled = ?, '
-        'command = ?, args = ?, url = ?, updated_at = ? WHERE id = ?',
+        'command = ?, args = ?, url = ?, auth_type = ?, updated_at = ? '
+        'WHERE id = ?',
         <Object?>[
           profile.name,
           profile.transport.wire,
@@ -245,6 +354,7 @@ class DaemonStore {
           profile.command,
           jsonEncode(profile.args),
           profile.url,
+          profile.authType.wire,
           _ts(profile.updatedAt),
           profile.id,
         ],
@@ -280,6 +390,17 @@ class DaemonStore {
   McpServerProfile _mcpProfileFromRow(Row row) {
     final String id = row['id'] as String;
     final List<String> secretNames = _mcpSecrets(id).keys.toList()..sort();
+    final McpAuthType authType = McpAuthType.parse(row['auth_type'] as String);
+    final StoredMcpOAuth? oauth = authType == McpAuthType.oauth
+        ? getMcpOAuth(id)
+        : null;
+    McpOAuthStatus status = oauth?.status ?? McpOAuthStatus.notConnected;
+    final DateTime? expiresAt = oauth?.expiresAt;
+    if (status == McpOAuthStatus.authorized &&
+        expiresAt != null &&
+        !expiresAt.isAfter(DateTime.now().toUtc())) {
+      status = McpOAuthStatus.expired;
+    }
     return McpServerProfile(
       id: id,
       name: row['name'] as String,
@@ -289,6 +410,13 @@ class DaemonStore {
       args: _models(row['args'] as String?),
       url: row['url'] as String?,
       secretNames: secretNames,
+      authType: authType,
+      oauthStatus: status,
+      oauthClientId: oauth?.clientId,
+      oauthClientSecretConfigured: oauth?.clientSecretConfigured ?? false,
+      oauthScopes: oauth?.scopes ?? const <String>[],
+      oauthExpiresAt: expiresAt,
+      oauthError: oauth?.error,
       createdAt: _fromTs(row['created_at'] as int),
       updatedAt: _fromTs(row['updated_at'] as int),
     );
@@ -312,6 +440,156 @@ class DaemonStore {
         <Object?>[serverId, secret.key, secret.value],
       );
     }
+  }
+
+  StoredMcpOAuth? getMcpOAuth(String serverId) {
+    final ResultSet rows = _db.select(
+      'SELECT status, client_id, client_secret, token_endpoint_auth_method, '
+      'authorization_server, authorization_endpoint, token_endpoint, '
+      'registration_endpoint, resource, redirect_uri, access_token, '
+      'refresh_token, expires_at, scopes, error FROM mcp_oauth '
+      'WHERE server_id = ?',
+      <Object?>[serverId],
+    );
+    if (rows.isEmpty) return null;
+    final Row row = rows.first;
+    final String? clientSecret = row['client_secret'] as String?;
+    return StoredMcpOAuth(
+      status: McpOAuthStatus.parse(row['status'] as String),
+      clientId: row['client_id'] as String?,
+      clientSecret: clientSecret,
+      clientSecretConfigured: clientSecret != null,
+      tokenEndpointAuthMethod: row['token_endpoint_auth_method'] as String?,
+      authorizationServer: row['authorization_server'] as String?,
+      authorizationEndpoint: row['authorization_endpoint'] as String?,
+      tokenEndpoint: row['token_endpoint'] as String?,
+      registrationEndpoint: row['registration_endpoint'] as String?,
+      resource: row['resource'] as String?,
+      redirectUri: row['redirect_uri'] as String?,
+      accessToken: row['access_token'] as String?,
+      refreshToken: row['refresh_token'] as String?,
+      expiresAt: switch (row['expires_at']) {
+        final int value => _fromTs(value),
+        _ => null,
+      },
+      scopes: _models(row['scopes'] as String?),
+      error: row['error'] as String?,
+    );
+  }
+
+  void setMcpOAuthClient(
+    String serverId, {
+    required String clientId,
+    String? clientSecret,
+    String? tokenEndpointAuthMethod,
+    String? redirectUri,
+  }) {
+    _ensureMcpOAuth(serverId);
+    _db.execute(
+      'UPDATE mcp_oauth SET client_id = ?, client_secret = ?, '
+      'token_endpoint_auth_method = ?, redirect_uri = ?, updated_at = ? '
+      'WHERE server_id = ?',
+      <Object?>[
+        clientId,
+        clientSecret,
+        tokenEndpointAuthMethod,
+        redirectUri,
+        _ts(DateTime.now()),
+        serverId,
+      ],
+    );
+  }
+
+  void setMcpOAuthDiscovery(
+    String serverId, {
+    required String authorizationServer,
+    required String authorizationEndpoint,
+    required String tokenEndpoint,
+    required String resource,
+    String? registrationEndpoint,
+  }) {
+    _ensureMcpOAuth(serverId);
+    _db.execute(
+      'UPDATE mcp_oauth SET authorization_server = ?, '
+      'authorization_endpoint = ?, token_endpoint = ?, '
+      'registration_endpoint = ?, resource = ?, updated_at = ? '
+      'WHERE server_id = ?',
+      <Object?>[
+        authorizationServer,
+        authorizationEndpoint,
+        tokenEndpoint,
+        registrationEndpoint,
+        resource,
+        _ts(DateTime.now()),
+        serverId,
+      ],
+    );
+  }
+
+  void setMcpOAuthStatus(
+    String serverId,
+    McpOAuthStatus status, {
+    String? error,
+  }) {
+    _ensureMcpOAuth(serverId);
+    _db.execute(
+      'UPDATE mcp_oauth SET status = ?, error = ?, updated_at = ? '
+      'WHERE server_id = ?',
+      <Object?>[status.wire, error, _ts(DateTime.now()), serverId],
+    );
+  }
+
+  void setMcpOAuthTokens(
+    String serverId, {
+    required String accessToken,
+    String? refreshToken,
+    DateTime? expiresAt,
+    required List<String> scopes,
+  }) {
+    _ensureMcpOAuth(serverId);
+    _db.execute(
+      'UPDATE mcp_oauth SET status = ?, access_token = ?, '
+      'refresh_token = COALESCE(?, refresh_token), expires_at = ?, '
+      'scopes = ?, error = NULL, updated_at = ? WHERE server_id = ?',
+      <Object?>[
+        McpOAuthStatus.authorized.wire,
+        accessToken,
+        refreshToken,
+        expiresAt == null ? null : _ts(expiresAt),
+        jsonEncode(scopes),
+        _ts(DateTime.now()),
+        serverId,
+      ],
+    );
+  }
+
+  void clearMcpOAuthTokens(String serverId) {
+    _ensureMcpOAuth(serverId);
+    _db.execute(
+      'UPDATE mcp_oauth SET status = ?, access_token = NULL, '
+      'refresh_token = NULL, expires_at = NULL, scopes = ?, error = NULL, '
+      'updated_at = ? WHERE server_id = ?',
+      <Object?>[
+        McpOAuthStatus.notConnected.wire,
+        '[]',
+        _ts(DateTime.now()),
+        serverId,
+      ],
+    );
+  }
+
+  void resetMcpOAuth(String serverId) {
+    _db.execute('DELETE FROM mcp_oauth WHERE server_id = ?', <Object?>[
+      serverId,
+    ]);
+  }
+
+  void _ensureMcpOAuth(String serverId) {
+    _db.execute(
+      'INSERT INTO mcp_oauth (server_id, updated_at) VALUES (?, ?) '
+      'ON CONFLICT(server_id) DO NOTHING',
+      <Object?>[serverId, _ts(DateTime.now())],
+    );
   }
 
   // -------------------------------------------------------------------------

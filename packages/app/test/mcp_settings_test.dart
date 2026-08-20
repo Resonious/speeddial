@@ -54,4 +54,72 @@ void main() {
     expect(profiles.single.secretNames, const <String>['API_TOKEN']);
     expect(profiles.single.toJson().toString(), isNot(contains('top-secret')));
   });
+
+  testWidgets('authorizes and disconnects an HTTP OAuth server', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient client = FakeDaemonClient();
+    final AppData data = AppData()..registerClient('daemon', client);
+    addTearDown(data.dispose);
+    Uri? launched;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          data: data,
+          child: McpSettingsPage(
+            daemonId: 'daemon',
+            daemonName: 'Test daemon',
+            launchExternal: (Uri uri) async {
+              launched = uri;
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mcp-add-server')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('mcp-name')), 'Remote tools');
+    await tester.tap(find.byKey(const Key('mcp-transport')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remote server (HTTP)').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('mcp-endpoint')),
+      'https://mcp.example/tools',
+    );
+    await tester.tap(find.byKey(const Key('mcp-auth-type')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OAuth 2.1').last);
+    await tester.pumpAndSettle();
+    final Finder save = find.byKey(const Key('mcp-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(find.text('OAuth: Not connected'), findsOneWidget);
+    await tester.tap(find.byTooltip('MCP server actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect account'));
+    await tester.pump();
+    expect(
+      launched.toString(),
+      contains('https://auth.example/authorize'),
+    );
+    expect(
+      find.textContaining('Finish authorization in your browser'),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('OAuth: Authorized'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('MCP server actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    expect(find.text('OAuth: Not connected'), findsOneWidget);
+  });
 }

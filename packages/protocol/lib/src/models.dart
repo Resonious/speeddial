@@ -68,6 +68,46 @@ enum McpTransport {
   };
 }
 
+/// Authentication managed by SpeedDial for an HTTP MCP server.
+enum McpAuthType {
+  none,
+  oauth;
+
+  String get wire => name;
+
+  static McpAuthType parse(String value) => switch (value) {
+    'none' => McpAuthType.none,
+    'oauth' => McpAuthType.oauth,
+    _ => throw FormatException('Unknown McpAuthType: "$value"'),
+  };
+}
+
+/// Last known daemon-side OAuth state for an HTTP MCP server.
+enum McpOAuthStatus {
+  notConnected,
+  authorizing,
+  authorized,
+  expired,
+  error;
+
+  String get wire => switch (this) {
+    McpOAuthStatus.notConnected => 'not_connected',
+    McpOAuthStatus.authorizing => 'authorizing',
+    McpOAuthStatus.authorized => 'authorized',
+    McpOAuthStatus.expired => 'expired',
+    McpOAuthStatus.error => 'error',
+  };
+
+  static McpOAuthStatus parse(String value) => switch (value) {
+    'not_connected' => McpOAuthStatus.notConnected,
+    'authorizing' => McpOAuthStatus.authorizing,
+    'authorized' => McpOAuthStatus.authorized,
+    'expired' => McpOAuthStatus.expired,
+    'error' => McpOAuthStatus.error,
+    _ => throw FormatException('Unknown McpOAuthStatus: "$value"'),
+  };
+}
+
 /// Execution state of a tool call.
 enum ToolCallStatus {
   pending,
@@ -988,6 +1028,13 @@ class McpServerProfile {
     this.command,
     this.args = const <String>[],
     this.url,
+    this.authType = McpAuthType.none,
+    this.oauthStatus = McpOAuthStatus.notConnected,
+    this.oauthClientId,
+    this.oauthClientSecretConfigured = false,
+    this.oauthScopes = const <String>[],
+    this.oauthExpiresAt,
+    this.oauthError,
   });
 
   final String id;
@@ -1000,6 +1047,13 @@ class McpServerProfile {
   final List<String> secretNames;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final McpAuthType authType;
+  final McpOAuthStatus oauthStatus;
+  final String? oauthClientId;
+  final bool oauthClientSecretConfigured;
+  final List<String> oauthScopes;
+  final DateTime? oauthExpiresAt;
+  final String? oauthError;
 
   factory McpServerProfile.fromJson(Map<String, Object?> json) =>
       McpServerProfile(
@@ -1015,6 +1069,19 @@ class McpServerProfile {
         secretNames: (json['secretNames']! as List<Object?>)
             .map((Object? value) => value! as String)
             .toList(growable: false),
+        authType: McpAuthType.parse(json['authType']! as String),
+        oauthStatus: McpOAuthStatus.parse(json['oauthStatus']! as String),
+        oauthClientId: json['oauthClientId'] as String?,
+        oauthClientSecretConfigured:
+            json['oauthClientSecretConfigured']! as bool,
+        oauthScopes: (json['oauthScopes']! as List<Object?>)
+            .map((Object? value) => value! as String)
+            .toList(growable: false),
+        oauthExpiresAt: switch (json['oauthExpiresAt']) {
+          final String value => DateTime.parse(value).toUtc(),
+          _ => null,
+        },
+        oauthError: json['oauthError'] as String?,
         createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
         updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
       );
@@ -1028,8 +1095,33 @@ class McpServerProfile {
     'args': args,
     'url': ?url,
     'secretNames': secretNames,
+    'authType': authType.wire,
+    'oauthStatus': oauthStatus.wire,
+    'oauthClientId': ?oauthClientId,
+    'oauthClientSecretConfigured': oauthClientSecretConfigured,
+    'oauthScopes': oauthScopes,
+    'oauthExpiresAt': ?oauthExpiresAt?.toUtc().toIso8601String(),
+    'oauthError': ?oauthError,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'updatedAt': updatedAt.toUtc().toIso8601String(),
+  };
+}
+
+/// Browser authorization request created by `mcp.oauth.begin`.
+class McpOAuthFlow {
+  const McpOAuthFlow({required this.flowId, required this.authorizationUrl});
+
+  final String flowId;
+  final String authorizationUrl;
+
+  factory McpOAuthFlow.fromJson(Map<String, Object?> json) => McpOAuthFlow(
+    flowId: json['flowId']! as String,
+    authorizationUrl: json['authorizationUrl']! as String,
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'flowId': flowId,
+    'authorizationUrl': authorizationUrl,
   };
 }
 

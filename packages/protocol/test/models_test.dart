@@ -683,6 +683,12 @@ void main() {
         secretNames: const <String>['Authorization'],
         createdAt: DateTime.utc(2026, 8, 20),
         updatedAt: DateTime.utc(2026, 8, 20, 1),
+        authType: McpAuthType.oauth,
+        oauthStatus: McpOAuthStatus.authorized,
+        oauthClientId: 'client-1',
+        oauthClientSecretConfigured: true,
+        oauthScopes: const <String>['mcp:tools'],
+        oauthExpiresAt: DateTime.utc(2026, 8, 20, 2),
       );
       final McpServerProfile decoded = McpServerProfile.fromJson(
         model.toJson(),
@@ -691,8 +697,20 @@ void main() {
       expect(decoded.url, 'https://example.test/mcp');
       expect(decoded.command, isNull);
       expect(decoded.secretNames, const <String>['Authorization']);
+      expect(decoded.authType, McpAuthType.oauth);
+      expect(decoded.oauthStatus, McpOAuthStatus.authorized);
+      expect(decoded.oauthClientId, 'client-1');
+      expect(decoded.oauthClientSecretConfigured, isTrue);
+      expect(decoded.oauthScopes, const <String>['mcp:tools']);
       expect(decoded.toJson(), model.toJson());
       expect(decoded.toJson(), isNot(contains('secrets')));
+    });
+    test('McpOAuthFlow roundtrip', () {
+      const McpOAuthFlow flow = McpOAuthFlow(
+        flowId: 'flow-1',
+        authorizationUrl: 'https://auth.example/authorize?state=flow-1',
+      );
+      expect(McpOAuthFlow.fromJson(flow.toJson()).toJson(), flow.toJson());
     });
   });
 

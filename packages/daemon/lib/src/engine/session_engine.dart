@@ -130,6 +130,7 @@ class SessionEngine {
 
   final Map<String, _LiveSession> _live = {};
   _BuiltInMcpConfig? _builtInMcp;
+  Future<void> Function()? _prepareMcpServers;
 
   /// Configures the daemon-owned MCP stdio server that is included in every
   /// subsequent ACP session/new and session/load request.
@@ -145,6 +146,12 @@ class SessionEngine {
       command: command,
       args: List<String>.unmodifiable(args),
     );
+  }
+
+  /// Configures daemon-owned authentication preparation for remote MCP
+  /// servers. Called immediately before every ACP session/new or session/load.
+  void configureMcpAuth({required Future<void> Function() prepare}) {
+    _prepareMcpServers = prepare;
   }
 
   List<Map<String, Object?>> _mcpServersFor(
@@ -519,6 +526,7 @@ class SessionEngine {
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
+      await _prepareMcpServers?.call();
       final created = await client.newSession(
         cwd: baseSession.cwd,
         mcpServers: _mcpServersFor(baseSession, info),
@@ -897,6 +905,7 @@ class SessionEngine {
           'restart (no ACP session/load support); create a new session',
         );
       }
+      await _prepareMcpServers?.call();
       configOptions = await client.loadSession(
         sessionId: acpSessionId,
         cwd: session.cwd,

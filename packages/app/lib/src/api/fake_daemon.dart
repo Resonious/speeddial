@@ -329,6 +329,9 @@ class FakeDaemonClient implements DaemonClient {
     List<String> args = const <String>[],
     String? url,
     Map<String, String> secrets = const <String, String>{},
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     final DateTime now = DateTime.now().toUtc();
     final String id = 'mcp-${_mcpServerCounter++}';
@@ -342,6 +345,10 @@ class FakeDaemonClient implements DaemonClient {
       args: List<String>.unmodifiable(args),
       url: url,
       secretNames: secrets.keys.toList(growable: false)..sort(),
+      authType: authType,
+      oauthClientId: oauthClientId,
+      oauthClientSecretConfigured:
+          oauthClientSecret != null && oauthClientSecret.isNotEmpty,
       createdAt: now,
       updatedAt: now,
     );
@@ -360,6 +367,9 @@ class FakeDaemonClient implements DaemonClient {
     String? url,
     Map<String, String> secrets = const <String, String>{},
     List<String> removeSecretNames = const <String>[],
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     final McpServerProfile? current = _mcpServers[id];
     if (current == null) {
@@ -373,6 +383,10 @@ class FakeDaemonClient implements DaemonClient {
       stored.remove(secretName);
     }
     stored.addAll(secrets);
+    final bool resetOAuth =
+        current.authType != authType ||
+        current.url != url ||
+        (oauthClientId != null && oauthClientId != current.oauthClientId);
     final McpServerProfile profile = McpServerProfile(
       id: id,
       name: name,
@@ -382,6 +396,20 @@ class FakeDaemonClient implements DaemonClient {
       args: List<String>.unmodifiable(args),
       url: url,
       secretNames: stored.keys.toList(growable: false)..sort(),
+      authType: authType,
+      oauthStatus: authType == McpAuthType.oauth && !resetOAuth
+          ? current.oauthStatus
+          : McpOAuthStatus.notConnected,
+      oauthClientId: authType == McpAuthType.oauth
+          ? oauthClientId ?? current.oauthClientId
+          : null,
+      oauthClientSecretConfigured:
+          authType == McpAuthType.oauth &&
+          ((oauthClientSecret != null && oauthClientSecret.isNotEmpty) ||
+              (!resetOAuth && current.oauthClientSecretConfigured)),
+      oauthScopes: resetOAuth ? const <String>[] : current.oauthScopes,
+      oauthExpiresAt: resetOAuth ? null : current.oauthExpiresAt,
+      oauthError: resetOAuth ? null : current.oauthError,
       createdAt: current.createdAt,
       updatedAt: DateTime.now().toUtc(),
     );
@@ -396,6 +424,87 @@ class FakeDaemonClient implements DaemonClient {
     }
     _mcpSecrets.remove(id);
   }
+
+  @override
+  Future<McpOAuthFlow> beginMcpOAuth(String id) async {
+    final McpServerProfile current = _requireMcpOAuth(id);
+    _mcpServers[id] = _copyMcpOAuth(
+      current,
+      status: McpOAuthStatus.authorizing,
+    );
+    return McpOAuthFlow(
+      flowId: 'fake-oauth-$id',
+      authorizationUrl: 'https://auth.example/authorize?state=fake-oauth-$id',
+    );
+  }
+
+  @override
+  Future<McpServerProfile> mcpOAuthStatus(String id, String flowId) async {
+    final McpServerProfile current = _requireMcpOAuth(id);
+    if (flowId != 'fake-oauth-$id') {
+      throw DaemonError(kErrNotFound, 'Unknown OAuth flow');
+    }
+    if (current.oauthStatus == McpOAuthStatus.authorizing) {
+      final McpServerProfile authorized = _copyMcpOAuth(
+        current,
+        status: McpOAuthStatus.authorized,
+        scopes: const <String>['mcp'],
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+      _mcpServers[id] = authorized;
+      return authorized;
+    }
+    return current;
+  }
+
+  @override
+  Future<McpServerProfile> disconnectMcpOAuth(String id) async {
+    final McpServerProfile current = _requireMcpOAuth(id);
+    final McpServerProfile disconnected = _copyMcpOAuth(
+      current,
+      status: McpOAuthStatus.notConnected,
+    );
+    _mcpServers[id] = disconnected;
+    return disconnected;
+  }
+
+  McpServerProfile _requireMcpOAuth(String id) {
+    final McpServerProfile? profile = _mcpServers[id];
+    if (profile == null) {
+      throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
+    }
+    if (profile.transport != McpTransport.http ||
+        profile.authType != McpAuthType.oauth) {
+      throw DaemonError(kErrConflict, 'MCP server does not use OAuth');
+    }
+    return profile;
+  }
+
+  McpServerProfile _copyMcpOAuth(
+    McpServerProfile profile, {
+    required McpOAuthStatus status,
+    List<String> scopes = const <String>[],
+    DateTime? expiresAt,
+    String? error,
+  }) => McpServerProfile(
+    id: profile.id,
+    name: profile.name,
+    transport: profile.transport,
+    enabled: profile.enabled,
+    command: profile.command,
+    args: profile.args,
+    url: profile.url,
+    secretNames: profile.secretNames,
+    authType: profile.authType,
+    oauthStatus: status,
+    oauthClientId: profile.oauthClientId,
+    oauthClientSecretConfigured: profile.oauthClientSecretConfigured,
+    oauthScopes: scopes,
+    oauthExpiresAt: expiresAt,
+    oauthError: error,
+    createdAt: profile.createdAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   // ---------------------------------------------------------------------
   // Sessions

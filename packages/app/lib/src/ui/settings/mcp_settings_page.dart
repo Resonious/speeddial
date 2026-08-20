@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../scope.dart';
 import '../../state/mcp_store.dart';
+
+Future<bool> _launchExternal(Uri uri) =>
+    launchUrl(uri, mode: LaunchMode.externalApplication);
 
 /// Daemon-scoped settings for MCP servers injected into ACP sessions.
 class McpSettingsPage extends StatefulWidget {
@@ -10,27 +16,43 @@ class McpSettingsPage extends StatefulWidget {
     super.key,
     required this.daemonId,
     required this.daemonName,
+    this.launchExternal = _launchExternal,
   });
 
   final String daemonId;
   final String daemonName;
 
+  final Future<bool> Function(Uri uri) launchExternal;
   @override
   State<McpSettingsPage> createState() => _McpSettingsPageState();
 }
 
 class _McpSettingsPageState extends State<McpSettingsPage> {
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((Duration _) => _refresh());
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      _refresh();
+      _refreshTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (Timer _) => _refresh(silent: true),
+      );
+    });
   }
 
-  Future<void> _refresh() async {
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh({bool silent = false}) async {
     try {
       await AppScope.of(context).mcp.refresh(widget.daemonId);
     } on Object catch (error) {
-      if (mounted) _showError(error);
+      if (!silent && mounted) _showError(error);
     }
   }
 
@@ -62,6 +84,8 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
         command: profile.command,
         args: profile.args,
         url: profile.url,
+        authType: profile.authType,
+        oauthClientId: profile.oauthClientId,
       );
     } on Object catch (error) {
       if (mounted) _showError(error);
@@ -94,6 +118,45 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
     if (!confirmed || !mounted) return;
     try {
       await AppScope.of(context).mcp.remove(widget.daemonId, profile.id);
+    } on Object catch (error) {
+      if (mounted) _showError(error);
+    }
+  }
+
+  Future<void> _authorize(McpServerProfile profile) async {
+    try {
+      final McpStore store = AppScope.of(context).mcp;
+      final McpOAuthFlow flow = await store.beginOAuth(
+        widget.daemonId,
+        profile.id,
+      );
+      final bool launched = await widget.launchExternal(
+        Uri.parse(flow.authorizationUrl),
+      );
+      if (!launched) {
+        throw StateError('Could not open the authorization page');
+      }
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) => _OAuthProgressDialog(
+          daemonId: widget.daemonId,
+          serverId: profile.id,
+          serverName: profile.name,
+          flowId: flow.flowId,
+          store: store,
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) _showError(error);
+    }
+  }
+
+  Future<void> _disconnect(McpServerProfile profile) async {
+    try {
+      await AppScope.of(context).mcp
+          .disconnectOAuth(widget.daemonId, profile.id);
     } on Object catch (error) {
       if (mounted) _showError(error);
     }
@@ -156,6 +219,8 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
                                 _toggle(servers[index], value),
                             onEdit: () => _openEditor(servers[index]),
                             onDelete: () => _delete(servers[index]),
+                            onAuthorize: () => _authorize(servers[index]),
+                            onDisconnect: () => _disconnect(servers[index]),
                           ),
                           if (index != servers.length - 1)
                             const Divider(height: 1),
@@ -198,12 +263,16 @@ class _McpServerTile extends StatelessWidget {
     required this.onEnabledChanged,
     required this.onEdit,
     required this.onDelete,
+    required this.onAuthorize,
+    required this.onDisconnect,
   });
 
   final McpServerProfile profile;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onAuthorize;
+  final VoidCallback onDisconnect;
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -212,12 +281,26 @@ class _McpServerTile extends StatelessWidget {
       profile.transport == McpTransport.stdio ? Icons.terminal : Icons.language,
     ),
     title: Text(profile.name),
-    subtitle: Text(
-      profile.transport == McpTransport.stdio
-          ? <String>[profile.command!, ...profile.args].join(' ')
-          : profile.url!,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
+    subtitle: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          profile.transport == McpTransport.stdio
+              ? <String>[profile.command!, ...profile.args].join(' ')
+              : profile.url!,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (profile.authType == McpAuthType.oauth)
+          Text(
+            _oauthStatusLabel(profile),
+            key: ValueKey<String>('mcp-oauth-status-${profile.id}'),
+            style: TextStyle(
+              color: _oauthStatusColor(context, profile.oauthStatus),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+      ],
     ),
     trailing: Row(
       mainAxisSize: MainAxisSize.min,
@@ -226,17 +309,144 @@ class _McpServerTile extends StatelessWidget {
         PopupMenuButton<String>(
           tooltip: 'MCP server actions',
           onSelected: (String action) => switch (action) {
+            'authorize' => onAuthorize(),
+            'disconnect' => onDisconnect(),
             'edit' => onEdit(),
             'delete' => onDelete(),
             _ => null,
           },
-          itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
-            PopupMenuItem<String>(value: 'edit', child: Text('Edit')),
-            PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
+          itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+            if (profile.authType == McpAuthType.oauth)
+              PopupMenuItem<String>(
+                key: const Key('mcp-oauth-authorize'),
+                value: 'authorize',
+                child: Text(
+                  profile.oauthStatus == McpOAuthStatus.authorized
+                      ? 'Reauthorize'
+                      : 'Connect account',
+                ),
+              ),
+            if (profile.authType == McpAuthType.oauth &&
+                profile.oauthStatus != McpOAuthStatus.notConnected)
+              const PopupMenuItem<String>(
+                value: 'disconnect',
+                child: Text('Disconnect'),
+              ),
+            const PopupMenuItem<String>(value: 'edit', child: Text('Edit')),
+            const PopupMenuItem<String>(value: 'delete', child: Text('Delete')),
           ],
         ),
       ],
     ),
+  );
+
+  static String _oauthStatusLabel(McpServerProfile profile) =>
+      switch (profile.oauthStatus) {
+        McpOAuthStatus.notConnected => 'OAuth: Not connected',
+        McpOAuthStatus.authorizing => 'OAuth: Waiting for authorization',
+        McpOAuthStatus.authorized => 'OAuth: Authorized',
+        McpOAuthStatus.expired => 'OAuth: Expired — reauthorize',
+        McpOAuthStatus.error =>
+          'OAuth: ${profile.oauthError ?? 'Authorization failed'}',
+      };
+
+  static Color _oauthStatusColor(BuildContext context, McpOAuthStatus status) =>
+      switch (status) {
+        McpOAuthStatus.authorized => Colors.green.shade700,
+        McpOAuthStatus.error ||
+        McpOAuthStatus.expired => Theme.of(context).colorScheme.error,
+        McpOAuthStatus.notConnected || McpOAuthStatus.authorizing => Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant,
+      };
+}
+
+class _OAuthProgressDialog extends StatefulWidget {
+  const _OAuthProgressDialog({
+    required this.daemonId,
+    required this.serverId,
+    required this.serverName,
+    required this.flowId,
+    required this.store,
+  });
+
+  final String daemonId;
+  final String serverId;
+  final String serverName;
+  final String flowId;
+  final McpStore store;
+
+  @override
+  State<_OAuthProgressDialog> createState() => _OAuthProgressDialogState();
+}
+
+class _OAuthProgressDialogState extends State<_OAuthProgressDialog> {
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) => _poll());
+  }
+
+  Future<void> _poll() async {
+    while (mounted) {
+      try {
+        final McpServerProfile profile = await widget.store.oauthStatus(
+          widget.daemonId,
+          widget.serverId,
+          widget.flowId,
+        );
+        if (!mounted) return;
+        switch (profile.oauthStatus) {
+          case McpOAuthStatus.authorized:
+            Navigator.of(context).pop();
+            return;
+          case McpOAuthStatus.error:
+          case McpOAuthStatus.expired:
+          case McpOAuthStatus.notConnected:
+            setState(() {
+              _error = profile.oauthError ?? 'Authorization did not complete';
+            });
+            return;
+          case McpOAuthStatus.authorizing:
+            await Future<void>.delayed(const Duration(seconds: 1));
+        }
+      } on Object catch (error) {
+        if (!mounted) return;
+        setState(() => _error = error.toString());
+        return;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text('Connect ${widget.serverName}'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (_error == null) ...<Widget>[
+          const CircularProgressIndicator(),
+          const SizedBox(height: 20),
+          const Text(
+            'Finish authorization in your browser. This window will update '
+            'automatically.',
+            textAlign: TextAlign.center,
+          ),
+        ] else
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+      ],
+    ),
+    actions: <Widget>[
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: Text(_error == null ? 'Cancel' : 'Close'),
+      ),
+    ],
   );
 }
 
@@ -274,6 +484,9 @@ class _McpServerDialogState extends State<_McpServerDialog> {
   late final TextEditingController _name;
   late final TextEditingController _endpoint;
   late final TextEditingController _args;
+  late final TextEditingController _oauthClientId;
+  late final TextEditingController _oauthClientSecret;
+  late McpAuthType _authType;
   late McpTransport _transport;
   late bool _enabled;
   late final Set<String> _storedSecrets;
@@ -288,6 +501,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
     final McpServerProfile? existing = widget.existing;
     _transport = existing?.transport ?? McpTransport.stdio;
     _enabled = existing?.enabled ?? true;
+    _authType = existing?.authType ?? McpAuthType.none;
     _name = TextEditingController(text: existing?.name);
     _endpoint = TextEditingController(
       text: existing?.transport == McpTransport.http
@@ -295,6 +509,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           : existing?.command,
     );
     _args = TextEditingController(text: existing?.args.join('\n'));
+    _oauthClientId = TextEditingController(text: existing?.oauthClientId);
+    _oauthClientSecret = TextEditingController();
     _storedSecrets = Set<String>.of(existing?.secretNames ?? const <String>[]);
   }
 
@@ -303,6 +519,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
     _name.dispose();
     _endpoint.dispose();
     _args.dispose();
+    _oauthClientId.dispose();
+    _oauthClientSecret.dispose();
     for (final _SecretDraft draft in _secretDrafts) {
       draft.dispose();
     }
@@ -315,6 +533,9 @@ class _McpServerDialogState extends State<_McpServerDialog> {
       _transport = transport;
       _endpoint.clear();
       _args.clear();
+      if (transport == McpTransport.stdio) {
+        _authType = McpAuthType.none;
+      }
     });
   }
 
@@ -355,6 +576,19 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           args: args,
           url: _transport == McpTransport.http ? _endpoint.text.trim() : null,
           secrets: secrets,
+          authType: _transport == McpTransport.http
+              ? _authType
+              : McpAuthType.none,
+          oauthClientId:
+              _transport == McpTransport.http && _authType == McpAuthType.oauth
+              ? _oauthClientId.text.trim()
+              : null,
+          oauthClientSecret:
+              _transport == McpTransport.http &&
+                  _authType == McpAuthType.oauth &&
+                  _oauthClientSecret.text.isNotEmpty
+              ? _oauthClientSecret.text
+              : null,
         );
       } else {
         await widget.store.update(
@@ -370,6 +604,19 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           url: _transport == McpTransport.http ? _endpoint.text.trim() : null,
           secrets: secrets,
           removeSecretNames: _removedSecrets.toList(growable: false),
+          authType: _transport == McpTransport.http
+              ? _authType
+              : McpAuthType.none,
+          oauthClientId:
+              _transport == McpTransport.http && _authType == McpAuthType.oauth
+              ? _oauthClientId.text.trim()
+              : null,
+          oauthClientSecret:
+              _transport == McpTransport.http &&
+                  _authType == McpAuthType.oauth &&
+                  _oauthClientSecret.text.isNotEmpty
+              ? _oauthClientSecret.text
+              : null,
         );
       }
       if (mounted) Navigator.of(context).pop();
@@ -452,6 +699,54 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                     ),
                   ),
                 ],
+                if (!stdio) ...<Widget>[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<McpAuthType>(
+                    key: const Key('mcp-auth-type'),
+                    initialValue: _authType,
+                    decoration: const InputDecoration(
+                      labelText: 'Authentication',
+                    ),
+                    items: const <DropdownMenuItem<McpAuthType>>[
+                      DropdownMenuItem(
+                        value: McpAuthType.none,
+                        child: Text('None or static headers'),
+                      ),
+                      DropdownMenuItem(
+                        value: McpAuthType.oauth,
+                        child: Text('OAuth 2.1'),
+                      ),
+                    ],
+                    onChanged: (McpAuthType? value) {
+                      if (value != null) setState(() => _authType = value);
+                    },
+                  ),
+                  if (_authType == McpAuthType.oauth) ...<Widget>[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('mcp-oauth-client-id'),
+                      controller: _oauthClientId,
+                      decoration: const InputDecoration(
+                        labelText: 'OAuth client ID (optional)',
+                        helperText:
+                            'Leave blank to use dynamic client registration',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('mcp-oauth-client-secret'),
+                      controller: _oauthClientSecret,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'OAuth client secret (optional)',
+                        helperText:
+                            widget.existing?.oauthClientSecretConfigured == true
+                            ? 'Stored on daemon; enter a value to replace it'
+                            : 'Required only by confidential clients',
+                      ),
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 12),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -461,8 +756,11 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                 ),
                 const Divider(),
                 Text(
-                  stdio ? 'Environment variables' : 'HTTP headers',
-                  style: Theme.of(context).textTheme.titleSmall,
+                  stdio
+                      ? 'Environment variables'
+                      : _authType == McpAuthType.oauth
+                      ? 'Additional HTTP headers'
+                      : 'HTTP headers',
                 ),
                 const SizedBox(height: 4),
                 Text(

@@ -71,6 +71,12 @@ void main() {
     }
   });
 
+  test('database files are owner-readable only on POSIX', () {
+    if (!Platform.isLinux && !Platform.isMacOS) return;
+    final FileStat stat = File(p.join(tempDir.path, 'speeddial.db')).statSync();
+    expect(stat.mode & 0x1ff, 0x180);
+  });
+
   test('project CRUD roundtrips and touch bumps lastActiveAt', () {
     final before = project();
     store.insertProject(before);
@@ -149,6 +155,72 @@ void main() {
     ]);
     expect(store.deleteMcpServer(profile.id), isTrue);
     expect(store.listMcpServers(), isEmpty);
+  });
+
+  test('OAuth tokens remain daemon-only and become a bearer header', () {
+    final DateTime createdAt = DateTime.utc(2026, 8, 20);
+    final McpServerProfile profile = McpServerProfile(
+      id: 'mcp-oauth',
+      name: 'Remote tools',
+      transport: McpTransport.http,
+      enabled: true,
+      url: 'https://mcp.example/tools',
+      authType: McpAuthType.oauth,
+      secretNames: const <String>[],
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    store.insertMcpServer(profile, const <String, String>{
+      'X-Tenant': 'tenant-1',
+    });
+    store.setMcpOAuthDiscovery(
+      profile.id,
+      authorizationServer: 'https://auth.example',
+      authorizationEndpoint: 'https://auth.example/authorize',
+      tokenEndpoint: 'https://auth.example/token',
+      resource: profile.url!,
+    );
+    store.setMcpOAuthClient(
+      profile.id,
+      clientId: 'client-1',
+      clientSecret: 'client-secret',
+      tokenEndpointAuthMethod: 'client_secret_post',
+      redirectUri: 'http://127.0.0.1:7331/oauth/callback',
+    );
+    store.setMcpOAuthTokens(
+      profile.id,
+      accessToken: 'access-secret',
+      refreshToken: 'refresh-secret',
+      expiresAt: DateTime.utc(2020),
+      scopes: const <String>['mcp:tools'],
+    );
+
+    final McpServerProfile listed = store.getMcpServer(profile.id)!;
+    expect(listed.oauthStatus, McpOAuthStatus.expired);
+    expect(listed.oauthClientId, 'client-1');
+    expect(listed.oauthClientSecretConfigured, isTrue);
+    expect(listed.toJson().toString(), isNot(contains('access-secret')));
+    expect(listed.toJson().toString(), isNot(contains('refresh-secret')));
+    expect(listed.toJson().toString(), isNot(contains('client-secret')));
+    expect(store.listEnabledMcpServers(), isEmpty);
+
+    store.setMcpOAuthTokens(
+      profile.id,
+      accessToken: 'access-secret',
+      refreshToken: 'refresh-secret',
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      scopes: const <String>['mcp:tools'],
+    );
+    expect(store.listEnabledMcpServers().single.secrets, <String, String>{
+      'X-Tenant': 'tenant-1',
+      'Authorization': 'Bearer access-secret',
+    });
+    store.clearMcpOAuthTokens(profile.id);
+    expect(store.listEnabledMcpServers(), isEmpty);
+    expect(
+      store.getMcpServer(profile.id)!.oauthStatus,
+      McpOAuthStatus.notConnected,
+    );
   });
 
   test('session CRUD roundtrips and list filtering', () {

@@ -49,6 +49,9 @@ class McpStore extends StoreBase {
     List<String> args = const <String>[],
     String? url,
     Map<String, String> secrets = const <String, String>{},
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     try {
       final McpServerProfile profile = await _clientFor(daemonId)
@@ -60,6 +63,9 @@ class McpStore extends StoreBase {
             args: args,
             url: url,
             secrets: secrets,
+            authType: authType,
+            oauthClientId: oauthClientId,
+            oauthClientSecret: oauthClientSecret,
           );
       _serversByDaemon
           .putIfAbsent(daemonId, () => <McpServerProfile>[])
@@ -86,6 +92,9 @@ class McpStore extends StoreBase {
     String? url,
     Map<String, String> secrets = const <String, String>{},
     List<String> removeSecretNames = const <String>[],
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     try {
       final McpServerProfile profile = await _clientFor(daemonId)
@@ -99,6 +108,9 @@ class McpStore extends StoreBase {
             url: url,
             secrets: secrets,
             removeSecretNames: removeSecretNames,
+            authType: authType,
+            oauthClientId: oauthClientId,
+            oauthClientSecret: oauthClientSecret,
           );
       final List<McpServerProfile>? servers = _serversByDaemon[daemonId];
       final int index =
@@ -131,6 +143,62 @@ class McpStore extends StoreBase {
       notifyListeners();
       rethrow;
     }
+  }
+
+  Future<McpOAuthFlow> beginOAuth(String daemonId, String id) async {
+    try {
+      final McpOAuthFlow flow = await _clientFor(daemonId).beginMcpOAuth(id);
+      _lastError = null;
+      return flow;
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<McpServerProfile> oauthStatus(
+    String daemonId,
+    String id,
+    String flowId,
+  ) async {
+    try {
+      final McpServerProfile profile = await _clientFor(daemonId)
+          .mcpOAuthStatus(id, flowId);
+      _replaceProfile(daemonId, profile);
+      _lastError = null;
+      notifyListeners();
+      return profile;
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<McpServerProfile> disconnectOAuth(String daemonId, String id) async {
+    try {
+      final McpServerProfile profile = await _clientFor(daemonId)
+          .disconnectMcpOAuth(id);
+      _replaceProfile(daemonId, profile);
+      _lastError = null;
+      notifyListeners();
+      return profile;
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  void _replaceProfile(String daemonId, McpServerProfile profile) {
+    final List<McpServerProfile>? servers = _serversByDaemon[daemonId];
+    final int index =
+        servers?.indexWhere(
+          (McpServerProfile server) => server.id == profile.id,
+        ) ??
+        -1;
+    if (index >= 0) servers![index] = profile;
   }
 
   static int _compareProfiles(McpServerProfile a, McpServerProfile b) =>

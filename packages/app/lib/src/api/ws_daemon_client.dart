@@ -463,6 +463,9 @@ class WsDaemonClient implements DaemonClient {
     List<String> args = const <String>[],
     String? url,
     Map<String, String> secrets = const <String, String>{},
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     final Object? result = await _requirePeer().call(
       'mcp.create',
@@ -474,6 +477,9 @@ class WsDaemonClient implements DaemonClient {
         'args': args,
         'url': ?url,
         'secrets': secrets,
+        'authType': authType.wire,
+        'oauthClientId': ?oauthClientId,
+        'oauthClientSecret': ?oauthClientSecret,
       },
     );
     return McpServerProfile.fromJson(
@@ -492,6 +498,9 @@ class WsDaemonClient implements DaemonClient {
     String? url,
     Map<String, String> secrets = const <String, String>{},
     List<String> removeSecretNames = const <String>[],
+    McpAuthType authType = McpAuthType.none,
+    String? oauthClientId,
+    String? oauthClientSecret,
   }) async {
     final Object? result = await _requirePeer().call(
       'mcp.update',
@@ -505,6 +514,9 @@ class WsDaemonClient implements DaemonClient {
         'url': ?url,
         'secrets': secrets,
         'removeSecretNames': removeSecretNames,
+        'authType': authType.wire,
+        'oauthClientId': ?oauthClientId,
+        'oauthClientSecret': ?oauthClientSecret,
       },
     );
     return McpServerProfile.fromJson(
@@ -515,6 +527,44 @@ class WsDaemonClient implements DaemonClient {
   @override
   Future<void> deleteMcpServer(String id) async {
     await _requirePeer().call('mcp.delete', <String, Object?>{'id': id});
+  }
+
+  @override
+  Future<McpOAuthFlow> beginMcpOAuth(String id) async {
+    final Uri endpoint = Uri.parse(url);
+    final Uri redirectUri = endpoint.replace(
+      scheme: endpoint.scheme == 'wss' ? 'https' : 'http',
+      path: '/oauth/callback',
+      query: null,
+      fragment: null,
+    );
+    final Object? result = await _requirePeer().call(
+      'mcp.oauth.begin',
+      <String, Object?>{'id': id, 'redirectUri': redirectUri.toString()},
+    );
+    return McpOAuthFlow.fromJson(_resultMap(_resultField(result, 'flow')));
+  }
+
+  @override
+  Future<McpServerProfile> mcpOAuthStatus(String id, String flowId) async {
+    final Object? result = await _requirePeer().call(
+      'mcp.oauth.status',
+      <String, Object?>{'id': id, 'flowId': flowId},
+    );
+    return McpServerProfile.fromJson(
+      _resultMap(_resultField(result, 'server')),
+    );
+  }
+
+  @override
+  Future<McpServerProfile> disconnectMcpOAuth(String id) async {
+    final Object? result = await _requirePeer().call(
+      'mcp.oauth.disconnect',
+      <String, Object?>{'id': id},
+    );
+    return McpServerProfile.fromJson(
+      _resultMap(_resultField(result, 'server')),
+    );
   }
 
   // ---------------------------------------------------------------------

@@ -40,6 +40,9 @@ class TestDaemonServer {
   /// Every `sessions.send` params object received, in call order.
   final List<Map<String, Object?>> sends = <Map<String, Object?>>[];
 
+  /// Every `mcp.oauth.begin` params object received, in call order.
+  final List<Map<String, Object?>> oauthBegins = <Map<String, Object?>>[];
+
   /// Attachment payloads keyed by session id then attachment id, served by
   /// the `attachments.read` handler.
   final Map<String, Map<String, Map<String, Object?>>> attachments =
@@ -90,6 +93,15 @@ class TestDaemonServer {
     });
     peer.registerHandler('projects.list', (Map<String, Object?> _) {
       return <String, Object?>{'projects': <Object?>[projectJson()]};
+    });
+    peer.registerHandler('mcp.oauth.begin', (Map<String, Object?> params) {
+      oauthBegins.add(params);
+      return <String, Object?>{
+        'flow': <String, Object?>{
+          'flowId': 'flow-1',
+          'authorizationUrl': 'https://auth.example/authorize',
+        },
+      };
     });
     peer.registerHandler('sessions.send', (Map<String, Object?> params) {
       sends.add(params);
@@ -284,6 +296,31 @@ void main() {
 
     // Void calls resolve without error.
     await client.sendMessage('sess-1', 'hello');
+  });
+
+  test('beginMcpOAuth derives the browser callback from the daemon URL',
+      () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    final McpOAuthFlow flow = await client.beginMcpOAuth('mcp-1');
+
+    expect(flow.flowId, 'flow-1');
+    expect(flow.authorizationUrl, 'https://auth.example/authorize');
+    expect(server.oauthBegins, <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'mcp-1',
+        'redirectUri':
+            'http://127.0.0.1:${server.server.port}/oauth/callback',
+      },
+    ]);
   });
 
   test('sendMessage omits attachments when empty and serializes them otherwise',
