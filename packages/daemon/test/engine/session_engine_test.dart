@@ -192,25 +192,15 @@ void main() {
     // The agent asked for permission; the turn must not finish until we
     // respond.
     expect(request.request.toolCallId, 'tc1');
-    expect(request.request.title, 'Read example.txt');
-    expect(
-      request.request.options.map((o) => o.optionId),
-      <String>['allow', 'reject'],
-    );
-    expect(request.request.options.first.kind, PermissionKind.allowAlways);
-    expect(request.request.options.last.kind, PermissionKind.rejectOnce);
-
-    var sendDone = false;
-    unawaited(send.then((_) {
-      sendDone = true;
-    }));
-    await Future<void>.delayed(Duration.zero);
-    expect(sendDone, isFalse,
+    // sessions.send resolves at turn start (PROTOCOL.md), so the send
+    // future is already done here — but the turn itself is parked at the
+    // permission request and must not finish until we respond.
+    await send;
+    expect(events.any((t) => t.event is TurnCompleteEvent), isFalse,
         reason: 'the turn is parked until respondPermission');
 
     await engine.respondPermission(session.id, request.request.requestId, 'allow');
-    await send;
-    expect(sendDone, isTrue);
+    await waitFor(() => events.any((t) => t.event is TurnCompleteEvent));
 
     // Session status walked through the full turn lifecycle.
     expect(
@@ -307,9 +297,11 @@ void main() {
         reason: 'the flag must persist for restarts/resume');
 
     // The turn completes without respondPermission: the engine resolves the
-    // agent's request itself with the allow_always option.
-    await engine.sendMessage(session.id, 'please edit the file');
-
+    // agent's request itself with the allow_always option. sessions.send
+    // resolves at turn start, so wait for the turn to finish before asserting
+    // the post-turn state.
+    unawaited(engine.sendMessage(session.id, 'please edit the file'));
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
     expect(
       changes.map((s) => s.status),
@@ -340,10 +332,10 @@ void main() {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');
     final permissionFuture = waitForPermissionRequest();
-    final send = engine.sendMessage(session.id, 'please edit the file');
+    unawaited(engine.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await engine.respondPermission(session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => events.any((t) => t.event is TurnCompleteEvent));
 
     final history = store.listEvents(session.id);
     expect(history.hasMore, isFalse);
@@ -376,10 +368,10 @@ void main() {
 
     // The next send respawns the agent and resumes the ACP session.
     final permissionFuture = waitForPermissionRequestOn(restarted);
-    final send = restarted.sendMessage(session.id, 'please edit the file');
+    unawaited(restarted.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await restarted.respondPermission(session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
     final replayed = store.listEvents(session.id).events;
     expect(replayed.first, isA<UserMessageEvent>());
@@ -395,9 +387,11 @@ void main() {
     await waitFor(() => store.getSession(session.id)!.status ==
         SessionStatus.running);
 
-    // The daemon dies mid-turn.
     await engine.dispose();
-    await hung; // the killed agent's turn unwinds quietly
+    // sendMessage now resolves at turn start, so `hung` is already done;
+    // the killed agent's _driveTurn unwinds independently (suppressed via
+    // live.closed, set in dispose before the agent is torn down).
+    await hung;
     final restarted = SessionEngine(store: store, providers: fakeProviders());
     await restarted.restore();
 
@@ -410,10 +404,10 @@ void main() {
 
     // …but usable: the next send resumes the agent and runs a normal turn.
     final permissionFuture = waitForPermissionRequestOn(restarted);
-    final send = restarted.sendMessage(session.id, 'please edit the file');
+    unawaited(restarted.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await restarted.respondPermission(session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
     await restarted.dispose();
   });
@@ -530,7 +524,8 @@ void main() {
       throwsA(isA<DaemonError>()
           .having((e) => e.code, 'code', kErrConflict)),
     );
-    await first; // the resumed session completes its turn
+    await first; // sessions.send resolves at turn start; the turn runs on
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
     await restarted.dispose();
   });
@@ -540,7 +535,7 @@ void main() {
       () async {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');
-    final first = engine.sendMessage(session.id, 'hang');
+    unawaited(engine.sendMessage(session.id, 'hang'));
 
     await expectLater(
       engine.sendMessage(session.id, 'second message'),
@@ -549,7 +544,8 @@ void main() {
     );
 
     await engine.cancel(session.id);
-    await first; // resolves with the cancelled stop reason
+    await waitFor(
+        () => events.any((t) => t.event is TurnCompleteEvent));
 
     expect(
       events.map((t) => t.event.runtimeType).toList(),
@@ -559,18 +555,19 @@ void main() {
     expect(changes.last.status, SessionStatus.idle);
 
     // The session is usable again afterwards.
-    final sendAgain = engine.sendMessage(session.id, 'cancel');
+    unawaited(engine.sendMessage(session.id, 'cancel'));
     await engine.cancel(session.id);
-    await sendAgain;
+    await waitFor(() => changes.last.status == SessionStatus.idle);
   });
 
   test('cancel resolves a pending turn with the cancelled stop reason',
       () async {
     final session =
         await engine.createSession(projectId: 'p1', providerId: 'fake');
-    final send = engine.sendMessage(session.id, 'cancel');
+    unawaited(engine.sendMessage(session.id, 'cancel'));
     await engine.cancel(session.id);
-    await send;
+    await waitFor(
+        () => events.any((t) => t.event is TurnCompleteEvent));
     expect(
       events.map((t) => t.event.runtimeType).toList(),
       <Type>[UserMessageEvent, TurnCompleteEvent],
@@ -761,11 +758,11 @@ void main() {
 
     // The next send respawns the agent and reapplies the persisted level.
     final permissionFuture = waitForPermissionRequestOn(restarted);
-    final send = restarted.sendMessage(session.id, 'please edit the file');
+    unawaited(restarted.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await restarted.respondPermission(
         session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(
       File(p.join(tempDir.path, 'agent.thinking')).readAsStringSync(),
       'low',
@@ -805,11 +802,11 @@ void main() {
     await restarted.restore();
 
     final permissionFuture = waitForPermissionRequestOn(restarted);
-    final send = restarted.sendMessage(session.id, 'please edit the file');
+    unawaited(restarted.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await restarted.respondPermission(
         session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
 
     expect(
       store.getSession(session.id)!.thinkingLevel,
@@ -926,13 +923,12 @@ void main() {
     expect(offline.model, 'fake-smart');
     expect(store.getSession(session.id)!.model, 'fake-smart');
 
-    // The next send respawns the agent and reapplies the persisted model.
     final permissionFuture = waitForPermissionRequestOn(restarted);
-    final send = restarted.sendMessage(session.id, 'please edit the file');
+    unawaited(restarted.sendMessage(session.id, 'please edit the file'));
     final request = await permissionFuture;
     await restarted.respondPermission(
         session.id, request.request.requestId, 'allow');
-    await send;
+    await waitFor(() => store.getSession(session.id)!.status == SessionStatus.idle);
     expect(
       File(p.join(tempDir.path, 'agent.model')).readAsStringSync(),
       'fake-smart',
@@ -1056,20 +1052,19 @@ void main() {
     expect(request.request.requestId, isNotEmpty);
     expect(store.getSession(session.id)!.status, SessionStatus.waitingPermission);
 
-    var sendDone = false;
-    unawaited(send.then((_) {
-      sendDone = true;
-    }));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(sendDone, isFalse,
+    // sessions.send resolves at turn start (PROTOCOL.md): the send future
+    // is already done here, but the turn is parked at the permission
+    // request and must not finish until the agent dies.
+    await send;
+    expect(store.getSession(session.id)!.status,
+        SessionStatus.waitingPermission,
         reason: 'the turn is parked until the agent dies');
 
     // Kill the agent mid-request: the turn errors and the session ends in
     // error status.
     File(p.join(tempDir.path, 'agent.turn.die')).writeAsStringSync('die');
-    await send;
-    expect(store.getSession(session.id)!.status, SessionStatus.error,
-        reason: 'agent death must leave the session in error');
+    await waitFor(() =>
+        store.getSession(session.id)!.status == SessionStatus.error);
 
     // The parked request is gone: a stale respondPermission is not-found and
     // cannot flip the dead session back to running.

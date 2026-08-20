@@ -263,8 +263,8 @@ void main() {
     });
     addTearDown(() => eventsSub.cancel());
 
-    // sessions.send blocks until the turn completes: respond to the parked
-    // permission request while it runs.
+    // sessions.send resolves at turn start (PROTOCOL.md); the turn runs on
+    // and parks at the permission request, so respond to it while it runs.
     final sendFuture = client.sendMessage(session.id, 'hello');
     final permission = await waitFor<PermissionRequestEvent>(
       () {

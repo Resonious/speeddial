@@ -374,13 +374,20 @@ class SessionEngine {
           _writeTextFile(session.id, path, content),
     );
   }
-
   /// Starts a turn for [text] with the attached files. When the session's
   /// agent process is gone (daemon restarted), the agent is first respawned
   /// and resumed via ACP `session/load` — see [_resume]. Errors
   /// `kErrConflict` when a turn is already running or the session cannot be
   /// resumed (closed, predates resume support, or the provider lacks
   /// `session/load`).
+  ///
+  /// The returned future resolves as soon as the user message is persisted
+  /// and the turn is started (status `running`) — not when the agent
+  /// finishes. Turn output arrives as live `session.event` notifications,
+  /// so the request itself must not stay in flight for the whole turn: a
+  /// client that backgrounds the app mid-turn would otherwise see the socket
+  /// drop error its still-pending `sessions.send` and restore the draft over
+  /// a message the daemon already received (PROTOCOL.md: turn-start ack).
   Future<void> sendMessage(
     String sessionId,
     String text, {
@@ -429,13 +436,19 @@ class SessionEngine {
       _store.insertAttachment(sessionId, data);
       prepared.add(_PreparedAttachment(data: data, bytes: bytes));
     }
-    final turn = _runTurn(live, text, prepared);
-    live.turn = turn;
-    try {
-      await turn;
-    } finally {
-      live.turn = null;
-    }
+    // Persist the user message, name the session if needed, and flip to
+    // running synchronously — every failure mode below happens before any
+    // agent I/O, so the caller learns it from this future rather than after
+    // a socket drop mid-turn.
+    _beginTurn(live, text, prepared);
+    // The agent prompt runs detached; its completion clears the turn slot.
+    // Errors are emitted as session events (not rethrown to the caller): a
+    // turn that dies after it started is the session's problem, not the
+    // sender's, and the client already cleared its draft on ack.
+    final active = live;
+    active.turn = _driveTurn(active, text, prepared).whenComplete(() {
+      active.turn = null;
+    });
   }
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
@@ -806,11 +819,17 @@ class SessionEngine {
   // Turn machinery
   // -------------------------------------------------------------------------
 
-  Future<void> _runTurn(
+  /// Synchronous turn setup, run before [sendMessage] resolves: resets
+  /// per-turn tool-call state, persists and emits the user message,
+  /// auto-titles a default-named session, and flips status to `running`.
+  /// Every step is synchronous store/event work that cannot block on agent
+  /// I/O, so a caller learns of any failure from the [sendMessage] future
+  /// itself.
+  void _beginTurn(
     _LiveSession live,
     String text,
     List<_PreparedAttachment> attachments,
-  ) async {
+  ) {
     final sessionId = live.sessionId;
     _toolCalls[sessionId] = <String, ToolCall>{};
     _emit(
@@ -833,7 +852,19 @@ class SessionEngine {
       }
     }
     _setStatus(live, SessionStatus.running);
+  }
 
+  /// Drives the agent prompt to completion, detached from the caller's
+  /// [sendMessage] future. Streams mapped updates, emits `turnComplete` and
+  /// returns to `idle` on success; on agent failure emits a `sessionError`
+  /// and marks the session `error` (a turn that dies after it started is the
+  /// session's problem, not the sender's — the sender already got its ack).
+  /// [cancel] and [dispose] observe the in-flight future via `live.turn`.
+  Future<void> _driveTurn(
+    _LiveSession live,
+    String text,
+    List<_PreparedAttachment> attachments,
+  ) async {
     final updates = live.client.sessionUpdates(live.acpSessionId);
     final subscription = updates.listen((update) {
       final event = _mapUpdate(live, update);

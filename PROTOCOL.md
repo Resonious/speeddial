@@ -224,6 +224,11 @@ UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: strin
   an `image` block; text-like types (`text/*`, JSON/XML/YAML, source code, SVG) become an embedded `resource`
   block with `text`; anything else becomes an embedded `resource` block with a base64 `blob`. Resource URIs
   have the form `speeddial-attachment:///<id>/<name>`.
+  The request resolves at turn start — once the `userMessage` event is persisted and the session is
+  `running` — not when the agent finishes. The turn's output arrives as live `session.event` notifications,
+  ending in `turnComplete`; a client awaiting the response only gates the send, never the whole turn, so a
+  connection drop mid-turn errors nothing the caller is still waiting on (the draft is cleared on ack, not
+  on turn completion).
   Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and resumes the
   conversation via ACP `session/load` before starting the turn. Errors `-32003` when the session is closed or its
   provider cannot resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when

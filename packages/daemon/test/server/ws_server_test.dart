@@ -374,10 +374,10 @@ void main() {
           waitForEvent(client, (event) => event is PermissionRequestEvent);
       final send = client.peer.call('sessions.send',
           <String, Object?>{'sessionId': session.id, 'text': 'inspect'});
-      var sendDone = false;
-      unawaited(send.then((_) {
-        sendDone = true;
-      }));
+      // sessions.send resolves at turn start (PROTOCOL.md): the response
+      // arrives once the userMessage is persisted and the session is
+      // running, while the turn parks at the permission request.
+      await send;
 
       final requestParams = await permissionFuture;
       final request = ((requestParams['event']! as Map)['request']! as Map)
@@ -385,8 +385,8 @@ void main() {
       expect(request['toolCallId'], 'tc1');
       expect(request['title'], 'Read example.txt');
 
-      await Future<void>.delayed(Duration.zero);
-      expect(sendDone, isFalse,
+      // The turn is parked (not yet complete) until we respond.
+      expect(client.of('session.event').length, lessThan(10),
           reason: 'the turn is parked until respondPermission');
 
       await client.peer.call('sessions.respondPermission', <String, Object?>{
@@ -394,8 +394,6 @@ void main() {
         'requestId': request['requestId']! as String,
         'optionId': 'allow',
       });
-      await send;
-      expect(sendDone, isTrue);
 
       // All ten events arrived in the order the agent produced them. The
       // turn's tail (usage, turnComplete) is emitted asynchronously after the
