@@ -20,6 +20,7 @@ import '../engine/session_engine.dart';
 import '../git/git_service.dart';
 import '../git/pr_service.dart';
 import '../mcp/built_in_mcp_server.dart';
+import '../mcp/mcp_proxy.dart';
 import '../paths.dart';
 import '../git/summary_watcher.dart';
 import '../providers/provider_registry.dart';
@@ -83,10 +84,14 @@ const List<String> _kProtocolMethods = <String>[
 
 const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpAuthenticate',
+  'internal.mcpListTools',
+  'internal.mcpCallTool',
   'internal.mcpSearchProjects',
   'internal.mcpSearchSessions',
   'internal.mcpDisplayImage',
 ];
+
+typedef _McpCredential = ({String secret, String projectId, String cwd});
 
 /// One connected client: its peer, socket, and authentication state.
 class _Client {
@@ -100,6 +105,7 @@ class _Client {
   final WebSocket socket;
   bool authenticated;
   String? mcpSessionId;
+  McpProxySession? mcpProxy;
 }
 
 /// Implements the SpeedDial daemon wire API over WebSocket JSON-RPC.
@@ -111,6 +117,7 @@ class SpeedDialServer {
     GitService? git,
     PrService? pr,
     String? authToken,
+    McpUpstreamConnector? mcpConnector,
     this.gitPollInterval = const Duration(seconds: 15),
     this.gitFetchInterval = const Duration(minutes: 2),
   }) : _engine = engine, // ignore: prefer_initializing_formals
@@ -118,7 +125,8 @@ class SpeedDialServer {
        _providers = providers, // ignore: prefer_initializing_formals
        _authToken = authToken, // ignore: prefer_initializing_formals
        _git = git ?? GitService(),
-       _pr = pr ?? PrService() {
+       _pr = pr ?? PrService(),
+       _mcpConnector = mcpConnector ?? connectMcpUpstream {
     _init();
   }
 
@@ -132,6 +140,7 @@ class SpeedDialServer {
     String? authToken,
     GitService? git,
     PrService? pr,
+    McpUpstreamConnector? mcpConnector,
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
   }) async {
@@ -142,6 +151,7 @@ class SpeedDialServer {
       authToken: authToken,
       git: git,
       pr: pr,
+      mcpConnector: mcpConnector,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
     );
@@ -155,13 +165,24 @@ class SpeedDialServer {
   final String? _authToken;
   final GitService _git;
   final PrService _pr;
+  final McpUpstreamConnector _mcpConnector;
   final FsService _fs = FsService();
   final Uuid _uuid = const Uuid();
-  final Map<String, String> _mcpSecretsBySession = <String, String>{};
+  final Map<String, _McpCredential> _mcpCredentialsBySession =
+      <String, _McpCredential>{};
   McpOAuthService? _oauth;
 
-  String _mcpSecretForSession(String sessionId) => _mcpSecretsBySession
-      .putIfAbsent(sessionId, () => '${_uuid.v4()}${_uuid.v4()}');
+  String _mcpSecretForSession(Session session) {
+    final _McpCredential? existing = _mcpCredentialsBySession[session.id];
+    if (existing != null) return existing.secret;
+    final String secret = '${_uuid.v4()}${_uuid.v4()}';
+    _mcpCredentialsBySession[session.id] = (
+      secret: secret,
+      projectId: session.projectId,
+      cwd: session.cwd,
+    );
+    return secret;
+  }
 
   /// How often the summary watcher recomputes session summaries, and how
   /// often it refetches a project's base branches. Injectable for tests.
@@ -200,6 +221,7 @@ class SpeedDialServer {
     await _changesSub.cancel();
     await _removalsSub.cancel();
     for (final client in _clients.toList()) {
+      await client.mcpProxy?.close();
       client.peer.close();
       unawaited(
         client.socket
@@ -247,7 +269,7 @@ class SpeedDialServer {
     });
     _removalsSub = _engine.sessionRemovals.listen((sessionId) {
       _createdBroadcast.remove(sessionId);
-      _mcpSecretsBySession.remove(sessionId);
+      _mcpCredentialsBySession.remove(sessionId);
       _broadcast('session.removed', <String, Object?>{'sessionId': sessionId});
     });
   }
@@ -377,6 +399,9 @@ class SpeedDialServer {
 
   void _dropClient(_Client client, StreamController<Object?> incoming) {
     _clients.remove(client);
+    final McpProxySession? proxy = client.mcpProxy;
+    client.mcpProxy = null;
+    if (proxy != null) unawaited(proxy.close());
     client.peer.close();
     if (!incoming.isClosed) incoming.close();
   }
@@ -411,6 +436,8 @@ class SpeedDialServer {
     }
     if (client.mcpSessionId != null) {
       return switch (method) {
+        'internal.mcpListTools' => _mcpListTools(client),
+        'internal.mcpCallTool' => _mcpCallTool(client, params),
         'internal.mcpSearchProjects' => _mcpSearchProjects(client, params),
         'internal.mcpSearchSessions' => _mcpSearchSessions(client, params),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
@@ -482,13 +509,41 @@ class SpeedDialServer {
   Object? _mcpAuthenticate(_Client client, Map<String, Object?> params) {
     final String secret = _requiredString(params, 'secret');
     final String sessionId = _requiredString(params, 'sessionId');
-    if (_mcpSecretsBySession[sessionId] != secret ||
-        _store.getSession(sessionId) == null) {
+    final _McpCredential? credential = _mcpCredentialsBySession[sessionId];
+    if (credential == null || credential.secret != secret) {
       throw DaemonError(kErrUnauthenticated, 'invalid MCP credentials');
     }
+    final McpProxySession? previous = client.mcpProxy;
+    if (previous != null) unawaited(previous.close());
     client.authenticated = false;
     client.mcpSessionId = sessionId;
+    client.mcpProxy = McpProxySession(
+      servers: _store.listEnabledMcpServersFor(credential.projectId),
+      cwd: credential.cwd,
+      connector: _mcpConnector,
+    );
     return <String, Object?>{'ok': true};
+  }
+
+  Future<Object?> _mcpListTools(_Client client) async {
+    final McpProxyListResult result = await client.mcpProxy!.listTools();
+    return <String, Object?>{
+      'tools': result.tools,
+      'warnings': result.warnings,
+    };
+  }
+
+  Future<Object?> _mcpCallTool(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final String name = _requiredString(params, 'name');
+    final Map<String, Object?> arguments = switch (params['arguments']) {
+      null => const <String, Object?>{},
+      final Map value => value.cast<String, Object?>(),
+      _ => throw DaemonError(_kErrInvalidParams, 'arguments must be an object'),
+    };
+    return client.mcpProxy!.callTool(name, arguments);
   }
 
   Object? _mcpSearchProjects(_Client client, Map<String, Object?> params) {

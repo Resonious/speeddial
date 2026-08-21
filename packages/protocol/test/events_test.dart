@@ -52,6 +52,18 @@ void main() {
     outputTokens: 50,
     totalTokens: 150,
     cost: '0.0030',
+    cacheReadTokens: 80,
+    cacheCreationTokens: 20,
+    contextUsedTokens: 4096,
+    contextLimitTokens: 200000,
+  );
+
+  const activity = AgentActivity(
+    id: 'ante-extensions-s1',
+    kind: 'extensions',
+    title: 'Extensions refreshed',
+    status: AgentActivityStatus.completed,
+    details: <String>['Skills: commit, review'],
   );
 
   const attachment = Attachment(
@@ -113,6 +125,14 @@ void main() {
       type: 'usage',
     ),
     (
+      event: AgentActivityEvent(
+        activity: activity,
+        seq: 9,
+        timestamp: timestamp,
+      ),
+      type: 'agentActivity',
+    ),
+    (
       event: TurnCompleteEvent(
         stopReason: 'end_turn',
         seq: 9,
@@ -158,6 +178,7 @@ void main() {
       PermissionRequestEvent(request: permissionRequest),
       PermissionResolvedEvent(requestId: 'r', optionId: 'o'),
       UsageEvent(usage: usage),
+      AgentActivityEvent(activity: activity),
       TurnCompleteEvent(stopReason: 'cancelled'),
       SessionErrorEvent(message: 'boom'),
     ];
@@ -293,6 +314,21 @@ void main() {
     }) as UsageEvent;
     expect(usageEvent.usage.totalTokens, 3);
     expect(usageEvent.usage.cost, isNull);
+    expect(usageEvent.usage.contextUsedTokens, isNull);
+
+    final activityEvent = SessionEvent.fromJson(const {
+      'type': 'agentActivity',
+      'activity': {
+        'id': 'a1',
+        'kind': 'compaction',
+        'title': 'Compacting conversation',
+        'status': 'running',
+        'details': ['Summarizing history'],
+      },
+    }) as AgentActivityEvent;
+    expect(activityEvent.activity.kind, 'compaction');
+    expect(activityEvent.activity.status, AgentActivityStatus.running);
+    expect(activityEvent.activity.details, ['Summarizing history']);
 
     final done = SessionEvent.fromJson(const {
       'type': 'turnComplete',

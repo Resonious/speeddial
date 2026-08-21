@@ -41,7 +41,7 @@ DaemonInfo = {
 }
 
 ProviderInfo = {
-  id: string,                 // "omp" | "claude" | "codex" | custom
+  id: string,                 // "omp" | "claude" | "codex" | "ante" | custom
   name: string,               // display name
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)
@@ -181,6 +181,7 @@ SessionEvent =
   | { type: "permissionRequest", request: PermissionRequest }
   | { type: "permissionResolved", requestId: string, optionId: string }
   | { type: "usage", usage: UsageInfo }
+  | { type: "agentActivity", activity: AgentActivity } // provider lifecycle/background activity; snapshots match by activity.id
   | { type: "turnComplete", stopReason: string }       // "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...
   | { type: "sessionError", message: string }
 
@@ -209,7 +210,24 @@ PermissionRequest = {
 }
 PermissionOption = { optionId: string, name: string, kind: "allow_once" | "allow_always" | "reject_once" | "reject_always" }
 
-UsageInfo = { inputTokens: int, outputTokens: int, totalTokens: int, cost: string | null }
+AgentActivity = {
+  id: string,
+  kind: string,               // provider-defined category, e.g. "session" | "extensions" | "info"
+  title: string,
+  status: "running" | "completed" | "failed",
+  details: string[],          // human-readable detail lines, may be []
+}
+
+UsageInfo = {
+  inputTokens: int,
+  outputTokens: int,
+  totalTokens: int,
+  cost: string | null,
+  cacheReadTokens?: int,
+  cacheCreationTokens?: int,
+  contextUsedTokens?: int,
+  contextLimitTokens?: int,
+}
 ```
 
 ## Methods
@@ -247,12 +265,31 @@ on the daemon and never returned—`secretNames` lets clients replace or remove 
 immutable: when absent the profile applies daemon-wide; when present it must name an existing
 project and applies only to that project's sessions. Daemon-wide and matching project profiles are
 combined. Names remain unique case-insensitively across the daemon, and `speeddial` is reserved for
-the built-in server. Enabled matching profiles are appended to ACP `session/new` and `session/load`;
-HTTP profiles are included only when the agent advertises `mcpCapabilities.http`. A daemon-wide
-change reloads every compatible session; a project change reloads only that project's sessions.
-Idle `session/load`-capable agents are parked immediately and running agents before their following
-turn. Agents without `session/load` retain their current list; all new sessions receive the saved
+the built-in bridge.
+
+Enabled matching profiles are not passed to agent processes. Every compatible agent receives only
+the daemon-owned `speeddial` stdio bridge. After that bridge authenticates, the daemon opens the
+matching upstream stdio processes in the session cwd or Streamable HTTP connections, performs MCP
+initialization, follows `tools/list` pagination, and forwards `tools/call`. HTTP supports JSON and
+SSE responses, resumable SSE event IDs, protocol/session headers, and best-effort session deletion.
+OAuth access tokens are refreshed before provider startup and terminate at the daemon proxy.
+Upstream commands, environment values, URLs, and headers are never included in agent MCP
 configuration.
+
+Managed tools appear inside the `speeddial` server as
+`<normalized-server-name>__<normalized-tool-name>`; deterministic numeric suffixes resolve
+collisions. The bridge preserves each upstream descriptor and result while adding source metadata.
+A profile that fails to initialize contributes a warning without hiding the built-in tools or tools
+from healthy profiles. The upstream connections close with their authenticated bridge connection.
+
+Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file on POSIX) so its
+server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data
+back to the user's real home, preserving auth, sessions, memory, skills, and logs, and removes the
+transient home when Ante exits. Ante-native MCP entries remain direct and available. A daemon-wide
+profile change reloads every compatible session; a project change reloads only that project's
+sessions. Idle resume-capable agents are parked immediately and running agents before their
+following turn. Agents without resume support retain their current connections; all new sessions
+receive the saved configuration.
 
 OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
 RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic
@@ -264,9 +301,9 @@ callback would be insecure and unreachable from a remote device. For `wss` conne
 derives an HTTPS callback from the daemon WebSocket URL. Both use `/oauth/callback`; remote HTTPS
 deployments must route that path to the daemon alongside `/ws`.
 Client secrets, access tokens, and refresh tokens remain in daemon SQLite and never cross the
-public RPC surface. The daemon injects an `Authorization: Bearer ...` header only while constructing
-ACP session configuration and refreshes expiring tokens before session creation/resume and
-periodically while running.
+public RPC surface or enter agent configuration. The daemon adds the current
+`Authorization: Bearer ...` header only to proxied upstream HTTP requests, refreshes expiring
+tokens before session creation/resume, and checks them periodically while running.
 
 
 ### Sessions
@@ -284,12 +321,14 @@ periodically while running.
     to the first `allow_once`), emits the `permissionRequest` and `permissionResolved` events
     back-to-back (the session never enters `waitingPermission`), and the turn continues
     uninterrupted. A request offering no allow option still parks for a client response.
-  — the daemon adopts the agent's ACP `configOptions` at creation: `models`/`thinkingLevels`
-    carry the advertised options and `model`/`thinkingLevel` the agent-reported current values.
-    A `model` argument is applied best-effort via `session/set_config_option` when the agent
-    advertises a model option (the returned session reflects the agent-reported model, which
-    may differ when the agent rejects it); when the agent advertises none, `model` stays a
-    local label as before.
+  — the daemon adopts the agent's configurable model and effort/thinking options at
+    creation: `models`/`thinkingLevels` carry the advertised options and
+    `model`/`thinkingLevel` the agent-reported current values. ACP providers use
+    `configOptions`; Ante uses its catalog plus `SessionStart`/`SessionUpdated`.
+    A `model` argument is applied best-effort through the provider transport when a
+    model option exists (the returned session reflects the provider-reported model,
+    which may differ when the provider rejects it); when the provider advertises none,
+    `model` stays a local label as before.
   — without `title`, the session starts as `New session`; the first user message sent to it
     replaces that placeholder (see `sessions.send`).
 - `sessions.fork {sessionId: string, seq: int}` → `{session: Session}` — creates a new idle
@@ -303,23 +342,28 @@ periodically while running.
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
-  may be empty only when `attachments` is non-empty. Caps: at most 8 attachments, 8 MiB decoded per
-  attachment, 16 MiB decoded total; violations are `-32602`, as are malformed base64 payloads. The daemon
+  may be empty only when `attachments` is non-empty. Attachments are supported by ACP providers;
+  Ante currently rejects a non-empty `attachments` list with `-32602` before persisting the turn.
+  General caps: at most 8 attachments, 8 MiB decoded per attachment, 16 MiB decoded total;
+  violations are `-32602`, as are malformed base64 payloads. For a supporting provider, the daemon
   persists each payload (fetchable later via `attachments.read`), records the metadata on the turn's
-  `userMessage` event, and forwards the files to the agent as ACP prompt content blocks: `image/*` becomes
-  an `image` block; text-like types (`text/*`, JSON/XML/YAML, source code, SVG) become an embedded `resource`
-  block with `text`; anything else becomes an embedded `resource` block with a base64 `blob`. Resource URIs
-  have the form `speeddial-attachment:///<id>/<name>`.
+  `userMessage` event, and forwards the files as ACP prompt content blocks: `image/*` becomes
+  an `image` block; text-like types (`text/*`, JSON/XML/YAML, source code, SVG) become an embedded
+  `resource` block with `text`; anything else becomes an embedded `resource` block with a base64
+  `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`.
   The request resolves at turn start — once the `userMessage` event is persisted and the session is
   `running` — not when the agent finishes. The turn's output arrives as live `session.event` notifications,
   ending in `turnComplete`; a client awaiting the response only gates the send, never the whole turn, so a
   connection drop mid-turn errors nothing the caller is still waiting on (the draft is cleared on ack, not
   on turn completion).
-  Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and resumes the
-  conversation via ACP `session/load` before starting the turn. Errors `-32003` when the session is closed or its
-  provider cannot resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
-  the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks the session
-  `error` and appends a `sessionError` event to its history; the session becomes usable again on the next send.
+  Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and
+  resumes the conversation through the provider transport before starting the turn. ACP uses
+  `session/load`; Ante starts the persisted Ante session id and suppresses replayed history until
+  the next live `TurnStart`. Errors `-32003` when the session is closed or its ACP provider cannot
+  resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
+  the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks
+  the session `error` and appends a `sessionError` event to its history; the session becomes usable
+  again on the next send.
   A session still titled `New session` is auto-titled from `text`'s first line (whitespace-collapsed,
   capped at 60 characters) right after the `userMessage` event is persisted, and the change is
   broadcast as `session.updated`; explicitly set titles are never overwritten, and an
@@ -352,8 +396,9 @@ periodically while running.
 
 ### Built-in MCP bridge (daemon-private)
 
-Every ACP `session/new` and `session/load` request includes a daemon-owned stdio MCP server named
-`speeddial`. It exposes:
+Every compatible provider session includes a daemon-owned stdio MCP server named `speeddial`.
+ACP receives it directly in `session/new`/`session/load`; Ante receives it through the transient
+home described above. It exposes:
 
 - `search_projects {query?: string}` — lists projects whose name/path contains the
   case-insensitive query; an empty query lists all known projects.
@@ -367,12 +412,14 @@ Every ACP `session/new` and `session/load` request includes a daemon-owned stdio
   `attachments.read`. The MCP result also includes MCP image content for the model.
 
 The subprocess connects to `/ws` over loopback and must first call
-`internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret is bound
-to each session and injected with its owning session id only into that session's ACP MCP configuration.
-An authenticated MCP bridge may call only `internal.mcpSearchProjects`,
-`internal.mcpSearchSessions`, and `internal.mcpDisplayImage`; it cannot call the public daemon API
-and receives no broadcasts.
-Public clients cannot use the internal methods without the MCP secret.
+`internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret and the
+session's project/cwd proxy context are registered before provider startup; only the bridge process
+receives that session-bound secret. It may then call
+`internal.mcpListTools {}` → `{tools: Tool[], warnings: string[]}`,
+`internal.mcpCallTool {name: string, arguments: object}` → the upstream MCP call result,
+`internal.mcpSearchProjects`, `internal.mcpSearchSessions`, and `internal.mcpDisplayImage`. It
+cannot call the public daemon API and receives no broadcasts. Public clients cannot use the
+internal methods without the MCP secret.
 
 ### Files (paths are relative to the project root; absolute rejected with `-32602`)
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending

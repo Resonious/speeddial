@@ -418,6 +418,9 @@ String summarizeSessionEvent(SessionEvent event) {
       '[usage] in=${usage.inputTokens} '
           'out=${usage.outputTokens} total=${usage.totalTokens}'
           '${usage.cost == null ? '' : ' cost=\$${usage.cost}'}',
+    AgentActivityEvent(:final activity) =>
+      '[${activity.kind}] ${_oneLine(activity.title)} '
+          '(${activity.status.wire})',
     TurnCompleteEvent(:final stopReason) => '[done] $stopReason',
     SessionErrorEvent(:final message) => '[error] ${_oneLine(message)}',
   };

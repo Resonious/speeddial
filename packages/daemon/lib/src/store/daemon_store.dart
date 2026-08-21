@@ -11,7 +11,7 @@
 ///   * `sessions`       id PK, project_id FK→projects, provider_id, title,
 ///                      status, mode, model NULL, models TEXT JSON-array
 ///                      (default '[]'), cwd, base_branch NULL,
-///                      acp_session_id NULL (provider-side id for resume),
+///                      acp_session_id NULL (legacy column for provider-side resume id),
 ///                      fork_context_seq NULL (copied history to inject into
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
@@ -796,12 +796,13 @@ class DaemonStore {
     _db.execute('DELETE FROM sessions WHERE id = ?', [id]);
   }
 
-  /// Persists the provider-side ACP session id for [sessionId] so the
-  /// session can be resumed (ACP `session/load`) after a daemon restart.
+  /// Persists the provider-side session id for [sessionId] so the provider
+  /// can resume it after a daemon restart. The legacy SQLite column remains
+  /// `acp_session_id` to preserve existing databases.
   /// Throws `DaemonError(kErrNotFound)` for an unknown id.
-  void setAcpSessionId(String sessionId, String acpSessionId) {
+  void setProviderSessionId(String sessionId, String providerSessionId) {
     _db.execute('UPDATE sessions SET acp_session_id = ? WHERE id = ?', [
-      acpSessionId,
+      providerSessionId,
       sessionId,
     ]);
     if (_db.updatedRows == 0) {
@@ -809,9 +810,9 @@ class DaemonStore {
     }
   }
 
-  /// The stored ACP session id for [sessionId]; null for unknown sessions
-  /// and for sessions persisted before resume support existed.
-  String? acpSessionIdOf(String sessionId) {
+  /// The stored provider-side session id for [sessionId]; null for unknown
+  /// sessions and for sessions persisted before resume support existed.
+  String? providerSessionIdOf(String sessionId) {
     final rows = _db.select(
       'SELECT acp_session_id FROM sessions WHERE id = ?',
       [sessionId],

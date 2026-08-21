@@ -21,8 +21,7 @@ Future<void> _waitUntil(
   }
 }
 
-Future<void> _flushMicrotasks() =>
-    Future<void>.delayed(Duration.zero);
+Future<void> _flushMicrotasks() => Future<void>.delayed(Duration.zero);
 
 /// Fake whose listing/history calls are counted and whose history fetch can
 /// be failed on demand.
@@ -41,7 +40,9 @@ class _InstrumentedFake extends FakeDaemonClient {
   }) {
     listSessionsCalls++;
     return super.listSessions(
-        projectId: projectId, includeArchived: includeArchived);
+      projectId: projectId,
+      includeArchived: includeArchived,
+    );
   }
 
   @override
@@ -59,7 +60,8 @@ class _InstrumentedFake extends FakeDaemonClient {
     historyCalls++;
     if (failHistory) {
       return Future<({List<SessionEvent> events, bool hasMore})>.error(
-          StateError('daemon unreachable'));
+        StateError('daemon unreachable'),
+      );
     }
     return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
   }
@@ -92,7 +94,8 @@ class _GatedPageFake extends FakeDaemonClient {
     if (beforeSeq != null) {
       if (failOlderPages) {
         return Future<({List<SessionEvent> events, bool hasMore})>.error(
-            StateError('daemon unreachable mid-backfill'));
+          StateError('daemon unreachable mid-backfill'),
+        );
       }
       if (!_open) {
         _gate ??= Completer<void>();
@@ -119,39 +122,45 @@ void main() {
     app.dispose();
   });
 
-  test('clientFor resolves registered clients and rejects unknown ids', () async {
-    expect(app.clientFor('fake'), same(fake));
-    expect(
-      () => app.clientFor('nope'),
-      throwsA(isA<StateError>()),
-    );
-  });
+  test(
+    'clientFor resolves registered clients and rejects unknown ids',
+    () async {
+      expect(app.clientFor('fake'), same(fake));
+      expect(() => app.clientFor('nope'), throwsA(isA<StateError>()));
+    },
+  );
 
   group('projects', () {
-    test('refresh/add/remove update the cache and lastError stays null', () async {
-      expect(app.projects.projectsFor('fake'), isEmpty);
+    test(
+      'refresh/add/remove update the cache and lastError stays null',
+      () async {
+        expect(app.projects.projectsFor('fake'), isEmpty);
 
-      await app.projects.refresh('fake');
-      expect(app.projects.isLoading('fake'), isFalse);
-      final List<Project> seeded = app.projects.projectsFor('fake');
-      expect(seeded, hasLength(1));
-      expect(seeded.single.name, 'Demo Project');
-      expect(seeded.single.path, '/demo');
+        await app.projects.refresh('fake');
+        expect(app.projects.isLoading('fake'), isFalse);
+        final List<Project> seeded = app.projects.projectsFor('fake');
+        expect(seeded, hasLength(1));
+        expect(seeded.single.name, 'Demo Project');
+        expect(seeded.single.path, '/demo');
 
-      final Project added =
-          await app.projects.add('fake', '/work/other', name: 'Other');
-      expect(added.name, 'Other');
-      expect(app.projects.projectsFor('fake'), hasLength(2));
-      expect(
-        app.projects.projectsFor('fake').map((Project p) => p.name),
-        containsAll(<String>['Demo Project', 'Other']),
-      );
+        final Project added = await app.projects.add(
+          'fake',
+          '/work/other',
+          name: 'Other',
+        );
+        expect(added.name, 'Other');
+        expect(app.projects.projectsFor('fake'), hasLength(2));
+        expect(
+          app.projects.projectsFor('fake').map((Project p) => p.name),
+          containsAll(<String>['Demo Project', 'Other']),
+        );
 
-      await app.projects.remove('fake', added.id);
-      expect(app.projects.projectsFor('fake'), hasLength(1));
-      expect(app.projects.projectsFor('fake').single.id, 'proj-demo');
-      expect(app.projects.lastError, isNull);
-    });
+        await app.projects.remove('fake', added.id);
+        expect(app.projects.projectsFor('fake'), hasLength(1));
+        expect(app.projects.projectsFor('fake').single.id, 'proj-demo');
+        expect(app.projects.lastError, isNull);
+      },
+    );
 
     test('isLoading is true while a refresh is in flight', () async {
       final Future<void> refreshing = app.projects.refresh('fake');
@@ -181,142 +190,164 @@ void main() {
   });
 
   group('sessions', () {
-    test('create/refresh/rename/archive/delete keep the cache consistent', () async {
-      final String projectId = (await fake.listProjects()).single.id;
+    test(
+      'create/refresh/rename/archive/delete keep the cache consistent',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
 
-      await app.sessions.refresh('fake', projectId: projectId);
-      expect(app.sessions.sessionsFor(projectId), hasLength(2));
-      expect(app.sessions.byId('sess-1')?.title, 'Build the feature');
-      expect(app.sessions.byId('sess-2')?.mode, SessionMode.plan);
+        await app.sessions.refresh('fake', projectId: projectId);
+        expect(app.sessions.sessionsFor(projectId), hasLength(2));
+        expect(app.sessions.byId('sess-1')?.title, 'Build the feature');
+        expect(app.sessions.byId('sess-2')?.mode, SessionMode.plan);
 
-      final Session created = await app.sessions.create(
-        'fake',
-        projectId: projectId,
-        providerId: 'omp',
-        title: 'Fresh',
-      );
-      expect(created.mode, SessionMode.build);
-      expect(app.sessions.byId(created.id), isNotNull);
-      expect(app.sessions.sessionsFor(projectId), hasLength(3));
+        final Session created = await app.sessions.create(
+          'fake',
+          projectId: projectId,
+          providerId: 'omp',
+          title: 'Fresh',
+        );
+        expect(created.mode, SessionMode.build);
+        expect(app.sessions.byId(created.id), isNotNull);
+        expect(app.sessions.sessionsFor(projectId), hasLength(3));
 
-      await app.sessions.rename('fake', created.id, 'Renamed');
-      expect(app.sessions.byId(created.id)!.title, 'Renamed');
+        await app.sessions.rename('fake', created.id, 'Renamed');
+        expect(app.sessions.byId(created.id)!.title, 'Renamed');
 
-      await app.sessions.setMode('fake', created.id, SessionMode.plan);
-      expect(app.sessions.byId(created.id)!.mode, SessionMode.plan);
+        await app.sessions.setMode('fake', created.id, SessionMode.plan);
+        expect(app.sessions.byId(created.id)!.mode, SessionMode.plan);
 
-      await app.sessions.archive('fake', created.id, true);
-      expect(app.sessions.byId(created.id)!.archived, isTrue);
+        await app.sessions.archive('fake', created.id, true);
+        expect(app.sessions.byId(created.id)!.archived, isTrue);
 
-      await app.sessions.delete('fake', created.id);
-      expect(app.sessions.byId(created.id), isNull);
-      expect(app.sessions.sessionsFor(projectId), hasLength(2));
+        await app.sessions.delete('fake', created.id);
+        expect(app.sessions.byId(created.id), isNull);
+        expect(app.sessions.sessionsFor(projectId), hasLength(2));
 
-      // A full refresh (all projects) keeps everything sane.
-      await app.sessions.refresh('fake');
-      expect(app.sessions.sessionsFor(projectId), hasLength(2));
-    });
+        // A full refresh (all projects) keeps everything sane.
+        await app.sessions.refresh('fake');
+        expect(app.sessions.sessionsFor(projectId), hasLength(2));
+      },
+    );
 
-    test('reacts to daemon sessionUpdates / sessionRemovals without a refresh',
-        () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.sessions.refresh('fake', projectId: projectId);
-      expect(app.sessions.byId('sess-1')!.title, 'Build the feature');
+    test(
+      'reacts to daemon sessionUpdates / sessionRemovals without a refresh',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.sessions.refresh('fake', projectId: projectId);
+        expect(app.sessions.byId('sess-1')!.title, 'Build the feature');
 
-      // A daemon-side rename (no store call): the subscription upserts.
-      await fake.renameSession('sess-1', 'Renamed externally');
-      await _flushMicrotasks();
-      expect(app.sessions.byId('sess-1')!.title, 'Renamed externally');
-      expect(
-        app.sessions
-            .sessionsFor(projectId)
-            .singleWhere((Session s) => s.id == 'sess-1')
-            .title,
-        'Renamed externally',
-      );
+        // A daemon-side rename (no store call): the subscription upserts.
+        await fake.renameSession('sess-1', 'Renamed externally');
+        await _flushMicrotasks();
+        expect(app.sessions.byId('sess-1')!.title, 'Renamed externally');
+        expect(
+          app.sessions
+              .sessionsFor(projectId)
+              .singleWhere((Session s) => s.id == 'sess-1')
+              .title,
+          'Renamed externally',
+        );
 
-      // A daemon-side create lands in the bucket too.
-      final Session created =
-          await fake.createSession(projectId: projectId, providerId: 'omp');
-      await _flushMicrotasks();
-      expect(app.sessions.byId(created.id), isNotNull);
-      expect(app.sessions.sessionsFor(projectId), hasLength(3));
+        // A daemon-side create lands in the bucket too.
+        final Session created = await fake.createSession(
+          projectId: projectId,
+          providerId: 'omp',
+        );
+        await _flushMicrotasks();
+        expect(app.sessions.byId(created.id), isNotNull);
+        expect(app.sessions.sessionsFor(projectId), hasLength(3));
 
-      // A daemon-side delete removes it.
-      await fake.deleteSession(created.id);
-      await _flushMicrotasks();
-      expect(app.sessions.byId(created.id), isNull);
-      expect(app.sessions.sessionsFor(projectId), hasLength(2));
-    });
+        // A daemon-side delete removes it.
+        await fake.deleteSession(created.id);
+        await _flushMicrotasks();
+        expect(app.sessions.byId(created.id), isNull);
+        expect(app.sessions.sessionsFor(projectId), hasLength(2));
+      },
+    );
 
-    test('byId prefers the most recently used daemon for a shared id',
-        () async {
-      final FakeDaemonClient fake2 = FakeDaemonClient();
-      app.registerClient('fake2', fake2);
-      await app.sessions.refresh('fake');
-      await app.sessions.refresh('fake2'); // last used for both daemons
+    test(
+      'byId prefers the most recently used daemon for a shared id',
+      () async {
+        final FakeDaemonClient fake2 = FakeDaemonClient();
+        app.registerClient('fake2', fake2);
+        await app.sessions.refresh('fake');
+        await app.sessions.refresh('fake2'); // last used for both daemons
 
-      await app.sessions.rename('fake2', 'sess-1', 'From fake2');
-      expect(app.sessions.byId('sess-1')!.title, 'From fake2');
+        await app.sessions.rename('fake2', 'sess-1', 'From fake2');
+        expect(app.sessions.byId('sess-1')!.title, 'From fake2');
 
-      await app.sessions.rename('fake', 'sess-1', 'From fake');
-      expect(app.sessions.byId('sess-1')!.title, 'From fake');
+        await app.sessions.rename('fake', 'sess-1', 'From fake');
+        expect(app.sessions.byId('sess-1')!.title, 'From fake');
 
-      // fake's entry is untouched internally; refreshing fake2 makes fake2's
-      // copy authoritative again for the shared id.
-      await app.sessions.refresh('fake2');
-      expect(app.sessions.byId('sess-1')!.title, 'From fake2');
-    });
+        // fake's entry is untouched internally; refreshing fake2 makes fake2's
+        // copy authoritative again for the shared id.
+        await app.sessions.refresh('fake2');
+        expect(app.sessions.byId('sess-1')!.title, 'From fake2');
+      },
+    );
   });
 
   group('chat', () {
-    test('watch buffers events, merges chunks, derives status and usage', () async {
-      final String sessionId = (await fake.listSessions()).first.id;
-      app.chat.watchSession('fake', sessionId);
+    test(
+      'watch buffers events, merges chunks, derives status and usage',
+      () async {
+        final String sessionId = (await fake.listSessions()).first.id;
+        app.chat.watchSession('fake', sessionId);
 
-      await app.chat.send('fake', sessionId, 'hello');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
+        await app.chat.send('fake', sessionId, 'hello');
+        await _waitUntil(
+          () => app.chat
+              .eventsFor(sessionId)
+              .any((SessionEvent e) => e is TurnCompleteEvent),
+        );
 
-      final List<SessionEvent> events = app.chat.eventsFor(sessionId);
-      // The three chunk deltas merged into a single concatenated event.
-      final List<AgentMessageChunkEvent> chunks =
-          events.whereType<AgentMessageChunkEvent>().toList();
-      expect(chunks, hasLength(1));
-      expect(chunks.single.text,
-          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.');
+        final List<SessionEvent> events = app.chat.eventsFor(sessionId);
+        // The three chunk deltas merged into a single concatenated event.
+        final List<AgentMessageChunkEvent> chunks = events
+            .whereType<AgentMessageChunkEvent>()
+            .toList();
+        expect(chunks, hasLength(1));
+        expect(
+          chunks.single.text,
+          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.',
+        );
 
-      // Tool call appears once per status transition, plan and usage once.
-      expect(events.whereType<ToolCallEvent>(), hasLength(2));
-      expect(events.whereType<PlanEvent>().single.entries, hasLength(2));
-      expect(app.chat.usageOf(sessionId)?.totalTokens, 1500);
-      expect(events.last, isA<TurnCompleteEvent>());
+        // Tool call appears once per status transition, plan and usage once.
+        expect(events.whereType<ToolCallEvent>(), hasLength(2));
+        expect(events.whereType<PlanEvent>().single.entries, hasLength(2));
+        expect(app.chat.usageOf(sessionId)?.totalTokens, 1500);
+        expect(events.last, isA<TurnCompleteEvent>());
 
-      // Status: idle once the turn completed.
-      expect(app.chat.statusOf(sessionId), SessionStatus.idle);
-      expect(app.chat.modeOf(sessionId), SessionMode.build);
-    });
+        // Status: idle once the turn completed.
+        expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+        expect(app.chat.modeOf(sessionId), SessionMode.build);
+      },
+    );
 
     test('permission flow via the store parks then resolves', () async {
       final String sessionId = (await fake.listSessions()).first.id;
       app.chat.watchSession('fake', sessionId);
 
       await app.chat.send('fake', sessionId, 'please grant permission');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is PermissionRequestEvent));
+      await _waitUntil(
+        () => app.chat
+            .eventsFor(sessionId)
+            .any((SessionEvent e) => e is PermissionRequestEvent),
+      );
 
       expect(app.chat.statusOf(sessionId), SessionStatus.waitingPermission);
       expect(
-        app.chat.eventsFor(sessionId).any((SessionEvent e) => e is TurnCompleteEvent),
+        app.chat
+            .eventsFor(sessionId)
+            .any((SessionEvent e) => e is TurnCompleteEvent),
         isFalse,
       );
 
-      final PermissionRequestEvent request = app.chat
-          .eventsFor(sessionId)
-          .singleWhere((SessionEvent e) => e is PermissionRequestEvent)
-          as PermissionRequestEvent;
+      final PermissionRequestEvent request =
+          app.chat
+                  .eventsFor(sessionId)
+                  .singleWhere((SessionEvent e) => e is PermissionRequestEvent)
+              as PermissionRequestEvent;
       await app.chat.respondPermission(
         'fake',
         sessionId,
@@ -324,9 +355,11 @@ void main() {
         request.request.options.first.optionId,
       );
 
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
+      await _waitUntil(
+        () => app.chat
+            .eventsFor(sessionId)
+            .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
       expect(app.chat.statusOf(sessionId), SessionStatus.idle);
       expect(
         app.chat
@@ -342,9 +375,11 @@ void main() {
       // Run a full turn first so history() has events to replay.
       final String sessionId = (await fake.listSessions()).first.id;
       await fake.sendMessage(sessionId, 'hello');
-      await _waitUntil(() async => (await fake.history(sessionId))
-          .events
-          .any((SessionEvent e) => e is TurnCompleteEvent));
+      await _waitUntil(
+        () async =>
+            (await fake.history(sessionId)).events
+                .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
 
       int notifications = 0;
       app.chat.addListener(() => notifications++);
@@ -352,9 +387,9 @@ void main() {
       app.chat.watchSession('fake', sessionId);
       await _flushMicrotasks();
 
-      // 11 history events (userMessage + turn) arrive in one batch;
-      // notifications are coalesced; the two chunk runs merge → 2.
-      expect(app.chat.eventsFor(sessionId).length, 8);
+      // 12 history events (userMessage + turn) arrive in one batch;
+      // notifications are coalesced; the two chunk runs merge → 9.
+      expect(app.chat.eventsFor(sessionId).length, 9);
       expect(notifications, 1);
 
       // A second watch for the same session is a no-op.
@@ -363,26 +398,33 @@ void main() {
       expect(notifications, 1);
     });
 
-    test('unwatch stops buffering and releases per-daemon subscriptions', () async {
-      final String sessionId = (await fake.listSessions()).first.id;
-      app.chat.watchSession('fake', sessionId);
-      await app.chat.send('fake', sessionId, 'hello');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
+    test(
+      'unwatch stops buffering and releases per-daemon subscriptions',
+      () async {
+        final String sessionId = (await fake.listSessions()).first.id;
+        app.chat.watchSession('fake', sessionId);
+        await app.chat.send('fake', sessionId, 'hello');
+        await _waitUntil(
+          () => app.chat
+              .eventsFor(sessionId)
+              .any((SessionEvent e) => e is TurnCompleteEvent),
+        );
 
-      app.chat.unwatch(sessionId);
-      expect(app.chat.eventsFor(sessionId), isEmpty);
-      expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+        app.chat.unwatch(sessionId);
+        expect(app.chat.eventsFor(sessionId), isEmpty);
+        expect(app.chat.statusOf(sessionId), SessionStatus.idle);
 
-      // Watching again reloads history (duplicates dropped by seq).
-      app.chat.watchSession('fake', sessionId);
-      await _flushMicrotasks();
-      final List<SessionEvent> events = app.chat.eventsFor(sessionId);
-      expect(events.whereType<AgentMessageChunkEvent>().single.text,
-          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.');
-      expect(events.whereType<TurnCompleteEvent>(), hasLength(1));
-    });
+        // Watching again reloads history (duplicates dropped by seq).
+        app.chat.watchSession('fake', sessionId);
+        await _flushMicrotasks();
+        final List<SessionEvent> events = app.chat.eventsFor(sessionId);
+        expect(
+          events.whereType<AgentMessageChunkEvent>().single.text,
+          'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.',
+        );
+        expect(events.whereType<TurnCompleteEvent>(), hasLength(1));
+      },
+    );
 
     test('watch backfills multi-page history by paging backwards', () async {
       // Seed more than one page (the store pages at the protocol cap, 1000).
@@ -395,91 +437,104 @@ void main() {
 
       final List<SessionEvent> events = app.chat.eventsFor('sess-1');
       // Both pages arrived, in ascending seq order, with no overlap.
-      expect(events.map((SessionEvent e) => e.seq).toList(),
-          List<int?>.generate(1001, (int i) => i + 1));
       expect(
-        (events.first as UserMessageEvent).text,
-        'm1',
+        events.map((SessionEvent e) => e.seq).toList(),
+        List<int?>.generate(1001, (int i) => i + 1),
       );
-      expect(
-        (events.last as UserMessageEvent).text,
-        'm1001',
-      );
+      expect((events.first as UserMessageEvent).text, 'm1');
+      expect((events.last as UserMessageEvent).text, 'm1001');
 
       // A live event after the backfill continues from the known max seq.
       await app.chat.send('fake', 'sess-1', 'after backfill');
-      await _waitUntil(() => app.chat
-          .eventsFor('sess-1')
-          .any((SessionEvent e) => e is TurnCompleteEvent));
-      // The turn appends 11 raw events, but the 2 thought deltas (1003-1004)
+      await _waitUntil(
+        () => app.chat
+            .eventsFor('sess-1')
+            .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
+      // The turn appends 12 raw events, but the 2 thought deltas (1003-1004)
       // and 3 chunk deltas (1005-1007) each merge into one buffered record:
-      // 1001 + 8 = 1009.
-      expect(app.chat.eventsFor('sess-1'), hasLength(1009));
+      // 1001 + 9 = 1010.
+      expect(app.chat.eventsFor('sess-1'), hasLength(1010));
       // Merged chunk records the last delta's seq; the tail is contiguous.
       expect(
-        app.chat.eventsFor('sess-1').sublist(1001).map((SessionEvent e) => e.seq),
-        <int>[1002, 1004, 1007, 1008, 1009, 1010, 1011, 1012],
+        app.chat
+            .eventsFor('sess-1')
+            .sublist(1001)
+            .map((SessionEvent e) => e.seq),
+        <int>[1002, 1004, 1007, 1008, 1009, 1010, 1011, 1012, 1013],
       );
       expect(
-        (app.chat.eventsFor('sess-1').lastWhere((SessionEvent e) =>
-            e is UserMessageEvent) as UserMessageEvent)
+        (app.chat
+                    .eventsFor('sess-1')
+                    .lastWhere((SessionEvent e) => e is UserMessageEvent)
+                as UserMessageEvent)
             .text,
         'after backfill',
       );
     });
 
-    test('first history page renders before older pages finish loading',
-        () async {
-      // A gated client holds the SECOND page back, proving the store
-      // applies (and reports ready) after the newest page alone.
-      final _GatedPageFake gated = _GatedPageFake();
-      app.registerClient('gated', gated);
-      gated.seedHistory('sess-1', <SessionEvent>[
-        for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
-      ]);
+    test(
+      'first history page renders before older pages finish loading',
+      () async {
+        // A gated client holds the SECOND page back, proving the store
+        // applies (and reports ready) after the newest page alone.
+        final _GatedPageFake gated = _GatedPageFake();
+        app.registerClient('gated', gated);
+        gated.seedHistory('sess-1', <SessionEvent>[
+          for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+        ]);
 
-      app.chat.watchSession('gated', 'sess-1');
-      await _waitUntil(() =>
-          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+        app.chat.watchSession('gated', 'sess-1');
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
 
-      // Only the newest page (m501..m1500) has arrived; the buffer is
-      // already usable and live events apply directly.
-      expect(app.chat.eventsFor('sess-1'), hasLength(1000));
-      expect(
-        (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
-        'm501',
-      );
+        // Only the newest page (m501..m1500) has arrived; the buffer is
+        // already usable and live events apply directly.
+        expect(app.chat.eventsFor('sess-1'), hasLength(1000));
+        expect(
+          (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
+          'm501',
+        );
 
-      gated.releaseNextPage();
-      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
-      // The older page prepended in seq order, above nothing, below all.
-      expect(app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList(),
-          List<int?>.generate(1500, (int i) => i + 1));
-    });
+        gated.releaseNextPage();
+        await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
+        // The older page prepended in seq order, above nothing, below all.
+        expect(
+          app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList(),
+          List<int?>.generate(1500, (int i) => i + 1),
+        );
+      },
+    );
 
-    test('retrying a partially loaded history does not duplicate events',
-        () async {
-      final _GatedPageFake gated = _GatedPageFake()..failOlderPages = true;
-      app.registerClient('gated', gated);
-      gated.seedHistory('sess-1', <SessionEvent>[
-        for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
-      ]);
+    test(
+      'retrying a partially loaded history does not duplicate events',
+      () async {
+        final _GatedPageFake gated = _GatedPageFake()..failOlderPages = true;
+        app.registerClient('gated', gated);
+        gated.seedHistory('sess-1', <SessionEvent>[
+          for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+        ]);
 
-      app.chat.watchSession('gated', 'sess-1');
-      // Page one lands; the second page fetch throws.
-      await _waitUntil(() =>
-          app.chat.historyStatusFor('sess-1') == HistoryStatus.failed);
-      expect(app.chat.eventsFor('sess-1'), hasLength(1000));
+        app.chat.watchSession('gated', 'sess-1');
+        // Page one lands; the second page fetch throws.
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.failed,
+        );
+        expect(app.chat.eventsFor('sess-1'), hasLength(1000));
 
-      gated.failOlderPages = false;
-      gated.releaseNextPage(); // Unblocks the retry's second page.
-      app.chat.retryHistory('gated', 'sess-1');
-      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
-      final List<int?> seqs =
-          app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList();
-      expect(seqs.toSet().length, 1500, reason: 'no duplicated seqs');
-      expect(seqs, List<int?>.generate(1500, (int i) => i + 1));
-    });
+        gated.failOlderPages = false;
+        gated.releaseNextPage(); // Unblocks the retry's second page.
+        app.chat.retryHistory('gated', 'sess-1');
+        await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
+        final List<int?> seqs = app.chat
+            .eventsFor('sess-1')
+            .map((SessionEvent e) => e.seq)
+            .toList();
+        expect(seqs.toSet().length, 1500, reason: 'no duplicated seqs');
+        expect(seqs, List<int?>.generate(1500, (int i) => i + 1));
+      },
+    );
 
     test('revisionFor increments on every buffer mutation', () async {
       final String sessionId = (await fake.listSessions()).first.id;
@@ -490,13 +545,15 @@ void main() {
       expect(app.chat.revisionFor(sessionId), 0); // empty history: no-op watch
 
       await app.chat.send('fake', sessionId, 'hello');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
-      // 11 events (userMessage, 2 thought deltas, 3 chunk deltas, 2 tool
-      // calls, plan, usage, turnComplete); the merged chunk deltas still
-      // count as mutations.
-      expect(app.chat.revisionFor(sessionId), 11);
+      await _waitUntil(
+        () => app.chat
+            .eventsFor(sessionId)
+            .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
+      // 12 events (userMessage, 2 thought deltas, 3 chunk deltas, 2 tool
+      // calls, plan, activity, usage, turnComplete); the merged chunk deltas
+      // still count as mutations.
+      expect(app.chat.revisionFor(sessionId), 12);
 
       // Reading the buffer never bumps the revision.
       final int settled = app.chat.revisionFor(sessionId);
@@ -508,88 +565,117 @@ void main() {
       expect(app.chat.revisionFor(sessionId), 0);
     });
 
-    test('attachmentData fetches payloads and memoizes per attachment',
-        () async {
-      final String sessionId = (await fake.listSessions()).first.id;
-      await fake.sendMessage(sessionId, '', attachments: <OutgoingAttachment>[
-        const OutgoingAttachment(
-          name: 'shot.png',
-          mimeType: 'image/png',
-          data: 'aGVsbG8=',
-        ),
-      ]);
+    test(
+      'attachmentData fetches payloads and memoizes per attachment',
+      () async {
+        final String sessionId = (await fake.listSessions()).first.id;
+        await fake.sendMessage(
+          sessionId,
+          '',
+          attachments: <OutgoingAttachment>[
+            const OutgoingAttachment(
+              name: 'shot.png',
+              mimeType: 'image/png',
+              data: 'aGVsbG8=',
+            ),
+          ],
+        );
 
-      final Future<AttachmentData> first =
-          app.chat.attachmentData('fake', sessionId, 'att-1');
-      final AttachmentData data = await first;
-      expect(data.id, 'att-1');
-      expect(data.name, 'shot.png');
-      expect(data.mimeType, 'image/png');
-      expect(data.data, 'aGVsbG8=');
+        final Future<AttachmentData> first = app.chat.attachmentData(
+          'fake',
+          sessionId,
+          'att-1',
+        );
+        final AttachmentData data = await first;
+        expect(data.id, 'att-1');
+        expect(data.name, 'shot.png');
+        expect(data.mimeType, 'image/png');
+        expect(data.data, 'aGVsbG8=');
 
-      // Attachments are immutable, so repeat reads share one future.
-      expect(
-        app.chat.attachmentData('fake', sessionId, 'att-1'),
-        same(first),
-      );
+        // Attachments are immutable, so repeat reads share one future.
+        expect(
+          app.chat.attachmentData('fake', sessionId, 'att-1'),
+          same(first),
+        );
 
-      // Unknown attachments surface the daemon's not-found code.
-      await expectLater(
-        app.chat.attachmentData('fake', sessionId, 'att-99'),
-        throwsA(isA<DaemonError>()
-            .having((DaemonError e) => e.code, 'code', kErrNotFound)),
-      );
-    });
+        // Unknown attachments surface the daemon's not-found code.
+        await expectLater(
+          app.chat.attachmentData('fake', sessionId, 'att-99'),
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError e) => e.code,
+              'code',
+              kErrNotFound,
+            ),
+          ),
+        );
+      },
+    );
 
-    test('same session id on two daemons stays separate, last watch wins',
-        () async {
-      final FakeDaemonClient fake2 =
-          FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
-      app.registerClient('fake2', fake2);
-      final String sessionId = (await fake.listSessions()).first.id;
+    test(
+      'same session id on two daemons stays separate, last watch wins',
+      () async {
+        final FakeDaemonClient fake2 = FakeDaemonClient(
+          eventDelay: const Duration(milliseconds: 1),
+        );
+        app.registerClient('fake2', fake2);
+        final String sessionId = (await fake.listSessions()).first.id;
 
-      app.chat.watchSession('fake', sessionId);
-      await app.chat.send('fake', sessionId, 'hello');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
-      expect(app.chat.eventsFor(sessionId), isNotEmpty);
-      final int fakeRevisions = app.chat.revisionFor(sessionId);
+        app.chat.watchSession('fake', sessionId);
+        await app.chat.send('fake', sessionId, 'hello');
+        await _waitUntil(
+          () => app.chat
+              .eventsFor(sessionId)
+              .any((SessionEvent e) => e is TurnCompleteEvent),
+        );
+        expect(app.chat.eventsFor(sessionId), isNotEmpty);
+        final int fakeRevisions = app.chat.revisionFor(sessionId);
 
-      // Now watch the same id on fake2: the public getters shift to fake2's
-      // fresh buffer — its own history is empty, unlike fake's full turn.
-      app.chat.watchSession('fake2', sessionId);
-      await _flushMicrotasks();
-      expect(app.chat.eventsFor(sessionId), isEmpty);
-      expect(app.chat.revisionFor(sessionId), 0);
+        // Now watch the same id on fake2: the public getters shift to fake2's
+        // fresh buffer — its own history is empty, unlike fake's full turn.
+        app.chat.watchSession('fake2', sessionId);
+        await _flushMicrotasks();
+        expect(app.chat.eventsFor(sessionId), isEmpty);
+        expect(app.chat.revisionFor(sessionId), 0);
 
-      // A turn on fake2 fills only fake2's buffer; seqs start at 1 again.
-      await app.chat.send('fake2', sessionId, 'hi there');
-      await _waitUntil(() => app.chat
-          .eventsFor(sessionId)
-          .any((SessionEvent e) => e is TurnCompleteEvent));
-      final List<SessionEvent> fake2Events = app.chat.eventsFor(sessionId);
-      expect(fake2Events.first, isA<UserMessageEvent>());
-      expect(fake2Events.first.seq, 1);
-      // 11 raw events; the 2 thought deltas and 3 chunk deltas each merge
-      // into one buffered event whose seq is the last delta's, so the buffer
-      // holds 9 events with seqs [1, 3, 6, 7, 8, 9, 10, 11].
-      expect(fake2Events.map((SessionEvent e) => e.seq).toList(),
-          <int>[1, 3, 6, 7, 8, 9, 10, 11]);
-      expect(app.chat.revisionFor(sessionId), 11);
+        // A turn on fake2 fills only fake2's buffer; seqs start at 1 again.
+        await app.chat.send('fake2', sessionId, 'hi there');
+        await _waitUntil(
+          () => app.chat
+              .eventsFor(sessionId)
+              .any((SessionEvent e) => e is TurnCompleteEvent),
+        );
+        final List<SessionEvent> fake2Events = app.chat.eventsFor(sessionId);
+        expect(fake2Events.first, isA<UserMessageEvent>());
+        expect(fake2Events.first.seq, 1);
+        // 12 raw events; the 2 thought deltas and 3 chunk deltas each merge
+        // into one buffered event whose seq is the last delta's, so the buffer
+        // holds 9 events with seqs [1, 3, 6, 7, 8, 9, 10, 11, 12].
+        expect(fake2Events.map((SessionEvent e) => e.seq).toList(), <int>[
+          1,
+          3,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+        ]);
+        expect(app.chat.revisionFor(sessionId), 12);
 
-      // Unwatching releases the preferred (fake2) buffer; resolution shifts
-      // back to fake's still-watched buffer with its turn intact.
-      app.chat.unwatch(sessionId);
-      await _flushMicrotasks();
-      expect(app.chat.eventsFor(sessionId).first, isA<UserMessageEvent>());
-      expect(app.chat.revisionFor(sessionId), fakeRevisions);
-    });
+        // Unwatching releases the preferred (fake2) buffer; resolution shifts
+        // back to fake's still-watched buffer with its turn intact.
+        app.chat.unwatch(sessionId);
+        await _flushMicrotasks();
+        expect(app.chat.eventsFor(sessionId).first, isA<UserMessageEvent>());
+        expect(app.chat.revisionFor(sessionId), fakeRevisions);
+      },
+    );
   });
 
   group('connection recovery', () {
-    test('failed history load reports failed; retryHistory recovers',
-        () async {
+    test('failed history load reports failed; retryHistory recovers', () async {
       final _InstrumentedFake instrumented = _InstrumentedFake();
       app.registerClient('inst', instrumented);
       instrumented.seedHistory('sess-1', <SessionEvent>[
@@ -600,30 +686,32 @@ void main() {
       // empty; it reports a failed load instead.
       instrumented.failHistory = true;
       app.chat.watchSession('inst', 'sess-1');
-      await _waitUntil(() =>
-          app.chat.historyStatusFor('sess-1') == HistoryStatus.failed);
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.failed,
+      );
       expect(app.chat.eventsFor('sess-1'), isEmpty);
       expect(app.chat.historyErrorFor('sess-1'), isNotNull);
 
       // Back up: the manual retry loads the persisted events.
       instrumented.failHistory = false;
       app.chat.retryHistory('inst', 'sess-1');
-      await _waitUntil(() =>
-          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
       expect(app.chat.eventsFor('sess-1'), hasLength(1));
       expect(app.chat.historyErrorFor('sess-1'), isNull);
     });
 
-    test('a resync refetches sessions, projects and watched history',
-        () async {
+    test('a resync refetches sessions, projects and watched history', () async {
       final _InstrumentedFake instrumented = _InstrumentedFake();
       app.registerClient('inst', instrumented);
 
       await app.projects.refresh('inst');
       await app.sessions.refresh('inst');
       app.chat.watchSession('inst', 'sess-1');
-      await _waitUntil(() =>
-          app.chat.historyStatusFor('sess-1') == HistoryStatus.ready);
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
 
       final int sessionsBefore = instrumented.listSessionsCalls;
       final int projectsBefore = instrumented.listProjectsCalls;
@@ -633,37 +721,54 @@ void main() {
       // store must refetch what it could have missed while offline.
       instrumented.triggerResync();
 
-      await _waitUntil(() =>
-          instrumented.listSessionsCalls > sessionsBefore &&
-          instrumented.listProjectsCalls > projectsBefore &&
-          instrumented.historyCalls > historyBefore);
+      await _waitUntil(
+        () =>
+            instrumented.listSessionsCalls > sessionsBefore &&
+            instrumented.listProjectsCalls > projectsBefore &&
+            instrumented.historyCalls > historyBefore,
+      );
     });
   });
 
   group('files', () {
-    test('entriesFor is null until loaded, then cached per directory', () async {
-      final String projectId = (await fake.listProjects()).single.id;
+    test(
+      'entriesFor is null until loaded, then cached per directory',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
 
-      expect(app.files.entriesFor(projectId, '.'), isNull);
+        expect(app.files.entriesFor(projectId, '.'), isNull);
 
-      await app.files.loadDir('fake', projectId, '.');
-      final List<FileEntry>? root = app.files.entriesFor(projectId, '.');
-      expect(root, isNotNull);
-      expect(root!.map((FileEntry e) => e.name),
-          <String>['lib', 'main.dart', 'pubspec.yaml']);
-      expect(root.map((FileEntry e) => e.isDir).toList(),
-          <bool>[true, false, false]);
+        await app.files.loadDir('fake', projectId, '.');
+        final List<FileEntry>? root = app.files.entriesFor(projectId, '.');
+        expect(root, isNotNull);
+        expect(root!.map((FileEntry e) => e.name), <String>[
+          'lib',
+          'main.dart',
+          'pubspec.yaml',
+        ]);
+        expect(root.map((FileEntry e) => e.isDir).toList(), <bool>[
+          true,
+          false,
+          false,
+        ]);
 
-      // Subdirectory loads independently.
-      expect(app.files.entriesFor(projectId, 'lib'), isNull);
-      await app.files.loadDir('fake', projectId, 'lib');
-      expect(app.files.entriesFor(projectId, 'lib')!.single.name, 'main.dart');
-    });
+        // Subdirectory loads independently.
+        expect(app.files.entriesFor(projectId, 'lib'), isNull);
+        await app.files.loadDir('fake', projectId, 'lib');
+        expect(
+          app.files.entriesFor(projectId, 'lib')!.single.name,
+          'main.dart',
+        );
+      },
+    );
 
     test('readFile passes through content from the client', () async {
       final String projectId = (await fake.listProjects()).single.id;
-      final FileReadResult result =
-          await app.files.readFile('fake', projectId, 'lib/main.dart');
+      final FileReadResult result = await app.files.readFile(
+        'fake',
+        projectId,
+        'lib/main.dart',
+      );
       expect(result.content, contains('runApp'));
       expect(result.isBinary, isFalse);
     });
@@ -687,188 +792,230 @@ void main() {
       expect(status!.branch, 'main');
       expect(status.files.single.path, 'lib/main.dart');
       expect(status.files.single.worktreeStatus, 'M');
-      expect(app.git.branchesFor(projectId)!.map((Branch b) => b.name),
-          <String>['main', 'feature/x']);
-    });
-
-    test('commit records a git error and rethrows when the message is empty', () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.git.refresh('fake', projectId);
-
-      final Future<String> bad = app.git.commit('fake', projectId, '');
-      expect(app.git.isBusy(projectId), isTrue);
-      await expectLater(
-        bad,
-        throwsA(isA<DaemonError>()
-            .having((DaemonError e) => e.code, 'code', kErrGit)),
-      );
-      expect(app.git.isBusy(projectId), isFalse);
-      expect(app.git.errorFor(projectId), isA<DaemonError>());
-
-      // A subsequent success clears the error.
-      final String hash = await app.git.commit('fake', projectId, 'fix stuff');
-      expect(hash, 'deadbeef');
-      expect(app.git.errorFor(projectId), isNull);
-    });
-
-    test('diff returns canned diffs and checkout switches the status branch', () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.git.refresh('fake', projectId);
-
-      final List<GitDiff> diffs = await app.git.diff('fake', projectId);
-      expect(diffs.single.path, 'lib/main.dart');
-      expect(diffs.single.patch, startsWith('--- a/lib/main.dart'));
-
-      await app.git.checkout('fake', projectId, 'feature/x');
-      await app.git.refresh('fake', projectId);
-      expect(app.git.statusFor(projectId)!.branch, 'feature/x');
       expect(
-        app.git.branchesFor(projectId)!.singleWhere((Branch b) => b.isCurrent).name,
-        'feature/x',
+        app.git.branchesFor(projectId)!.map((Branch b) => b.name),
+        <String>['main', 'feature/x'],
       );
     });
 
-    test('session scope keys status/branches/errors per worktree session',
-        () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      final Session session = await app.sessions.create(
-        'fake',
-        projectId: projectId,
-        providerId: 'omp',
-        title: 'Worktree session',
-        baseBranch: 'main',
-      );
-      expect(session.cwd, contains('.speeddial-worktrees'));
+    test(
+      'commit records a git error and rethrows when the message is empty',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.git.refresh('fake', projectId);
 
-      // The session scope is a cache entry of its own: refreshing it shows
-      // the worktree branch and leaves the project entry untouched.
-      expect(app.git.statusFor(projectId, sessionId: session.id), isNull);
-      await app.git.refresh('fake', projectId, sessionId: session.id);
-      final GitStatus sessionStatus =
-          app.git.statusFor(projectId, sessionId: session.id)!;
-      expect(sessionStatus.branch, 'speeddial/${session.id}');
-      expect(sessionStatus.files, isEmpty);
-      expect(
-        app.git
-            .branchesFor(projectId, sessionId: session.id)!
-            .single
-            .name,
-        'speeddial/${session.id}',
-      );
-      expect(app.git.statusFor(projectId), isNull,
-          reason: 'project scope stays empty until refreshed itself');
+        final Future<String> bad = app.git.commit('fake', projectId, '');
+        expect(app.git.isBusy(projectId), isTrue);
+        await expectLater(
+          bad,
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError e) => e.code,
+              'code',
+              kErrGit,
+            ),
+          ),
+        );
+        expect(app.git.isBusy(projectId), isFalse);
+        expect(app.git.errorFor(projectId), isA<DaemonError>());
 
-      await app.git.refresh('fake', projectId);
-      expect(app.git.statusFor(projectId)!.branch, 'main');
-      expect(app.git.statusFor(projectId)!.files, isNotEmpty,
-          reason: 'the project checkout still has its own change');
+        // A subsequent success clears the error.
+        final String hash = await app.git.commit(
+          'fake',
+          projectId,
+          'fix stuff',
+        );
+        expect(hash, 'deadbeef');
+        expect(app.git.errorFor(projectId), isNull);
+      },
+    );
 
-      // Errors are scoped too: a failing commit under the session does not
-      // mark the project entry.
-      await expectLater(
-        app.git.commit('fake', projectId, '', sessionId: session.id),
-        throwsA(isA<DaemonError>()),
-      );
-      expect(app.git.errorFor(projectId, sessionId: session.id),
-          isA<DaemonError>());
-      expect(app.git.errorFor(projectId), isNull);
+    test(
+      'diff returns canned diffs and checkout switches the status branch',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.git.refresh('fake', projectId);
 
-      // A session of another project is rejected (refresh records it).
-      final Project other = await fake.addProject('/other');
-      final Session otherSession = await app.sessions.create(
-        'fake',
-        projectId: other.id,
-        providerId: 'omp',
-      );
-      await app.git.refresh('fake', projectId, sessionId: otherSession.id);
-      expect(app.git.errorFor(projectId, sessionId: otherSession.id),
-          isA<DaemonError>());
-      expect(app.git.statusFor(projectId, sessionId: otherSession.id),
-          isNull);
-    });
+        final List<GitDiff> diffs = await app.git.diff('fake', projectId);
+        expect(diffs.single.path, 'lib/main.dart');
+        expect(diffs.single.patch, startsWith('--- a/lib/main.dart'));
 
-    test('refreshSessionSummaries populates badges and replaces stale entries',
-        () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      expect(app.git.sessionSummaryFor('sess-1'), isNull);
+        await app.git.checkout('fake', projectId, 'feature/x');
+        await app.git.refresh('fake', projectId);
+        expect(app.git.statusFor(projectId)!.branch, 'feature/x');
+        expect(
+          app.git
+              .branchesFor(projectId)!
+              .singleWhere((Branch b) => b.isCurrent)
+              .name,
+          'feature/x',
+        );
+      },
+    );
 
-      await app.git.refreshSessionSummaries('fake', projectId);
-      final SessionGitSummary first = app.git.sessionSummaryFor('sess-1')!;
-      expect(first.dirty, isTrue);
-      expect(first.aheadOfBase, 2);
-      expect(first.mergedIntoBase, isFalse);
-      expect(app.git.sessionSummaryFor('sess-2')!.dirty, isTrue);
-      expect(app.git.sessionSummaryFor('sess-2')!.aheadOfBase, isNull);
-      expect(app.git.sessionSummaryErrorFor('fake', projectId), isNull);
+    test(
+      'session scope keys status/branches/errors per worktree session',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        final Session session = await app.sessions.create(
+          'fake',
+          projectId: projectId,
+          providerId: 'omp',
+          title: 'Worktree session',
+          baseBranch: 'main',
+        );
+        expect(session.cwd, contains('.speeddial-worktrees'));
 
-      // The daemon drops archived sessions from the batch; the store must
-      // drop their cached summaries rather than keep stale badges.
-      await fake.archiveSession('sess-2', true);
-      // The archive notification itself triggers a refresh (idle session);
-      // wait for the replacement to settle, then assert.
-      await _waitUntil(() => app.git.sessionSummaryFor('sess-2') == null);
-      expect(app.git.sessionSummaryFor('sess-1'), isNotNull);
+        // The session scope is a cache entry of its own: refreshing it shows
+        // the worktree branch and leaves the project entry untouched.
+        expect(app.git.statusFor(projectId, sessionId: session.id), isNull);
+        await app.git.refresh('fake', projectId, sessionId: session.id);
+        final GitStatus sessionStatus = app.git.statusFor(
+          projectId,
+          sessionId: session.id,
+        )!;
+        expect(sessionStatus.branch, 'speeddial/${session.id}');
+        expect(sessionStatus.files, isEmpty);
+        expect(
+          app.git.branchesFor(projectId, sessionId: session.id)!.single.name,
+          'speeddial/${session.id}',
+        );
+        expect(
+          app.git.statusFor(projectId),
+          isNull,
+          reason: 'project scope stays empty until refreshed itself',
+        );
 
-      // Scripted change lands on the next refresh.
-      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
-        sessionId: 'sess-1',
-        dirty: false,
-        aheadOfBase: 0,
-        behindBase: 0,
-        mergedIntoBase: true,
-      );
-      await app.git.refreshSessionSummaries('fake', projectId);
-      final SessionGitSummary merged = app.git.sessionSummaryFor('sess-1')!;
-      expect(merged.dirty, isFalse);
-      expect(merged.mergedIntoBase, isTrue);
-    });
+        await app.git.refresh('fake', projectId);
+        expect(app.git.statusFor(projectId)!.branch, 'main');
+        expect(
+          app.git.statusFor(projectId)!.files,
+          isNotEmpty,
+          reason: 'the project checkout still has its own change',
+        );
 
-    test('refreshSessionSummaries records failures without throwing',
-        () async {
+        // Errors are scoped too: a failing commit under the session does not
+        // mark the project entry.
+        await expectLater(
+          app.git.commit('fake', projectId, '', sessionId: session.id),
+          throwsA(isA<DaemonError>()),
+        );
+        expect(
+          app.git.errorFor(projectId, sessionId: session.id),
+          isA<DaemonError>(),
+        );
+        expect(app.git.errorFor(projectId), isNull);
+
+        // A session of another project is rejected (refresh records it).
+        final Project other = await fake.addProject('/other');
+        final Session otherSession = await app.sessions.create(
+          'fake',
+          projectId: other.id,
+          providerId: 'omp',
+        );
+        await app.git.refresh('fake', projectId, sessionId: otherSession.id);
+        expect(
+          app.git.errorFor(projectId, sessionId: otherSession.id),
+          isA<DaemonError>(),
+        );
+        expect(
+          app.git.statusFor(projectId, sessionId: otherSession.id),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'refreshSessionSummaries populates badges and replaces stale entries',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        expect(app.git.sessionSummaryFor('sess-1'), isNull);
+
+        await app.git.refreshSessionSummaries('fake', projectId);
+        final SessionGitSummary first = app.git.sessionSummaryFor('sess-1')!;
+        expect(first.dirty, isTrue);
+        expect(first.aheadOfBase, 2);
+        expect(first.mergedIntoBase, isFalse);
+        expect(app.git.sessionSummaryFor('sess-2')!.dirty, isTrue);
+        expect(app.git.sessionSummaryFor('sess-2')!.aheadOfBase, isNull);
+        expect(app.git.sessionSummaryErrorFor('fake', projectId), isNull);
+
+        // The daemon drops archived sessions from the batch; the store must
+        // drop their cached summaries rather than keep stale badges.
+        await fake.archiveSession('sess-2', true);
+        // The archive notification itself triggers a refresh (idle session);
+        // wait for the replacement to settle, then assert.
+        await _waitUntil(() => app.git.sessionSummaryFor('sess-2') == null);
+        expect(app.git.sessionSummaryFor('sess-1'), isNotNull);
+
+        // Scripted change lands on the next refresh.
+        fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+          sessionId: 'sess-1',
+          dirty: false,
+          aheadOfBase: 0,
+          behindBase: 0,
+          mergedIntoBase: true,
+        );
+        await app.git.refreshSessionSummaries('fake', projectId);
+        final SessionGitSummary merged = app.git.sessionSummaryFor('sess-1')!;
+        expect(merged.dirty, isFalse);
+        expect(merged.mergedIntoBase, isTrue);
+      },
+    );
+
+    test('refreshSessionSummaries records failures without throwing', () async {
       await app.git.refreshSessionSummaries('fake', 'nope');
-      expect(app.git.sessionSummaryErrorFor('fake', 'nope'),
-          isA<DaemonError>());
-    });
-
-    test('an idle session update refetches summaries for a known project',
-        () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.git.refreshSessionSummaries('fake', projectId);
-      expect(app.git.sessionSummaryFor('sess-1')!.mergedIntoBase, isFalse);
-
-      // The turn ended daemon-side (agents commit mid-turn): the next idle
-      // session update must pull the fresh summaries on its own.
-      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
-        sessionId: 'sess-1',
-        dirty: false,
-        aheadOfBase: 0,
-        behindBase: 0,
-        mergedIntoBase: true,
+      expect(
+        app.git.sessionSummaryErrorFor('fake', 'nope'),
+        isA<DaemonError>(),
       );
-      await fake.renameSession('sess-1', 'Renamed (idle update)');
-      await _waitUntil(() =>
-          app.git.sessionSummaryFor('sess-1')?.mergedIntoBase == true);
     });
 
-    test('a git.changed notification refetches summaries for a known project',
-        () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.git.refreshSessionSummaries('fake', projectId);
-      expect(app.git.sessionSummaryFor('sess-1')!.behindBase, 0);
+    test(
+      'an idle session update refetches summaries for a known project',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.git.refreshSessionSummaries('fake', projectId);
+        expect(app.git.sessionSummaryFor('sess-1')!.mergedIntoBase, isFalse);
 
-      // The daemon's watcher noticed the base move on the remote: the
-      // notification alone must pull the fresh summaries, with no turn
-      // having ended and no manual refresh.
-      fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
-        sessionId: 'sess-1',
-        dirty: false,
-        aheadOfBase: 1,
-        behindBase: 3,
-        mergedIntoBase: false,
-      );
-      fake.gitChangedController.add(projectId);
-      await _waitUntil(
-          () => app.git.sessionSummaryFor('sess-1')?.behindBase == 3);
-    });
+        // The turn ended daemon-side (agents commit mid-turn): the next idle
+        // session update must pull the fresh summaries on its own.
+        fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+          sessionId: 'sess-1',
+          dirty: false,
+          aheadOfBase: 0,
+          behindBase: 0,
+          mergedIntoBase: true,
+        );
+        await fake.renameSession('sess-1', 'Renamed (idle update)');
+        await _waitUntil(
+          () => app.git.sessionSummaryFor('sess-1')?.mergedIntoBase == true,
+        );
+      },
+    );
+
+    test(
+      'a git.changed notification refetches summaries for a known project',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.git.refreshSessionSummaries('fake', projectId);
+        expect(app.git.sessionSummaryFor('sess-1')!.behindBase, 0);
+
+        // The daemon's watcher noticed the base move on the remote: the
+        // notification alone must pull the fresh summaries, with no turn
+        // having ended and no manual refresh.
+        fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+          sessionId: 'sess-1',
+          dirty: false,
+          aheadOfBase: 1,
+          behindBase: 3,
+          mergedIntoBase: false,
+        );
+        fake.gitChangedController.add(projectId);
+        await _waitUntil(
+          () => app.git.sessionSummaryFor('sess-1')?.behindBase == 3,
+        );
+      },
+    );
   });
 }

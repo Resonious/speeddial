@@ -11,8 +11,8 @@ import 'model_picker.dart';
 
 /// Picks files for attachment. The record carries the file name and raw
 /// bytes; the composer turns them into base64 [OutgoingAttachment]s.
-typedef AttachmentPicker = Future<List<({String name, Uint8List bytes})>>
-    Function();
+typedef AttachmentPicker =
+    Future<List<({String name, Uint8List bytes})>> Function();
 
 /// Multiline message composer: Enter sends, Shift+Enter inserts a newline,
 /// send is disabled while empty, a stop button replaces send while the
@@ -79,7 +79,7 @@ class Composer extends StatefulWidget {
   /// attachments into the chip row so the draft is never lost. Returning a
   /// future is what lets the composer know the send outcome.
   final Future<void> Function(String text, List<OutgoingAttachment> attachments)
-      onSend;
+  onSend;
   final VoidCallback onStop;
   final ValueChanged<SessionMode> onModeChanged;
 
@@ -132,9 +132,11 @@ class _ComposerState extends State<Composer> {
   /// Default file picker: multi-select with bytes on every desktop, mobile
   /// and web platform (file_picker returns null on cancel).
   static Future<List<({String name, Uint8List bytes})>>
-      _defaultAttachmentPicker() async {
-    final FilePickerResult? result =
-        await FilePicker.platform.pickFiles(allowMultiple: true, withData: true);
+  _defaultAttachmentPicker() async {
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true,
+    );
     if (result == null) return const <({String name, Uint8List bytes})>[];
     return <({String name, Uint8List bytes})>[
       for (final PlatformFile file in result.files)
@@ -171,8 +173,9 @@ class _ComposerState extends State<Composer> {
 
   void _send() {
     final String text = _controller.text.trim();
-    final List<OutgoingAttachment> attachments =
-        List<OutgoingAttachment>.of(_attachments);
+    final List<OutgoingAttachment> attachments = List<OutgoingAttachment>.of(
+      _attachments,
+    );
     if ((text.isEmpty && attachments.isEmpty) || _running || !mounted) {
       return;
     }
@@ -256,8 +259,10 @@ class _ComposerState extends State<Composer> {
                         const _SendMessageIntent(),
                     const SingleActivator(LogicalKeyboardKey.numpadEnter):
                         const _SendMessageIntent(),
-                    const SingleActivator(LogicalKeyboardKey.enter, shift: true):
-                        const _InsertNewlineIntent(),
+                    const SingleActivator(
+                      LogicalKeyboardKey.enter,
+                      shift: true,
+                    ): const _InsertNewlineIntent(),
                   },
                   child: Actions(
                     actions: <Type, Action<Intent>>{
@@ -267,12 +272,13 @@ class _ComposerState extends State<Composer> {
                           return null;
                         },
                       ),
-                      _InsertNewlineIntent: CallbackAction<_InsertNewlineIntent>(
-                        onInvoke: (_) {
-                          _insertNewline();
-                          return null;
-                        },
-                      ),
+                      _InsertNewlineIntent:
+                          CallbackAction<_InsertNewlineIntent>(
+                            onInvoke: (_) {
+                              _insertNewline();
+                              return null;
+                            },
+                          ),
                     },
                     child: TextField(
                       controller: _controller,
@@ -386,8 +392,10 @@ class _ControlsRow extends StatelessWidget {
                 underline: const SizedBox.shrink(),
                 isDense: true,
                 iconSize: 16,
-                style: context.speedDialColors.mono
-                    .copyWith(fontSize: 11, color: muted),
+                style: context.speedDialColors.mono.copyWith(
+                  fontSize: 11,
+                  color: muted,
+                ),
                 items: <DropdownMenuItem<String>>[
                   for (final String level in thinkingLevels)
                     DropdownMenuItem<String>(
@@ -427,8 +435,10 @@ class _ControlsRow extends StatelessWidget {
                 model!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: context.speedDialColors.mono
-                    .copyWith(fontSize: 11, color: muted),
+                style: context.speedDialColors.mono.copyWith(
+                  fontSize: 11,
+                  color: muted,
+                ),
               ),
             ),
         ],
@@ -446,11 +456,26 @@ class _UsageFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Color muted = theme.colorScheme.onSurfaceVariant;
-    final String cost = usage.cost == null ? '' : ' · \$${usage.cost}';
+    final List<String> parts = <String>[
+      '${usage.totalTokens} tokens '
+          '(${usage.inputTokens} in / ${usage.outputTokens} out)',
+    ];
+    final int? contextUsed = usage.contextUsedTokens;
+    final int? contextLimit = usage.contextLimitTokens;
+    if (contextUsed != null && contextLimit != null && contextLimit > 0) {
+      final String percent = (contextUsed * 100 / contextLimit).toStringAsFixed(
+        1,
+      );
+      parts.add('$contextUsed / $contextLimit context ($percent%)');
+    }
+    final int cache =
+        (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0);
+    if (cache > 0) parts.add('$cache cached');
+    if (usage.cost != null) parts.add('\$${usage.cost}');
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
       child: Text(
-        '${usage.totalTokens} tokens$cost',
+        parts.join(' · '),
         style: theme.textTheme.labelSmall?.copyWith(color: muted),
       ),
     );
@@ -460,10 +485,7 @@ class _UsageFooter extends StatelessWidget {
 /// Horizontally scrollable row of pending-attachment chips, shown above the
 /// text field while files are staged for the next send.
 class _AttachmentChips extends StatelessWidget {
-  const _AttachmentChips({
-    required this.attachments,
-    required this.onRemove,
-  });
+  const _AttachmentChips({required this.attachments, required this.onRemove});
 
   final List<OutgoingAttachment> attachments;
   final ValueChanged<OutgoingAttachment> onRemove;
@@ -492,10 +514,7 @@ class _AttachmentChips extends StatelessWidget {
 /// One pending attachment: an image thumbnail (or a file icon plus name) and
 /// a remove affordance.
 class _AttachmentChip extends StatelessWidget {
-  const _AttachmentChip({
-    required this.attachment,
-    required this.onRemove,
-  });
+  const _AttachmentChip({required this.attachment, required this.onRemove});
 
   final OutgoingAttachment attachment;
   final ValueChanged<OutgoingAttachment> onRemove;
@@ -513,13 +532,16 @@ class _AttachmentChip extends StatelessWidget {
               height: 40,
               fit: BoxFit.cover,
               gaplessPlayback: true,
-              errorBuilder: (BuildContext context, Object error,
-                      StackTrace? stackTrace) =>
-                  Icon(
-                Icons.broken_image_outlined,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
+              errorBuilder:
+                  (
+                    BuildContext context,
+                    Object error,
+                    StackTrace? stackTrace,
+                  ) => Icon(
+                    Icons.broken_image_outlined,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
             ),
           )
         : Icon(

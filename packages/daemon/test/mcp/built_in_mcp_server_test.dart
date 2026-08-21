@@ -32,6 +32,23 @@ void main() {
               <String, Object?>{'id': 'other-session', 'title': 'Useful'},
             ],
           },
+          'internal.mcpListTools' => <String, Object?>{
+            'tools': <Object?>[
+              <String, Object?>{
+                'name': 'workspace__read',
+                'description': 'Read a workspace file.',
+                'inputSchema': <String, Object?>{'type': 'object'},
+              },
+            ],
+            'warnings': <String>['offline: connection refused'],
+          },
+          'internal.mcpCallTool' => <String, Object?>{
+            'content': <Object?>[
+              <String, Object?>{'type': 'text', 'text': 'proxied'},
+            ],
+            'structuredContent': params['arguments'],
+            'isError': false,
+          },
           _ => <String, Object?>{'ok': true},
         };
       },
@@ -77,7 +94,12 @@ void main() {
       'search_projects',
       'search_sessions',
       'display_image',
+      'workspace__read',
     ]);
+    expect(
+      ((listedResult['_meta']! as Map)['speeddial/warnings']! as List).single,
+      'offline: connection refused',
+    );
   });
 
   test('search tools forward filters and return daemon results', () async {
@@ -114,6 +136,24 @@ void main() {
       'query': 'use',
       'projectId': 'p1',
       'limit': 7,
+    });
+  });
+  test('managed tool calls route through the daemon bridge', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'workspace__read',
+        'arguments': <String, Object?>{'path': 'README'},
+      },
+    );
+    final Map<String, Object?> result = (response['result']! as Map)
+        .cast<String, Object?>();
+    expect(result['structuredContent'], <String, Object?>{'path': 'README'});
+    expect(calls.single.method, 'internal.mcpCallTool');
+    expect(calls.single.params, <String, Object?>{
+      'name': 'workspace__read',
+      'arguments': <String, Object?>{'path': 'README'},
     });
   });
 

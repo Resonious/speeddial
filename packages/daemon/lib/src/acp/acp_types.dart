@@ -145,7 +145,9 @@ final class AcpContentBlockContent extends AcpToolCallContent {
   factory AcpContentBlockContent.fromJson(Map<String, Object?> json) {
     final raw = json['content'];
     return AcpContentBlockContent(
-      content: raw is Map ? Map<String, Object?>.from(raw) : const <String, Object?>{},
+      content: raw is Map
+          ? Map<String, Object?>.from(raw)
+          : const <String, Object?>{},
     );
   }
 
@@ -555,25 +557,58 @@ final class AcpCurrentModeUpdate extends AcpSessionUpdate {
   final String modeId;
 }
 
-/// Context window and cost update for the session.
+/// Context window, token accounting, and cost update for the session.
 final class AcpUsageUpdate extends AcpSessionUpdate {
-  const AcpUsageUpdate({required this.size, required this.used, this.cost});
+  const AcpUsageUpdate({
+    required this.size,
+    required this.used,
+    this.cost,
+    this.inputTokens,
+    this.outputTokens,
+    this.cacheReadTokens,
+    this.cacheCreationTokens,
+  });
 
   factory AcpUsageUpdate.fromJson(Map<String, Object?> json) {
     final rawCost = json['cost'];
     return AcpUsageUpdate(
       size: (json['size'] as num?)?.toInt() ?? 0,
       used: (json['used'] as num?)?.toInt() ?? 0,
-      cost: rawCost is Map ? AcpCost.fromJson(Map<String, Object?>.from(rawCost)) : null,
+      cost: rawCost is Map
+          ? AcpCost.fromJson(Map<String, Object?>.from(rawCost))
+          : null,
     );
   }
 
-  /// Total context window size in tokens.
+  /// Total context window size in tokens, or zero when unknown.
   final int size;
 
-  /// Tokens currently in context.
+  /// Tokens currently occupying the context window, or zero when unknown.
   final int used;
 
   /// Cumulative session cost (optional).
   final AcpCost? cost;
+
+  /// Provider-reported token accounting when it distinguishes these buckets.
+  final int? inputTokens;
+  final int? outputTokens;
+  final int? cacheReadTokens;
+  final int? cacheCreationTokens;
+}
+
+/// Provider-specific lifecycle information normalized for the public stream.
+final class AcpAgentActivityUpdate extends AcpSessionUpdate {
+  const AcpAgentActivityUpdate({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.status,
+    this.details = const <String>[],
+  });
+
+  final String id;
+  final String kind;
+  final String title;
+  final String status;
+  final List<String> details;
 }

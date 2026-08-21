@@ -56,6 +56,7 @@ class BuiltInMcpServer {
     required String sessionId,
     required String cwd,
     required McpDaemonCall daemonCall,
+    this.onWarning,
   }) : _sessionId = sessionId, // ignore: prefer_initializing_formals
        _cwd = cwd, // ignore: prefer_initializing_formals
        _daemonCall = daemonCall; // ignore: prefer_initializing_formals
@@ -63,6 +64,7 @@ class BuiltInMcpServer {
   final String _sessionId;
   final String _cwd;
   final McpDaemonCall _daemonCall;
+  final void Function(String message)? onWarning;
 
   /// Handles one decoded MCP JSON-RPC message. Notifications return null;
   /// requests return a complete response envelope.
@@ -88,7 +90,7 @@ class BuiltInMcpServer {
       final Object result = switch (rawMethod) {
         'initialize' => _initialize(params),
         'ping' => const <String, Object?>{},
-        'tools/list' => <String, Object?>{'tools': _tools},
+        'tools/list' => await _listTools(),
         'tools/call' => await _callTool(params),
         _ => throw const _McpRpcError(-32601, 'Method not found'),
       };
@@ -120,6 +122,55 @@ class BuiltInMcpServer {
     };
   }
 
+  Future<Map<String, Object?>> _listTools() async {
+    try {
+      final Object? raw = await _daemonCall(
+        'internal.mcpListTools',
+        const <String, Object?>{},
+      );
+      if (raw is! Map) {
+        throw const FormatException('managed MCP tool list must be an object');
+      }
+      final Map<String, Object?> result = raw.cast<String, Object?>();
+      final Object? rawTools = result['tools'];
+      if (rawTools is! List) {
+        throw const FormatException('managed MCP tool list has no tools array');
+      }
+      final List<Map<String, Object?>> tools = <Map<String, Object?>>[
+        ..._tools,
+      ];
+      for (final Object? rawTool in rawTools) {
+        if (rawTool is! Map) {
+          throw const FormatException(
+            'managed MCP tool descriptor must be an object',
+          );
+        }
+        tools.add(Map<String, Object?>.from(rawTool.cast<String, Object?>()));
+      }
+      final List<String> warnings = switch (result['warnings']) {
+        final List values => values.whereType<String>().toList(growable: false),
+        _ => const <String>[],
+      };
+      for (final String warning in warnings) {
+        onWarning?.call('SpeedDial MCP proxy: $warning');
+      }
+      return <String, Object?>{
+        'tools': tools,
+        if (warnings.isNotEmpty)
+          '_meta': <String, Object?>{'speeddial/warnings': warnings},
+      };
+    } on Object catch (error) {
+      final String warning = 'managed MCP tools unavailable: $error';
+      onWarning?.call('SpeedDial MCP proxy: $warning');
+      return <String, Object?>{
+        'tools': _tools,
+        '_meta': <String, Object?>{
+          'speeddial/warnings': <String>[warning],
+        },
+      };
+    }
+  }
+
   Future<Map<String, Object?>> _callTool(Map<String, Object?> params) async {
     final Object? rawName = params['name'];
     final Object? rawArguments = params['arguments'];
@@ -134,7 +185,7 @@ class BuiltInMcpServer {
         'search_projects' => await _searchProjects(arguments),
         'search_sessions' => await _searchSessions(arguments),
         'display_image' => await _displayImage(arguments),
-        _ => throw ArgumentError('Unknown tool: $rawName'),
+        _ => await _callManagedTool(rawName, arguments),
       };
     } on Object catch (error) {
       return <String, Object?>{
@@ -144,6 +195,20 @@ class BuiltInMcpServer {
         'isError': true,
       };
     }
+  }
+
+  Future<Map<String, Object?>> _callManagedTool(
+    String name,
+    Map<String, Object?> arguments,
+  ) async {
+    final Object? raw = await _daemonCall(
+      'internal.mcpCallTool',
+      <String, Object?>{'name': name, 'arguments': arguments},
+    );
+    if (raw is! Map) {
+      throw const FormatException('managed MCP result must be an object');
+    }
+    return Map<String, Object?>.from(raw.cast<String, Object?>());
   }
 
   Future<Map<String, Object?>> _searchProjects(
@@ -399,6 +464,7 @@ Future<int> runBuiltInMcpServer({Map<String, String>? environment}) async {
     sessionId: sessionId,
     cwd: cwd,
     daemonCall: bridge.call,
+    onWarning: stderr.writeln,
   );
   try {
     await for (final String line

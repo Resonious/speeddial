@@ -60,6 +60,12 @@ class ToolCallTimelineItem extends TimelineItem {
   final ToolCall toolCall;
 }
 
+/// Latest snapshot of one provider-reported background activity.
+class AgentActivityItem extends TimelineItem {
+  const AgentActivityItem({required this.activity});
+  final AgentActivity activity;
+}
+
 /// A full-replacement plan view.
 class PlanTimelineItem extends TimelineItem {
   const PlanTimelineItem({required this.entries});
@@ -110,6 +116,7 @@ List<TimelineItem> deriveTimelineItems(
 }) {
   final List<TimelineItem> items = <TimelineItem>[];
   final Map<String, int> toolIndexes = <String, int>{};
+  final Map<String, int> activityIndexes = <String, int>{};
   final StringBuffer message = StringBuffer();
   final StringBuffer thought = StringBuffer();
   int? messageForkSeq;
@@ -159,6 +166,16 @@ List<TimelineItem> deriveTimelineItems(
         } else {
           toolIndexes[e.toolCall.id] = items.length;
           items.add(ToolCallTimelineItem(toolCall: e.toolCall));
+        }
+      case AgentActivityEvent e:
+        flushMessage();
+        flushThought();
+        final int? existing = activityIndexes[e.activity.id];
+        if (existing != null) {
+          items[existing] = AgentActivityItem(activity: e.activity);
+        } else {
+          activityIndexes[e.activity.id] = items.length;
+          items.add(AgentActivityItem(activity: e.activity));
         }
       case PlanEvent e:
         flushMessage();
@@ -274,6 +291,7 @@ class _TimelineRow extends StatelessWidget {
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),
+      AgentActivityItem i => _ActivityCard(activity: i.activity),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
       PermissionRequestItem i => _InlinePermissionRecord(request: i.request),
       PermissionResolvedItem i => _ResolvedRecord(optionId: i.optionId),
@@ -393,6 +411,80 @@ class _TurnDivider extends StatelessWidget {
     return const Padding(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Divider(height: 1),
+    );
+  }
+}
+
+class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({required this.activity});
+
+  final AgentActivity activity;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final SpeedDialColors colors = context.speedDialColors;
+    final Color accent = switch (activity.status) {
+      AgentActivityStatus.running => colors.running,
+      AgentActivityStatus.completed => theme.colorScheme.primary,
+      AgentActivityStatus.failed => colors.error,
+    };
+    final Widget icon = switch (activity.status) {
+      AgentActivityStatus.running => SizedBox.square(
+        dimension: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: accent),
+      ),
+      AgentActivityStatus.completed => Icon(
+        Icons.check_circle_outline,
+        size: 17,
+        color: accent,
+      ),
+      AgentActivityStatus.failed => Icon(
+        Icons.error_outline,
+        size: 17,
+        color: accent,
+      ),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: colors.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          key: ValueKey<String>('activity-${activity.id}'),
+          leading: icon,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+          childrenPadding: const EdgeInsets.fromLTRB(40, 0, 12, 10),
+          dense: true,
+          initiallyExpanded: activity.status == AgentActivityStatus.failed,
+          title: Text(activity.title, style: theme.textTheme.bodySmall),
+          subtitle: Text(
+            activity.kind,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          children: <Widget>[
+            for (final String detail in activity.details)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    detail,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

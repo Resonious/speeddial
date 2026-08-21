@@ -8,8 +8,7 @@ import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:test/test.dart';
 
 /// Probe stub: no provider has models. Keeps tests off real agent CLIs.
-Future<List<String>> noModels(List<String> command) async =>
-    const <String>[];
+Future<List<String>> noModels(List<String> command) async => const <String>[];
 
 ProviderRegistry registryWith(Map<String, Object?> overrides) =>
     ProviderRegistry(configOverrides: overrides, modelsProbe: noModels);
@@ -17,10 +16,7 @@ ProviderRegistry registryWith(Map<String, Object?> overrides) =>
 Map<String, Object?> fakeProvider(String name, List<String> command) =>
     <String, Object?>{
       'providers': <String, Object?>{
-        'fake': <String, Object?>{
-          'name': name,
-          'command': command,
-        },
+        'fake': <String, Object?>{'name': name, 'command': command},
       },
     };
 
@@ -42,24 +38,28 @@ void main() {
     final registry = ProviderRegistry(modelsProbe: noModels);
     final providers = await registry.list();
 
-    expect(
-      providers.map((info) => info.id),
-      <String>['omp', 'claude', 'codex'],
-    );
+    expect(providers.map((info) => info.id), <String>[
+      'omp',
+      'claude',
+      'codex',
+      'ante',
+    ]);
     final omp = registry.byId('omp')!;
     expect(omp.name, 'OMP');
     expect(omp.command, <String>['omp', 'acp']);
     expect(omp.modelsCommand, <String>['omp', 'models', '--json']);
     final claude = registry.byId('claude')!;
-    expect(
-      claude.command,
-      <String>['npx', '-y', '@zed-industries/claude-code-acp'],
-    );
+    expect(claude.command, <String>[
+      'npx',
+      '-y',
+      '@zed-industries/claude-code-acp',
+    ]);
     final codex = registry.byId('codex')!;
-    expect(
-      codex.command,
-      <String>['npx', '-y', '@zed-industries/codex-acp'],
-    );
+    expect(codex.command, <String>['npx', '-y', '@zed-industries/codex-acp']);
+    final ante = registry.byId('ante')!;
+    expect(ante.command, <String>['ante', 'serve', '--stdio']);
+    expect(ante.protocol, ProviderProtocol.ante);
+    expect(ante.catalogCommand, <String>['ante', 'catalog']);
 
     // ProviderInfo carries the joined command and the (stubbed) model list.
     expect(providers.first.command, 'omp acp');
@@ -95,10 +95,9 @@ void main() {
   });
 
   test('availability is true for an absolute existing executable', () async {
-    final registry = registryWith(fakeProvider('Fake', <String>[
-      Platform.resolvedExecutable,
-      '--help',
-    ]));
+    final registry = registryWith(
+      fakeProvider('Fake', <String>[Platform.resolvedExecutable, '--help']),
+    );
     expect(registry.isAvailable('fake'), isTrue);
     final info = (await registry.list()).firstWhere((p) => p.id == 'fake');
     expect(info.available, isTrue);
@@ -120,8 +119,9 @@ void main() {
     }
     expect(knownExe, isNotNull, reason: 'expected a common executable on PATH');
 
-    final registry =
-        registryWith(fakeProvider('PathFinder', <String>[knownExe!]));
+    final registry = registryWith(
+      fakeProvider('PathFinder', <String>[knownExe!]),
+    );
     expect(registry.isAvailable('fake'), isTrue);
     expect(
       (await registry.list()).firstWhere((info) => info.id == 'fake').available,
@@ -149,22 +149,46 @@ void main() {
     // An override that omits modelsCommand inherits the previous entry's.
     expect(omp.modelsCommand, <String>['omp', 'models', '--json']);
     final providers = await registry.list();
-    expect(
-      providers.map((info) => info.id),
-      <String>['omp', 'claude', 'codex', 'custom'],
-    );
+    expect(providers.map((info) => info.id), <String>[
+      'omp',
+      'claude',
+      'codex',
+      'ante',
+      'custom',
+    ]);
     final customInfo = providers.firstWhere((info) => info.id == 'custom');
     expect(customInfo.name, 'Custom Agent');
     expect(customInfo.command, 'custom-agent --flag');
     expect(customInfo.models, isEmpty);
   });
 
+  test('custom providers can select the Ante wire protocol', () {
+    final ProviderSpec custom = registryWith(<String, Object?>{
+      'providers': <String, Object?>{
+        'customAnte': <String, Object?>{
+          'name': 'Custom Ante',
+          'command': <String>['custom-ante', 'serve'],
+          'protocol': 'ante',
+          'catalogCommand': <String>['custom-ante', 'catalog'],
+        },
+      },
+    }).byId('customAnte')!;
+
+    expect(custom.protocol, ProviderProtocol.ante);
+    expect(custom.catalogCommand, <String>['custom-ante', 'catalog']);
+  });
+
   test('malformed config entries are skipped defensively', () async {
     final registry = registryWith(<String, Object?>{
       'providers': <String, Object?>{
         'badCommand': <String, Object?>{'name': 'Bad', 'command': 'not-a-list'},
-        'missingName': <String, Object?>{'command': <String>['x', 'y']},
-        'emptyCommand': <String, Object?>{'name': 'Empty', 'command': <String>[]},
+        'missingName': <String, Object?>{
+          'command': <String>['x', 'y'],
+        },
+        'emptyCommand': <String, Object?>{
+          'name': 'Empty',
+          'command': <String>[],
+        },
         'badItem': <String, Object?>{
           'name': 'BadItem',
           'command': <Object>['ok', 42],
@@ -187,10 +211,12 @@ void main() {
 
   test('config without a providers key changes nothing', () async {
     final registry = registryWith(<String, Object?>{'other': 1});
-    expect(
-      (await registry.list()).map((info) => info.id),
-      <String>['omp', 'claude', 'codex'],
-    );
+    expect((await registry.list()).map((info) => info.id), <String>[
+      'omp',
+      'claude',
+      'codex',
+      'ante',
+    ]);
     expect(registry.byId('omp')!.command, <String>['omp', 'acp']);
   });
 
@@ -212,9 +238,11 @@ void main() {
     test('static config models win and skip the probe', () async {
       var probes = 0;
       final registry = ProviderRegistry(
-        configOverrides: spawnableOmp(extra: <String, Object?>{
-          'models': <String>['static-a', 'static-b'],
-        }),
+        configOverrides: spawnableOmp(
+          extra: <String, Object?>{
+            'models': <String>['static-a', 'static-b'],
+          },
+        ),
         modelsProbe: (command) async {
           probes++;
           return <String>['probed'];
@@ -228,9 +256,9 @@ void main() {
     test('explicit empty modelsCommand disables probing', () async {
       var probes = 0;
       final registry = ProviderRegistry(
-        configOverrides: spawnableOmp(extra: <String, Object?>{
-          'modelsCommand': <String>[],
-        }),
+        configOverrides: spawnableOmp(
+          extra: <String, Object?>{'modelsCommand': <String>[]},
+        ),
         modelsProbe: (command) async {
           probes++;
           return <String>['probed'];
@@ -261,8 +289,7 @@ void main() {
       expect(probes, 2, reason: 'failures are not cached');
     });
 
-    test('probe successes are cached and shared across list() calls',
-        () async {
+    test('probe successes are cached and shared across list() calls', () async {
       var probes = 0;
       final registry = ProviderRegistry(
         configOverrides: spawnableOmp(),

@@ -14,12 +14,12 @@ import '../acp/acp_types.dart';
 
 /// Maps an ACP tool call status string to the protocol enum.
 ToolCallStatus toolCallStatusFromAcp(String? status) => switch (status) {
-      'pending' => ToolCallStatus.pending,
-      'in_progress' => ToolCallStatus.running,
-      'completed' => ToolCallStatus.completed,
-      'cancelled' => ToolCallStatus.failed,
-      _ => ToolCallStatus.pending,
-    };
+  'pending' => ToolCallStatus.pending,
+  'in_progress' => ToolCallStatus.running,
+  'completed' => ToolCallStatus.completed,
+  'cancelled' => ToolCallStatus.failed,
+  _ => ToolCallStatus.pending,
+};
 
 /// Maps ACP tool call content to protocol content blocks. Content kinds the
 /// protocol cannot represent (input/output/... blocks) are dropped; their
@@ -60,15 +60,15 @@ List<String> locationsFromAcpLocationList(
 
 /// Builds a protocol [ToolCall] from a `tool_call` update.
 ToolCall toolCallFromAcp(AcpToolCallData data, {String? cwd}) => ToolCall(
-      id: data.id,
-      title: data.title,
-      kind: data.kind,
-      status: toolCallStatusFromAcp(data.status),
-      content: toolCallContentFromAcp(data.content),
-      locations: locationsFromAcpLocationList(data.locations, cwd: cwd),
-      rawInput: data.rawInput,
-      rawOutput: data.rawOutput,
-    );
+  id: data.id,
+  title: data.title,
+  kind: data.kind,
+  status: toolCallStatusFromAcp(data.status),
+  content: toolCallContentFromAcp(data.content),
+  locations: locationsFromAcpLocationList(data.locations, cwd: cwd),
+  rawInput: data.rawInput,
+  rawOutput: data.rawOutput,
+);
 
 /// Merges a `tool_call_update` onto the prior tool call state for the same
 /// `toolCallId`; fields absent from the update keep their previous values.
@@ -85,17 +85,19 @@ ToolCall mergeToolCallUpdate(
     id: update.toolCallId,
     title: rawTitle ?? prior.title,
     kind: rawKind ?? prior.kind,
-    status: rawStatus != null
-        ? toolCallStatusFromAcp(rawStatus)
-        : prior.status,
+    status: rawStatus != null ? toolCallStatusFromAcp(rawStatus) : prior.status,
     content: fields['content'] is List
         ? toolCallContentFromAcp(AcpToolCallContent.listFrom(fields['content']))
         : prior.content,
     locations: fields['locations'] is List
         ? _locationPaths(fields['locations'], cwd: cwd)
         : prior.locations,
-    rawInput: fields.containsKey('rawInput') ? fields['rawInput'] : prior.rawInput,
-    rawOutput: fields.containsKey('rawOutput') ? fields['rawOutput'] : prior.rawOutput,
+    rawInput: fields.containsKey('rawInput')
+        ? fields['rawInput']
+        : prior.rawInput,
+    rawOutput: fields.containsKey('rawOutput')
+        ? fields['rawOutput']
+        : prior.rawOutput,
   );
 }
 
@@ -112,7 +114,8 @@ ToolCall mergeToolCallUpdate(
 /// that never settles loses only its intermediate raw snapshots.
 /// `content` is untouched — it is the live progress display.
 ToolCall trimToolCallUpdateForEmit(ToolCall merged) {
-  final bool terminal = merged.status == ToolCallStatus.completed ||
+  final bool terminal =
+      merged.status == ToolCallStatus.completed ||
       merged.status == ToolCallStatus.failed;
   if (terminal) return merged;
   if (merged.rawInput == null && merged.rawOutput == null) return merged;
@@ -151,33 +154,41 @@ ToolCall toolCallFromAcpUpdate(
 PlanEvent planEventFromAcp(AcpPlan plan) {
   final entries = <PlanEntry>[];
   for (final raw in plan.entries) {
-    final priority = _tryParse(
-          raw.priority,
-          PlanPriority.parse,
-        ) ??
-        PlanPriority.medium;
-    entries.add(PlanEntry(
-      content: raw.content,
-      priority: priority,
-      status: _planEntryStatus(raw.status),
-    ));
+    final priority =
+        _tryParse(raw.priority, PlanPriority.parse) ?? PlanPriority.medium;
+    entries.add(
+      PlanEntry(
+        content: raw.content,
+        priority: priority,
+        status: _planEntryStatus(raw.status),
+      ),
+    );
   }
   return PlanEvent(entries: entries);
 }
 
-/// Maps an ACP `usage_update` to a protocol [UsageEvent].
+/// Maps a normalized provider usage update to the public event.
 ///
-/// ACP reports combined context usage (`used` tokens in a `size` window), not
-/// a prompt/completion split; the whole used count is bucketed under
-/// `outputTokens` so `inputTokens + outputTokens == totalTokens`.
+/// ACP reports only combined context occupancy; richer transports may also
+/// report input/output and cache buckets.
 UsageEvent usageEventFromAcp(AcpUsageUpdate update) {
-  final cost = update.cost;
-  return UsageEvent(usage: UsageInfo(
-    inputTokens: 0,
-    outputTokens: update.used,
-    totalTokens: update.used,
-    cost: cost == null ? null : _costToString(cost.amount),
-  ));
+  final AcpCost? cost = update.cost;
+  final bool hasSplit =
+      update.inputTokens != null || update.outputTokens != null;
+  final int input = update.inputTokens ?? 0;
+  final int output = update.outputTokens ?? (hasSplit ? 0 : update.used);
+  return UsageEvent(
+    usage: UsageInfo(
+      inputTokens: input,
+      outputTokens: output,
+      totalTokens: input + output,
+      cost: cost == null ? null : _costToString(cost.amount),
+      cacheReadTokens: update.cacheReadTokens,
+      cacheCreationTokens: update.cacheCreationTokens,
+      contextUsedTokens: update.used == 0 ? null : update.used,
+      contextLimitTokens: update.size == 0 ? null : update.size,
+    ),
+  );
 }
 
 /// Maps ACP permission options to protocol options.
@@ -185,12 +196,15 @@ List<PermissionOption> permissionOptionsFromAcp(
   List<PermissionOptionData> options,
 ) {
   return options
-      .map((o) => PermissionOption(
-            optionId: o.optionId,
-            name: o.name,
-            kind: _tryParse(o.kind, PermissionKind.parse) ??
-                PermissionKind.allowOnce,
-          ))
+      .map(
+        (o) => PermissionOption(
+          optionId: o.optionId,
+          name: o.name,
+          kind:
+              _tryParse(o.kind, PermissionKind.parse) ??
+              PermissionKind.allowOnce,
+        ),
+      )
       .toList(growable: false);
 }
 
@@ -242,16 +256,17 @@ String _relativize(String path, {String? cwd}) {
 String _costToString(double amount) {
   if (amount == 0) return '0';
   final fixed = amount.toStringAsFixed(6);
-  final trimmed =
-      fixed.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  final trimmed = fixed
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
   return trimmed;
 }
 
 /// Plan entry status: protocol has no `cancelled`, so it folds onto
 /// `completed` (terminal, will not run).
 PlanEntryStatus _planEntryStatus(String status) => switch (status) {
-      'in_progress' => PlanEntryStatus.inProgress,
-      'completed' => PlanEntryStatus.completed,
-      'cancelled' => PlanEntryStatus.completed,
-      _ => PlanEntryStatus.pending,
-    };
+  'in_progress' => PlanEntryStatus.inProgress,
+  'completed' => PlanEntryStatus.completed,
+  'cancelled' => PlanEntryStatus.completed,
+  _ => PlanEntryStatus.pending,
+};

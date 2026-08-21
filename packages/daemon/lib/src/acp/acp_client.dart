@@ -12,24 +12,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'acp_types.dart';
+import '../agents/agent_client.dart';
 
-/// Decides what to do with a `session/request_permission` request from the
-/// agent. Returns the `optionId` of the option the user chose.
-typedef AcpPermissionHandler = Future<String> Function(
-  String sessionId,
-  String? toolCallId,
-  String title,
-  List<PermissionOptionData> options,
-);
-
-/// Serves `fs/read_text_file` requests from the agent. Returns the file
-/// content to send back.
+/// Serves `fs/read_text_file` requests from an ACP agent.
 typedef AcpReadTextFileHandler = Future<String> Function(
   String sessionId,
   String path,
 );
-
-/// Serves `fs/write_text_file` requests from the agent.
 typedef AcpWriteTextFileHandler = Future<void> Function(
   String sessionId,
   String path,
@@ -85,14 +74,14 @@ class _PendingPermission {
 ///
 /// Use [spawn] to launch an agent executable and drive it. All methods throw
 /// [StateError] after the process has exited or the client has been disposed.
-class AcpClient {
+class AcpClient implements AgentClient {
   // ignore: prefer_initializing_formals — public param names are API
   AcpClient.spawn(
     List<String> command, {
     required String cwd,
     Map<String, String>? environment,
     this.initTimeout = const Duration(seconds: 30),
-    AcpPermissionHandler? requestPermission,
+    AgentPermissionHandler? requestPermission,
     AcpReadTextFileHandler? readTextFile,
     AcpWriteTextFileHandler? writeTextFile,
   }) : _command = List<String>.of(command),
@@ -109,7 +98,7 @@ class AcpClient {
   final String _cwd;
   final Map<String, String>? _environment;
   final Duration initTimeout;
-  final AcpPermissionHandler? _permissionHandler;
+  final AgentPermissionHandler? _permissionHandler;
   final AcpReadTextFileHandler? _readTextFileHandler;
   final AcpWriteTextFileHandler? _writeTextFileHandler;
 
@@ -130,10 +119,12 @@ class AcpClient {
   Completer<void> _writeQueue = Completer<void>()..complete();
 
   /// Completes once `initialize` has been answered; re-uses the first result.
+  @override
   Future<InitializeResult> get initialized =>
       _initializedFuture ??= _initialize();
 
   /// Lines written to the agent's stderr.
+  @override
   Stream<String> get stderrLines => _stderrController.stream;
 
   /// Serializes writes to the process stdin so messages never interleave.
@@ -437,15 +428,19 @@ class AcpClient {
   }
 
   /// Authenticates with the given advertised method id.
+  @override
   Future<void> authenticate(String methodId) async {
     await _request('authenticate', <String, Object?>{'methodId': methodId});
   }
 
   /// Creates a new session with the supplied MCP server connections,
   /// returning its id plus the session config options the agent advertised.
+  @override
   Future<({String sessionId, List<AcpConfigOption> configOptions})> newSession({
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
+    String? model,
+    bool yolo = false,
   }) async {
     final result = await _request('session/new', <String, Object?>{
       'cwd': cwd,
@@ -469,6 +464,7 @@ class AcpClient {
   /// Returns the session config options the agent advertised (empty when
   /// the agent reports none). [mcpServers] reconnects the same tools that
   /// were present when the session was created.
+  @override
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
@@ -485,6 +481,7 @@ class AcpClient {
   /// Sets the value of a session config option (ACP
   /// `session/set_config_option`), returning the agent's full updated
   /// config options list (empty when the agent reports none).
+  @override
   Future<List<AcpConfigOption>> setConfigOption(
     String sessionId,
     String configId,
@@ -505,6 +502,7 @@ class AcpClient {
   ///
   /// A broadcast stream is created on first access; updates emitted before
   /// the first listener is attached are dropped.
+  @override
   Stream<AcpSessionUpdate> sessionUpdates(String sessionId) {
     final controller = _sessionStreams.putIfAbsent(
       sessionId,
@@ -518,6 +516,7 @@ class AcpClient {
   /// [promptBlocks] are the ACP prompt content blocks (text, image, resource)
   /// sent verbatim as the request's `prompt` parameter; empty for a turn
   /// without any content.
+  @override
   Future<PromptResult> prompt(
     String sessionId,
     List<Map<String, Object?>> promptBlocks,
@@ -533,6 +532,7 @@ class AcpClient {
   ///
   /// Sends the `session/cancel` notification and answers any pending
   /// permission requests with the cancelled outcome, per the ACP spec.
+  @override
   Future<void> cancel(String sessionId) async {
     // Answer pending permission requests first so the agent cannot hang.
     final pending = _pendingPermissions.entries.toList();
@@ -552,6 +552,7 @@ class AcpClient {
   }
 
   /// Switches the session to the given mode id.
+  @override
   Future<void> setMode(String sessionId, String modeId) async {
     await _request('session/set_mode', <String, Object?>{
       'sessionId': sessionId,
@@ -624,6 +625,7 @@ class AcpClient {
   }
 
   /// Terminates the agent process and fails any pending work.
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

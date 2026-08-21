@@ -200,7 +200,7 @@ void main() {
 
     // Exactly the documented sequence: the user's own message, 2 thought
     // deltas, 3 chunk deltas, tool call (running → completed via a second
-    // event), plan (2 entries), usage, turn complete.
+    // event), plan (2 entries), provider activity, usage, turn complete.
     expect(events.map((SessionEvent e) => e.runtimeType).toList(), <Type>[
       UserMessageEvent,
       AgentThoughtChunkEvent,
@@ -211,6 +211,7 @@ void main() {
       ToolCallEvent,
       ToolCallEvent,
       PlanEvent,
+      AgentActivityEvent,
       UsageEvent,
       TurnCompleteEvent,
     ]);
@@ -392,7 +393,7 @@ void main() {
       final ({List<SessionEvent> events, bool hasMore}) all = await fake
           .history('sess-1');
       expect(all.hasMore, isFalse);
-      expect(all.events, hasLength(11));
+      expect(all.events, hasLength(12));
       expect(all.events.last, isA<TurnCompleteEvent>());
 
       // beforeSeq excludes newer events; limit pages from the end.

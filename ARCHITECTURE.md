@@ -10,8 +10,9 @@ of per-frame work.
 ```
 packages/protocol/   pure Dart, zero deps beyond SDK. Implements PROTOCOL.md exactly:
                      models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides).
-packages/daemon/     Dart CLI + library. Spawns agent CLIs via ACP, owns session/project
-                     bookkeeping (SQLite), git/gh operations, WebSocket JSON-RPC server.
+packages/daemon/     Dart CLI + library. Spawns ACP and Ante agent CLIs, owns
+                     session/project bookkeeping (SQLite), git/gh operations, WebSocket
+                     JSON-RPC server.
 packages/app/        Flutter app (desktop + mobile + web). Three-pane control surface.
 ```
 
@@ -34,6 +35,7 @@ Pub workspace: root `pubspec.yaml` lists all three in `workspace:`; every packag
 Entrypoint `bin/speeddial.dart`, package name `speeddial_daemon`.
 
 ```
+lib/src/agents/     AgentClient transport boundary shared by the session engine.
 lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JSON-RPC
                     stdio. Spec: https://agentclientprotocol.com — implements:
                     initialize, authenticate, session/new, session/load,
@@ -43,31 +45,47 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,
+                    sends `UserInput`, handles approval pauses, and maps message/thought
+                    deltas, tool progress, usage/context accounting, extension/MCP refresh,
+                    info blocks, shell output, compaction, and errors into the shared agent
+                    update stream. Catalog data comes from `ante catalog`. Only the
+                    daemon-owned `speeddial` MCP descriptor is merged into the selected
+                    native Ante settings in a private transient `ANTE_HOME`; non-settings
+                    state links back to the real home, native MCP entries remain direct,
+                    and the transient directory is removed on process exit.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
-                    into every ACP new/load request. Search tools bridge over an
-                    authenticated, session-bound loopback WebSocket to query
-                    projects/session history; display_image persists an attachment and
-                    emits an image event. The same hidden subprocess entry works from the
-                    daemon CLI and the native Flutter executable used by the embedded
-                    daemon. User-configured stdio and Streamable HTTP MCP profiles are
-                    daemon-managed or project-scoped, then injected directly into
-                    compatible ACP agents; project sessions receive daemon-wide plus
-                    matching project profiles. The built-in server does not proxy their
-                    tools. HTTP profiles may use
-                    daemon-managed OAuth 2.1 authorization-code + S256 PKCE; discovery,
-                    dynamic client registration, callback handling, and token refresh live
-                    in server/mcp_oauth_service.dart.
+                    into every compatible provider session. ACP receives its descriptor
+                    directly; Ante receives it through its transient home. Search tools
+                    bridge over an authenticated, session-bound loopback WebSocket to
+                    query projects/session history; display_image persists an attachment
+                    and emits an image event. McpProxySession owns the matching managed
+                    upstreams for that bridge connection, starts stdio servers in the
+                    session cwd, drives Streamable HTTP JSON/SSE sessions, qualifies and
+                    aggregates tool descriptors, routes calls, and closes every upstream
+                    with the bridge. Managed commands, URLs, environment values, headers,
+                    and OAuth tokens never enter provider configuration. The same hidden
+                    subprocess entry works from the daemon CLI and native Flutter
+                    executable. Profiles are daemon-wide or project-scoped; a project
+                    receives both matching sets. HTTP OAuth 2.1 authorization-code + S256
+                    PKCE discovery, registration, callback handling, and refresh live in
+                    server/mcp_oauth_service.dart.
 lib/src/providers/  Provider registry. Built-ins:
-                      omp    → ["omp", "acp"]
-                      claude → ["npx", "-y", "@zed-industries/claude-code-acp"]
-                      codex  → ["npx", "-y", "@zed-industries/codex-acp"]
+                      omp    → ["omp", "acp"]                              (ACP)
+                      claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
+                      codex  → ["npx", "-y", "@zed-industries/codex-acp"]  (ACP)
+                      ante   → ["ante", "serve", "--stdio"]                (Ante)
                     `~/.speeddial/config.json` may add/override providers:
-                    {"providers": {"<id>": {"name": "...", "command": ["...", ...]}}}
+                    {"providers":{"<id>":{"name":"...","command":["...",...],
+                    "protocol":"acp|ante","catalogCommand":["...",...]}}}
+                    `protocol` defaults to `acp`; `catalogCommand` is used only by Ante.
                     Availability = command[0] resolvable via PATH (or absolute exists).
-lib/src/engine/     SessionEngine: owns live ACP processes per session, maps ACP updates
-                    to protocol SessionEvents, assigns seq, persists via SessionStore,
-                    broadcasts to listeners. Handles permission requests (parked until
-                    respondPermission), cancel, process exit, turn lifecycle.
+lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
+                    transport updates to protocol SessionEvents, assigns seq, persists
+                    via SessionStore, and broadcasts to listeners. Handles permission
+                    requests (parked until respondPermission), cancel, process exit, and
+                    turn lifecycle. MCP injection supports ACP and Ante; attachments remain
+                    ACP-only.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
                     dependency) at ~/.speeddial/speeddial.db (override with --db or
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,
@@ -159,8 +177,9 @@ lib/src/ui/chat/             timeline (virtualized ListView, reversed), message 
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips, mode
-                             selector, model + thinking-level selectors fed by the agent's
-                             ACP config options, stop button while running), usage footer
+                             selector, model + thinking/effort selectors fed by the
+                             provider, stop button while running), expandable provider
+                             activity cards, usage/context footer
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
                              highlight) and Git (branch picker, staged/unstaged lists,
                              per-file diff view, commit field + button, push, create PR)

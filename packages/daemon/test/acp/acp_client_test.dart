@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/acp/acp_client.dart';
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
+import 'package:speeddial_daemon/src/agents/agent_client.dart';
 import 'package:test/test.dart';
 
 /// Resolves the fake agent fixture whether the test runner's cwd is the
@@ -29,7 +30,7 @@ String fakeAgentScript() => <String>[
 AcpClient spawnClient({
   String? targetPath,
   String? cwd,
-  AcpPermissionHandler? requestPermission,
+  AgentPermissionHandler? requestPermission,
   AcpReadTextFileHandler? readTextFile,
   AcpWriteTextFileHandler? writeTextFile,
 }) {

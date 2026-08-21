@@ -130,9 +130,10 @@ void main() {
     final McpServerProfile listed = store.listMcpServers().single;
     expect(listed.secretNames, const <String>['API_TOKEN']);
     expect(listed.toJson().toString(), isNot(contains('secret-one')));
-    expect(store.listEnabledMcpServersFor('p1').single.secrets, <String, String>{
-      'API_TOKEN': 'secret-one',
-    });
+    expect(
+      store.listEnabledMcpServersFor('p1').single.secrets,
+      <String, String>{'API_TOKEN': 'secret-one'},
+    );
 
     store.updateMcpServer(
       McpServerProfile(
@@ -263,10 +264,13 @@ void main() {
       expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
       scopes: const <String>['mcp:tools'],
     );
-    expect(store.listEnabledMcpServersFor('p1').single.secrets, <String, String>{
-      'X-Tenant': 'tenant-1',
-      'Authorization': 'Bearer access-secret',
-    });
+    expect(
+      store.listEnabledMcpServersFor('p1').single.secrets,
+      <String, String>{
+        'X-Tenant': 'tenant-1',
+        'Authorization': 'Bearer access-secret',
+      },
+    );
     store.clearMcpOAuthTokens(profile.id);
     expect(store.listEnabledMcpServersFor('p1'), isEmpty);
     expect(
@@ -424,9 +428,9 @@ void main() {
       reason: 'legacy rows default to no advertised models',
     );
     expect(
-      store.acpSessionIdOf('s1'),
+      store.providerSessionIdOf('s1'),
       isNull,
-      reason: 'legacy rows have no resumable ACP session id',
+      reason: 'legacy rows have no resumable provider session id',
     );
 
     // New inserts carry the base branch, the yolo flag, the thinking level
@@ -457,40 +461,40 @@ void main() {
       'main',
     ]);
 
-    // The migrated schema accepts ACP session ids.
-    store.setAcpSessionId('s2', 'acp-42');
-    expect(store.acpSessionIdOf('s2'), 'acp-42');
+    // The migrated schema accepts provider session ids.
+    store.setProviderSessionId('s2', 'provider-42');
+    expect(store.providerSessionIdOf('s2'), 'provider-42');
   });
 
-  test('acp_session_id roundtrips and rejects unknown sessions', () {
+  test('provider session id roundtrips and rejects unknown sessions', () {
     store.insertProject(project());
     store.insertSession(session(id: 's1'));
 
-    expect(store.acpSessionIdOf('s1'), isNull);
-    expect(store.acpSessionIdOf('missing'), isNull);
+    expect(store.providerSessionIdOf('s1'), isNull);
+    expect(store.providerSessionIdOf('missing'), isNull);
 
-    store.setAcpSessionId('s1', 'acp-1');
-    expect(store.acpSessionIdOf('s1'), 'acp-1');
+    store.setProviderSessionId('s1', 'provider-1');
+    expect(store.providerSessionIdOf('s1'), 'provider-1');
 
     // Overwrite (a provider that re-issues ids on resume) works.
-    store.setAcpSessionId('s1', 'acp-2');
-    expect(store.acpSessionIdOf('s1'), 'acp-2');
+    store.setProviderSessionId('s1', 'provider-2');
+    expect(store.providerSessionIdOf('s1'), 'provider-2');
 
     // The wire-facing Session model never carries the id.
     expect(
-      store.getSession('s1')!.toJson().containsKey('acpSessionId'),
+      store.getSession('s1')!.toJson().containsKey('providerSessionId'),
       isFalse,
     );
 
     expect(
-      () => store.setAcpSessionId('missing', 'acp-x'),
+      () => store.setProviderSessionId('missing', 'provider-x'),
       throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
     );
 
     // The value survives a reopen (it is the whole point of the column).
     store.dispose();
     store = openStore(tempDir);
-    expect(store.acpSessionIdOf('s1'), 'acp-2');
+    expect(store.providerSessionIdOf('s1'), 'provider-2');
   });
 
   test('removeProject archives its sessions and removes the project', () {

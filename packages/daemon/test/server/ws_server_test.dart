@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
+import 'package:speeddial_daemon/src/mcp/mcp_proxy.dart';
 import 'package:speeddial_daemon/src/server/ws_server.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -45,6 +46,48 @@ ProviderRegistry fakeProviders() => ProviderRegistry(
   },
   modelsProbe: (command) async => const <String>[],
 );
+
+class TestMcpConnection implements McpUpstreamConnection {
+  TestMcpConnection(this.serverName);
+
+  final String serverName;
+  final List<({String name, Map<String, Object?> arguments})> calls =
+      <({String name, Map<String, Object?> arguments})>[];
+  bool closed = false;
+
+  @override
+  Future<List<Map<String, Object?>>> listTools() async =>
+      <Map<String, Object?>>[
+        <String, Object?>{
+          'name': 'echo',
+          'description': 'Echo from $serverName.',
+          'inputSchema': <String, Object?>{
+            'type': 'object',
+            'additionalProperties': true,
+          },
+        },
+      ];
+
+  @override
+  Future<Map<String, Object?>> callTool(
+    String name,
+    Map<String, Object?> arguments,
+  ) async {
+    calls.add((name: name, arguments: arguments));
+    return <String, Object?>{
+      'content': <Object?>[
+        <String, Object?>{'type': 'text', 'text': serverName},
+      ],
+      'structuredContent': arguments,
+      'isError': false,
+    };
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
+}
 
 /// A test client: its own [RpcPeer] over a real WebSocket.
 class WsClient {
@@ -201,6 +244,7 @@ void main() {
     String? authToken,
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
+    McpUpstreamConnector? mcpConnector,
   }) async {
     engine = SessionEngine(
       store: store,
@@ -217,6 +261,7 @@ void main() {
       authToken: authToken,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
+      mcpConnector: mcpConnector,
     );
     return server!;
   }
@@ -724,83 +769,132 @@ void main() {
       await client.close();
     });
 
-    test('MCP profiles are redacted and injected into new sessions', () async {
-      await startServer();
-      final WsClient client = await connect(server!.port);
-      final Map<String, Object?> created = j(
-        await client.peer.call('mcp.create', <String, Object?>{
+    test(
+      'MCP profiles are redacted and proxied without agent credentials',
+      () async {
+        StoredMcpServer? connected;
+        TestMcpConnection? upstream;
+        await startServer(
+          mcpConnector: (StoredMcpServer server, String cwd) async {
+            connected = server;
+            return upstream = TestMcpConnection(server.profile.name);
+          },
+        );
+        final WsClient client = await connect(server!.port);
+        final Map<String, Object?> created = j(
+          await client.peer.call('mcp.create', <String, Object?>{
+            'name': 'filesystem',
+            'transport': 'stdio',
+            'enabled': true,
+            'command': '/bin/filesystem-mcp',
+            'args': <String>['--stdio'],
+            'secrets': <String, String>{'API_TOKEN': 'top-secret'},
+          }),
+        );
+        final String profileId = (created['server']! as Map)['id']! as String;
+        final Map<String, Object?> listing = j(
+          await client.peer.call('mcp.list'),
+        );
+        expect(listing.toString(), isNot(contains('top-secret')));
+        expect(
+          (((listing['servers']! as List).single as Map)['secretNames']
+              as List),
+          const <String>['API_TOKEN'],
+        );
+
+        final Directory dir = Directory(p.join(tempDir.path, 'managed-mcp'))
+          ..createSync();
+        File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
+        final Map<String, Object?> project = j(
+          await client.peer.call('projects.add', <String, Object?>{
+            'path': dir.path,
+            'name': 'Managed MCP',
+          }),
+        );
+        final String projectId = (project['project']! as Map)['id']! as String;
+        final Session owner = Session.fromJson(
+          (j(
+                    await client.peer.call('sessions.create', <String, Object?>{
+                      'projectId': projectId,
+                      'providerId': 'fake',
+                    }),
+                  )['session']!
+                  as Map)
+              .cast<String, Object?>(),
+        );
+        final List<Object?> configs = jsonDecode(
+          File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
+        ) as List<Object?>;
+        final Map<String, Object?> bridge = (configs.single! as Map)
+            .cast<String, Object?>();
+        expect(bridge['name'], 'speeddial');
+        expect(jsonEncode(bridge), isNot(contains('/bin/filesystem-mcp')));
+        expect(jsonEncode(bridge), isNot(contains('top-secret')));
+
+        final Map<String, String> environment = mcpEnvironment(bridge);
+        final WsClient mcp = await connect(server!.port);
+        await mcp.peer.call('internal.mcpAuthenticate', <String, Object?>{
+          'secret': environment['SPEEDDIAL_MCP_SECRET'],
+          'sessionId': owner.id,
+        });
+        final Map<String, Object?> tools = j(
+          await mcp.peer.call('internal.mcpListTools'),
+        );
+        expect(
+          (tools['tools']! as List<Object?>).single,
+          containsPair('name', 'filesystem__echo'),
+        );
+        expect(tools['warnings'], isEmpty);
+        expect(connected?.profile.command, '/bin/filesystem-mcp');
+        expect(connected?.secrets, <String, String>{'API_TOKEN': 'top-secret'});
+
+        final Map<String, Object?> call = j(
+          await mcp.peer.call('internal.mcpCallTool', <String, Object?>{
+            'name': 'filesystem__echo',
+            'arguments': <String, Object?>{'value': 7},
+          }),
+        );
+        expect(call['structuredContent'], <String, Object?>{'value': 7});
+        expect(upstream?.calls.single.name, 'echo');
+        await mcp.close();
+
+        await client.peer.call('mcp.update', <String, Object?>{
+          'id': profileId,
           'name': 'filesystem',
           'transport': 'stdio',
-          'enabled': true,
+          'enabled': false,
           'command': '/bin/filesystem-mcp',
           'args': <String>['--stdio'],
-          'secrets': <String, String>{'API_TOKEN': 'top-secret'},
-        }),
-      );
-      final String profileId = (created['server']! as Map)['id']! as String;
-      final Map<String, Object?> listing = j(
-        await client.peer.call('mcp.list'),
-      );
-      expect(listing.toString(), isNot(contains('top-secret')));
-      expect(
-        (((listing['servers']! as List).single as Map)['secretNames'] as List),
-        const <String>['API_TOKEN'],
-      );
+          'removeSecretNames': <String>['API_TOKEN'],
+        });
+        final Map<String, Object?> updated = j(
+          await client.peer.call('mcp.list'),
+        );
+        expect(
+          ((updated['servers']! as List).single as Map)['secretNames'],
+          isEmpty,
+        );
+        await client.peer.call('mcp.delete', <String, Object?>{
+          'id': profileId,
+        });
+        expect(
+          (j(await client.peer.call('mcp.list'))['servers']! as List),
+          isEmpty,
+        );
+        await client.close();
+      },
+    );
 
-      final Directory dir = Directory(p.join(tempDir.path, 'managed-mcp'))
-        ..createSync();
-      File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
-      final Map<String, Object?> project = j(
-        await client.peer.call('projects.add', <String, Object?>{
-          'path': dir.path,
-          'name': 'Managed MCP',
-        }),
+    test('project MCP profiles proxy only into matching sessions', () async {
+      final Map<String, List<String>> connectedByCwd = <String, List<String>>{};
+      await startServer(
+        mcpConnector: (StoredMcpServer server, String cwd) async {
+          connectedByCwd
+              .putIfAbsent(cwd, () => <String>[])
+              .add(server.profile.name);
+          return TestMcpConnection(server.profile.name);
+        },
       );
-      final String projectId = (project['project']! as Map)['id']! as String;
-      await client.peer.call('sessions.create', <String, Object?>{
-        'projectId': projectId,
-        'providerId': 'fake',
-      });
-      final List<Object?> configs = jsonDecode(
-        File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
-      ) as List<Object?>;
-      final Map<String, Object?> managed = configs
-          .whereType<Map>()
-          .map((Map config) => config.cast<String, Object?>())
-          .singleWhere(
-            (Map<String, Object?> config) => config['name'] == 'filesystem',
-          );
-      expect(managed['command'], '/bin/filesystem-mcp');
-      expect(managed['args'], const <String>['--stdio']);
-      expect(mcpEnvironment(managed)['API_TOKEN'], 'top-secret');
-
-      await client.peer.call('mcp.update', <String, Object?>{
-        'id': profileId,
-        'name': 'filesystem',
-        'transport': 'stdio',
-        'enabled': false,
-        'command': '/bin/filesystem-mcp',
-        'args': <String>['--stdio'],
-        'removeSecretNames': <String>['API_TOKEN'],
-      });
-      final Map<String, Object?> updated = j(
-        await client.peer.call('mcp.list'),
-      );
-      expect(
-        ((updated['servers']! as List).single as Map)['secretNames'],
-        isEmpty,
-      );
-      await client.peer.call('mcp.delete', <String, Object?>{'id': profileId});
-      expect(
-        (j(await client.peer.call('mcp.list'))['servers']! as List),
-        isEmpty,
-      );
-      await client.close();
-    });
-
-    test('project MCP profiles are injected only into matching sessions',
-        () async {
-      await startServer();
       final WsClient client = await connect(server!.port);
       final Directory firstDir = Directory(
         p.join(tempDir.path, 'project-mcp-first'),
@@ -812,21 +906,21 @@ void main() {
       File(p.join(secondDir.path, 'agent.capture_mcp')).writeAsStringSync('');
       final String firstProjectId =
           (j(
-                await client.peer.call('projects.add', <String, Object?>{
-                  'path': firstDir.path,
-                  'name': 'First MCP project',
-                }),
-              )['project']!
-              as Map)['id']!
+                    await client.peer.call('projects.add', <String, Object?>{
+                      'path': firstDir.path,
+                      'name': 'First MCP project',
+                    }),
+                  )['project']!
+                  as Map)['id']!
               as String;
       final String secondProjectId =
           (j(
-                await client.peer.call('projects.add', <String, Object?>{
-                  'path': secondDir.path,
-                  'name': 'Second MCP project',
-                }),
-              )['project']!
-              as Map)['id']!
+                    await client.peer.call('projects.add', <String, Object?>{
+                      'path': secondDir.path,
+                      'name': 'Second MCP project',
+                    }),
+                  )['project']!
+                  as Map)['id']!
               as String;
 
       await expectLater(
@@ -860,40 +954,74 @@ void main() {
           'command': '/bin/project-mcp',
         }),
       );
-      expect(
-        (scoped['server']! as Map)['projectId'],
-        firstProjectId,
+      expect((scoped['server']! as Map)['projectId'], firstProjectId);
+
+      final Session first = Session.fromJson(
+        (j(
+                  await client.peer.call('sessions.create', <String, Object?>{
+                    'projectId': firstProjectId,
+                    'providerId': 'fake',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final Session second = Session.fromJson(
+        (j(
+                  await client.peer.call('sessions.create', <String, Object?>{
+                    'projectId': secondProjectId,
+                    'providerId': 'fake',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
       );
 
-      await client.peer.call('sessions.create', <String, Object?>{
-        'projectId': firstProjectId,
-        'providerId': 'fake',
-      });
-      await client.peer.call('sessions.create', <String, Object?>{
-        'projectId': secondProjectId,
-        'providerId': 'fake',
-      });
-      List<String> configuredNames(Directory directory) =>
-          (jsonDecode(
-                    File(
-                      p.join(directory.path, 'agent.mcp_servers'),
-                    ).readAsStringSync(),
-                  )
-                  as List<Object?>)
-              .whereType<Map>()
-              .map((Map<Object?, Object?> config) => config['name']! as String)
-              .toList(growable: false);
+      Future<List<String>> proxiedNames(
+        Session session,
+        Directory directory,
+      ) async {
+        final List<Object?> configs = jsonDecode(
+          File(p.join(directory.path, 'agent.mcp_servers')).readAsStringSync(),
+        ) as List<Object?>;
+        final Map<String, Object?> bridge = (configs.single! as Map)
+            .cast<String, Object?>();
+        expect(bridge['name'], 'speeddial');
+        final Map<String, String> environment = mcpEnvironment(bridge);
+        final WsClient mcp = await connect(server!.port);
+        await mcp.peer.call('internal.mcpAuthenticate', <String, Object?>{
+          'secret': environment['SPEEDDIAL_MCP_SECRET'],
+          'sessionId': session.id,
+        });
+        final Map<String, Object?> listed = j(
+          await mcp.peer.call('internal.mcpListTools'),
+        );
+        await mcp.close();
+        return (listed['tools']! as List<Object?>)
+            .whereType<Map>()
+            .map((Map<Object?, Object?> tool) => tool['name']! as String)
+            .toList(growable: false);
+      }
 
       expect(
-        configuredNames(firstDir),
+        await proxiedNames(first, firstDir),
+        containsAll(<String>[
+          'global-tools__echo',
+          'first-project-tools__echo',
+        ]),
+      );
+      expect(await proxiedNames(second, secondDir), <String>[
+        'global-tools__echo',
+      ]);
+      expect(
+        connectedByCwd[firstDir.path],
         containsAll(<String>['global-tools', 'first-project-tools']),
       );
-      expect(configuredNames(secondDir), contains('global-tools'));
-      expect(configuredNames(secondDir), isNot(contains('first-project-tools')));
+      expect(connectedByCwd[secondDir.path], <String>['global-tools']);
       await client.close();
     });
 
-    test('HTTP MCP OAuth authorizes, reports status, and injects token', () async {
+    test('HTTP MCP OAuth authorizes, refreshes, and proxies its token', () async {
       final HttpServer oauthServer = await HttpServer.bind(
         InternetAddress.loopbackIPv4,
         0,
@@ -1020,7 +1148,13 @@ void main() {
         await oauthServer.close(force: true);
       });
 
-      await startServer();
+      StoredMcpServer? oauthUpstream;
+      await startServer(
+        mcpConnector: (StoredMcpServer server, String cwd) async {
+          oauthUpstream = server;
+          return TestMcpConnection(server.profile.name);
+        },
+      );
       final WsClient client = await connect(server!.port);
       final String redirectUri =
           'http://127.0.0.1:${server!.port}/oauth/callback';
@@ -1116,23 +1250,36 @@ void main() {
         }),
       );
       await Future<void>.delayed(const Duration(milliseconds: 2100));
-      await client.peer.call('sessions.create', <String, Object?>{
-        'projectId': (project['project']! as Map)['id'],
-        'providerId': 'fake',
-      });
+      final Session owner = Session.fromJson(
+        (j(
+                  await client.peer.call('sessions.create', <String, Object?>{
+                    'projectId': (project['project']! as Map)['id'],
+                    'providerId': 'fake',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
       final List<Object?> configs = jsonDecode(
         File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
       ) as List<Object?>;
-      final Map<String, Object?> oauthConfig = configs
-          .whereType<Map>()
-          .map((Map config) => config.cast<String, Object?>())
-          .singleWhere(
-            (Map<String, Object?> config) => config['name'] == 'oauth-tools',
-          );
+      final Map<String, Object?> bridge = (configs.single! as Map)
+          .cast<String, Object?>();
+      expect(bridge['name'], 'speeddial');
+      expect(jsonEncode(bridge), isNot(contains(oauthBase.toString())));
+      expect(jsonEncode(bridge), isNot(contains('oauth-refreshed-token')));
+      final Map<String, String> bridgeEnvironment = mcpEnvironment(bridge);
+      final WsClient mcp = await connect(server!.port);
+      await mcp.peer.call('internal.mcpAuthenticate', <String, Object?>{
+        'secret': bridgeEnvironment['SPEEDDIAL_MCP_SECRET'],
+        'sessionId': owner.id,
+      });
+      await mcp.peer.call('internal.mcpListTools');
       expect(
-        mcpEnvironment(oauthConfig, field: 'headers')['Authorization'],
+        oauthUpstream?.secrets['Authorization'],
         'Bearer oauth-refreshed-token',
       );
+      await mcp.close();
       expect(tokenForms, hasLength(2));
       expect(tokenForms.last['grant_type'], 'refresh_token');
       expect(tokenForms.last['refresh_token'], 'oauth-refresh-token');

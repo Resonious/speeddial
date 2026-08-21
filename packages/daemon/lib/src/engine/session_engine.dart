@@ -1,22 +1,21 @@
-/// [SessionEngine]: owns live ACP agent processes per session and maps their
+/// [SessionEngine]: owns live provider processes per session and maps their
 /// updates onto protocol [SessionEvent]s, persisting every event with a
 /// per-session sequence number and broadcasting it.
 ///
 /// Lifecycle:
-///   * `createSession` spawns a provider's ACP agent (cwd = session cwd),
-///     creates an ACP session, and persists an idle protocol session.
-///   * `sendMessage` runs a turn: user message event (with attachment
-///     metadata when files were attached), status `running`, mapped ACP
-///     updates (chunks, tool calls, plan, usage) streamed and persisted,
+///   * `createSession` spawns the selected provider transport in the session
+///     cwd, creates a provider session, and persists an idle protocol session.
+///   * `sendMessage` runs a turn: user message event (with attachment metadata
+///     when supported files were attached), status `running`, mapped provider
+///     updates (chunks, tools, activities, plan, usage) streamed and persisted,
 ///     permission requests parked until `respondPermission`, then
 ///     `turnComplete` and status `idle`.
 ///   * `cancel` cancels the running turn via the agent.
 ///   * `delete` kills the agent and removes the session (and its events).
 ///
-/// Daemon restarts: the ACP session id is persisted at creation, so after a
-/// restart `sendMessage` lazily respawns the provider's agent and resumes it
-/// with ACP `session/load` ([SessionEngine.restore] only flags sessions that
-/// were interrupted mid-turn).
+/// Daemon restarts: the provider-side session id is persisted at creation, so
+/// `sendMessage` can lazily respawn the transport and resume that session
+/// ([SessionEngine.restore] only flags sessions interrupted mid-turn).
 ///
 /// fs/read+write requests from agents are served with paths confined to the
 /// session cwd; anything escaping it is rejected with a JSON-RPC error.
@@ -32,6 +31,8 @@ import 'package:uuid/uuid.dart';
 
 import '../acp/acp_client.dart';
 import '../acp/acp_types.dart';
+import '../agents/agent_client.dart';
+import '../ante/ante_client.dart';
 import '../git/git_service.dart';
 import '../mcp/built_in_mcp_server.dart';
 import '../providers/provider_registry.dart';
@@ -58,21 +59,21 @@ class _LiveSession {
   _LiveSession({
     required this.session,
     required this.client,
-    required this.acpSessionId,
+    required this.providerSessionId,
     this.modelConfigId,
     this.thinkingConfigId,
   });
 
   Session session;
-  final AcpClient client;
-  final String acpSessionId;
+  final AgentClient client;
+  final String providerSessionId;
 
-  /// The config option id of the provider's model (for ACP
-  /// `session/set_config_option`), null when the provider exposes none.
+  /// The config option id of the provider's model, null when the provider
+  /// exposes none.
   final String? modelConfigId;
 
-  /// The config option id of the provider's thinking level (for ACP
-  /// `session/set_config_option`), null when the provider exposes none.
+  /// The config option id of the provider's thinking/effort level, null when
+  /// the provider exposes none.
   final String? thinkingConfigId;
 
   /// The in-flight turn future, or null when idle.
@@ -105,12 +106,12 @@ typedef _ForkContext = ({
 });
 typedef _BuiltInMcpConfig = ({
   String daemonUrl,
-  String Function(String sessionId) secretForSession,
+  String Function(Session session) secretForSession,
   String command,
   List<String> args,
 });
 
-/// Orchestrates ACP agent processes and the project session lifecycle.
+/// Orchestrates agent transports and the project session lifecycle.
 class SessionEngine {
   SessionEngine({
     required DaemonStore store,
@@ -133,10 +134,10 @@ class SessionEngine {
   Future<void> Function()? _prepareMcpServers;
 
   /// Configures the daemon-owned MCP stdio server that is included in every
-  /// subsequent ACP session/new and session/load request.
+  /// subsequent provider session creation or resume.
   void configureBuiltInMcp({
     required String daemonUrl,
-    required String Function(String sessionId) secretForSession,
+    required String Function(Session session) secretForSession,
     required String command,
     required List<String> args,
   }) {
@@ -149,7 +150,7 @@ class SessionEngine {
   }
 
   /// Configures daemon-owned authentication preparation for remote MCP
-  /// servers. Called immediately before every ACP session/new or session/load.
+  /// servers. Called immediately before every provider session start/resume.
   void configureMcpAuth({required Future<void> Function() prepare}) {
     _prepareMcpServers = prepare;
   }
@@ -158,10 +159,13 @@ class SessionEngine {
     Session session,
     InitializeResult info,
   ) {
-    final List<Map<String, Object?>> servers = <Map<String, Object?>>[];
+    if (info.agentCapabilities['mcpServers'] == false) {
+      return const <Map<String, Object?>>[];
+    }
     final _BuiltInMcpConfig? builtIn = _builtInMcp;
-    if (builtIn != null) {
-      servers.add(<String, Object?>{
+    if (builtIn == null) return const <Map<String, Object?>>[];
+    return <Map<String, Object?>>[
+      <String, Object?>{
         'name': kMcpServerName,
         'command': builtIn.command,
         'args': builtIn.args,
@@ -172,46 +176,13 @@ class SessionEngine {
           },
           <String, Object?>{
             'name': kMcpSecretEnv,
-            'value': builtIn.secretForSession(session.id),
+            'value': builtIn.secretForSession(session),
           },
           <String, Object?>{'name': kMcpSessionIdEnv, 'value': session.id},
           <String, Object?>{'name': kMcpSessionCwdEnv, 'value': session.cwd},
         ],
-      });
-    }
-    final Object? rawCapabilities = info.agentCapabilities['mcpCapabilities'];
-    final bool supportsHttp =
-        rawCapabilities is Map && rawCapabilities['http'] == true;
-    for (final StoredMcpServer stored
-        in _store.listEnabledMcpServersFor(session.projectId)) {
-      final McpServerProfile profile = stored.profile;
-      switch (profile.transport) {
-        case McpTransport.stdio:
-          servers.add(<String, Object?>{
-            'name': profile.name,
-            'command': profile.command!,
-            'args': profile.args,
-            'env': <Object?>[
-              for (final MapEntry<String, String> secret
-                  in stored.secrets.entries)
-                <String, Object?>{'name': secret.key, 'value': secret.value},
-            ],
-          });
-        case McpTransport.http:
-          if (!supportsHttp) continue;
-          servers.add(<String, Object?>{
-            'name': profile.name,
-            'type': 'http',
-            'url': profile.url!,
-            'headers': <Object?>[
-              for (final MapEntry<String, String> secret
-                  in stored.secrets.entries)
-                <String, Object?>{'name': secret.key, 'value': secret.value},
-            ],
-          });
-      }
-    }
-    return servers;
+      },
+    ];
   }
 
   final Set<String> _mcpReloadPending = <String>{};
@@ -233,6 +204,7 @@ class SessionEngine {
 
   Future<bool> _parkForMcpReload(_LiveSession live) async {
     final InitializeResult info = await live.client.initialized;
+    if (info.agentCapabilities['mcpServers'] == false) return false;
     if (info.agentCapabilities['loadSession'] != true) return false;
     final String sessionId = live.session.id;
     if (!identical(_live[sessionId], live)) return false;
@@ -302,7 +274,7 @@ class SessionEngine {
     }
   }
 
-  /// Creates a new protocol session and spawns its ACP agent.
+  /// Creates a new protocol session and spawns its provider transport.
   ///
   /// When [baseBranch] is given, the session runs in a fresh git worktree:
   /// the daemon fetches `origin/<baseBranch>` in the project repo and adds a
@@ -519,7 +491,7 @@ class SessionEngine {
     String? rollbackWorktreePath,
   }) async {
     final client = _spawnAgent(baseSession);
-    final String acpSessionId;
+    final String providerSessionId;
     final Session session;
     ({String configId, String? current, List<String> levels})? modelOption;
     ({String configId, String? current, List<String> levels})? thinking;
@@ -528,19 +500,25 @@ class SessionEngine {
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
-      await _prepareMcpServers?.call();
+      if (info.agentCapabilities['mcpServers'] != false) {
+        await _prepareMcpServers?.call();
+      }
       final created = await client.newSession(
         cwd: baseSession.cwd,
         mcpServers: _mcpServersFor(baseSession, info),
+        model: requestedModel,
+        yolo: baseSession.yolo,
       );
-      acpSessionId = created.sessionId;
+      providerSessionId = created.sessionId;
       modelOption = _modelOptionOf(created.configOptions);
       thinking = _thinkingOptionOf(created.configOptions);
       var adoptedOptions = created.configOptions;
-      if (modelOption != null && requestedModel != null) {
+      if (modelOption != null &&
+          requestedModel != null &&
+          modelOption.current != requestedModel) {
         try {
           adoptedOptions = await client.setConfigOption(
-            acpSessionId,
+            providerSessionId,
             modelOption.configId,
             requestedModel,
           );
@@ -573,11 +551,11 @@ class SessionEngine {
       );
     }
     _store.insertSession(session);
-    _store.setAcpSessionId(session.id, acpSessionId);
+    _store.setProviderSessionId(session.id, providerSessionId);
     _live[session.id] = _LiveSession(
       session: session,
       client: client,
-      acpSessionId: acpSessionId,
+      providerSessionId: providerSessionId,
       modelConfigId: modelOption?.configId,
       thinkingConfigId: thinking?.configId,
     );
@@ -636,22 +614,33 @@ class SessionEngine {
     }
   }
 
-  /// Spawns the ACP agent for [session]'s provider in its cwd, wired to this
-  /// engine's permission/fs handlers. Shared by [createSession] and the
-  /// restart-resume path in [sendMessage].
-  AcpClient _spawnAgent(Session session) {
+  /// Spawns the configured agent transport in [session.cwd], wired to the
+  /// engine's permission and filesystem handlers where supported.
+  AgentClient _spawnAgent(Session session) {
     final ProviderSpec spec = _providers.byId(session.providerId)!;
-    return AcpClient.spawn(
-      spec.command,
-      cwd: session.cwd,
-      // The closures capture our protocol sessionId, so the ACP session id
-      // (which collides across agents, e.g. "s1") never needs disambiguation.
-      requestPermission: (acpSessionId, toolCallId, requestTitle, options) =>
-          _onPermissionRequest(session.id, toolCallId, requestTitle, options),
-      readTextFile: (acpSessionId, path) => _readTextFile(session.id, path),
-      writeTextFile: (acpSessionId, path, content) =>
-          _writeTextFile(session.id, path, content),
-    );
+    Future<String> permissionHandler(
+      String providerSessionId,
+      String? toolCallId,
+      String requestTitle,
+      List<PermissionOptionData> options,
+    ) => _onPermissionRequest(session.id, toolCallId, requestTitle, options);
+    return switch (spec.protocol) {
+      ProviderProtocol.acp => AcpClient.spawn(
+        spec.command,
+        cwd: session.cwd,
+        requestPermission: permissionHandler,
+        readTextFile: (providerSessionId, path) =>
+            _readTextFile(session.id, path),
+        writeTextFile: (providerSessionId, path, content) =>
+            _writeTextFile(session.id, path, content),
+      ),
+      ProviderProtocol.ante => AnteClient.spawn(
+        spec.command,
+        cwd: session.cwd,
+        catalogCommand: spec.catalogCommand,
+        requestPermission: permissionHandler,
+      ),
+    };
   }
 
   /// Persists an agent-requested image and emits it into the session timeline.
@@ -743,6 +732,15 @@ class SessionEngine {
       );
     }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
+    final ProviderSpec provider = _providers.byId(live.session.providerId)!;
+    if (provider.protocol == ProviderProtocol.ante &&
+        (attachments.isNotEmpty ||
+            (forkContext?.attachments.isNotEmpty ?? false))) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Ante serve does not accept file attachments',
+      );
+    }
     // Decode and persist each attachment before the turn starts so the
     // metadata rides on the user message event and the payload is fetchable
     // via `attachments.read`. The wire handler has already validated the
@@ -859,14 +857,14 @@ class SessionEngine {
     );
   }
 
-  /// Respawns the agent for a session whose process is gone and reloads its
-  /// ACP session, making persisted sessions usable across daemon restarts.
+  /// Respawns the provider transport for a session whose process is gone,
+  /// making persisted sessions usable across daemon restarts.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
   /// `DaemonError(kErrConflict)` when the session is closed, predates resume
-  /// support (no persisted ACP session id), or its provider cannot resume.
-  /// A provider/agent failure during resume marks the session `error` (its
-  /// agent-side state is presumed lost) and throws `kErrAgentProcess`.
+  /// support (no persisted provider session id), or its provider cannot resume.
+  /// A provider failure during resume marks the session `error` (its remote
+  /// state is presumed lost) and throws `kErrAgentProcess`.
   Future<_LiveSession> _resume(String sessionId) async {
     final Session? session = _store.getSession(sessionId);
     if (session == null) {
@@ -878,8 +876,8 @@ class SessionEngine {
         'Session "$sessionId" is closed; create a new session',
       );
     }
-    final String? acpSessionId = _store.acpSessionIdOf(sessionId);
-    if (acpSessionId == null) {
+    final String? providerSessionId = _store.providerSessionIdOf(sessionId);
+    if (providerSessionId == null) {
       throw DaemonError(
         kErrConflict,
         'Session "$sessionId" predates resume support (its agent process '
@@ -893,7 +891,7 @@ class SessionEngine {
         'Provider "${session.providerId}" is not available on this host',
       );
     }
-    final AcpClient client = _spawnAgent(session);
+    final AgentClient client = _spawnAgent(session);
     final List<AcpConfigOption> configOptions;
     try {
       final InitializeResult info = await client.initialized;
@@ -904,12 +902,14 @@ class SessionEngine {
         throw DaemonError(
           kErrConflict,
           'Provider "${session.providerId}" cannot resume sessions after a '
-          'restart (no ACP session/load support); create a new session',
+          'restart; create a new session',
         );
       }
-      await _prepareMcpServers?.call();
+      if (info.agentCapabilities['mcpServers'] != false) {
+        await _prepareMcpServers?.call();
+      }
       configOptions = await client.loadSession(
-        sessionId: acpSessionId,
+        sessionId: providerSessionId,
         cwd: session.cwd,
         mcpServers: _mcpServersFor(session, info),
       );
@@ -946,7 +946,7 @@ class SessionEngine {
     final _LiveSession live = _LiveSession(
       session: session,
       client: client,
-      acpSessionId: acpSessionId,
+      providerSessionId: providerSessionId,
       modelConfigId: modelOption?.configId,
       thinkingConfigId: thinkingOption?.configId,
     );
@@ -956,7 +956,7 @@ class SessionEngine {
     // resume — the next explicit setMode tries again.
     if (session.mode != SessionMode.build) {
       try {
-        await client.setMode(acpSessionId, session.mode.wire);
+        await client.setMode(providerSessionId, session.mode.wire);
       } on Object {
         // Best-effort; see comment above.
       }
@@ -975,7 +975,7 @@ class SessionEngine {
         modelOption != null) {
       try {
         currentOptions = await client.setConfigOption(
-          acpSessionId,
+          providerSessionId,
           modelOption.configId,
           persistedModel,
         );
@@ -992,7 +992,7 @@ class SessionEngine {
       if (thinking != null) {
         try {
           currentOptions = await client.setConfigOption(
-            acpSessionId,
+            providerSessionId,
             thinking.configId,
             persistedLevel,
           );
@@ -1024,7 +1024,7 @@ class SessionEngine {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
     }
     if (live.turn == null) return;
-    await live.client.cancel(live.acpSessionId);
+    await live.client.cancel(live.providerSessionId);
     _expirePendingPermissions(live, 'Permission request cancelled');
   }
 
@@ -1040,7 +1040,7 @@ class SessionEngine {
   Future<Session> setMode(String sessionId, SessionMode mode) async {
     final live = _live[sessionId];
     if (live != null && live.turn == null) {
-      await live.client.setMode(live.acpSessionId, mode.wire);
+      await live.client.setMode(live.providerSessionId, mode.wire);
     }
     return _updateSession(sessionId, (session) => _withMode(session, mode));
   }
@@ -1076,7 +1076,7 @@ class SessionEngine {
         live.turn == null &&
         live.modelConfigId != null) {
       final configOptions = await live.client.setConfigOption(
-        live.acpSessionId,
+        live.providerSessionId,
         live.modelConfigId!,
         model,
       );
@@ -1125,7 +1125,7 @@ class SessionEngine {
     final live = _live[sessionId];
     if (live != null && live.turn == null && live.thinkingConfigId != null) {
       final configOptions = await live.client.setConfigOption(
-        live.acpSessionId,
+        live.providerSessionId,
         live.thinkingConfigId!,
         level,
       );
@@ -1276,7 +1276,7 @@ class SessionEngine {
     List<_PreparedAttachment> attachments,
     _ForkContext? forkContext,
   ) async {
-    final updates = live.client.sessionUpdates(live.acpSessionId);
+    final updates = live.client.sessionUpdates(live.providerSessionId);
     final subscription = updates.listen((update) {
       final event = _mapUpdate(live, update);
       if (event != null) _emit(live, event);
@@ -1284,7 +1284,7 @@ class SessionEngine {
 
     try {
       final result = await live.client.prompt(
-        live.acpSessionId,
+        live.providerSessionId,
         _promptBlocks(text, attachments, forkContext: forkContext),
       );
       if (forkContext != null) {
@@ -1294,11 +1294,15 @@ class SessionEngine {
       _setStatus(live, SessionStatus.idle);
     } on Object catch (error) {
       if (!live.closed) {
-        // The agent is gone (process exit / stream failure). Expire every
-        // parked permission first so a stale respondPermission reports
-        // kErrNotFound and cannot flip the dead session back to running.
-        _expirePendingPermissions(live, 'Agent process ended: $error');
-        _emit(live, SessionErrorEvent(message: 'Agent process ended: $error'));
+        final String message = switch (error) {
+          AnteTurnException(:final message) => 'Ante turn failed: $message',
+          _ => 'Agent process ended: $error',
+        };
+        // Expire every parked permission first so a stale
+        // respondPermission reports kErrNotFound and cannot flip the failed
+        // session back to running.
+        _expirePendingPermissions(live, message);
+        _emit(live, SessionErrorEvent(message: message));
         _setStatus(live, SessionStatus.error);
       }
     } finally {
@@ -1306,10 +1310,11 @@ class SessionEngine {
     }
   }
 
-  /// The ACP prompt content blocks for a turn. A fork's inherited transcript
-  /// and copied attachments lead the first new prompt; the user's current
-  /// text and attachments follow. Attachments become `image` blocks or
-  /// embedded `resource` blocks according to their mime type.
+  /// The structured provider prompt blocks for a turn. A fork's inherited
+  /// transcript and copied attachments lead the first new prompt; the user's
+  /// current text and attachments follow. ACP transports accept `image` and
+  /// embedded `resource` attachment blocks; Ante is validated as text-only
+  /// before this point.
   static List<Map<String, Object?>> _promptBlocks(
     String text,
     List<_PreparedAttachment> attachments, {
@@ -1404,6 +1409,16 @@ class SessionEngine {
         return planEventFromAcp(plan);
       case final AcpUsageUpdate usage:
         return usageEventFromAcp(usage);
+      case final AcpAgentActivityUpdate activity:
+        return AgentActivityEvent(
+          activity: AgentActivity(
+            id: activity.id,
+            kind: activity.kind,
+            title: activity.title,
+            status: AgentActivityStatus.parse(activity.status),
+            details: activity.details,
+          ),
+        );
       case AcpAvailableCommandsUpdate():
       case AcpCurrentModeUpdate():
         return null; // Not part of the protocol event stream.

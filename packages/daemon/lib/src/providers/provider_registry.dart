@@ -10,7 +10,8 @@
 ///
 /// ```json
 /// {"providers": {"<id>": {"name": "...", "command": ["...", ...],
-///   "models": ["model-id", ...], "modelsCommand": ["...", ...]}}}
+///   "protocol": "acp"|"ante", "models": ["model-id", ...],
+///   "modelsCommand": ["...", ...], "catalogCommand": ["...", ...]}}}
 /// ```
 ///
 /// Selectable models surface on `ProviderInfo.models`:
@@ -42,14 +43,19 @@ import '../paths.dart';
 /// tests inject stubs. A throwing probe degrades to an empty list.
 typedef ModelsProbe = Future<List<String>> Function(List<String> command);
 
+/// Wire protocol spoken by a provider process.
+enum ProviderProtocol { acp, ante }
+
 /// How to spawn one provider's ACP agent, and how to list its models.
 class ProviderSpec {
   const ProviderSpec({
     required this.id,
     required this.name,
     required this.command,
+    this.protocol = ProviderProtocol.acp,
     this.models = const <String>[],
     this.modelsCommand,
+    this.catalogCommand,
   });
 
   /// Provider id ("omp", "claude", "codex", or a custom id).
@@ -61,12 +67,18 @@ class ProviderSpec {
   /// Executable plus arguments for the ACP agent subprocess.
   final List<String> command;
 
+  /// Session protocol spoken over the provider process's stdio.
+  final ProviderProtocol protocol;
+
   /// Static selectable model ids. When non-empty, no probe runs.
   final List<String> models;
 
   /// Argv of a command printing `{"models": [{"selector"|"id": ...}]}` on
   /// stdout, or null when the provider has no machine-readable model list.
   final List<String>? modelsCommand;
+
+  /// Ante's provider catalog command. Null for ACP providers.
+  final List<String>? catalogCommand;
 }
 
 /// Registry of ACP providers known to the daemon.
@@ -98,6 +110,13 @@ class ProviderRegistry {
         name: 'Codex',
         command: <String>['npx', '-y', '@zed-industries/codex-acp'],
       ),
+      'ante': const ProviderSpec(
+        id: 'ante',
+        name: 'Ante',
+        command: <String>['ante', 'serve', '--stdio'],
+        protocol: ProviderProtocol.ante,
+        catalogCommand: <String>['ante', 'catalog'],
+      ),
     };
     _applyConfig(configOverrides ?? _readConfigFile());
   }
@@ -124,13 +143,15 @@ class ProviderRegistry {
   Future<List<ProviderInfo>> list() async {
     final out = <ProviderInfo>[];
     for (final spec in _providers.values) {
-      out.add(ProviderInfo(
-        id: spec.id,
-        name: spec.name,
-        available: isAvailable(spec.id),
-        command: spec.command.join(' '),
-        models: await _modelsFor(spec),
-      ));
+      out.add(
+        ProviderInfo(
+          id: spec.id,
+          name: spec.name,
+          available: isAvailable(spec.id),
+          command: spec.command.join(' '),
+          models: await _modelsFor(spec),
+        ),
+      );
     }
     return out;
   }
@@ -194,8 +215,10 @@ class ProviderRegistry {
   /// timeout, non-zero exit, malformed JSON) yields an empty list.
   static Future<List<String>> _runModelsCommand(List<String> command) async {
     try {
-      final result = await Process.run(command.first, command.sublist(1))
-          .timeout(const Duration(seconds: 5));
+      final result = await Process.run(
+        command.first,
+        command.sublist(1),
+      ).timeout(const Duration(seconds: 5));
       if (result.exitCode != 0) return const <String>[];
       final decoded = jsonDecode(result.stdout as String);
       if (decoded is! Map) return const <String>[];
@@ -253,11 +276,21 @@ class ProviderRegistry {
         id: id,
         name: name,
         command: rawCommand.cast<String>(),
-        models: _stringList(specMap['models']) ?? previous?.models ??
+        protocol: switch (specMap['protocol']) {
+          'ante' => ProviderProtocol.ante,
+          'acp' => ProviderProtocol.acp,
+          _ => previous?.protocol ?? ProviderProtocol.acp,
+        },
+        models:
+            _stringList(specMap['models']) ??
+            previous?.models ??
             const <String>[],
         modelsCommand: specMap.containsKey('modelsCommand')
             ? _stringList(specMap['modelsCommand'])
             : previous?.modelsCommand,
+        catalogCommand: specMap.containsKey('catalogCommand')
+            ? _stringList(specMap['catalogCommand'])
+            : previous?.catalogCommand,
       );
     }
   }

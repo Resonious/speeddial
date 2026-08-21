@@ -28,6 +28,18 @@ String resolveFixture() => <String>[
   ),
 ].firstWhere((path) => File(path).existsSync());
 
+String resolveAnteFixture() => <String>[
+  p.join(Directory.current.path, 'test', 'fixtures', 'fake_ante_agent.dart'),
+  p.join(
+    Directory.current.path,
+    'packages',
+    'daemon',
+    'test',
+    'fixtures',
+    'fake_ante_agent.dart',
+  ),
+].firstWhere((String path) => File(path).existsSync());
+
 /// A registry whose only provider is the fake ACP fixture, spawned through
 /// the current Dart VM.
 ProviderRegistry fakeProviders() => ProviderRegistry(
@@ -40,6 +52,35 @@ ProviderRegistry fakeProviders() => ProviderRegistry(
     },
   },
 );
+
+ProviderRegistry fakeAnteProviders() {
+  final String fixture = resolveAnteFixture();
+  return ProviderRegistry(
+    configOverrides: <String, Object?>{
+      'providers': <String, Object?>{
+        'fakeAnte': <String, Object?>{
+          'name': 'Fake Ante',
+          'command': <String>[Platform.resolvedExecutable, fixture, 'serve'],
+          'protocol': 'ante',
+          'catalogCommand': <String>[
+            Platform.resolvedExecutable,
+            fixture,
+            'catalog',
+          ],
+        },
+      },
+    },
+  );
+}
+
+void configureTestMcp(SessionEngine engine) {
+  engine.configureBuiltInMcp(
+    daemonUrl: 'ws://127.0.0.1:7331/ws',
+    secretForSession: (Session session) => 'test-secret-${session.id}',
+    command: '/bin/speeddial',
+    args: const <String>['_internal-mcp'],
+  );
+}
 
 void main() {
   late Directory tempDir;
@@ -125,6 +166,115 @@ void main() {
     }
   }
 
+  test('Ante sessions stream rich events through the engine', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    engine = SessionEngine(store: store, providers: fakeAnteProviders());
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeAnte',
+    );
+    expect(session.model, 'fake-model');
+    expect(session.models, <String>['fake-model', 'fake-large']);
+    expect(session.thinkingLevel, 'medium');
+    expect(session.thinkingLevels, <String>[
+      'min',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+
+    final Future<PermissionRequestEvent> permissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(session.id, 'normal');
+    final PermissionRequestEvent permission = await permissionFuture.timeout(
+      const Duration(seconds: 5),
+    );
+    expect(
+      permission.request.options.map(
+        (PermissionOption option) => option.optionId,
+      ),
+      contains('AcceptForSession'),
+    );
+    await engine.respondPermission(
+      session.id,
+      permission.request.requestId,
+      'AcceptForSession',
+    );
+    await waitFor(
+      () => events.any(
+        (tuple) =>
+            tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+      ),
+    );
+
+    final List<SessionEvent> turnEvents = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .toList(growable: false);
+    expect(
+      turnEvents.whereType<AgentActivityEvent>().map(
+        (AgentActivityEvent event) => event.activity.kind,
+      ),
+      containsAll(<String>['session', 'extensions', 'info']),
+    );
+    expect(
+      turnEvents
+          .whereType<AgentMessageChunkEvent>()
+          .map((AgentMessageChunkEvent event) => event.text)
+          .join(),
+      'Hello world',
+    );
+    final UsageInfo usage = turnEvents.whereType<UsageEvent>().single.usage;
+    expect(usage.inputTokens, 120);
+    expect(usage.outputTokens, 30);
+    expect(usage.contextUsedTokens, 4096);
+    expect(usage.contextLimitTokens, 200000);
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+
+    await expectLater(
+      engine.sendMessage(
+        session.id,
+        'attachment',
+        attachments: const <OutgoingAttachment>[
+          OutgoingAttachment(
+            name: 'note.txt',
+            mimeType: 'text/plain',
+            data: 'aGk=',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<DaemonError>().having(
+          (DaemonError error) => error.code,
+          'code',
+          -32602,
+        ),
+      ),
+    );
+
+    await engine.sendMessage(session.id, 'error');
+    await waitFor(
+      () => events.any(
+        (tuple) =>
+            tuple.sessionId == session.id &&
+            tuple.event is SessionErrorEvent &&
+            (tuple.event as SessionErrorEvent).message ==
+                'Ante turn failed: Provider failed: bad credentials',
+      ),
+    );
+    expect(store.getSession(session.id)!.status, SessionStatus.error);
+  });
+
   test(
     'tool_call_update snapshots drop raw fields until the call settles',
     () async {
@@ -199,12 +349,7 @@ void main() {
 
   test('createSession injects the configured built-in MCP server', () async {
     File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
-    engine.configureBuiltInMcp(
-      daemonUrl: 'ws://127.0.0.1:7331/ws',
-      secretForSession: (String sessionId) => 'test-secret-$sessionId',
-      command: '/bin/speeddial',
-      args: const <String>['_internal-mcp'],
-    );
+    configureTestMcp(engine);
 
     final Session session = await engine.createSession(
       projectId: 'p1',
@@ -230,6 +375,7 @@ void main() {
   });
   test('MCP changes reload an idle session before its next turn', () async {
     File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+    configureTestMcp(engine);
     final Session session = await engine.createSession(
       projectId: 'p1',
       providerId: 'fake',
@@ -269,15 +415,11 @@ void main() {
     ) as List<Object?>;
     final Map<String, Object?> config = (servers.single! as Map)
         .cast<String, Object?>();
-    expect(config['name'], 'workspace');
-    expect(config['command'], '/bin/workspace-mcp');
-    final Map<String, Object?> environment =
-        ((config['env']! as List<Object?>).single! as Map)
-            .cast<String, Object?>();
-    expect(environment, <String, Object?>{
-      'name': 'TOKEN',
-      'value': 'daemon-secret',
-    });
+    expect(config['name'], 'speeddial');
+    expect(config['command'], '/bin/speeddial');
+    final String encoded = jsonEncode(config);
+    expect(encoded, isNot(contains('/bin/workspace-mcp')));
+    expect(encoded, isNot(contains('daemon-secret')));
   });
 
   test('project MCP changes park only matching idle sessions', () async {
@@ -317,49 +459,40 @@ void main() {
     );
   });
 
-  test(
-    'HTTP MCP profiles are injected only when the agent supports them',
-    () async {
-      File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
-      final DateTime now = DateTime.utc(2026, 8, 20);
-      store.insertMcpServer(
-        McpServerProfile(
-          id: 'mcp-http',
-          name: 'remote',
-          transport: McpTransport.http,
-          enabled: true,
-          url: 'https://example.test/mcp',
-          secretNames: const <String>[],
-          createdAt: now,
-          updatedAt: now,
-        ),
-        const <String, String>{'Authorization': 'Bearer daemon-secret'},
-      );
+  test('managed MCP profiles stay behind the built-in bridge', () async {
+    File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
+    configureTestMcp(engine);
+    final DateTime now = DateTime.utc(2026, 8, 20);
+    store.insertMcpServer(
+      McpServerProfile(
+        id: 'mcp-http',
+        name: 'remote',
+        transport: McpTransport.http,
+        enabled: true,
+        url: 'https://example.test/mcp',
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{'Authorization': 'Bearer daemon-secret'},
+    );
 
-      await engine.createSession(projectId: 'p1', providerId: 'fake');
-      expect(
-        jsonDecode(
-          File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
-        ),
-        isEmpty,
-      );
-
-      File(p.join(tempDir.path, 'agent.http_mcp')).writeAsStringSync('');
+    for (final bool supportsHttp in <bool>[false, true]) {
+      if (supportsHttp) {
+        File(p.join(tempDir.path, 'agent.http_mcp')).writeAsStringSync('');
+      }
       await engine.createSession(projectId: 'p1', providerId: 'fake');
       final List<Object?> servers = jsonDecode(
         File(p.join(tempDir.path, 'agent.mcp_servers')).readAsStringSync(),
       ) as List<Object?>;
       final Map<String, Object?> config = (servers.single! as Map)
           .cast<String, Object?>();
-      expect(config['name'], 'remote');
-      expect(config['type'], 'http');
-      expect(config['url'], 'https://example.test/mcp');
-      expect((config['headers']! as List<Object?>).single, <String, Object?>{
-        'name': 'Authorization',
-        'value': 'Bearer daemon-secret',
-      });
-    },
-  );
+      expect(config['name'], 'speeddial');
+      final String encoded = jsonEncode(config);
+      expect(encoded, isNot(contains('https://example.test/mcp')));
+      expect(encoded, isNot(contains('daemon-secret')));
+    }
+  });
 
   test('displayImage persists payload and emits an image event', () async {
     final Session session = await engine.createSession(

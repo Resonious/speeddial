@@ -54,6 +54,22 @@ enum SessionMode {
   };
 }
 
+/// Lifecycle state of a provider-reported background activity.
+enum AgentActivityStatus {
+  running,
+  completed,
+  failed;
+
+  String get wire => name;
+
+  static AgentActivityStatus parse(String value) => switch (value) {
+    'running' => AgentActivityStatus.running,
+    'completed' => AgentActivityStatus.completed,
+    'failed' => AgentActivityStatus.failed,
+    _ => throw FormatException('Unknown AgentActivityStatus: "$value"'),
+  };
+}
+
 /// Transport used to connect an ACP agent to an MCP server.
 enum McpTransport {
   stdio,
@@ -436,25 +452,37 @@ class PermissionRequest {
   };
 }
 
-/// Token usage of a turn; `cost` is a decimal USD string when known.
+/// Token usage of a turn plus optional context-window measurements.
 class UsageInfo {
   const UsageInfo({
     required this.inputTokens,
     required this.outputTokens,
     required this.totalTokens,
     this.cost,
+    this.cacheReadTokens,
+    this.cacheCreationTokens,
+    this.contextUsedTokens,
+    this.contextLimitTokens,
   });
 
   final int inputTokens;
   final int outputTokens;
   final int totalTokens;
   final String? cost;
+  final int? cacheReadTokens;
+  final int? cacheCreationTokens;
+  final int? contextUsedTokens;
+  final int? contextLimitTokens;
 
   factory UsageInfo.fromJson(Map<String, Object?> json) => UsageInfo(
     inputTokens: json['inputTokens']! as int,
     outputTokens: json['outputTokens']! as int,
     totalTokens: json['totalTokens']! as int,
     cost: json['cost'] as String?,
+    cacheReadTokens: json['cacheReadTokens'] as int?,
+    cacheCreationTokens: json['cacheCreationTokens'] as int?,
+    contextUsedTokens: json['contextUsedTokens'] as int?,
+    contextLimitTokens: json['contextLimitTokens'] as int?,
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -462,6 +490,52 @@ class UsageInfo {
     'outputTokens': outputTokens,
     'totalTokens': totalTokens,
     'cost': cost,
+    if (cacheReadTokens != null) 'cacheReadTokens': cacheReadTokens,
+    if (cacheCreationTokens != null) 'cacheCreationTokens': cacheCreationTokens,
+    if (contextUsedTokens != null) 'contextUsedTokens': contextUsedTokens,
+    if (contextLimitTokens != null) 'contextLimitTokens': contextLimitTokens,
+  };
+}
+
+/// A provider-reported lifecycle or background activity.
+///
+/// Later events with the same [id] replace the prior timeline snapshot.
+class AgentActivity {
+  const AgentActivity({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.status,
+    this.details = const <String>[],
+  });
+
+  final String id;
+
+  /// Provider-neutral category such as `session`, `extensions`, `info`, or
+  /// `compaction`.
+  final String kind;
+  final String title;
+  final AgentActivityStatus status;
+  final List<String> details;
+
+  factory AgentActivity.fromJson(Map<String, Object?> json) => AgentActivity(
+    id: json['id']! as String,
+    kind: json['kind']! as String,
+    title: json['title']! as String,
+    status: AgentActivityStatus.parse(json['status']! as String),
+    details:
+        (json['details'] as List<Object?>?)?.whereType<String>().toList(
+          growable: false,
+        ) ??
+        const <String>[],
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'kind': kind,
+    'title': title,
+    'status': status.wire,
+    'details': details,
   };
 }
 
@@ -1039,6 +1113,7 @@ class McpServerProfile {
   });
 
   final String id;
+
   /// Project receiving this server, or null when daemon-wide.
   final String? projectId;
   final String name;

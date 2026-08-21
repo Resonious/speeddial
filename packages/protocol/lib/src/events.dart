@@ -36,6 +36,7 @@ sealed class SessionEvent {
         'permissionRequest' => PermissionRequestEvent.fromJson(json),
         'permissionResolved' => PermissionResolvedEvent.fromJson(json),
         'usage' => UsageEvent.fromJson(json),
+        'agentActivity' => AgentActivityEvent.fromJson(json),
         'turnComplete' => TurnCompleteEvent.fromJson(json),
         'sessionError' => SessionErrorEvent.fromJson(json),
         _ => throw FormatException(
@@ -315,6 +316,38 @@ class UsageEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'usage',
       'usage': usage.toJson(),
+      'seq': ?localSeq,
+      if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
+    };
+  }
+}
+
+/// A provider-reported lifecycle or background activity.
+class AgentActivityEvent extends SessionEvent {
+  const AgentActivityEvent({
+    required this.activity,
+    super.seq,
+    super.timestamp,
+  });
+
+  final AgentActivity activity;
+
+  factory AgentActivityEvent.fromJson(Map<String, Object?> json) =>
+      AgentActivityEvent(
+        activity: AgentActivity.fromJson(
+          json['activity']! as Map<String, Object?>,
+        ),
+        seq: json['seq'] as int?,
+        timestamp: _parseTimestamp(json['timestamp']),
+      );
+
+  @override
+  Map<String, Object?> toJson() {
+    final localSeq = seq;
+    final localTimestamp = timestamp;
+    return <String, Object?>{
+      'type': 'agentActivity',
+      'activity': activity.toJson(),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

@@ -1397,12 +1397,31 @@ class FakeDaemonClient implements DaemonClient {
     if (_disposed || !_sessions.containsKey(sessionId)) return;
     _emit(
       sessionId,
+      const AgentActivityEvent(
+        activity: AgentActivity(
+          id: 'demo-extensions',
+          kind: 'extensions',
+          title: '2 skills · 1 subagent · 1 MCP server · 4 tools',
+          status: AgentActivityStatus.completed,
+          details: <String>[
+            'Skills: review, commit',
+            'Subagents: explore',
+            'MCP filesystem: 4 tools',
+          ],
+        ),
+      ),
+    );
+    _emit(
+      sessionId,
       const UsageEvent(
         usage: UsageInfo(
           inputTokens: 1180,
           outputTokens: 320,
           totalTokens: 1500,
           cost: '0.0021',
+          cacheReadTokens: 640,
+          contextUsedTokens: 12100,
+          contextLimitTokens: 200000,
         ),
       ),
     );
@@ -1617,6 +1636,11 @@ class FakeDaemonClient implements DaemonClient {
         ),
         UsageEvent e => UsageEvent(
           usage: e.usage,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        AgentActivityEvent e => AgentActivityEvent(
+          activity: e.activity,
           seq: seq,
           timestamp: timestamp,
         ),
