@@ -239,6 +239,54 @@ void main() {
     expect(find.text('Excluded answer'), findsNothing);
   });
 
+  testWidgets('copy actions copy exact user and merged agent message text', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    fake.seedHistory('sess-1', const <SessionEvent>[
+      UserMessageEvent(text: 'Copy this user message'),
+      AgentMessageChunkEvent(text: 'Merged **agent** '),
+      AgentMessageChunkEvent(text: 'message'),
+      TurnCompleteEvent(stopReason: 'end_turn'),
+    ]);
+    await pumpChat(tester, fake: fake);
+    await pumpUntil(
+      tester,
+      () =>
+          find.byKey(const ValueKey<String>('copy-message-1')).hasFound &&
+          find.byKey(const ValueKey<String>('copy-message-3')).hasFound,
+    );
+
+    final List<MethodCall> clipboardCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        clipboardCalls.add(call);
+        return null;
+      },
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('copy-message-1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey<String>('copy-message-3')));
+    await tester.pump();
+
+    final List<String> copied = clipboardCalls
+        .where((MethodCall call) => call.method == 'Clipboard.setData')
+        .map(
+          (MethodCall call) =>
+              (call.arguments! as Map<Object?, Object?>)['text']! as String,
+        )
+        .toList();
+    expect(copied, <String>[
+      'Copy this user message',
+      'Merged **agent** message',
+    ]);
+    expect(find.text('Message copied'), findsOneWidget);
+  });
+
   testWidgets('empty state shows the select-session placeholder', (
     WidgetTester tester,
   ) async {

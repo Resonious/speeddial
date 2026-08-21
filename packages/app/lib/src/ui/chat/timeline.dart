@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
@@ -270,8 +271,9 @@ class _TimelineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return switch (item) {
-      UserMessageItem i => _ForkableMessage(
+      UserMessageItem i => _MessageWithActions(
         isUser: true,
+        text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
         child: UserMessageBubble(
@@ -284,8 +286,9 @@ class _TimelineRow extends StatelessWidget {
         attachment: i.attachment,
         attachmentLoader: attachmentLoader,
       ),
-      AgentMessageItem i => _ForkableMessage(
+      AgentMessageItem i => _MessageWithActions(
         isUser: false,
+        text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
         child: AgentMessageView(text: i.text),
@@ -329,39 +332,73 @@ class _DisplayedImage extends StatelessWidget {
   );
 }
 
-/// Adds one compact fork action to a user/agent message without changing the
-/// bubble widgets or making non-message timeline rows forkable.
-class _ForkableMessage extends StatelessWidget {
-  const _ForkableMessage({
+/// Adds compact copy and fork actions to user and agent messages without
+/// making non-message timeline rows actionable.
+class _MessageWithActions extends StatelessWidget {
+  const _MessageWithActions({
     required this.child,
     required this.isUser,
+    required this.text,
     required this.seq,
     required this.onFork,
   });
 
   final Widget child;
   final bool isUser;
+  final String text;
   final int? seq;
   final void Function(int seq)? onFork;
 
   @override
   Widget build(BuildContext context) {
+    final List<Widget> buttons = <Widget>[];
+    if (text.isNotEmpty) {
+      buttons.add(
+        IconButton(
+          key: seq == null ? null : ValueKey<String>('copy-message-${seq!}'),
+          tooltip: 'Copy message',
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          onPressed: () => _copyMessage(context),
+          icon: const Icon(Icons.content_copy),
+        ),
+      );
+    }
     final int? messageSeq = seq;
     final void Function(int seq)? callback = onFork;
-    if (messageSeq == null || callback == null) return child;
-    final Widget button = IconButton(
-      key: ValueKey<String>('fork-message-$messageSeq'),
-      tooltip: 'Fork from this message',
-      visualDensity: VisualDensity.compact,
-      iconSize: 18,
-      onPressed: () => callback(messageSeq),
-      icon: const Icon(Icons.fork_right),
+    if (messageSeq != null && callback != null) {
+      buttons.add(
+        IconButton(
+          key: ValueKey<String>('fork-message-$messageSeq'),
+          tooltip: 'Fork from this message',
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          onPressed: () => callback(messageSeq),
+          icon: const Icon(Icons.fork_right),
+        ),
+      );
+    }
+    if (buttons.isEmpty) return child;
+    final Widget actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: buttons,
     );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: isUser
-          ? <Widget>[Expanded(child: child), button]
-          : <Widget>[button, Expanded(child: child)],
+          ? <Widget>[Expanded(child: child), actions]
+          : <Widget>[actions, Expanded(child: child)],
+    );
+  }
+
+  Future<void> _copyMessage(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Message copied'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 }
