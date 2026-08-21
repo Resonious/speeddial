@@ -11,8 +11,8 @@ import '../api/daemon_client.dart';
 /// Mutating methods ([create], [fork], [rename], [archive], [delete],
 /// [setMode]) update both the by-project bucket and the by-id index
 /// immediately and notify.
-/// Buckets keep the complete picture (archived included); the public
-/// [sessionsFor] view omits archived sessions.
+/// Buckets keep the complete picture (archived included), ordered by creation
+/// time newest-first; the public [sessionsFor] view omits archived sessions.
 ///
 /// Caches are keyed by composite `daemonId/id` strings because session and
 /// project ids are daemon-scoped (PROTOCOL.md): the same id may exist on
@@ -160,7 +160,7 @@ class SessionsStore extends StoreBase {
         _scopedKey(daemonId, session.projectId),
         () => <Session>[],
       );
-      bucket.add(session);
+      _upsertNewestFirst(bucket, session);
       _note(daemonId, session);
       _touch(_scopedKey(daemonId, session.id));
     }
@@ -194,12 +194,7 @@ class SessionsStore extends StoreBase {
       _scopedKey(daemonId, projectId),
       () => <Session>[],
     );
-    final int index = bucket.indexWhere((Session s) => s.id == session.id);
-    if (index >= 0) {
-      bucket[index] = session;
-    } else {
-      bucket.add(session);
-    }
+    _upsertNewestFirst(bucket, session);
     _note(daemonId, session);
     notifyListeners();
     return session;
@@ -214,12 +209,7 @@ class SessionsStore extends StoreBase {
       _scopedKey(daemonId, session.projectId),
       () => <Session>[],
     );
-    final int index = bucket.indexWhere((Session s) => s.id == session.id);
-    if (index >= 0) {
-      bucket[index] = session;
-    } else {
-      bucket.add(session);
-    }
+    _upsertNewestFirst(bucket, session);
     _note(daemonId, session);
     notifyListeners();
     return session;
@@ -323,12 +313,7 @@ class SessionsStore extends StoreBase {
     final List<Session>? bucket =
         _sessionsByProject[_scopedKey(daemonId, session.projectId)];
     if (bucket == null) return; // never listed: nothing observable to change.
-    final int index = bucket.indexWhere((Session s) => s.id == session.id);
-    if (index >= 0) {
-      bucket[index] = session;
-    } else {
-      bucket.add(session);
-    }
+    _upsertNewestFirst(bucket, session);
     notifyListeners();
   }
 
@@ -353,12 +338,7 @@ class SessionsStore extends StoreBase {
     final List<Session>? bucket =
         _sessionsByProject[_scopedKey(daemonId, session.projectId)];
     if (bucket != null) {
-      final int index = bucket.indexWhere((Session s) => s.id == session.id);
-      if (index >= 0) {
-        bucket[index] = session;
-      } else {
-        bucket.add(session);
-      }
+      _upsertNewestFirst(bucket, session);
     }
     notifyListeners();
   }
@@ -386,6 +366,20 @@ class SessionsStore extends StoreBase {
       if (_idOf(key) == projectId) return _sessionsByProject[key];
     }
     return null;
+  }
+
+  static void _upsertNewestFirst(List<Session> bucket, Session session) {
+    final int index = bucket.indexWhere(
+      (Session item) => item.id == session.id,
+    );
+    if (index >= 0) {
+      bucket[index] = session;
+      return;
+    }
+    final int insertionIndex = bucket.indexWhere(
+      (Session item) => session.createdAt.isAfter(item.createdAt),
+    );
+    bucket.insert(insertionIndex < 0 ? bucket.length : insertionIndex, session);
   }
 
   static String _scopedKey(String daemonId, String id) => '$daemonId/$id';

@@ -269,6 +269,37 @@ void main() {
       },
     );
 
+    test('orders newly created sessions before older sessions', () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final Session firstCreated = await app.sessions.create(
+        'fake',
+        projectId: projectId,
+        providerId: 'omp',
+        title: 'First created',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final Session newest = await fake.createSession(
+        projectId: projectId,
+        providerId: 'omp',
+        title: 'Newest',
+      );
+      await _flushMicrotasks();
+
+      expect(
+        app.sessions.sessionsFor(projectId).take(2).map((Session s) => s.id),
+        <String>[newest.id, firstCreated.id],
+      );
+
+      await app.sessions.refresh('fake', projectId: projectId);
+      expect(
+        app.sessions.sessionsFor(projectId).take(2).map((Session s) => s.id),
+        <String>[newest.id, firstCreated.id],
+      );
+    });
+
     test(
       'reacts to daemon sessionUpdates / sessionRemovals without a refresh',
       () async {
