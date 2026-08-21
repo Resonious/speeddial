@@ -139,7 +139,8 @@ lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditi
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental chunk append),
-                             FilesStore, GitStore, McpStore. Stores NEVER hold BuildContext.
+                             FilesStore, GitStore, McpStore, SettingsStore (theme
+                             mode persisted locally). Stores NEVER hold BuildContext.
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
                              chat flexible, right 360, both collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.

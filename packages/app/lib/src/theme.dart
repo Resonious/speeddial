@@ -364,7 +364,7 @@ ThemeData buildSpeedDialLightTheme() {
         purple: const Color(0xFF8250DF),
         diffRemove: const Color(0xFFCF222E),
         border: border,
-        codeBackground: panel,
+        codeBackground: surface,
         mono: _monoBase.copyWith(fontSize: 12, height: 1.5, color: fg),
       ),
     ],

@@ -499,6 +499,7 @@ class AppData {
     files.dispose();
     git.dispose();
     mcp.dispose();
+    settings.dispose();
   }
 }
 

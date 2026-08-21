@@ -58,6 +58,28 @@ void main() {
     expect(find.text('Git'), findsOneWidget);
   });
 
+  testWidgets('theme button cycles mode and updates MaterialApp',
+      (WidgetTester tester) async {
+    final AppData data = await pumpApp(tester);
+
+    expect(data.settings.themeMode, ThemeMode.system);
+    expect(find.byTooltip('Theme: System'), findsOneWidget);
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+      ThemeMode.system,
+    );
+
+    await tester.tap(find.byTooltip('Theme: System'));
+    await tester.pumpAndSettle();
+
+    expect(data.settings.themeMode, ThemeMode.light);
+    expect(find.byTooltip('Theme: Light'), findsOneWidget);
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+      ThemeMode.light,
+    );
+  });
+
   testWidgets('mobile: chat-only body, drawer reveals left rail', (WidgetTester tester) async {
     await pumpApp(tester, size: const Size(390, 844));
 

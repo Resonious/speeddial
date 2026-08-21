@@ -238,14 +238,35 @@ class _ThemeModeButton extends StatelessWidget {
         return IconButton(
           tooltip: 'Theme: $label',
           icon: Icon(icon),
-          onPressed: () => settings.setThemeMode(switch (mode) {
-            ThemeMode.system => ThemeMode.light,
-            ThemeMode.light => ThemeMode.dark,
-            ThemeMode.dark => ThemeMode.system,
-          }),
+          onPressed: () => _setThemeMode(
+            context,
+            settings,
+            switch (mode) {
+              ThemeMode.system => ThemeMode.light,
+              ThemeMode.light => ThemeMode.dark,
+              ThemeMode.dark => ThemeMode.system,
+            },
+          ),
         );
       },
     );
+  }
+
+  Future<void> _setThemeMode(
+    BuildContext context,
+    SettingsStore settings,
+    ThemeMode mode,
+  ) async {
+    try {
+      await settings.setThemeMode(mode);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Could not save theme preference')),
+        );
+    }
   }
 }
 
