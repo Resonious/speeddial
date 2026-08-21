@@ -41,6 +41,10 @@ class SessionsStore extends StoreBase {
   /// `daemonId/sessionId` → session; always the complete picture.
   final Map<String, Session> _sessionsById = <String, Session>{};
 
+  /// Mutation revision per scoped session id, including removal tombstones.
+  final Map<String, int> _revisionBySession = <String, int>{};
+  int _nextRevision = 0;
+
   /// Most recently used daemon per session/project id; disambiguates
   /// cross-daemon id collisions in the public single-id getters.
   final Map<String, String> _lastDaemonBySession = <String, String>{};
@@ -88,35 +92,77 @@ class SessionsStore extends StoreBase {
   /// complete picture; panes filter what they show).
   Future<void> refresh(String daemonId, {String? projectId}) async {
     _ensureDaemonSubscriptions(daemonId);
+    final Map<String, int> revisionsAtStart = <String, int>{
+      for (final MapEntry<String, Session> entry in _sessionsById.entries)
+        if (_daemonOf(entry.key) == daemonId &&
+            (projectId == null || entry.value.projectId == projectId))
+          entry.key: _revisionBySession[entry.key] ?? 0,
+    };
     final List<Session> sessions = await _clientFor(daemonId)
         .listSessions(projectId: projectId, includeArchived: true);
-    // Drop only this daemon's cached buckets; other daemons' listings stay.
-    _sessionsByProject.removeWhere(
-      (String key, List<Session> _) => _daemonOf(key) == daemonId,
-    );
-    if (projectId == null) {
-      for (final Session session in sessions) {
-        // Upsert: a sessionUpdates notification (create/rename on another
-        // path) may have created the bucket mid-refresh with this session.
-        final List<Session> bucket = _sessionsByProject.putIfAbsent(
-          _scopedKey(daemonId, session.projectId),
-          () => <Session>[],
-        );
-        final int index = bucket.indexWhere((Session s) => s.id == session.id);
-        if (index >= 0) {
-          bucket[index] = session;
-        } else {
-          bucket.add(session);
-        }
-        _note(daemonId, session);
+    final Map<String, Session> listed = <String, Session>{
+      for (final Session session in sessions)
+        _scopedKey(daemonId, session.id): session,
+    };
+    final Set<String> keys = <String>{
+      ...revisionsAtStart.keys,
+      ...listed.keys,
+      for (final MapEntry<String, Session> entry in _sessionsById.entries)
+        if (_daemonOf(entry.key) == daemonId &&
+            (projectId == null || entry.value.projectId == projectId))
+          entry.key,
+    };
+    final List<Session> merged = <Session>[];
+    for (final String key in keys) {
+      final int revisionAtStart = revisionsAtStart[key] ?? 0;
+      final int currentRevision = _revisionBySession[key] ?? 0;
+      final Session? current = _sessionsById[key];
+      final Session? snapshot = listed[key];
+      if (currentRevision != revisionAtStart) {
+        if (current != null) merged.add(current);
+        continue;
       }
-    } else {
-      _sessionsByProject[_scopedKey(daemonId, projectId)] = List<Session>.of(
-        sessions,
+      if (snapshot == null) continue;
+      merged.add(
+        current != null && current.updatedAt.isAfter(snapshot.updatedAt)
+            ? current
+            : snapshot,
       );
-      for (final Session session in sessions) {
-        _note(daemonId, session);
-      }
+    }
+
+    final Set<String> mergedKeys = <String>{
+      for (final Session session in merged) _scopedKey(daemonId, session.id),
+    };
+    final List<String> removedKeys = <String>[
+      for (final MapEntry<String, Session> entry in _sessionsById.entries)
+        if (_daemonOf(entry.key) == daemonId &&
+            (projectId == null || entry.value.projectId == projectId) &&
+            !mergedKeys.contains(entry.key))
+          entry.key,
+    ];
+    _sessionsById.removeWhere(
+      (String key, Session session) =>
+          _daemonOf(key) == daemonId &&
+          (projectId == null || session.projectId == projectId),
+    );
+    for (final String key in removedKeys) {
+      _touch(key);
+    }
+    if (projectId == null) {
+      _sessionsByProject.removeWhere(
+        (String key, List<Session> _) => _daemonOf(key) == daemonId,
+      );
+    } else {
+      _sessionsByProject.remove(_scopedKey(daemonId, projectId));
+    }
+    for (final Session session in merged) {
+      final List<Session> bucket = _sessionsByProject.putIfAbsent(
+        _scopedKey(daemonId, session.projectId),
+        () => <Session>[],
+      );
+      bucket.add(session);
+      _note(daemonId, session);
+      _touch(_scopedKey(daemonId, session.id));
     }
     notifyListeners();
   }
@@ -201,6 +247,7 @@ class SessionsStore extends StoreBase {
     final Session? before = _sessionsById[key];
     await _clientFor(daemonId).deleteSession(sessionId);
     _sessionsById.remove(key);
+    _touch(key);
     if (before != null) {
       _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
         (Session s) => s.id == sessionId,
@@ -268,7 +315,11 @@ class SessionsStore extends StoreBase {
   /// Upserts a session that changed daemon-side (created/updated) into the
   /// by-id index and — when a listing for its project exists — its bucket.
   void _onSessionUpdate(String daemonId, Session session) {
+    final String key = _scopedKey(daemonId, session.id);
+    final Session? current = _sessionsById[key];
+    if (current != null && current.updatedAt.isAfter(session.updatedAt)) return;
     _note(daemonId, session);
+    _touch(key);
     final List<Session>? bucket =
         _sessionsByProject[_scopedKey(daemonId, session.projectId)];
     if (bucket == null) return; // never listed: nothing observable to change.
@@ -285,6 +336,7 @@ class SessionsStore extends StoreBase {
   void _onSessionRemoved(String daemonId, String sessionId) {
     final String key = _scopedKey(daemonId, sessionId);
     final Session? before = _sessionsById.remove(key);
+    _touch(key);
     if (before == null) return;
     _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
       (Session s) => s.id == sessionId,
@@ -293,7 +345,11 @@ class SessionsStore extends StoreBase {
   }
 
   void _replace(String daemonId, Session session) {
+    final String key = _scopedKey(daemonId, session.id);
+    final Session? current = _sessionsById[key];
+    if (current != null && current.updatedAt.isAfter(session.updatedAt)) return;
     _note(daemonId, session);
+    _touch(key);
     final List<Session>? bucket =
         _sessionsByProject[_scopedKey(daemonId, session.projectId)];
     if (bucket != null) {
@@ -313,6 +369,10 @@ class SessionsStore extends StoreBase {
     _lastDaemonBySession[session.id] = daemonId;
     _lastDaemonByProject[session.projectId] = daemonId;
     _sessionsById[_scopedKey(daemonId, session.id)] = session;
+  }
+
+  void _touch(String key) {
+    _revisionBySession[key] = ++_nextRevision;
   }
 
   List<Session>? _bucketFor(String projectId) {

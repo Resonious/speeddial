@@ -374,8 +374,10 @@ class ChatStore extends StoreBase {
   }
 
   void _onSessionUpdate(String daemonId, Session session) {
-    _lastDaemonBySession[session.id] = daemonId;
     final String key = _scopedKey(daemonId, session.id);
+    final Session? current = _sessionsById[key];
+    if (current != null && current.updatedAt.isAfter(session.updatedAt)) return;
+    _lastDaemonBySession[session.id] = daemonId;
     _sessionsById[key] = session;
     _statusById[key] = session.status;
     _modeById[key] = session.mode;
@@ -414,7 +416,8 @@ class ChatStore extends StoreBase {
       final List<Session> sessions =
           await client.listSessions(includeArchived: true);
       for (final Session session in sessions) {
-        if (session.id == sessionId) {
+        if (session.id == sessionId &&
+            _buffers.containsKey(_scopedKey(daemonId, sessionId))) {
           _onSessionUpdate(daemonId, session);
           return;
         }

@@ -67,6 +67,46 @@ class _InstrumentedFake extends FakeDaemonClient {
   }
 }
 
+class _GatedSessionListFake extends FakeDaemonClient {
+  _GatedSessionListFake()
+    : super(eventDelay: const Duration(milliseconds: 100));
+
+  Completer<void>? _captured;
+  Completer<void>? _release;
+
+  Future<void> get listCaptured => _captured?.future ?? Future<void>.value();
+
+  void gateNextList() {
+    _captured = Completer<void>();
+    _release = Completer<void>();
+  }
+
+  void releaseList() {
+    final Completer<void>? release = _release;
+    if (release != null && !release.isCompleted) release.complete();
+  }
+
+  @override
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  }) async {
+    final List<Session> snapshot = await super.listSessions(
+      projectId: projectId,
+      includeArchived: includeArchived,
+    );
+    final Completer<void>? captured = _captured;
+    final Completer<void>? release = _release;
+    if (captured != null && release != null) {
+      captured.complete();
+      await release.future;
+      _captured = null;
+      _release = null;
+    }
+    return snapshot;
+  }
+}
+
 /// Fake whose `history()` serves the newest page normally and can hold
 /// older pages behind a gate or fail them, so tests can observe the
 /// store's incremental page application and mid-backfill retries.
@@ -265,6 +305,26 @@ void main() {
       },
     );
 
+    test('refresh does not overwrite a newer live session update', () async {
+      final _GatedSessionListFake gated = _GatedSessionListFake();
+      app.registerClient('gated', gated);
+      await app.sessions.refresh('gated');
+
+      gated.gateNextList();
+      final Future<void> refreshing = app.sessions.refresh('gated');
+      await gated.listCaptured;
+
+      await gated.sendMessage('sess-1', 'keep running');
+      await _waitUntil(
+        () => app.sessions.byId('sess-1')?.status == SessionStatus.running,
+      );
+
+      gated.releaseList();
+      await refreshing;
+
+      expect(app.sessions.byId('sess-1')?.status, SessionStatus.running);
+    });
+
     test(
       'byId prefers the most recently used daemon for a shared id',
       () async {
@@ -321,6 +381,28 @@ void main() {
         // Status: idle once the turn completed.
         expect(app.chat.statusOf(sessionId), SessionStatus.idle);
         expect(app.chat.modeOf(sessionId), SessionMode.build);
+      },
+    );
+
+    test(
+      'session seed does not overwrite a newer live running update',
+      () async {
+        final _GatedSessionListFake gated = _GatedSessionListFake();
+        app.registerClient('gated', gated);
+        gated.gateNextList();
+
+        app.chat.watchSession('gated', 'sess-1');
+        await gated.listCaptured;
+
+        await app.chat.send('gated', 'sess-1', 'keep running');
+        await _waitUntil(
+          () => app.chat.statusOf('sess-1') == SessionStatus.running,
+        );
+
+        gated.releaseList();
+        await _flushMicrotasks();
+
+        expect(app.chat.statusOf('sess-1'), SessionStatus.running);
       },
     );
 
