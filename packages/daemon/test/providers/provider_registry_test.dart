@@ -55,7 +55,8 @@ void main() {
       '@zed-industries/claude-code-acp',
     ]);
     final codex = registry.byId('codex')!;
-    expect(codex.command, <String>['npx', '-y', '@zed-industries/codex-acp']);
+    expect(codex.command, <String>['codex', 'app-server', '--stdio']);
+    expect(codex.protocol, ProviderProtocol.codex);
     final ante = registry.byId('ante')!;
     expect(ante.command, <String>['ante', 'serve', '--stdio']);
     expect(ante.protocol, ProviderProtocol.ante);
@@ -162,8 +163,8 @@ void main() {
     expect(customInfo.models, isEmpty);
   });
 
-  test('custom providers can select the Ante wire protocol', () {
-    final ProviderSpec custom = registryWith(<String, Object?>{
+  test('custom providers can select direct wire protocols', () {
+    final ProviderRegistry registry = registryWith(<String, Object?>{
       'providers': <String, Object?>{
         'customAnte': <String, Object?>{
           'name': 'Custom Ante',
@@ -171,11 +172,31 @@ void main() {
           'protocol': 'ante',
           'catalogCommand': <String>['custom-ante', 'catalog'],
         },
+        'customCodex': <String, Object?>{
+          'name': 'Custom Codex',
+          'command': <String>['custom-codex', 'app-server'],
+          'protocol': 'codex',
+        },
       },
-    }).byId('customAnte')!;
+    });
 
-    expect(custom.protocol, ProviderProtocol.ante);
-    expect(custom.catalogCommand, <String>['custom-ante', 'catalog']);
+    final ProviderSpec customAnte = registry.byId('customAnte')!;
+    expect(customAnte.protocol, ProviderProtocol.ante);
+    expect(customAnte.catalogCommand, <String>['custom-ante', 'catalog']);
+    expect(registry.byId('customCodex')!.protocol, ProviderProtocol.codex);
+  });
+
+  test('an override without protocol defaults to ACP', () {
+    final ProviderRegistry registry = registryWith(<String, Object?>{
+      'providers': <String, Object?>{
+        'codex': <String, Object?>{
+          'name': 'Legacy Codex ACP',
+          'command': <String>['codex-acp'],
+        },
+      },
+    });
+
+    expect(registry.byId('codex')!.protocol, ProviderProtocol.acp);
   });
 
   test('malformed config entries are skipped defensively', () async {

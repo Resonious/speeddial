@@ -33,6 +33,7 @@ import '../acp/acp_client.dart';
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
 import '../ante/ante_client.dart';
+import '../codex/codex_client.dart';
 import '../git/git_service.dart';
 import '../mcp/built_in_mcp_server.dart';
 import '../providers/provider_registry.dart';
@@ -636,6 +637,11 @@ class SessionEngine {
         writeTextFile: (providerSessionId, path, content) =>
             _writeTextFile(session.id, path, content),
       ),
+      ProviderProtocol.codex => CodexClient.spawn(
+        spec.command,
+        cwd: session.cwd,
+        requestPermission: permissionHandler,
+      ),
       ProviderProtocol.ante => AnteClient.spawn(
         spec.command,
         cwd: session.cwd,
@@ -735,12 +741,17 @@ class SessionEngine {
     }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
     final ProviderSpec provider = _providers.byId(live.session.providerId)!;
-    if (provider.protocol == ProviderProtocol.ante) {
+    if (provider.protocol == ProviderProtocol.ante ||
+        provider.protocol == ProviderProtocol.codex) {
+      final bool codex = provider.protocol == ProviderProtocol.codex;
+      bool supports(String mimeType) =>
+          isTextMimeType(mimeType) ||
+          isImageMimeType(mimeType) ||
+          (codex && mimeType.startsWith('audio/'));
       String? unsupportedName;
       String? unsupportedMimeType;
       for (final OutgoingAttachment attachment in attachments) {
-        if (!isTextMimeType(attachment.mimeType) &&
-            !isImageMimeType(attachment.mimeType)) {
+        if (!supports(attachment.mimeType)) {
           unsupportedName = attachment.name;
           unsupportedMimeType = attachment.mimeType;
           break;
@@ -749,8 +760,7 @@ class SessionEngine {
       final List<_PreparedAttachment>? inherited = forkContext?.attachments;
       if (unsupportedMimeType == null && inherited != null) {
         for (final _PreparedAttachment attachment in inherited) {
-          if (!isTextMimeType(attachment.data.mimeType) &&
-              !isImageMimeType(attachment.data.mimeType)) {
+          if (!supports(attachment.data.mimeType)) {
             unsupportedName = attachment.data.name;
             unsupportedMimeType = attachment.data.mimeType;
             break;
@@ -760,7 +770,8 @@ class SessionEngine {
       if (unsupportedMimeType != null) {
         throw DaemonError(
           _kErrInvalidParams,
-          'Ante serve accepts only text or image attachments; '
+          '${codex ? 'Codex app-server' : 'Ante serve'} accepts only '
+          '${codex ? 'text, image, or audio' : 'text or image'} attachments; '
           '"$unsupportedName" has MIME type $unsupportedMimeType',
         );
       }
@@ -1336,6 +1347,7 @@ class SessionEngine {
       if (!live.closed) {
         final String message = switch (error) {
           AnteTurnException(:final message) => 'Ante turn failed: $message',
+          CodexTurnException(:final message) => 'Codex turn failed: $message',
           _ => 'Agent process ended: $error',
         };
         // Expire every parked permission first so a stale

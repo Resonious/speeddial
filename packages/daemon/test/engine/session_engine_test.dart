@@ -40,6 +40,23 @@ String resolveAnteFixture() => <String>[
   ),
 ].firstWhere((String path) => File(path).existsSync());
 
+String resolveCodexFixture() => <String>[
+  p.join(
+    Directory.current.path,
+    'test',
+    'fixtures',
+    'fake_codex_app_server.dart',
+  ),
+  p.join(
+    Directory.current.path,
+    'packages',
+    'daemon',
+    'test',
+    'fixtures',
+    'fake_codex_app_server.dart',
+  ),
+].firstWhere((String path) => File(path).existsSync());
+
 /// A registry whose only provider is the fake ACP fixture, spawned through
 /// the current Dart VM.
 ProviderRegistry fakeProviders() => ProviderRegistry(
@@ -72,6 +89,18 @@ ProviderRegistry fakeAnteProviders() {
     },
   );
 }
+
+ProviderRegistry fakeCodexProviders() => ProviderRegistry(
+  configOverrides: <String, Object?>{
+    'providers': <String, Object?>{
+      'fakeCodex': <String, Object?>{
+        'name': 'Fake Codex',
+        'command': <String>[Platform.resolvedExecutable, resolveCodexFixture()],
+        'protocol': 'codex',
+      },
+    },
+  },
+);
 
 void configureTestMcp(SessionEngine engine) {
   engine.configureBuiltInMcp(
@@ -165,6 +194,175 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
+
+  test('Codex sessions stream native rich events and attachments', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    engine = SessionEngine(store: store, providers: fakeCodexProviders());
+    configureTestMcp(engine);
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeCodex',
+    );
+    expect(session.model, 'gpt-test');
+    expect(session.models, <String>['gpt-test', 'gpt-fast']);
+    expect(session.thinkingLevel, 'medium');
+    expect(session.thinkingLevels, <String>['low', 'medium', 'high']);
+
+    final Future<PermissionRequestEvent> permissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(session.id, 'Exercise native events');
+    final PermissionRequestEvent permission = await permissionFuture.timeout(
+      const Duration(seconds: 5),
+    );
+    expect(permission.request.toolCallId, 'command-1');
+    expect(
+      permission.request.options.map(
+        (PermissionOption option) => option.optionId,
+      ),
+      contains('acceptWithExecpolicyAmendment'),
+    );
+    await engine.respondPermission(
+      session.id,
+      permission.request.requestId,
+      'acceptWithExecpolicyAmendment',
+    );
+    await waitFor(
+      () => events.any(
+        (tuple) =>
+            tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+      ),
+    );
+
+    final List<SessionEvent> turnEvents = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .toList(growable: false);
+    expect(
+      turnEvents
+          .whereType<AgentMessageChunkEvent>()
+          .map((AgentMessageChunkEvent event) => event.text)
+          .join(),
+      'Hello Codex',
+    );
+    expect(
+      turnEvents
+          .whereType<AgentThoughtChunkEvent>()
+          .map((AgentThoughtChunkEvent event) => event.text)
+          .join(),
+      'Thinking',
+    );
+    expect(turnEvents.whereType<PlanEvent>().single.entries, hasLength(2));
+    final ToolCall patch = turnEvents
+        .whereType<ToolCallEvent>()
+        .map((ToolCallEvent event) => event.toolCall)
+        .lastWhere((ToolCall call) => call.id == 'patch-1');
+    expect(patch.status, ToolCallStatus.completed);
+    expect(patch.content.single, isA<ToolCallPatch>());
+    expect((patch.content.single as ToolCallPatch).diff, contains('+new'));
+    final UsageInfo usage = turnEvents.whereType<UsageEvent>().single.usage;
+    expect(usage.inputTokens, 120);
+    expect(usage.outputTokens, 30);
+    expect(usage.contextUsedTokens, 150);
+    expect(usage.contextLimitTokens, 200000);
+    expect(
+      turnEvents.whereType<AgentActivityEvent>().map(
+        (AgentActivityEvent event) => event.activity.kind,
+      ),
+      containsAll(<String>['mcp', 'compaction', 'model']),
+    );
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+
+    final Future<PermissionRequestEvent> audioPermissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(
+      session.id,
+      'Listen to this.',
+      attachments: const <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'voice.wav',
+          mimeType: 'audio/wav',
+          data: 'UklGRg==',
+        ),
+      ],
+    );
+    final PermissionRequestEvent audioPermission = await audioPermissionFuture
+        .timeout(const Duration(seconds: 5));
+    await engine.respondPermission(
+      session.id,
+      audioPermission.request.requestId,
+      'accept',
+    );
+    await waitFor(
+      () =>
+          turnEvents.whereType<TurnCompleteEvent>().length <
+          events
+              .where((tuple) => tuple.sessionId == session.id)
+              .map((tuple) => tuple.event)
+              .whereType<TurnCompleteEvent>()
+              .length,
+    );
+    final UserMessageEvent audioMessage = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(audioMessage.attachments.single.mimeType, 'audio/wav');
+
+    await expectLater(
+      engine.sendMessage(
+        session.id,
+        'Unsupported.',
+        attachments: const <OutgoingAttachment>[
+          OutgoingAttachment(
+            name: 'archive.zip',
+            mimeType: 'application/zip',
+            data: 'aQ==',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<DaemonError>().having(
+          (DaemonError error) => error.message,
+          'message',
+          contains('text, image, or audio'),
+        ),
+      ),
+    );
+
+    final int errorsBefore = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<SessionErrorEvent>()
+        .length;
+    await engine.sendMessage(session.id, 'fail turn');
+    await waitFor(
+      () =>
+          events
+              .where((tuple) => tuple.sessionId == session.id)
+              .map((tuple) => tuple.event)
+              .whereType<SessionErrorEvent>()
+              .length >
+          errorsBefore,
+    );
+    final SessionErrorEvent failure = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<SessionErrorEvent>()
+        .last;
+    expect(
+      failure.message,
+      'Codex turn failed: Provider failed: bad credentials',
+    );
+    expect(store.getSession(session.id)!.status, SessionStatus.error);
+  });
 
   test('Ante sessions stream rich events and attachments', () async {
     await eventsSub.cancel();

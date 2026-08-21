@@ -196,6 +196,54 @@ void main() {
     });
   });
 
+  group('tool call native patches', () {
+    testWidgets('renders a provider-native unified diff', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: SizedBox(
+              width: 600,
+              child: ToolCallCard(
+                toolCall: ToolCall(
+                  id: 'patch-1',
+                  title: 'Applied patch',
+                  kind: 'edit',
+                  status: ToolCallStatus.completed,
+                  content: <ToolCallContent>[
+                    ToolCallPatch(
+                      path: 'lib/src/native.dart',
+                      diff: '@@ -1 +1 @@\n-old line\n+new line',
+                    ),
+                  ],
+                  locations: <String>['lib/src/native.dart'],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Applied patch'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('lib/src/native.dart', findRichText: true),
+        findsWidgets,
+      );
+      expect(
+        find.textContaining('-old line', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('+new line', findRichText: true),
+        findsOneWidget,
+      );
+    });
+  });
+
   group('deriveTimelineItems user attachments', () {
     test('attachment metadata carries into the user message item', () {
       final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[

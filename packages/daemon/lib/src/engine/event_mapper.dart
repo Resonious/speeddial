@@ -37,6 +37,8 @@ List<ToolCallContent> toolCallContentFromAcp(
         }
       case AcpDiffContent(:final path, :final oldText, :final newText):
         out.add(ToolCallDiff(path: path, oldText: oldText, newText: newText));
+      case AcpPatchContent(:final path, :final diff):
+        out.add(ToolCallPatch(path: path, diff: diff));
       case AcpTerminalContent(:final terminalId, :final output):
         out.add(ToolCallTerminal(terminalId: terminalId, output: output ?? ''));
     }

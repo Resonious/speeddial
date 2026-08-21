@@ -199,8 +199,8 @@ ToolCall = {
 ToolCallContent =
   | { type: "text", text: string }
   | { type: "diff", path: string, oldText: string | null, newText: string }
+  | { type: "patch", path: string, diff: string }       // provider-native unified diff for one file
   | { type: "terminal", terminalId: string, output: string }
-
 PlanEntry = { content: string, priority: "high" | "medium" | "low", status: "pending" | "in_progress" | "completed" }
 
 PermissionRequest = {
@@ -329,11 +329,12 @@ tokens before session creation/resume, and checks them periodically while runnin
   — the daemon adopts the agent's configurable model and effort/thinking options at
     creation: `models`/`thinkingLevels` carry the advertised options and
     `model`/`thinkingLevel` the agent-reported current values. ACP providers use
-    `configOptions`; Ante uses its catalog plus `SessionStart`/`SessionUpdated`.
-    A `model` argument is applied best-effort through the provider transport when a
-    model option exists (the returned session reflects the provider-reported model,
-    which may differ when the provider rejects it); when the provider advertises none,
-    `model` stays a local label as before.
+    `configOptions`; Codex uses `model/list` plus thread settings; Ante uses its
+    catalog plus `SessionStart`/`SessionUpdated`. A `model` argument is applied
+    best-effort through the provider transport when a model option exists (the
+    returned session reflects the provider-reported model, which may differ when
+    the provider rejects it); when the provider advertises none, `model` stays a
+    local label as before.
   — without `title`, the session starts as `New session`; the first user message sent to it
     replaces that placeholder (see `sessions.send`).
 - `sessions.fork {sessionId: string, seq: int}` → `{session: Session}` — creates a new idle
@@ -348,19 +349,22 @@ tokens before session creation/resume, and checks them periodically while runnin
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. ACP providers accept text, image, and binary
-  attachments. Ante accepts text-like attachments (`text/*`, JSON/XML/YAML, source code, and SVG):
-  the daemon sends their file label and UTF-8 content through Ante's `UserInput` operation. For
-  non-text `image/*`, the daemon writes the decoded image to a private transient directory and adds
-  an `@` file mention to `UserInput`, invoking Ante's native image-context path; whether the model can
-  inspect pixels depends on its Ante catalog `support_vision` capability. Ante rejects other binary
-  attachments with `-32602` before persisting the turn.
+  attachments. Codex accepts text, non-text images, and audio; it rejects other binary attachments
+  with `-32602` before persisting the turn. Ante accepts text-like attachments (`text/*`,
+  JSON/XML/YAML, source code, and SVG): the daemon sends their file label and UTF-8 content through
+  Ante's `UserInput` operation. For non-text `image/*`, the daemon writes the decoded image to a
+  private transient directory and adds an `@` file mention to `UserInput`, invoking Ante's native
+  image-context path; whether the model can inspect pixels depends on its Ante catalog
+  `support_vision` capability. Ante rejects other binary attachments with `-32602` before
+  persisting the turn.
   General caps: at most 8 attachments, 8 MiB decoded per attachment, 16 MiB decoded total;
   violations are `-32602`, as are malformed base64 payloads and text-like payloads that are not valid
   UTF-8. For an accepted turn, the daemon persists each payload (fetchable later via
   `attachments.read`) and records the metadata on the turn's `userMessage` event. ACP receives the
   files as prompt content blocks: non-text `image/*` becomes an `image` block; text-like types become
   an embedded `resource` block with `text`; anything else becomes an embedded `resource` block with
-  a base64 `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`.
+  a base64 `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`. Codex receives
+  native `text`, `image`, and `audio` input items.
   The request resolves at turn start — once the `userMessage` event is persisted and the session is
   `running` — not when the agent finishes. The turn's output arrives as live `session.event` notifications,
   ending in `turnComplete`; a client awaiting the response only gates the send, never the whole turn, so a
@@ -368,12 +372,12 @@ tokens before session creation/resume, and checks them periodically while runnin
   on turn completion).
   Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and
   resumes the conversation through the provider transport before starting the turn. ACP uses
-  `session/load`; Ante starts the persisted Ante session id and suppresses replayed history until
-  the next live `TurnStart`. Errors `-32003` when the session is closed or its ACP provider cannot
-  resume (no `session/load` support), `-32010` when the provider is unavailable, and `-32011` when
-  the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks
-  the session `error` and appends a `sessionError` event to its history; the session becomes usable
-  again on the next send.
+  `session/load`; Codex uses `thread/resume`; Ante starts the persisted Ante session id and
+  suppresses replayed history until the next live `TurnStart`. Errors `-32003` when the session is
+  closed or its ACP provider cannot resume (no `session/load` support), `-32010` when the provider
+  is unavailable, and `-32011` when the agent failed to resume (its own state is lost). A daemon
+  restart that interrupts a turn marks the session `error` and appends a `sessionError` event to
+  its history; the session becomes usable again on the next send.
   A session's `lastActivityAt` advances when the accepted user message starts the turn and again
   when the turn reaches its terminal idle/error outcome, so clients can order sessions by recent
   conversation activity independently of metadata changes.
@@ -388,13 +392,13 @@ tokens before session creation/resume, and checks them periodically while runnin
 - `sessions.setMode {sessionId: string, mode: SessionMode}` → `{session: Session}`
 - `sessions.setModel {sessionId: string, model: string}` → `{session: Session}` — when the
   provider advertises selectable models (`Session.models`), the daemon validates against them
-  (`-32602` when not listed) and forwards the change to a live idle agent via ACP
-  `session/set_config_option`, persisting the agent-reported state (which also carries the
-  current thinking level/levels, since those can be model-dependent); without a live agent the
-  choice is persisted and reapplied on resume. Providers without a model option keep the legacy
-  local-preference behavior (any string is stored verbatim).
+  (`-32602` when not listed) and forwards the change to a live idle agent through the provider
+  transport, persisting the provider-reported state (which also carries the current thinking
+  level/levels, since those can be model-dependent); without a live agent the choice is persisted
+  and reapplied on resume. Providers without a model option keep the legacy local-preference
+  behavior (any string is stored verbatim).
 - `sessions.setThinkingLevel {sessionId: string, level: string}` → `{session: Session}` — sets the
-  agent's thinking level (forwarded to a live agent via ACP `session/set_config_option`; otherwise
+  agent's thinking level (forwarded to a live agent through the provider transport; otherwise
   persisted and reapplied on resume). `level` must be one of the session's `thinkingLevels`;
   `-32602` when it is not or when the session's provider advertises no thinking-level option. The
   returned session reflects the agent-reported state, which may differ from the requested level

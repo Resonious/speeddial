@@ -374,11 +374,15 @@ void main() {
   });
 
   group('ToolCallContent', () {
-    test('text/diff/terminal roundtrip', () {
+    test('text/diff/patch/terminal roundtrip', () {
       final variants = <ToolCallContent>[
         const ToolCallText(text: 'plain output'),
         ToolCallDiff(path: 'a/b.dart', oldText: 'old', newText: 'new'),
         ToolCallDiff(path: 'new.dart', oldText: null, newText: 'entire file'),
+        const ToolCallPatch(
+          path: 'lib/a.dart',
+          diff: '@@ -1 +1 @@\n-old\n+new',
+        ),
         const ToolCallTerminal(terminalId: 'term-1', output: '\$ ls\\nlib\\n'),
       ];
       for (final content in variants) {
@@ -396,6 +400,10 @@ void main() {
       expect(
         ToolCallDiff(path: 'p', oldText: null, newText: 'n').toJson(),
         const {'type': 'diff', 'path': 'p', 'oldText': null, 'newText': 'n'},
+      );
+      expect(
+        const ToolCallPatch(path: 'p', diff: '@@ -1 +1 @@').toJson(),
+        const {'type': 'patch', 'path': 'p', 'diff': '@@ -1 +1 @@'},
       );
       expect(
         const ToolCallTerminal(terminalId: 't', output: 'o').toJson(),

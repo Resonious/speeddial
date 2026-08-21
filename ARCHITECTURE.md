@@ -45,6 +45,13 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. Initializes
+                    the app server, starts/resumes threads, starts/steers/interrupts turns,
+                    applies model and reasoning-effort settings, resolves command and patch
+                    approvals, injects MCP server configuration, and maps native message,
+                    reasoning, command, file-change, MCP, collaboration, web-search, image,
+                    plan, review, usage, compaction, and lifecycle notifications into the
+                    shared agent update stream.
 lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,
                     sends `UserInput`, handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
@@ -55,12 +62,12 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     state links back to the real home, native MCP entries remain direct,
                     and the transient directory is removed on process exit.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
-                    into every compatible provider session. ACP receives its descriptor
-                    directly; Ante receives it through its transient home. Search tools
-                    bridge over an authenticated, session-bound loopback WebSocket to
-                    query projects/session history; display_image persists an attachment
-                    and emits an image event. McpProxySession owns the matching managed
-                    upstreams for that bridge connection, starts stdio servers in the
+                    into every compatible provider session. ACP and Codex receive its
+                    descriptor directly; Ante receives it through its transient home.
+                    Search tools bridge over an authenticated, session-bound loopback
+                    WebSocket to query projects/session history; display_image persists
+                    an attachment and emits an image event. McpProxySession owns the matching
+                    managed upstreams for that bridge connection, starts stdio servers in the
                     session cwd, drives Streamable HTTP JSON/SSE sessions, qualifies, sanitizes,
                     aggregates tool descriptors (stripping regex-lookaround `pattern` constraints
                     model providers reject), routes calls, and closes every upstream
@@ -74,21 +81,23 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]                              (ACP)
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
-                      codex  → ["npx", "-y", "@zed-industries/codex-acp"]  (ACP)
+                      codex  → ["codex", "app-server", "--stdio"]          (Codex)
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
                     `~/.speeddial/config.json` may add/override providers:
                     {"providers":{"<id>":{"name":"...","command":["...",...],
-                    "protocol":"acp|ante","catalogCommand":["...",...]}}}
+                    "protocol":"acp|codex|ante","catalogCommand":["...",...]}}}
                     `protocol` defaults to `acp`; `catalogCommand` is used only by Ante.
                     Availability = command[0] resolvable via PATH (or absolute exists).
 lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
                     transport updates to protocol SessionEvents, assigns seq, persists
                     via SessionStore, and broadcasts to listeners. Handles permission
                     requests (parked until respondPermission), cancel, process exit, and
-                    turn lifecycle. MCP injection supports ACP and Ante. ACP receives
-                    structured attachments; Ante inlines UTF-8 text attachments and
+                    turn lifecycle. MCP injection supports ACP, Codex, and Ante. ACP
+                    receives structured attachments; Codex receives native text, image,
+                    and audio inputs; Ante inlines UTF-8 text attachments and
                     materializes images as transient `@` file mentions for Ante's native
-                    context resolver. Other binary attachments are rejected before turn start.
+                    context resolver. Unsupported binary attachments are rejected before
+                    turn start.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
                     dependency) at ~/.speeddial/speeddial.db (override with --db or
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,

@@ -1,16 +1,17 @@
-/// Provider registry: built-in ACP agent CLIs plus user-configured additions.
+/// Provider registry: built-in agent CLIs plus user-configured additions.
 ///
 /// Built-in providers:
-///   * `omp`    → `omp acp`
-///   * `claude` → `npx -y @zed-industries/claude-code-acp`
-///   * `codex`  → `npx -y @zed-industries/codex-acp`
+///   * `omp`    → `omp acp` (ACP)
+///   * `claude` → `npx -y @zed-industries/claude-code-acp` (ACP)
+///   * `codex`  → `codex app-server --stdio` (Codex app-server)
+///   * `ante`   → `ante serve --stdio` (Ante)
 ///
 /// `~/.speeddial/config.json` may add or override providers under the
 /// `providers` key:
 ///
 /// ```json
 /// {"providers": {"<id>": {"name": "...", "command": ["...", ...],
-///   "protocol": "acp"|"ante", "models": ["model-id", ...],
+///   "protocol": "acp"|"codex"|"ante", "models": ["model-id", ...],
 ///   "modelsCommand": ["...", ...], "catalogCommand": ["...", ...]}}}
 /// ```
 ///
@@ -44,9 +45,9 @@ import '../paths.dart';
 typedef ModelsProbe = Future<List<String>> Function(List<String> command);
 
 /// Wire protocol spoken by a provider process.
-enum ProviderProtocol { acp, ante }
+enum ProviderProtocol { acp, codex, ante }
 
-/// How to spawn one provider's ACP agent, and how to list its models.
+/// How to spawn one provider's agent, and how to list its models.
 class ProviderSpec {
   const ProviderSpec({
     required this.id,
@@ -64,7 +65,7 @@ class ProviderSpec {
   /// Display name.
   final String name;
 
-  /// Executable plus arguments for the ACP agent subprocess.
+  /// Executable plus arguments for the provider subprocess.
   final List<String> command;
 
   /// Session protocol spoken over the provider process's stdio.
@@ -77,11 +78,11 @@ class ProviderSpec {
   /// stdout, or null when the provider has no machine-readable model list.
   final List<String>? modelsCommand;
 
-  /// Ante's provider catalog command. Null for ACP providers.
+  /// Ante's provider catalog command. Null for non-Ante providers.
   final List<String>? catalogCommand;
 }
 
-/// Registry of ACP providers known to the daemon.
+/// Registry of providers known to the daemon.
 ///
 /// The registry is immutable after construction: [configOverrides] (or the
 /// on-disk config file when null) is merged over the built-ins once, and the
@@ -108,7 +109,8 @@ class ProviderRegistry {
       'codex': const ProviderSpec(
         id: 'codex',
         name: 'Codex',
-        command: <String>['npx', '-y', '@zed-industries/codex-acp'],
+        command: <String>['codex', 'app-server', '--stdio'],
+        protocol: ProviderProtocol.codex,
       ),
       'ante': const ProviderSpec(
         id: 'ante',
@@ -278,8 +280,9 @@ class ProviderRegistry {
         command: rawCommand.cast<String>(),
         protocol: switch (specMap['protocol']) {
           'ante' => ProviderProtocol.ante,
+          'codex' => ProviderProtocol.codex,
           'acp' => ProviderProtocol.acp,
-          _ => previous?.protocol ?? ProviderProtocol.acp,
+          _ => ProviderProtocol.acp,
         },
         models:
             _stringList(specMap['models']) ??

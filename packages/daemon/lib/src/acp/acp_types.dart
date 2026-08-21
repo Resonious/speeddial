@@ -118,6 +118,8 @@ sealed class AcpToolCallContent {
         return AcpContentBlockContent.fromJson(json);
       case 'diff':
         return AcpDiffContent.fromJson(json);
+      case 'patch':
+        return AcpPatchContent.fromJson(json);
       case 'terminal':
         return AcpTerminalContent.fromJson(json);
       default:
@@ -173,6 +175,21 @@ final class AcpDiffContent extends AcpToolCallContent {
   final String path;
   final String? oldText;
   final String newText;
+}
+
+/// A provider-supplied unified diff that must retain hunk context.
+final class AcpPatchContent extends AcpToolCallContent {
+  const AcpPatchContent({required this.path, required this.diff});
+
+  factory AcpPatchContent.fromJson(Map<String, Object?> json) {
+    return AcpPatchContent(
+      path: json['path'] as String? ?? '',
+      diff: json['diff'] as String? ?? '',
+    );
+  }
+
+  final String path;
+  final String diff;
 }
 
 /// A terminal embedded in the content stream.

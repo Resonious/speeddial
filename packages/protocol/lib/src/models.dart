@@ -222,6 +222,7 @@ sealed class ToolCallContent {
       switch (json['type']) {
         'text' => ToolCallText.fromJson(json),
         'diff' => ToolCallDiff.fromJson(json),
+        'patch' => ToolCallPatch.fromJson(json),
         'terminal' => ToolCallTerminal.fromJson(json),
         _ => throw FormatException(
           'Unknown ToolCallContent type: ${json['type']}',
@@ -274,6 +275,29 @@ class ToolCallDiff extends ToolCallContent {
     'path': path,
     'oldText': oldText,
     'newText': newText,
+  };
+}
+
+/// A provider-supplied unified diff for one file.
+///
+/// Unlike [ToolCallDiff], this preserves hunk headers and context lines
+/// exactly as reported by providers with native patch events.
+class ToolCallPatch extends ToolCallContent {
+  const ToolCallPatch({required this.path, required this.diff});
+
+  final String path;
+  final String diff;
+
+  factory ToolCallPatch.fromJson(Map<String, Object?> json) => ToolCallPatch(
+    path: json['path']! as String,
+    diff: json['diff']! as String,
+  );
+
+  @override
+  Map<String, Object?> toJson() => <String, Object?>{
+    'type': 'patch',
+    'path': path,
+    'diff': diff,
   };
 }
 

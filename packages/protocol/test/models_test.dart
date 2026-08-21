@@ -479,6 +479,10 @@ void main() {
             oldText: 'old line',
             newText: 'new line',
           ),
+          const ToolCallPatch(
+            path: 'lib/src/native.dart',
+            diff: '@@ -1 +1 @@\n-old\n+new',
+          ),
         ],
         locations: const ['lib/src/rpc.dart'],
         rawInput: <String, Object?>{'path': 'lib/src/rpc.dart'},
@@ -487,7 +491,7 @@ void main() {
       final json = model.toJson();
       expect(json['kind'], 'edit');
       expect(json['status'], 'completed');
-      expect(json['content'], hasLength(2));
+      expect(json['content'], hasLength(3));
       expect(json['locations'], ['lib/src/rpc.dart']);
 
       final decoded = ToolCall.fromJson(json);
@@ -495,7 +499,7 @@ void main() {
       expect(decoded.title, 'Edit rpc.dart');
       expect(decoded.kind, 'edit');
       expect(decoded.status, ToolCallStatus.completed);
-      expect(decoded.content, hasLength(2));
+      expect(decoded.content, hasLength(3));
       expect(decoded.content[0], isA<ToolCallText>());
       expect((decoded.content[0] as ToolCallText).text, 'Applying edit');
       expect(decoded.content[1], isA<ToolCallDiff>());
@@ -503,6 +507,10 @@ void main() {
       expect(diff.path, 'lib/src/rpc.dart');
       expect(diff.oldText, 'old line');
       expect(diff.newText, 'new line');
+      expect(decoded.content[2], isA<ToolCallPatch>());
+      final patch = decoded.content[2] as ToolCallPatch;
+      expect(patch.path, 'lib/src/native.dart');
+      expect(patch.diff, '@@ -1 +1 @@\n-old\n+new');
       expect(decoded.locations, ['lib/src/rpc.dart']);
       expect(decoded.rawInput, {'path': 'lib/src/rpc.dart'});
       expect(decoded.rawOutput, {'ok': true});

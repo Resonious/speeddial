@@ -230,6 +230,8 @@ class _ToolCallContentView extends StatelessWidget {
         );
       case ToolCallDiff diff:
         return _DiffView(diff: diff);
+      case ToolCallPatch patch:
+        return _PatchView(patch: patch);
       case ToolCallTerminal terminal:
         return _ScrollableMono(
           background: const Color(0xFF000000),
@@ -317,6 +319,52 @@ class _DiffView extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         child: Text.rich(TextSpan(children: spans), style: colors.mono),
       ),
+    );
+  }
+}
+
+/// Preserves and highlights a provider-native unified diff.
+class _PatchView extends StatelessWidget {
+  const _PatchView({required this.patch});
+
+  final ToolCallPatch patch;
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    final Color neutral = Theme.of(context).colorScheme.onSurfaceVariant;
+    final List<InlineSpan> spans = <InlineSpan>[
+      if (patch.path.isNotEmpty)
+        TextSpan(
+          text: '${patch.path}\n',
+          style: colors.mono.copyWith(
+            color: neutral,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      for (final String line in patch.diff.split('\n'))
+        TextSpan(
+          text: '$line\n',
+          style: colors.mono.copyWith(
+            color: switch (line) {
+              final String value
+                  when value.startsWith('+++') ||
+                      value.startsWith('---') ||
+                      value.startsWith('diff ') ||
+                      value.startsWith('index ') =>
+                neutral,
+              final String value when value.startsWith('@@') => colors.purple,
+              final String value when value.startsWith('+') => colors.success,
+              final String value when value.startsWith('-') =>
+                colors.diffRemove,
+              _ => null,
+            },
+          ),
+        ),
+    ];
+    return _ScrollableMono(
+      background: colors.codeBackground,
+      child: Text.rich(TextSpan(children: spans), style: colors.mono),
     );
   }
 }
