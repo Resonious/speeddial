@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
+import 'active_pulse.dart';
 import 'message_view.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
@@ -456,12 +457,20 @@ class _ActivityCard extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: ExpansionTile(
           key: ValueKey<String>('activity-${activity.id}'),
-          leading: icon,
+          leading: ActivePulse(
+            active: activity.status == AgentActivityStatus.running,
+            pulseKey: ValueKey<String>('activity-pulse-${activity.id}'),
+            child: icon,
+          ),
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(40, 0, 12, 10),
           dense: true,
           initiallyExpanded: activity.status == AgentActivityStatus.failed,
-          title: Text(activity.title, style: theme.textTheme.bodySmall),
+          title: ActivePulse(
+            active: activity.status == AgentActivityStatus.running,
+            pulseKey: ValueKey<String>('activity-pulse-${activity.id}'),
+            child: Text(activity.title, style: theme.textTheme.bodySmall),
+          ),
           subtitle: Text(
             activity.kind,
             style: theme.textTheme.labelSmall?.copyWith(

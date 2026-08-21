@@ -1,6 +1,9 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
+import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -83,6 +86,113 @@ void main() {
       expect(activity.title, 'Extensions ready');
       expect(activity.status, AgentActivityStatus.completed);
       expect(activity.details, ['4 tools registered']);
+    });
+  });
+
+  group('active action pulse', () {
+    testWidgets('running tool call pulses and completed call is static', (
+      WidgetTester tester,
+    ) async {
+      const ToolCall running = ToolCall(
+        id: 'tool-1',
+        title: 'Searching files',
+        kind: 'search',
+        status: ToolCallStatus.running,
+        content: <ToolCallContent>[],
+        locations: <String>[],
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(body: ToolCallCard(toolCall: running)),
+        ),
+      );
+
+      final Finder pulse = find.byKey(
+        const ValueKey<String>('tool-pulse-tool-1'),
+      );
+      expect(pulse, findsNWidgets(2));
+      expect(
+        tester.widget<FadeTransition>(pulse.first).opacity.status,
+        anyOf(AnimationStatus.forward, AnimationStatus.reverse),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: ToolCallCard(
+              toolCall: ToolCall(
+                id: 'tool-1',
+                title: 'Searched files',
+                kind: 'search',
+                status: ToolCallStatus.completed,
+                content: <ToolCallContent>[],
+                locations: <String>[],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(pulse, findsNothing);
+    });
+
+    testWidgets('running activity pulses and completed activity is static', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: Timeline(
+              items: <TimelineItem>[
+                AgentActivityItem(
+                  activity: AgentActivity(
+                    id: 'warmup',
+                    kind: 'extensions',
+                    title: 'Warming extensions',
+                    status: AgentActivityStatus.running,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final Finder pulse = find.byKey(
+        const ValueKey<String>('activity-pulse-warmup'),
+      );
+      expect(pulse, findsNWidgets(2));
+      expect(
+        tester.widget<FadeTransition>(pulse.first).opacity.status,
+        anyOf(AnimationStatus.forward, AnimationStatus.reverse),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: Timeline(
+              items: <TimelineItem>[
+                AgentActivityItem(
+                  activity: AgentActivity(
+                    id: 'warmup',
+                    kind: 'extensions',
+                    title: 'Extensions ready',
+                    status: AgentActivityStatus.completed,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(pulse, findsNothing);
     });
   });
 

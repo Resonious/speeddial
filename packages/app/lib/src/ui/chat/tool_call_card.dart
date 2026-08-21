@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
+import 'active_pulse.dart';
 
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
@@ -29,11 +30,11 @@ Color _kindColor(BuildContext context, String kind) {
 }
 
 IconData _statusIcon(ToolCallStatus status) => switch (status) {
-      ToolCallStatus.pending => Icons.pause_circle_outline,
-      ToolCallStatus.running => Icons.play_circle_outline,
-      ToolCallStatus.completed => Icons.check_circle_outline,
-      ToolCallStatus.failed => Icons.cancel_outlined,
-    };
+  ToolCallStatus.pending => Icons.pause_circle_outline,
+  ToolCallStatus.running => Icons.play_circle_outline,
+  ToolCallStatus.completed => Icons.check_circle_outline,
+  ToolCallStatus.failed => Icons.cancel_outlined,
+};
 
 Color _statusColor(BuildContext context, ToolCallStatus status) {
   final SpeedDialColors c = context.speedDialColors;
@@ -78,8 +79,10 @@ class _ToolCallCardState extends State<ToolCallCard> {
   Widget build(BuildContext context) {
     final ToolCall toolCall = widget.toolCall;
     final ThemeData theme = Theme.of(context);
-    final BorderSide kindBorder =
-        BorderSide(color: _kindColor(context, toolCall.kind), width: 3);
+    final BorderSide kindBorder = BorderSide(
+      color: _kindColor(context, toolCall.kind),
+      width: 3,
+    );
     final Color statusColor = _statusColor(context, toolCall.status);
     final TextStyle? titleStyle = theme.textTheme.bodyMedium?.copyWith(
       fontWeight: FontWeight.w600,
@@ -103,14 +106,27 @@ class _ToolCallCardState extends State<ToolCallCard> {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Row(
                 children: <Widget>[
-                  Icon(_statusIcon(toolCall.status),
-                      size: 18, color: statusColor),
+                  ActivePulse(
+                    active: toolCall.status == ToolCallStatus.running,
+                    pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
+                    child: Icon(
+                      _statusIcon(toolCall.status),
+                      size: 18,
+                      color: statusColor,
+                    ),
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(toolCall.title,
+                    child: ActivePulse(
+                      active: toolCall.status == ToolCallStatus.running,
+                      pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
+                      child: Text(
+                        toolCall.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: titleStyle),
+                        style: titleStyle,
+                      ),
+                    ),
                   ),
                   if (toolCall.locations.isNotEmpty)
                     Flexible(
@@ -147,7 +163,9 @@ class _ToolCallCardState extends State<ToolCallCard> {
                 : CrossFadeState.showFirst,
             firstChild: const SizedBox(width: double.infinity, height: 0),
             secondChild: _ToolCallContentList(
-                toolCall: toolCall, kindColor: kindBorder),
+              toolCall: toolCall,
+              kindColor: kindBorder,
+            ),
           ),
         ],
       ),
@@ -166,19 +184,21 @@ class _ToolCallContentList extends StatelessWidget {
     final List<Widget> children = <Widget>[
       for (final ToolCallContent content in toolCall.content)
         _ToolCallContentView(content: content),
-      if (toolCall.locations.isNotEmpty) _LocationChips(locations: toolCall.locations),
+      if (toolCall.locations.isNotEmpty)
+        _LocationChips(locations: toolCall.locations),
     ];
     if (children.isEmpty) {
-      children.add(Padding(
-        padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-        child: Text(
-          'No output',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          child: Text(
+            'No output',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
         ),
-      ));
+      );
     }
     return Container(
       decoration: BoxDecoration(
@@ -259,20 +279,24 @@ class _DiffView extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final List<InlineSpan> spans = <InlineSpan>[];
     void add(String sign, String line, Color color) {
-      spans.add(TextSpan(
-        text: '$sign$line\n',
-        style: colors.mono.copyWith(color: color),
-      ));
+      spans.add(
+        TextSpan(
+          text: '$sign$line\n',
+          style: colors.mono.copyWith(color: color),
+        ),
+      );
     }
 
     if (diff.path.isNotEmpty) {
-      spans.add(TextSpan(
-        text: '${diff.path}\n',
-        style: colors.mono.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w600,
+      spans.add(
+        TextSpan(
+          text: '${diff.path}\n',
+          style: colors.mono.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      ));
+      );
     }
     for (final String line in (diff.oldText ?? '').split('\n')) {
       if (line.isEmpty) continue;
@@ -317,7 +341,10 @@ class _LocationChips extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
               border: Border.all(color: context.speedDialColors.border),
             ),
-            child: Text(path, style: context.speedDialColors.mono.copyWith(fontSize: 11)),
+            child: Text(
+              path,
+              style: context.speedDialColors.mono.copyWith(fontSize: 11),
+            ),
           ),
       ],
     );
