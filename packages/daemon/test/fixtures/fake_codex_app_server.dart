@@ -534,6 +534,7 @@ Future<void> _handle(Map<String, Object?> message) async {
         'failureReason': null,
       });
     case 'thread/resume':
+      await _writeReport('FAKE_CODEX_RESUME_REPORT', params);
       await _respond(id, <String, Object?>{
         'thread': <String, Object?>{'id': params['threadId']},
         'model': 'gpt-test',

@@ -46,10 +46,11 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
 lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. Initializes
-                    the app server, starts/resumes threads, starts/steers/interrupts turns,
-                    applies model and reasoning-effort settings, resolves command and patch
-                    approvals, injects MCP server configuration, and maps native message,
-                    reasoning, command, file-change, MCP, collaboration, web-search, image,
+                    the app server, starts/resumes threads with a workspace-write sandbox rooted at
+                    the session cwd, starts/steers/interrupts turns, applies model and reasoning-effort
+                    settings, resolves command and patch approvals, injects MCP server configuration,
+                    and maps native message, reasoning, command, file-change, MCP, collaboration,
+                    web-search, image,
                     plan, review, usage, compaction, and lifecycle notifications into the
                     shared agent update stream.
 lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,

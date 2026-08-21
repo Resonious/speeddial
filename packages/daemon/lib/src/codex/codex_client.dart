@@ -128,7 +128,10 @@ class CodexClient implements AgentClient {
     bool yolo = false,
   }) async {
     await initialized;
-    final Map<String, Object?> params = <String, Object?>{'cwd': cwd};
+    final Map<String, Object?> params = <String, Object?>{
+      'cwd': cwd,
+      'sandbox': 'workspace-write',
+    };
     if (model != null && model.isNotEmpty) params['model'] = model;
     if (yolo) params['approvalPolicy'] = 'never';
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
@@ -159,6 +162,7 @@ class CodexClient implements AgentClient {
     final Map<String, Object?> params = <String, Object?>{
       'threadId': sessionId,
       'cwd': cwd,
+      'sandbox': 'workspace-write',
     };
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;

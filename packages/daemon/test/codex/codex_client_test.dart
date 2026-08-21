@@ -54,6 +54,7 @@ void main() {
       );
       addTearDown(() => tempDir.delete(recursive: true));
       final File startReport = File(p.join(tempDir.path, 'start.json'));
+      final File resumeReport = File(p.join(tempDir.path, 'resume.json'));
       final CodexClient client = spawnCodex(
         environment: <String, String>{
           'FAKE_CODEX_START_REPORT': startReport.path,
@@ -99,6 +100,7 @@ void main() {
       );
 
       final Map<String, Object?> start = await readJsonMap(startReport);
+      expect(start['sandbox'], 'workspace-write');
       final Map<String, Object?> config = Map<String, Object?>.from(
         start['config']! as Map,
       );
@@ -129,7 +131,11 @@ void main() {
       expect(fastThinking.options.single.value, 'low');
 
       await client.dispose();
-      final CodexClient resumed = spawnCodex();
+      final CodexClient resumed = spawnCodex(
+        environment: <String, String>{
+          'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
+        },
+      );
       addTearDown(resumed.dispose);
       final List<AcpConfigOption> resumedOptions = await resumed.loadSession(
         sessionId: created.sessionId,
@@ -141,6 +147,8 @@ void main() {
             .currentValue,
         'gpt-test',
       );
+      final Map<String, Object?> resume = await readJsonMap(resumeReport);
+      expect(resume['sandbox'], 'workspace-write');
     },
   );
 
