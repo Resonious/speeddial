@@ -196,6 +196,52 @@ void main() {
     });
   });
 
+  group('tool call details', () {
+    testWidgets('renders raw input and output when typed content is absent', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: SizedBox(
+              width: 600,
+              child: ToolCallCard(
+                toolCall: ToolCall(
+                  id: 'bash-1',
+                  title: 'Bash',
+                  kind: 'execute',
+                  status: ToolCallStatus.completed,
+                  content: <ToolCallContent>[],
+                  locations: <String>[],
+                  rawInput: <String, Object?>{
+                    'command': 'git status --short',
+                    'description': 'Shows working tree status',
+                  },
+                  rawOutput: <String, Object?>{
+                    'Completed': <String, Object?>{
+                      'exit_code': 0,
+                      'stdout': ' M lib/main.dart',
+                    },
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Bash'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Input'), findsOneWidget);
+      expect(find.text('Output'), findsOneWidget);
+      expect(find.textContaining('git status --short'), findsOneWidget);
+      expect(find.textContaining('M lib/main.dart'), findsOneWidget);
+      expect(find.text('No output'), findsNothing);
+    });
+  });
+
   group('tool call native patches', () {
     testWidgets('renders a provider-native unified diff', (
       WidgetTester tester,

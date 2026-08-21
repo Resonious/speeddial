@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -181,14 +183,17 @@ class _ToolCallContentList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool hasInput = _hasRawValue(toolCall.rawInput);
+    final bool hasTypedOutput = toolCall.content.isNotEmpty;
+    final bool hasRawOutput = _hasRawValue(toolCall.rawOutput);
     final List<Widget> children = <Widget>[
+      if (hasInput) _RawToolDataView(label: 'Input', value: toolCall.rawInput!),
+      if (hasTypedOutput) const _ToolDataLabel(label: 'Output'),
       for (final ToolCallContent content in toolCall.content)
         _ToolCallContentView(content: content),
-      if (toolCall.locations.isNotEmpty)
-        _LocationChips(locations: toolCall.locations),
-    ];
-    if (children.isEmpty) {
-      children.add(
+      if (!hasTypedOutput && hasRawOutput)
+        _RawToolDataView(label: 'Output', value: toolCall.rawOutput!),
+      if (!hasTypedOutput && !hasRawOutput)
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
           child: Text(
@@ -198,8 +203,9 @@ class _ToolCallContentList extends StatelessWidget {
             ),
           ),
         ),
-      );
-    }
+      if (toolCall.locations.isNotEmpty)
+        _LocationChips(locations: toolCall.locations),
+    ];
     return Container(
       decoration: BoxDecoration(
         border: Border(left: kindColor),
@@ -241,6 +247,65 @@ class _ToolCallContentView extends StatelessWidget {
           ),
         );
     }
+  }
+}
+
+class _ToolDataLabel extends StatelessWidget {
+  const _ToolDataLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, bottom: 4),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _RawToolDataView extends StatelessWidget {
+  const _RawToolDataView({required this.label, required this.value});
+
+  final String label;
+  final Object value;
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _ToolDataLabel(label: label),
+        _ScrollableMono(
+          background: colors.codeBackground,
+          child: Text(_formatRawValue(value), style: colors.mono),
+        ),
+      ],
+    );
+  }
+}
+
+bool _hasRawValue(Object? value) => switch (value) {
+  null => false,
+  String value => value.isNotEmpty,
+  Map<Object?, Object?> value => value.isNotEmpty,
+  Iterable<Object?> value => value.isNotEmpty,
+  _ => true,
+};
+
+String _formatRawValue(Object value) {
+  if (value is String) return value;
+  try {
+    return const JsonEncoder.withIndent('  ').convert(value);
+  } on Object {
+    return value.toString();
   }
 }
 

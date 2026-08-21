@@ -246,7 +246,7 @@ Future<void> _runTurn(String parent, String text) async {
     'ToolStart': <String, Object?>{
       'id': 'tool-1',
       'name': 'Read',
-      'input': <String, Object?>{'file_path': '/tmp/example.dart'},
+      'args': <String, Object?>{'file_path': '/tmp/example.dart'},
     },
   }, parent);
   await _event(<String, Object?>{
@@ -266,7 +266,7 @@ Future<void> _runTurn(String parent, String text) async {
             <String, Object?>{
               'id': 'tool-1',
               'name': 'Read',
-              'input': <String, Object?>{'file_path': '/tmp/example.dart'},
+              'args': <String, Object?>{'file_path': '/tmp/example.dart'},
             },
           ],
           'message': 'Allow reading the file?',

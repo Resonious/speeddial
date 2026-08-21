@@ -852,7 +852,10 @@ class AnteClient implements AgentClient {
     final String id = value['id'] as String? ?? '';
     if (id.isEmpty) return;
     final String name = value['name'] as String? ?? 'Tool';
-    final Map<String, Object?> input = _map(value['input']);
+    final Map<String, Object?> args = _map(value['args']);
+    final Map<String, Object?> input = args.isNotEmpty
+        ? args
+        : _map(value['input']);
     _toolProgress[id] = SplayTreeMap<int, String>();
     _publish(
       AcpToolCall(
@@ -908,7 +911,10 @@ class AnteClient implements AgentClient {
     final Object? rawResult = value['result_json'];
     final Map<String, Object?> output = rawResult is Map
         ? Map<String, Object?>.from(rawResult)
+        : rawResult == null
+        ? <String, Object?>{}
         : <String, Object?>{'value': rawResult};
+    final List<Object?> content = _toolResultContent(rawResult);
     _publish(
       AcpToolCallUpdate(
         toolCallId: id,
@@ -916,6 +922,7 @@ class AnteClient implements AgentClient {
           'status': status == 'Completed' && !isError
               ? 'completed'
               : 'cancelled',
+          'content': content,
           'rawOutput': output,
         },
       ),
@@ -1392,6 +1399,41 @@ class AnteClient implements AgentClient {
         'image/svg+xml' => 'svg',
         _ => 'img',
       };
+
+  static List<Object?> _toolResultContent(Object? rawResult) {
+    final String? text = _toolResultText(rawResult);
+    if (text == null || text.isEmpty) return const <Object?>[];
+    return <Object?>[
+      <String, Object?>{
+        'type': 'content',
+        'content': <String, Object?>{'type': 'text', 'text': text},
+      },
+    ];
+  }
+
+  static String? _toolResultText(Object? value) {
+    if (value is String) return value;
+    if (value is! Map) return null;
+    final Map<String, Object?> result = Map<String, Object?>.from(value);
+    final Object? content = result['content'];
+    if (content is String) return content;
+    for (final String status in const <String>['Completed', 'Failed']) {
+      final Map<String, Object?> command = _map(result[status]);
+      if (command.isEmpty) continue;
+      final String stdout = command['stdout'] as String? ?? '';
+      final String stderr = command['stderr'] as String? ?? '';
+      final List<String> output = <String>[
+        if (stdout.isNotEmpty) stdout,
+        if (stderr.isNotEmpty) stderr,
+      ];
+      final int? exitCode = _int(command['exit_code']);
+      if (output.isEmpty && exitCode != null) {
+        output.add('Exit code: $exitCode');
+      }
+      if (output.isNotEmpty) return output.join('\n');
+    }
+    return null;
+  }
 
   static String _toolKind(String name) {
     final String lower = name.toLowerCase();

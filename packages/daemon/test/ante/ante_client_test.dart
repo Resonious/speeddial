@@ -232,8 +232,23 @@ void main() {
       updates.whereType<AcpAgentThoughtChunk>().single.text,
       'Considering',
     );
-    expect(updates.whereType<AcpToolCall>(), hasLength(1));
-    expect(updates.whereType<AcpToolCallUpdate>(), hasLength(2));
+    final AcpToolCall toolCall = updates.whereType<AcpToolCall>().single;
+    expect(toolCall.toolCall.rawInput['file_path'], '/tmp/example.dart');
+    expect(toolCall.toolCall.locations.single.path, '/tmp/example.dart');
+    final List<AcpToolCallUpdate> toolUpdates = updates
+        .whereType<AcpToolCallUpdate>()
+        .toList();
+    expect(toolUpdates, hasLength(2));
+    expect(
+      (toolUpdates.last.fields['rawOutput'] as Map)['content'],
+      'file contents',
+    );
+    final List<Object?> terminalContent =
+        toolUpdates.last.fields['content']! as List<Object?>;
+    final Map<String, Object?> terminalBlock = Map<String, Object?>.from(
+      terminalContent.single! as Map,
+    );
+    expect((terminalBlock['content'] as Map)['text'], 'file contents');
 
     final AcpUsageUpdate usage = updates.whereType<AcpUsageUpdate>().single;
     expect(usage.inputTokens, 120);
