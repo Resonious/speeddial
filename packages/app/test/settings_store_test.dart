@@ -32,6 +32,21 @@ void main() {
       expect(store.lastError, isNull);
     });
 
+    test('loads and persists the provider preference', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        SettingsStore.providerStorageKey: 'ante',
+      });
+      final SettingsStore store = SettingsStore();
+      addTearDown(store.dispose);
+
+      await store.init();
+      expect(store.providerId, 'ante');
+
+      await store.setProviderId('omp');
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString(SettingsStore.providerStorageKey), 'omp');
+    });
+
     test('persists changes and does not notify for a no-op', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final SettingsStore store = SettingsStore();

@@ -72,6 +72,16 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     return (info: info, branches: branches);
   }
 
+  Future<void> _selectProvider(String providerId) async {
+    setState(() => _providerId = providerId);
+    try {
+      await widget.data.settings.setProviderId(providerId);
+    } on Object {
+      if (!mounted) return;
+      setState(() => _error = 'Failed to save provider preference');
+    }
+  }
+
   Future<void> _submit() async {
     final AppData data = widget.data;
     setState(() {
@@ -108,8 +118,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final ThemeData theme = Theme.of(context);
     final List<ProviderInfo> providers =
         snapshot.data?.info.providers ?? const <ProviderInfo>[];
-    final List<Branch> branches =
-        snapshot.data?.branches ?? const <Branch>[];
+    final List<Branch> branches = snapshot.data?.branches ?? const <Branch>[];
 
     if (snapshot.connectionState == ConnectionState.waiting) {
       return const Padding(
@@ -121,23 +130,39 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Text(
-          providers.isEmpty ? 'No providers available' : 'Failed to load providers',
-          style: theme.textTheme.bodyMedium
-              ?.copyWith(color: theme.colorScheme.error),
+          providers.isEmpty
+              ? 'No providers available'
+              : 'Failed to load providers',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.error,
+          ),
         ),
       );
     }
 
-    _providerId ??= providers
-        .firstWhere((ProviderInfo p) => p.available,
-            orElse: () => providers.first)
-        .id;
+    final String? preferredProviderId = widget.data.settings.providerId;
+    final bool preferredProviderAvailable = providers.any(
+      (ProviderInfo provider) =>
+          provider.id == preferredProviderId && provider.available,
+    );
+    _providerId ??= preferredProviderAvailable
+        ? preferredProviderId
+        : providers
+              .firstWhere(
+                (ProviderInfo p) => p.available,
+                orElse: () => providers.first,
+              )
+              .id;
     if (branches.isNotEmpty && _baseBranch == null) {
       // Prefer the checked-out branch, then main, then the first listed.
       _baseBranch = branches
-          .firstWhere((Branch b) => b.isCurrent,
-              orElse: () => branches.firstWhere((Branch b) => b.name == 'main',
-                  orElse: () => branches.first))
+          .firstWhere(
+            (Branch b) => b.isCurrent,
+            orElse: () => branches.firstWhere(
+              (Branch b) => b.name == 'main',
+              orElse: () => branches.first,
+            ),
+          )
           .name;
     }
 
@@ -164,8 +189,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ],
           onChanged: _submitting
               ? null
-              : (String? value) =>
-                    setState(() => _providerId = value),
+              : (String? value) {
+                  if (value != null) _selectProvider(value);
+                },
         ),
         const SizedBox(height: 4),
         CheckboxListTile(
@@ -175,16 +201,17 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
           title: const Text('Yolo mode'),
-          subtitle:
-              const Text('Auto-approve every permission request from the agent'),
+          subtitle: const Text(
+            'Auto-approve every permission request from the agent',
+          ),
           onChanged: _submitting
               ? null
               : (bool? value) => setState(() {
-                    _yolo = value ?? false;
-                    // Sticky even when the sheet is cancelled: the next
-                    // sheet seeds from this.
-                    widget.data.newSessionYolo = _yolo;
-                  }),
+                  _yolo = value ?? false;
+                  // Sticky even when the sheet is cancelled: the next
+                  // sheet seeds from this.
+                  widget.data.newSessionYolo = _yolo;
+                }),
         ),
         if (branches.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),
@@ -231,8 +258,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           const SizedBox(height: 12),
           Text(
             _error!,
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.error),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
           ),
         ],
         const SizedBox(height: 16),
@@ -240,9 +268,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           alignment: MainAxisAlignment.end,
           children: <Widget>[
             TextButton(
-              onPressed: _submitting
-                  ? null
-                  : () => Navigator.of(context).pop(),
+              onPressed: _submitting ? null : () => Navigator.of(context).pop(),
               child: const Text('Cancel'),
             ),
             const SizedBox(width: 8),
@@ -268,7 +294,11 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     // remaining nav-bar case without adding a dead gap above the keyboard.
     return Padding(
       padding: EdgeInsets.fromLTRB(
-          20, 16, 20, 20 + MediaQuery.paddingOf(context).bottom),
+        20,
+        16,
+        20,
+        20 + MediaQuery.paddingOf(context).bottom,
+      ),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -276,10 +306,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           children: <Widget>[
             Text('New session', style: textTheme.titleMedium),
             const SizedBox(height: 16),
-            FutureBuilder<_SheetData>(
-              future: _data,
-              builder: _buildForm,
-            ),
+            FutureBuilder<_SheetData>(future: _data, builder: _buildForm),
           ],
         ),
       ),

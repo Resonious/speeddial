@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/state/settings_store.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/new_session_sheet.dart';
@@ -13,8 +14,10 @@ import 'package:speeddial_app/src/ui/left/new_session_sheet.dart';
 /// bottom-sheet route (mirroring the left rail: scroll-controlled,
 /// safe-area) against a fake daemon (either [fake] or a fresh scripted one).
 /// The sheet is already open when this returns.
-Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
-    {FakeDaemonClient? fake}) async {
+Future<({AppData app, String projectId})> pumpSheet(
+  WidgetTester tester, {
+  FakeDaemonClient? fake,
+}) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final FakeDaemonClient fakeClient =
       fake ?? FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
@@ -42,7 +45,8 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
                     useSafeArea: true,
                     builder: (BuildContext context) => Padding(
                       padding: EdgeInsets.only(
-                          bottom: MediaQuery.viewInsetsOf(context).bottom),
+                        bottom: MediaQuery.viewInsetsOf(context).bottom,
+                      ),
                       child: NewSessionSheet(
                         data: app,
                         daemonId: 'fake',
@@ -69,7 +73,8 @@ Future<({AppData app, String projectId})> pumpSheet(WidgetTester tester,
 Session createdSession(AppData app, String projectId) {
   final List<Session> sessions = app.sessions.sessionsFor(projectId);
   return sessions.singleWhere(
-      (Session s) => s.id != 'sess-1' && s.id != 'sess-2');
+    (Session s) => s.id != 'sess-1' && s.id != 'sess-2',
+  );
 }
 
 void main() {
@@ -122,8 +127,9 @@ void main() {
     );
   });
 
-  testWidgets('yolo mode is off by default and sent when checked',
-      (WidgetTester tester) async {
+  testWidgets('yolo mode is off by default and sent when checked', (
+    WidgetTester tester,
+  ) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
     // Default: no yolo.
@@ -142,17 +148,20 @@ void main() {
     await tester.pumpAndSettle();
 
     final List<Session> sessions = app.sessions.sessionsFor(projectId);
-    final Session second = sessions.singleWhere((Session s) =>
-        s.id != 'sess-1' && s.id != 'sess-2' && s.yolo);
+    final Session second = sessions.singleWhere(
+      (Session s) => s.id != 'sess-1' && s.id != 'sess-2' && s.yolo,
+    );
     expect(second.yolo, isTrue);
   });
 
-  testWidgets('yolo mode checkbox is sticky across sheet opens',
-      (WidgetTester tester) async {
+  testWidgets('yolo mode checkbox is sticky across sheet opens', (
+    WidgetTester tester,
+  ) async {
     await pumpSheet(tester);
 
-    CheckboxListTile yoloTile() =>
-        tester.widget<CheckboxListTile>(find.byKey(const Key('new-session-yolo')));
+    CheckboxListTile yoloTile() => tester.widget<CheckboxListTile>(
+      find.byKey(const Key('new-session-yolo')),
+    );
 
     // Check it, then cancel without submitting.
     final Finder toggle = find.byKey(const Key('new-session-yolo'));
@@ -178,6 +187,38 @@ void main() {
     expect(yoloTile().value, isFalse);
   });
 
+  testWidgets('provider selection is sticky across app instances', (
+    WidgetTester tester,
+  ) async {
+    await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('new-session-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Claude').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    DropdownButtonFormField<String> picker = tester.widget(
+      find.byKey(const Key('new-session-provider')),
+    );
+    expect(picker.initialValue, 'claude');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(SettingsStore.providerStorageKey), 'claude');
+
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final AppData app = AppData()..registerClient('fake', fake);
+    addTearDown(app.dispose);
+    await app.settings.init();
+    expect(app.settings.providerId, 'claude');
+  });
+
   testWidgets('unchecking the worktree box hides the base branch and keeps '
       'the project cwd', (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
@@ -193,8 +234,9 @@ void main() {
     expect(created.cwd, app.projects.projectsFor('fake').single.path);
   });
 
-  testWidgets('Cancel closes the sheet without creating a session',
-      (WidgetTester tester) async {
+  testWidgets('Cancel closes the sheet without creating a session', (
+    WidgetTester tester,
+  ) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
     await tester.tap(find.text('Cancel'));
@@ -204,8 +246,9 @@ void main() {
     expect(app.sessions.sessionsFor(projectId), hasLength(2));
   });
 
-  testWidgets('the action row stays clear of the system navigation bar',
-      (WidgetTester tester) async {
+  testWidgets('the action row stays clear of the system navigation bar', (
+    WidgetTester tester,
+  ) async {
     // Phone viewport with Android-15-style edge-to-edge bars: status bar on
     // top, gesture/navigation bar at the bottom (see safe_area_test.dart).
     const Size phone = Size(390, 844);
@@ -213,19 +256,25 @@ void main() {
     const double navBar = 48;
 
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake =
-        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
     final AppData app = AppData()..registerClient('fake', fake);
     addTearDown(app.dispose);
     await app.connections.addEndpoint(
-        id: 'fake', name: 'Fake daemon', url: 'fake://local', token: '');
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
 
     tester.view.physicalSize = phone;
     tester.view.devicePixelRatio = 1.0;
-    tester.view.padding =
-        const FakeViewPadding(top: statusBar, bottom: navBar);
-    tester.view.viewPadding =
-        const FakeViewPadding(top: statusBar, bottom: navBar);
+    tester.view.padding = const FakeViewPadding(top: statusBar, bottom: navBar);
+    tester.view.viewPadding = const FakeViewPadding(
+      top: statusBar,
+      bottom: navBar,
+    );
     addTearDown(tester.view.reset);
 
     // The rail hosts the real showModalBottomSheet route under test.
@@ -245,9 +294,12 @@ void main() {
 
     // The action row must stay tappable above the gesture/navigation area.
     expect(
-        tester.getBottomLeft(find.byKey(const Key('new-session-submit'))).dy,
-        lessThanOrEqualTo(phone.height - navBar));
-    expect(tester.getBottomLeft(find.text('Cancel')).dy,
-        lessThanOrEqualTo(phone.height - navBar));
+      tester.getBottomLeft(find.byKey(const Key('new-session-submit'))).dy,
+      lessThanOrEqualTo(phone.height - navBar),
+    );
+    expect(
+      tester.getBottomLeft(find.text('Cancel')).dy,
+      lessThanOrEqualTo(phone.height - navBar),
+    );
   });
 }

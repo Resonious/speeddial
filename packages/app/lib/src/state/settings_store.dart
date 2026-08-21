@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// App-local UI settings, persisted via shared_preferences. Currently just
-/// the theme mode; defaults to [ThemeMode.system] when nothing is stored or
-/// [init] was never called (tests, demo mode).
+/// App-local UI settings persisted via shared_preferences. Theme mode defaults
+/// to [ThemeMode.system]; the new-session provider remains null until selected.
 ///
 /// Stores never hold a BuildContext; UI reads them through `AppScope`.
 class SettingsStore extends ChangeNotifier {
   static const String storageKey = 'speeddial.settings.v1';
+  static const String providerStorageKey = 'speeddial.provider.v1';
 
   ThemeMode _themeMode = ThemeMode.system;
+  String? _providerId;
   Object? _lastError;
 
   ThemeMode get themeMode => _themeMode;
+
+  String? get providerId => _providerId;
 
   Object? get lastError => _lastError;
 
@@ -24,13 +27,13 @@ class SettingsStore extends ChangeNotifier {
       final ThemeMode? mode = raw == null || raw.isEmpty
           ? null
           : ThemeMode.values.asNameMap()[raw];
-      if (mode == null || mode == _themeMode) {
-        _clearError();
-        return;
-      }
-      _themeMode = mode;
+      final String? providerId = prefs.getString(providerStorageKey);
+      final bool changed =
+          (mode != null && mode != _themeMode) || providerId != _providerId;
+      if (mode != null) _themeMode = mode;
+      _providerId = providerId;
       _lastError = null;
-      notifyListeners();
+      if (changed) notifyListeners();
     } catch (error) {
       _lastError = error;
       notifyListeners();
@@ -53,9 +56,18 @@ class SettingsStore extends ChangeNotifier {
     }
   }
 
-  void _clearError() {
-    if (_lastError == null) return;
+  Future<void> setProviderId(String providerId) async {
+    if (providerId == _providerId) return;
+    _providerId = providerId;
     _lastError = null;
     notifyListeners();
+    try {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString(providerStorageKey, providerId);
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
   }
 }
