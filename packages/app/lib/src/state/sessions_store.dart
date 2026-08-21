@@ -1,10 +1,10 @@
 import 'dart:async';
 
-import 'store_base.dart';
-
+import 'package:flutter/foundation.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
+import 'store_base.dart';
 
 /// Caches sessions bucketed by project and keyed by id.
 ///
@@ -28,11 +28,31 @@ import '../api/daemon_client.dart';
 /// stream so changes missed while the socket was down are refetched on
 /// reconnect; subscriptions live until the store is disposed.
 class SessionsStore extends StoreBase {
-  SessionsStore({required DaemonClient Function(String daemonId) clientFor})
-    // ignore: prefer_initializing_formals
-    : _clientFor = clientFor;
+  factory SessionsStore({
+    required DaemonClient Function(String daemonId) clientFor,
+    required Listenable selection,
+    required String? Function() selectedDaemonId,
+    required String? Function() selectedSessionId,
+  }) => SessionsStore._(
+    clientFor,
+    selection,
+    selectedDaemonId,
+    selectedSessionId,
+  );
+
+  SessionsStore._(
+    this._clientFor,
+    this._selection,
+    this._selectedDaemonId,
+    this._selectedSessionId,
+  ) {
+    _selection.addListener(_onSelectionChanged);
+  }
 
   final DaemonClient Function(String daemonId) _clientFor;
+  final Listenable _selection;
+  final String? Function() _selectedDaemonId;
+  final String? Function() _selectedSessionId;
 
   /// `daemonId/projectId` → sessions (archived included); per daemon.
   final Map<String, List<Session>> _sessionsByProject =
@@ -49,6 +69,9 @@ class SessionsStore extends StoreBase {
   /// cross-daemon id collisions in the public single-id getters.
   final Map<String, String> _lastDaemonBySession = <String, String>{};
   final Map<String, String> _lastDaemonByProject = <String, String>{};
+
+  /// Scoped session ids whose latest observed turn completed while unselected.
+  final Set<String> _unseenCompleted = <String>{};
 
   /// One `sessionUpdates`/`sessionRemovals` subscription per daemon, alive
   /// from first use until [dispose].
@@ -87,6 +110,9 @@ class SessionsStore extends StoreBase {
     }
     return null;
   }
+
+  bool isDone(String daemonId, String sessionId) =>
+      _unseenCompleted.contains(_scopedKey(daemonId, sessionId));
 
   /// Refetches sessions (including archived ones so the store stays the
   /// complete picture; panes filter what they show).
@@ -238,6 +264,7 @@ class SessionsStore extends StoreBase {
     await _clientFor(daemonId).deleteSession(sessionId);
     _sessionsById.remove(key);
     _touch(key);
+    _unseenCompleted.remove(key);
     if (before != null) {
       _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
         (Session s) => s.id == sessionId,
@@ -322,6 +349,7 @@ class SessionsStore extends StoreBase {
     final String key = _scopedKey(daemonId, sessionId);
     final Session? before = _sessionsById.remove(key);
     _touch(key);
+    _unseenCompleted.remove(key);
     if (before == null) return;
     _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
       (Session s) => s.id == sessionId,
@@ -346,14 +374,38 @@ class SessionsStore extends StoreBase {
   /// Records [session] in the by-id index and remembers [daemonId] as the
   /// most recently used daemon for its session and project ids.
   void _note(String daemonId, Session session) {
+    final String key = _scopedKey(daemonId, session.id);
+    final Session? previous = _sessionsById[key];
+    if (session.archived || session.status != SessionStatus.idle) {
+      _unseenCompleted.remove(key);
+    } else if (_wasActive(previous?.status) &&
+        !_isSelected(daemonId, session.id)) {
+      _unseenCompleted.add(key);
+    }
     _lastDaemonBySession[session.id] = daemonId;
     _lastDaemonByProject[session.projectId] = daemonId;
-    _sessionsById[_scopedKey(daemonId, session.id)] = session;
+    _sessionsById[key] = session;
   }
 
   void _touch(String key) {
     _revisionBySession[key] = ++_nextRevision;
   }
+
+  void _onSelectionChanged() {
+    final String? daemonId = _selectedDaemonId();
+    final String? sessionId = _selectedSessionId();
+    if (daemonId == null || sessionId == null) return;
+    if (_unseenCompleted.remove(_scopedKey(daemonId, sessionId))) {
+      notifyListeners();
+    }
+  }
+
+  bool _isSelected(String daemonId, String sessionId) =>
+      _selectedDaemonId() == daemonId && _selectedSessionId() == sessionId;
+
+  static bool _wasActive(SessionStatus? status) =>
+      status == SessionStatus.running ||
+      status == SessionStatus.waitingPermission;
 
   List<Session>? _bucketFor(String projectId) {
     final String? daemonId = _lastDaemonByProject[projectId];
@@ -388,6 +440,7 @@ class SessionsStore extends StoreBase {
 
   @override
   void dispose() {
+    _selection.removeListener(_onSelectionChanged);
     for (final StreamSubscription<Session> sub in _updateSubs.values) {
       sub.cancel();
     }

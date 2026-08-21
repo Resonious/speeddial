@@ -23,9 +23,10 @@ Color sessionStatusColor(SpeedDialColors colors, SessionStatus status) {
 /// Small pill showing a session's lifecycle status, tinted with the status
 /// color from the theme.
 class SessionStatusChip extends StatelessWidget {
-  const SessionStatusChip({super.key, required this.status});
+  const SessionStatusChip({super.key, required this.status, this.done = false});
 
   final SessionStatus status;
+  final bool done;
 
   @override
   Widget build(BuildContext context) {
@@ -38,10 +39,8 @@ class SessionStatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        status.name,
-        style: Theme.of(context)
-            .textTheme
-            .labelSmall
+        done ? 'Done' : status.name,
+        style: Theme.of(context).textTheme.labelSmall
             ?.copyWith(color: color, fontSize: 10),
       ),
     );
@@ -94,8 +93,9 @@ class SessionGitBadges extends StatelessWidget {
     return ListenableBuilder(
       listenable: data.git,
       builder: (BuildContext context, Widget? _) {
-        final SessionGitSummary? summary =
-            data.git.sessionSummaryFor(session.id);
+        final SessionGitSummary? summary = data.git.sessionSummaryFor(
+          session.id,
+        );
         if (summary == null) return const SizedBox.shrink();
         final SpeedDialColors colors = context.speedDialColors;
         final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -116,14 +116,16 @@ class SessionGitBadges extends StatelessWidget {
               _GitBadge(
                 color: colors.running,
                 label: '↑$ahead',
-                tooltip: '$ahead ${ahead == 1 ? 'commit' : 'commits'} '
+                tooltip:
+                    '$ahead ${ahead == 1 ? 'commit' : 'commits'} '
                     'ahead of $base',
               ),
             if (behind > 0)
               _GitBadge(
                 color: colors.waitingPermission,
                 label: '↓$behind',
-                tooltip: '$behind ${behind == 1 ? 'commit' : 'commits'} '
+                tooltip:
+                    '$behind ${behind == 1 ? 'commit' : 'commits'} '
                     'behind $base (the base moved on)',
               ),
             if (summary.mergedIntoBase ?? false)
@@ -164,9 +166,7 @@ class _GitBadge extends StatelessWidget {
         ),
         child: Text(
           label,
-          style: Theme.of(context)
-              .textTheme
-              .labelSmall
+          style: Theme.of(context).textTheme.labelSmall
               ?.copyWith(color: color, fontSize: 10),
         ),
       ),
@@ -205,7 +205,8 @@ class SessionRow extends StatelessWidget {
   }
 
   Future<void> _delete(BuildContext context, AppData data) async {
-    final bool confirmed = await showDialog<bool>(
+    final bool confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (BuildContext context) => AlertDialog(
             title: const Text('Delete session'),
@@ -241,6 +242,7 @@ class SessionRow extends StatelessWidget {
     final AppData data = AppScope.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final bool done = data.sessions.isDone(daemonId, session.id);
 
     return ListTile(
       dense: true,
@@ -248,7 +250,7 @@ class SessionRow extends StatelessWidget {
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       leading: Tooltip(
-        message: session.status.name,
+        message: done ? 'Done' : session.status.name,
         child: SizedBox(
           width: 22,
           child: Center(
@@ -257,7 +259,10 @@ class SessionRow extends StatelessWidget {
               height: 8,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: sessionStatusColor(context.speedDialColors, session.status),
+                color: sessionStatusColor(
+                  context.speedDialColors,
+                  session.status,
+                ),
               ),
             ),
           ),
@@ -267,8 +272,9 @@ class SessionRow extends StatelessWidget {
         session.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: textTheme.bodySmall
-            ?.copyWith(color: selected ? scheme.primary : null),
+        style: textTheme.bodySmall?.copyWith(
+          color: selected ? scheme.primary : null,
+        ),
       ),
       subtitle: Wrap(
         spacing: 6,
@@ -277,10 +283,12 @@ class SessionRow extends StatelessWidget {
           ProviderBadge(providerId: session.providerId),
           Text(
             session.mode.name,
-            style: textTheme.labelSmall
-                ?.copyWith(color: scheme.onSurfaceVariant, fontSize: 10),
+            style: textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontSize: 10,
+            ),
           ),
-          SessionStatusChip(status: session.status),
+          SessionStatusChip(status: session.status, done: done),
           SessionGitBadges(session: session),
         ],
       ),
@@ -299,19 +307,19 @@ class SessionRow extends StatelessWidget {
         },
         itemBuilder: (BuildContext context) =>
             const <PopupMenuEntry<_SessionAction>>[
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.rename,
-            child: Text('Rename'),
-          ),
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.archive,
-            child: Text('Archive'),
-          ),
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.delete,
-            child: Text('Delete'),
-          ),
-        ],
+              PopupMenuItem<_SessionAction>(
+                value: _SessionAction.rename,
+                child: Text('Rename'),
+              ),
+              PopupMenuItem<_SessionAction>(
+                value: _SessionAction.archive,
+                child: Text('Archive'),
+              ),
+              PopupMenuItem<_SessionAction>(
+                value: _SessionAction.delete,
+                child: Text('Delete'),
+              ),
+            ],
       ),
       onTap: () {
         data.selection.selectedProjectId = projectId;
@@ -342,8 +350,9 @@ class _RenameSessionDialog extends StatefulWidget {
 }
 
 class _RenameSessionDialogState extends State<_RenameSessionDialog> {
-  late final TextEditingController _title =
-      TextEditingController(text: widget.initialTitle);
+  late final TextEditingController _title = TextEditingController(
+    text: widget.initialTitle,
+  );
 
   @override
   void dispose() {
@@ -405,9 +414,7 @@ class SessionList extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(24, 4, 8, 12),
         child: Text(
           'No sessions',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
+          style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );

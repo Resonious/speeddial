@@ -300,6 +300,41 @@ void main() {
       );
     });
 
+    test('marks unseen completed turns done until selected', () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+      app.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = projectId
+        ..selectedSessionId = 'sess-2';
+
+      await fake.sendMessage('sess-1', 'finish in the background');
+      await _waitUntil(() => app.sessions.isDone('fake', 'sess-1'));
+      expect(app.sessions.byId('sess-1')?.status, SessionStatus.idle);
+      expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
+
+      app.selection.selectedSessionId = 'sess-1';
+      expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+    });
+
+    test('does not mark a selected completed turn done', () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+      app.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = projectId
+        ..selectedSessionId = 'sess-1';
+
+      await fake.sendMessage('sess-1', 'finish while visible');
+      await _waitUntil(
+        () => app.sessions.byId('sess-1')?.status == SessionStatus.running,
+      );
+      await _waitUntil(
+        () => app.sessions.byId('sess-1')?.status == SessionStatus.idle,
+      );
+      expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+    });
+
     test(
       'reacts to daemon sessionUpdates / sessionRemovals without a refresh',
       () async {

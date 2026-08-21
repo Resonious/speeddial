@@ -115,6 +115,32 @@ void main() {
     },
   );
 
+  testWidgets('completed unviewed session shows Done until selected', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    app.selection.selectedSessionId = 'sess-2';
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    await fake.sendMessage('sess-1', 'finish in the background');
+    for (int i = 0; i < 100 && !app.sessions.isDone('fake', 'sess-1'); i++) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
+
+    expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
+    expect(find.text('Done'), findsOneWidget);
+    expect(find.text('idle'), findsOneWidget);
+
+    await tester.tap(find.text('Build the feature'));
+    await tester.pump();
+    expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+    expect(find.text('Done'), findsNothing);
+    expect(find.text('idle'), findsNWidgets(2));
+  });
+
   testWidgets('session rows show git badges from the daemon summaries', (
     WidgetTester tester,
   ) async {

@@ -271,7 +271,12 @@ class AppData {
        settings = settings ?? SettingsStore(),
        _fallbackClientFor = clientFor {
     projects = ProjectsStore(clientFor: this.clientFor);
-    sessions = SessionsStore(clientFor: this.clientFor);
+    sessions = SessionsStore(
+      clientFor: this.clientFor,
+      selection: this.selection,
+      selectedDaemonId: () => this.selection.selectedDaemonId,
+      selectedSessionId: () => this.selection.selectedSessionId,
+    );
     chat = ChatStore(clientFor: this.clientFor);
     files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
