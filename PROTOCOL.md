@@ -342,15 +342,20 @@ tokens before session creation/resume, and checks them periodically while runnin
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
-  may be empty only when `attachments` is non-empty. Attachments are supported by ACP providers;
-  Ante currently rejects a non-empty `attachments` list with `-32602` before persisting the turn.
+  may be empty only when `attachments` is non-empty. ACP providers accept text, image, and binary
+  attachments. Ante accepts text-like attachments (`text/*`, JSON/XML/YAML, source code, and SVG):
+  the daemon sends their file label and UTF-8 content through Ante's `UserInput` operation. For
+  non-text `image/*`, the daemon writes the decoded image to a private transient directory and adds
+  an `@` file mention to `UserInput`, invoking Ante's native image-context path; whether the model can
+  inspect pixels depends on its Ante catalog `support_vision` capability. Ante rejects other binary
+  attachments with `-32602` before persisting the turn.
   General caps: at most 8 attachments, 8 MiB decoded per attachment, 16 MiB decoded total;
-  violations are `-32602`, as are malformed base64 payloads. For a supporting provider, the daemon
-  persists each payload (fetchable later via `attachments.read`), records the metadata on the turn's
-  `userMessage` event, and forwards the files as ACP prompt content blocks: `image/*` becomes
-  an `image` block; text-like types (`text/*`, JSON/XML/YAML, source code, SVG) become an embedded
-  `resource` block with `text`; anything else becomes an embedded `resource` block with a base64
-  `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`.
+  violations are `-32602`, as are malformed base64 payloads and text-like payloads that are not valid
+  UTF-8. For an accepted turn, the daemon persists each payload (fetchable later via
+  `attachments.read`) and records the metadata on the turn's `userMessage` event. ACP receives the
+  files as prompt content blocks: non-text `image/*` becomes an `image` block; text-like types become
+  an embedded `resource` block with `text`; anything else becomes an embedded `resource` block with
+  a base64 `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`.
   The request resolves at turn start — once the `userMessage` event is persisted and the session is
   `running` — not when the agent finishes. The turn's output arrives as live `session.event` notifications,
   ending in `turnComplete`; a client awaiting the response only gates the send, never the whole turn, so a

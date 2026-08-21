@@ -56,8 +56,10 @@ class AnteClient implements AgentClient {
   Future<InitializeResult>? _initializedFuture;
   Future<void>? _closeStreamsFuture;
   Future<void>? _mcpHomeRemovalFuture;
+  Future<void>? _imageDirectoryRemovalFuture;
   Directory? _mcpHome;
-
+  Directory? _imageDirectory;
+  int _imageFileIndex = 0;
   final StreamController<String> _stderrController =
       StreamController<String>.broadcast();
   final Map<String, _SessionChannel> _sessionChannels =
@@ -236,7 +238,7 @@ class AnteClient implements AgentClient {
     if (_currentTurnOp != null) {
       throw StateError('An Ante turn is already running.');
     }
-    final String text = _textFromPromptBlocks(promptBlocks);
+    final String text = await _textFromPromptBlocks(promptBlocks);
     final String opId = _nextOpId();
     final Completer<PromptResult> completer = Completer<PromptResult>();
     _turnWaiters[opId] = completer;
@@ -295,8 +297,14 @@ class AnteClient implements AgentClient {
         process?.kill();
       }
     }
-    await _removeMcpHome();
-    await _closeStreams();
+    try {
+      await Future.wait(<Future<void>>[
+        _removeMcpHome(),
+        _removeImageDirectory(),
+      ]);
+    } finally {
+      await _closeStreams();
+    }
   }
 
   Future<void> _ensureStarted(List<Map<String, Object?>> mcpServers) =>
@@ -478,6 +486,46 @@ class AnteClient implements AgentClient {
     if (mcpHome == null) return;
     if (await mcpHome.exists()) await mcpHome.delete(recursive: true);
     _mcpHome = null;
+  }
+
+  Future<Directory> _ensureImageDirectory() async {
+    final Directory? existing = _imageDirectory;
+    if (existing != null) return existing;
+    final Directory directory = await Directory.systemTemp.createTemp(
+      'speeddial_ante_images_',
+    );
+    try {
+      if (!Platform.isWindows) {
+        final ProcessResult chmod = await Process.run('chmod', <String>[
+          '700',
+          directory.path,
+        ]);
+        if (chmod.exitCode != 0) {
+          throw FileSystemException(
+            'Could not restrict Ante image directory permissions',
+            directory.path,
+          );
+        }
+      }
+      if (_disposed || _exited) {
+        throw StateError('AnteClient is not running.');
+      }
+      _imageDirectory = directory;
+      return directory;
+    } on Object {
+      if (await directory.exists()) await directory.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  Future<void> _removeImageDirectory() =>
+      _imageDirectoryRemovalFuture ??= _removeImageDirectoryOnce();
+
+  Future<void> _removeImageDirectoryOnce() async {
+    final Directory? directory = _imageDirectory;
+    if (directory == null) return;
+    if (await directory.exists()) await directory.delete(recursive: true);
+    _imageDirectory = null;
   }
 
   Future<Process> _start(Map<String, String> environment) async {
@@ -1129,6 +1177,13 @@ class AnteClient implements AgentClient {
         _stderrController.add('Failed to remove transient Ante home: $error');
       }
     }
+    try {
+      await _removeImageDirectory();
+    } on Object catch (error) {
+      if (!_stderrController.isClosed) {
+        _stderrController.add('Failed to remove transient Ante images: $error');
+      }
+    }
     await _closeStreams();
   }
 
@@ -1261,7 +1316,9 @@ class AnteClient implements AgentClient {
     ];
   }
 
-  static String _textFromPromptBlocks(List<Map<String, Object?>> promptBlocks) {
+  Future<String> _textFromPromptBlocks(
+    List<Map<String, Object?>> promptBlocks,
+  ) async {
     final StringBuffer text = StringBuffer();
     for (final Map<String, Object?> block in promptBlocks) {
       switch (block['type']) {
@@ -1286,13 +1343,55 @@ class AnteClient implements AgentClient {
             );
           }
         case 'image':
-          throw UnsupportedError(
-            'Ante serve does not accept image attachments.',
-          );
+          if (text.isNotEmpty) text.writeln('\n');
+          final String path = await _materializeImage(block);
+          text
+            ..writeln('[Attached image]')
+            ..write('@$path');
       }
     }
     return text.toString();
   }
+
+  Future<String> _materializeImage(Map<String, Object?> block) async {
+    final Object? rawData = block['data'];
+    final Object? rawMimeType = block['mimeType'];
+    if (rawData is! String ||
+        rawMimeType is! String ||
+        !rawMimeType.toLowerCase().startsWith('image/')) {
+      throw const FormatException('Invalid Ante image attachment block.');
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(rawData);
+    } on FormatException {
+      throw const FormatException(
+        'Ante image attachment carries malformed base64 data.',
+      );
+    }
+    final Directory directory = await _ensureImageDirectory();
+    final String extension = _imageExtension(rawMimeType);
+    final File file = File(
+      p.join(directory.path, 'image-${++_imageFileIndex}.$extension'),
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return file.absolute.path;
+  }
+
+  static String _imageExtension(String mimeType) =>
+      switch (mimeType.toLowerCase().split(';').first.trim()) {
+        'image/png' => 'png',
+        'image/jpeg' || 'image/jpg' => 'jpg',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+        'image/bmp' => 'bmp',
+        'image/x-icon' => 'ico',
+        'image/tiff' => 'tiff',
+        'image/avif' => 'avif',
+        'image/heic' => 'heic',
+        'image/svg+xml' => 'svg',
+        _ => 'img',
+      };
 
   static String _toolKind(String name) {
     final String lower = name.toLowerCase();

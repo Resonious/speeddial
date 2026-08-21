@@ -166,7 +166,7 @@ void main() {
     }
   }
 
-  test('Ante sessions stream rich events through the engine', () async {
+  test('Ante sessions stream rich events and attachments', () async {
     await eventsSub.cancel();
     await changesSub.cancel();
     await removalsSub.cancel();
@@ -241,24 +241,112 @@ void main() {
     expect(usage.contextLimitTokens, 200000);
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
 
+    final Future<PermissionRequestEvent> attachmentPermissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(
+      session.id,
+      'attachment',
+      attachments: const <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'note.txt',
+          mimeType: 'text/plain',
+          data: 'aGk=',
+        ),
+      ],
+    );
+    final PermissionRequestEvent attachmentPermission =
+        await attachmentPermissionFuture.timeout(const Duration(seconds: 5));
+    await engine.respondPermission(
+      session.id,
+      attachmentPermission.request.requestId,
+      'AcceptForSession',
+    );
+    await waitFor(
+      () =>
+          events
+              .where(
+                (tuple) =>
+                    tuple.sessionId == session.id &&
+                    tuple.event is TurnCompleteEvent,
+              )
+              .length ==
+          2,
+    );
+    final UserMessageEvent attachedMessage = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(attachedMessage.text, 'attachment');
+    final Attachment metadata = attachedMessage.attachments.single;
+    expect(metadata.name, 'note.txt');
+    expect(metadata.mimeType, 'text/plain');
+    expect(metadata.size, 2);
+    expect(store.getAttachment(session.id, metadata.id)?.data, 'aGk=');
+
+    final Future<PermissionRequestEvent> imagePermissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(
+      session.id,
+      'image attachment',
+      attachments: const <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'shot.png',
+          mimeType: 'image/png',
+          data: 'aQ==',
+        ),
+      ],
+    );
+    final PermissionRequestEvent imagePermission = await imagePermissionFuture
+        .timeout(const Duration(seconds: 5));
+    await engine.respondPermission(
+      session.id,
+      imagePermission.request.requestId,
+      'AcceptForSession',
+    );
+    await waitFor(
+      () =>
+          events
+              .where(
+                (tuple) =>
+                    tuple.sessionId == session.id &&
+                    tuple.event is TurnCompleteEvent,
+              )
+              .length ==
+          3,
+    );
+    final UserMessageEvent imageMessage = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(imageMessage.text, 'image attachment');
+    final Attachment imageMetadata = imageMessage.attachments.single;
+    expect(imageMetadata.name, 'shot.png');
+    expect(imageMetadata.mimeType, 'image/png');
+    expect(imageMetadata.size, 1);
+    expect(store.getAttachment(session.id, imageMetadata.id)?.data, 'aQ==');
+
     await expectLater(
       engine.sendMessage(
         session.id,
-        'attachment',
+        'binary attachment',
         attachments: const <OutgoingAttachment>[
           OutgoingAttachment(
-            name: 'note.txt',
-            mimeType: 'text/plain',
-            data: 'aGk=',
+            name: 'archive.zip',
+            mimeType: 'application/zip',
+            data: 'aQ==',
           ),
         ],
       ),
       throwsA(
-        isA<DaemonError>().having(
-          (DaemonError error) => error.code,
-          'code',
-          -32602,
-        ),
+        isA<DaemonError>()
+            .having((DaemonError error) => error.code, 'code', -32602)
+            .having(
+              (DaemonError error) => error.message,
+              'message',
+              contains('text or image attachments'),
+            ),
       ),
     );
 

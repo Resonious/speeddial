@@ -84,8 +84,10 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     transport updates to protocol SessionEvents, assigns seq, persists
                     via SessionStore, and broadcasts to listeners. Handles permission
                     requests (parked until respondPermission), cancel, process exit, and
-                    turn lifecycle. MCP injection supports ACP and Ante; attachments remain
-                    ACP-only.
+                    turn lifecycle. MCP injection supports ACP and Ante. ACP receives
+                    structured attachments; Ante inlines UTF-8 text attachments and
+                    materializes images as transient `@` file mentions for Ante's native
+                    context resolver. Other binary attachments are rejected before turn start.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
                     dependency) at ~/.speeddial/speeddial.db (override with --db or
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,

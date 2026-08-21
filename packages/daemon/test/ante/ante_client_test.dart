@@ -262,6 +262,73 @@ void main() {
   });
 
   test(
+    'flattens text resources and materializes images into Ante UserInput',
+    () async {
+      final Directory tempDir = await Directory.systemTemp.createTemp(
+        'ante_attachment_test',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final File report = File(p.join(tempDir.path, 'user-input.txt'));
+      final AnteClient client = spawnAnte(
+        environment: <String, String>{
+          'FAKE_ANTE_USER_INPUT_REPORT': report.path,
+        },
+        requestPermission: (
+          String sessionId,
+          String? toolCallId,
+          String title,
+          List<PermissionOptionData> options,
+        ) async => 'Accept',
+      );
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+
+      final PromptResult result = await client.prompt(
+        created.sessionId,
+        <Map<String, Object?>>[
+          <String, Object?>{'type': 'text', 'text': 'Review these files.'},
+          <String, Object?>{
+            'type': 'resource',
+            'resource': <String, Object?>{
+              'uri': 'speeddial-attachment:///att-1/notes.txt',
+              'mimeType': 'text/plain',
+              'text': 'alpha\nbeta',
+            },
+          },
+          <String, Object?>{
+            'type': 'image',
+            'mimeType': 'image/png',
+            'data': 'aQ==',
+          },
+        ],
+      );
+
+      expect(result.stopReason, 'end_turn');
+      final String input = await report.readAsString();
+      expect(
+        input,
+        startsWith(
+          'Review these files.\n\n'
+          '[Attached resource: speeddial-attachment:///att-1/notes.txt]\n'
+          'alpha\nbeta\n\n'
+          '[Attached image]\n@',
+        ),
+      );
+      final RegExpMatch? pathMatch = RegExp(r'\[Attached image\]\n@([^\r\n]+)$')
+          .firstMatch(input);
+      expect(pathMatch, isNotNull);
+      final File image = File(pathMatch!.group(1)!);
+      expect(image.path, endsWith('.png'));
+      expect(await image.readAsBytes(), <int>[105]);
+      final Directory imageDirectory = image.parent;
+      expect(await imageDirectory.exists(), isTrue);
+
+      await client.dispose();
+      expect(await imageDirectory.exists(), isFalse);
+    },
+  );
+
+  test(
     'maps provider turn errors without treating them as completion',
     () async {
       final AnteClient client = spawnAnte();

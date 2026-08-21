@@ -147,6 +147,13 @@ Future<void> _captureMcpHome() async {
   await File('$reportPath.home').writeAsString(anteHome);
 }
 
+Future<void> _captureUserInput(String text) async {
+  final String? reportPath =
+      Platform.environment['FAKE_ANTE_USER_INPUT_REPORT'];
+  if (reportPath == null || reportPath.isEmpty) return;
+  await File(reportPath).writeAsString(text);
+}
+
 bool _isCurrentOpId(String id) {
   const String alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   if (!id.startsWith('op_') || id.length != 29) return false;
@@ -207,6 +214,7 @@ Future<void> _extensions(String parent) {
 }
 
 Future<void> _runTurn(String parent, String text) async {
+  await _captureUserInput(text);
   await _event(<String, Object?>{'UserInput': text}, parent);
   await _event(<String, Object?>{
     'TurnStart': <String, Object?>{'turn_id': parent},

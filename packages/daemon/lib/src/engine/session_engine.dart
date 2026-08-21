@@ -91,12 +91,12 @@ class _LiveSession {
 }
 
 /// A validated, persisted attachment ready for the turn: its metadata plus
-/// the decoded payload (for ACP block building).
+/// decoded text when the payload is text-like.
 class _PreparedAttachment {
-  _PreparedAttachment({required this.data, required this.bytes});
+  _PreparedAttachment({required this.data, required this.text});
 
   final AttachmentData data;
-  final List<int> bytes;
+  final String? text;
 }
 
 /// Provider prompt context prepared from the copied history of a fork.
@@ -733,13 +733,35 @@ class SessionEngine {
     }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
     final ProviderSpec provider = _providers.byId(live.session.providerId)!;
-    if (provider.protocol == ProviderProtocol.ante &&
-        (attachments.isNotEmpty ||
-            (forkContext?.attachments.isNotEmpty ?? false))) {
-      throw DaemonError(
-        _kErrInvalidParams,
-        'Ante serve does not accept file attachments',
-      );
+    if (provider.protocol == ProviderProtocol.ante) {
+      String? unsupportedName;
+      String? unsupportedMimeType;
+      for (final OutgoingAttachment attachment in attachments) {
+        if (!isTextMimeType(attachment.mimeType) &&
+            !isImageMimeType(attachment.mimeType)) {
+          unsupportedName = attachment.name;
+          unsupportedMimeType = attachment.mimeType;
+          break;
+        }
+      }
+      final List<_PreparedAttachment>? inherited = forkContext?.attachments;
+      if (unsupportedMimeType == null && inherited != null) {
+        for (final _PreparedAttachment attachment in inherited) {
+          if (!isTextMimeType(attachment.data.mimeType) &&
+              !isImageMimeType(attachment.data.mimeType)) {
+            unsupportedName = attachment.data.name;
+            unsupportedMimeType = attachment.data.mimeType;
+            break;
+          }
+        }
+      }
+      if (unsupportedMimeType != null) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'Ante serve accepts only text or image attachments; '
+          '"$unsupportedName" has MIME type $unsupportedMimeType',
+        );
+      }
     }
     // Decode and persist each attachment before the turn starts so the
     // metadata rides on the user message event and the payload is fetchable
@@ -757,6 +779,17 @@ class SessionEngine {
           'Attachment "${attachment.name}" carries malformed base64 data',
         );
       }
+      String? attachmentText;
+      if (isTextMimeType(attachment.mimeType)) {
+        try {
+          attachmentText = utf8.decode(bytes);
+        } on FormatException {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Attachment "${attachment.name}" is not valid UTF-8 text',
+          );
+        }
+      }
       final data = AttachmentData(
         id: _uuid.v4(),
         name: attachment.name,
@@ -765,7 +798,7 @@ class SessionEngine {
         data: attachment.data,
       );
       _store.insertAttachment(sessionId, data);
-      prepared.add(_PreparedAttachment(data: data, bytes: bytes));
+      prepared.add(_PreparedAttachment(data: data, text: attachmentText));
     }
     // Persist the user message, name the session if needed, and flip to
     // running synchronously — every failure mode below happens before any
@@ -831,7 +864,12 @@ class SessionEngine {
               '[Attachment: ${data.name}; ${data.mimeType}; ${data.size} bytes]',
             );
             inheritedAttachments.add(
-              _PreparedAttachment(data: data, bytes: base64Decode(data.data)),
+              _PreparedAttachment(
+                data: data,
+                text: isTextMimeType(data.mimeType)
+                    ? utf8.decode(base64Decode(data.data))
+                    : null,
+              ),
             );
           }
           messages.add(<String, String>{
@@ -1313,8 +1351,8 @@ class SessionEngine {
   /// The structured provider prompt blocks for a turn. A fork's inherited
   /// transcript and copied attachments lead the first new prompt; the user's
   /// current text and attachments follow. ACP transports accept `image` and
-  /// embedded `resource` attachment blocks; Ante is validated as text-only
-  /// before this point.
+  /// embedded `resource` attachment blocks. Ante converts text resources into
+  /// its text-only `UserInput` operation.
   static List<Map<String, Object?>> _promptBlocks(
     String text,
     List<_PreparedAttachment> attachments, {
@@ -1325,6 +1363,20 @@ class SessionEngine {
     void appendAttachments(List<_PreparedAttachment> preparedAttachments) {
       for (final prepared in preparedAttachments) {
         final data = prepared.data;
+        final String? attachmentText = prepared.text;
+        if (attachmentText != null) {
+          blocks.add(<String, Object?>{
+            'type': 'resource',
+            'resource': <String, Object?>{
+              'uri':
+                  'speeddial-attachment:///${data.id}/'
+                  '${Uri.encodeComponent(data.name)}',
+              'mimeType': data.mimeType,
+              'text': attachmentText,
+            },
+          });
+          continue;
+        }
         if (isImageMimeType(data.mimeType)) {
           blocks.add(<String, Object?>{
             'type': 'image',
@@ -1333,18 +1385,16 @@ class SessionEngine {
           });
           continue;
         }
-        final resource = <String, Object?>{
-          'uri':
-              'speeddial-attachment:///${data.id}/'
-              '${Uri.encodeComponent(data.name)}',
-          'mimeType': data.mimeType,
-        };
-        if (isTextMimeType(data.mimeType)) {
-          resource['text'] = utf8.decode(prepared.bytes);
-        } else {
-          resource['blob'] = data.data;
-        }
-        blocks.add(<String, Object?>{'type': 'resource', 'resource': resource});
+        blocks.add(<String, Object?>{
+          'type': 'resource',
+          'resource': <String, Object?>{
+            'uri':
+                'speeddial-attachment:///${data.id}/'
+                '${Uri.encodeComponent(data.name)}',
+            'mimeType': data.mimeType,
+            'blob': data.data,
+          },
+        });
       }
     }
 
