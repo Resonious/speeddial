@@ -123,6 +123,7 @@ void main() {
   Future<void> pumpComposer(
     WidgetTester tester, {
     required AttachmentPicker picker,
+    ClipboardImageReader? clipboardImageReader,
     Future<void> Function(String text, List<OutgoingAttachment> attachments)?
     onSend,
   }) async {
@@ -137,6 +138,7 @@ void main() {
             status: SessionStatus.idle,
             mode: SessionMode.build,
             attachmentPicker: picker,
+            clipboardImageReader: clipboardImageReader,
             onSend:
                 onSend ??
                 (String text, List<OutgoingAttachment> attachments) async {},
@@ -621,6 +623,113 @@ void main() {
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
     'DwAChwGA60e6kgAAAABJRU5ErkJggg==',
   );
+
+  testWidgets('pasting an image stages and sends a PNG attachment', (
+    WidgetTester tester,
+  ) async {
+    String? sentText;
+    List<OutgoingAttachment>? sentAttachments;
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      clipboardImageReader: () async => pngBytes,
+      onSend: (String text, List<OutgoingAttachment> attachments) async {
+        sentText = text;
+        sentAttachments = attachments;
+      },
+    );
+
+    await tester.tap(find.byType(TextField));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byTooltip('Remove'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.send))
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+
+    expect(sentText, isEmpty);
+    expect(sentAttachments, hasLength(1));
+    expect(sentAttachments!.single.name, 'pasted-image.png');
+    expect(sentAttachments!.single.mimeType, 'image/png');
+    expect(sentAttachments!.single.data, base64Encode(pngBytes));
+    expect(find.byTooltip('Remove'), findsNothing);
+  });
+
+  testWidgets('text paste still uses the TextField default action', (
+    WidgetTester tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.getData') {
+          return <String, Object?>{'text': 'pasted text'};
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      clipboardImageReader: () async => null,
+    );
+
+    await tester.tap(find.byType(TextField));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    await tester.pump();
+
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.controller!.text, 'pasted text');
+    expect(find.byTooltip('Remove'), findsNothing);
+  });
+
+  testWidgets('keyboard rich content stages an image attachment', (
+    WidgetTester tester,
+  ) async {
+    List<OutgoingAttachment>? sentAttachments;
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      clipboardImageReader: () async => null,
+      onSend: (String text, List<OutgoingAttachment> attachments) async {
+        sentAttachments = attachments;
+      },
+    );
+
+    final TextField field = tester.widget<TextField>(find.byType(TextField));
+    field.contentInsertionConfiguration!.onContentInserted(
+      KeyboardInsertedContent(
+        mimeType: 'image/jpeg',
+        uri: 'content://clipboard/image',
+        data: pngBytes,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+
+    expect(sentAttachments, hasLength(1));
+    expect(sentAttachments!.single.name, 'pasted-image.png');
+    expect(sentAttachments!.single.mimeType, 'image/png');
+  });
 
   testWidgets('attach button stages chips including an image thumbnail', (
     WidgetTester tester,

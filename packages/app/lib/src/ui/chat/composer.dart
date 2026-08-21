@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
@@ -13,6 +14,54 @@ import 'model_picker.dart';
 /// bytes; the composer turns them into base64 [OutgoingAttachment]s.
 typedef AttachmentPicker =
     Future<List<({String name, Uint8List bytes})>> Function();
+
+typedef ClipboardImageReader = Future<Uint8List?> Function();
+
+({String extension, String mimeType}) _imageFormat(
+  Uint8List bytes, {
+  String? fallbackMimeType,
+}) {
+  bool startsWith(List<int> signature) {
+    if (bytes.length < signature.length) return false;
+    for (int i = 0; i < signature.length; i++) {
+      if (bytes[i] != signature[i]) return false;
+    }
+    return true;
+  }
+
+  if (startsWith(const <int>[0x89, 0x50, 0x4e, 0x47])) {
+    return (extension: 'png', mimeType: 'image/png');
+  }
+  if (startsWith(const <int>[0xff, 0xd8, 0xff])) {
+    return (extension: 'jpg', mimeType: 'image/jpeg');
+  }
+  if (startsWith(const <int>[0x47, 0x49, 0x46, 0x38])) {
+    return (extension: 'gif', mimeType: 'image/gif');
+  }
+  if (startsWith(const <int>[0x42, 0x4d])) {
+    return (extension: 'bmp', mimeType: 'image/bmp');
+  }
+  if (bytes.length >= 12 &&
+      startsWith(const <int>[0x52, 0x49, 0x46, 0x46]) &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    return (extension: 'webp', mimeType: 'image/webp');
+  }
+  if (startsWith(const <int>[0x49, 0x49, 0x2a, 0x00]) ||
+      startsWith(const <int>[0x4d, 0x4d, 0x00, 0x2a])) {
+    return (extension: 'tiff', mimeType: 'image/tiff');
+  }
+  return switch (fallbackMimeType?.toLowerCase()) {
+    'image/jpeg' || 'image/jpg' => (extension: 'jpg', mimeType: 'image/jpeg'),
+    'image/gif' => (extension: 'gif', mimeType: 'image/gif'),
+    'image/bmp' => (extension: 'bmp', mimeType: 'image/bmp'),
+    'image/webp' => (extension: 'webp', mimeType: 'image/webp'),
+    'image/tiff' => (extension: 'tiff', mimeType: 'image/tiff'),
+    _ => (extension: 'png', mimeType: 'image/png'),
+  };
+}
 
 /// Multiline message composer: Enter sends, Shift+Enter inserts a newline,
 /// send is disabled while empty, a stop button replaces send while the
@@ -31,6 +80,7 @@ class Composer extends StatefulWidget {
     this.thinkingLevels = const <String>[],
     this.onThinkingChanged,
     this.attachmentPicker,
+    this.clipboardImageReader,
     required this.onSend,
     required this.onStop,
     required this.onModeChanged,
@@ -73,6 +123,10 @@ class Composer extends StatefulWidget {
   /// skipped.
   final AttachmentPicker? attachmentPicker;
 
+  /// Injectable clipboard image reader for tests; defaults to
+  /// [Pasteboard.image].
+  final ClipboardImageReader? clipboardImageReader;
+
   /// Starts a turn with [text] and [attachments]. Completes when the daemon
   /// accepted it; on failure (a [DaemonError] surfaced as a SnackBar by the
   /// caller) the composer restores BOTH the text into the field and the
@@ -95,9 +149,40 @@ class _InsertNewlineIntent extends Intent {
   const _InsertNewlineIntent();
 }
 
+class _PasteImageAction extends Action<PasteTextIntent> {
+  _PasteImageAction(this.onPaste);
+
+  final Future<bool> Function() onPaste;
+
+  @override
+  Object? invoke(PasteTextIntent intent) {
+    final Action<PasteTextIntent>? fallback = callingAction;
+    unawaited(_invoke(intent, fallback));
+    return null;
+  }
+
+  Future<void> _invoke(
+    PasteTextIntent intent,
+    Action<PasteTextIntent>? fallback,
+  ) async {
+    if (!await onPaste()) {
+      fallback?.invoke(intent);
+    }
+  }
+
+  @override
+  bool get isActionEnabled => callingAction?.isActionEnabled ?? false;
+
+  @override
+  bool consumesKey(PasteTextIntent intent) =>
+      callingAction?.consumesKey(intent) ?? false;
+}
+
 class _ComposerState extends State<Composer> {
   final TextEditingController _controller = TextEditingController();
+  late final _PasteImageAction _pasteImageAction;
   bool _hasText = false;
+  int _pastedImageCount = 0;
 
   /// Files picked but not yet sent; cleared on send, restored on failure.
   final List<OutgoingAttachment> _attachments = <OutgoingAttachment>[];
@@ -111,6 +196,7 @@ class _ComposerState extends State<Composer> {
   @override
   void initState() {
     super.initState();
+    _pasteImageAction = _PasteImageAction(_pasteImage);
     _controller.addListener(_onTextChanged);
   }
 
@@ -151,7 +237,6 @@ class _ComposerState extends State<Composer> {
     try {
       picked = await picker();
     } on Object {
-      // Picker cancelled or failed; leave the draft untouched.
       return;
     }
     if (!mounted || picked.isEmpty) return;
@@ -165,6 +250,91 @@ class _ComposerState extends State<Composer> {
           ),
       ]);
     });
+  }
+
+  Future<bool> _pasteImage() async {
+    if (_running) return false;
+    final ClipboardImageReader reader =
+        widget.clipboardImageReader ?? (() => Pasteboard.image);
+    final Uint8List? bytes;
+    try {
+      bytes = await reader();
+    } on Object {
+      return false;
+    }
+    if (!mounted || bytes == null || bytes.isEmpty) return false;
+    final Uint8List imageBytes = bytes;
+    final ({String extension, String mimeType}) format = _imageFormat(
+      imageBytes,
+    );
+    setState(() {
+      _pastedImageCount += 1;
+      _attachments.add(
+        OutgoingAttachment(
+          name: _pastedImageCount == 1
+              ? 'pasted-image.${format.extension}'
+              : 'pasted-image-$_pastedImageCount.${format.extension}',
+          mimeType: format.mimeType,
+          data: base64Encode(imageBytes),
+        ),
+      );
+    });
+    return true;
+  }
+
+  void _onContentInserted(KeyboardInsertedContent content) {
+    final Uint8List? bytes = content.data;
+    if (_running ||
+        !isImageMimeType(content.mimeType) ||
+        bytes == null ||
+        bytes.isEmpty) {
+      return;
+    }
+    final ({String extension, String mimeType}) format = _imageFormat(
+      bytes,
+      fallbackMimeType: content.mimeType,
+    );
+    setState(() {
+      _pastedImageCount += 1;
+      _attachments.add(
+        OutgoingAttachment(
+          name: _pastedImageCount == 1
+              ? 'pasted-image.${format.extension}'
+              : 'pasted-image-$_pastedImageCount.${format.extension}',
+          mimeType: format.mimeType,
+          data: base64Encode(bytes),
+        ),
+      );
+    });
+  }
+
+  Widget _buildContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final List<ContextMenuButtonItem> items = <ContextMenuButtonItem>[
+      for (final ContextMenuButtonItem item
+          in editableTextState.contextMenuButtonItems)
+        if (item.type == ContextMenuButtonType.paste)
+          item.copyWith(
+            onPressed: () {
+              editableTextState.hideToolbar();
+              unawaited(_pasteFromToolbar(editableTextState));
+            },
+          )
+        else
+          item,
+    ];
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: items,
+    );
+  }
+
+  Future<void> _pasteFromToolbar(EditableTextState editableTextState) async {
+    if (!await _pasteImage()) {
+      await editableTextState.pasteText(SelectionChangedCause.toolbar);
+    }
   }
 
   void _removeAttachment(OutgoingAttachment attachment) {
@@ -266,6 +436,7 @@ class _ComposerState extends State<Composer> {
                   },
                   child: Actions(
                     actions: <Type, Action<Intent>>{
+                      PasteTextIntent: _pasteImageAction,
                       _SendMessageIntent: CallbackAction<_SendMessageIntent>(
                         onInvoke: (_) {
                           _send();
@@ -286,6 +457,11 @@ class _ComposerState extends State<Composer> {
                       maxLines: 8,
                       keyboardType: TextInputType.multiline,
                       textInputAction: TextInputAction.newline,
+                      contentInsertionConfiguration:
+                          ContentInsertionConfiguration(
+                            onContentInserted: _onContentInserted,
+                          ),
+                      contextMenuBuilder: _buildContextMenu,
                       decoration: InputDecoration(
                         hintText: 'Message the agent…',
                         prefixIcon: IconButton(
