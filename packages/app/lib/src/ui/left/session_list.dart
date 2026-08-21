@@ -237,6 +237,22 @@ class SessionRow extends StatelessWidget {
     }
   }
 
+  String _statusTooltip(BuildContext context, bool done) {
+    final String label = done ? 'Done' : session.status.name;
+    if (session.status != SessionStatus.idle) return label;
+
+    final DateTime lastActivity = session.lastActivityAt.toLocal();
+    final MaterialLocalizations localizations = MaterialLocalizations.of(
+      context,
+    );
+    final String date = localizations.formatFullDate(lastActivity);
+    final String time = localizations.formatTimeOfDay(
+      TimeOfDay.fromDateTime(lastActivity),
+      alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+    );
+    return '$label\nLast activity: $date at $time';
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
@@ -250,7 +266,7 @@ class SessionRow extends StatelessWidget {
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       leading: Tooltip(
-        message: done ? 'Done' : session.status.name,
+        message: _statusTooltip(context, done),
         child: SizedBox(
           width: 22,
           child: Center(

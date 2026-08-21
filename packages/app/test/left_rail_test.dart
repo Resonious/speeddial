@@ -167,6 +167,40 @@ void main() {
     expect(find.text('idle'), findsNWidgets(2));
   });
 
+  testWidgets('idle session tooltip includes last activity timestamp', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = AppData();
+    addTearDown(app.dispose);
+    final Session session = testSession(
+      id: 'idle-session',
+      title: 'Idle session',
+      lastActivityAt: DateTime(2026, 8, 21, 9, 7),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AppScope(
+            data: app,
+            child: SessionRow(
+              session: session,
+              selected: false,
+              daemonId: 'fake',
+              projectId: 'project',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byTooltip('idle\nLast activity: Friday, August 21, 2026 at 9:07 AM'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('session list separates today from previous days', (
     WidgetTester tester,
   ) async {
