@@ -7,6 +7,7 @@ import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
+import 'package:speeddial_app/src/ui/left/session_list.dart';
 
 /// Pumps the left rail at a phone-ish viewport with one fake daemon
 /// registered as `'fake'` and visible as an endpoint tile.
@@ -48,6 +49,27 @@ Future<AppData> selectFakeDaemon(WidgetTester tester, AppData app) async {
   await tester.pumpAndSettle();
   return app;
 }
+
+Session testSession({
+  required String id,
+  required String title,
+  required DateTime lastActivityAt,
+}) => Session(
+  id: id,
+  projectId: 'project',
+  providerId: 'omp',
+  title: title,
+  status: SessionStatus.idle,
+  mode: SessionMode.build,
+  model: null,
+  cwd: '/project',
+  baseBranch: null,
+  yolo: false,
+  archived: false,
+  createdAt: lastActivityAt.subtract(const Duration(days: 1)),
+  lastActivityAt: lastActivityAt,
+  updatedAt: lastActivityAt,
+);
 
 void main() {
   testWidgets('empty state before any daemon is selected', (
@@ -123,22 +145,73 @@ void main() {
     await tester.tap(find.text('Demo Project'));
     await tester.pumpAndSettle();
 
-    app.selection.selectedSessionId = 'sess-2';
+    app.selection.selectedSessionId = 'sess-1';
     final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
-    await fake.sendMessage('sess-1', 'finish in the background');
-    for (int i = 0; i < 100 && !app.sessions.isDone('fake', 'sess-1'); i++) {
+    await fake.sendMessage('sess-2', 'finish in the background');
+    for (int i = 0; i < 100 && !app.sessions.isDone('fake', 'sess-2'); i++) {
       await tester.pump(const Duration(milliseconds: 10));
     }
 
-    expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
+    expect(app.sessions.isDone('fake', 'sess-2'), isTrue);
     expect(find.text('Done'), findsOneWidget);
     expect(find.text('idle'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Plan the refactor')).dy,
+      lessThan(tester.getTopLeft(find.text('Build the feature')).dy),
+    );
 
-    await tester.tap(find.text('Build the feature'));
+    await tester.tap(find.text('Plan the refactor'));
     await tester.pump();
-    expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+    expect(app.sessions.isDone('fake', 'sess-2'), isFalse);
     expect(find.text('Done'), findsNothing);
     expect(find.text('idle'), findsNWidgets(2));
+  });
+
+  testWidgets('session list separates today from previous days', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = AppData();
+    addTearDown(app.dispose);
+    final DateTime now = DateTime(2026, 8, 21, 12);
+    final List<Session> sessions = <Session>[
+      testSession(
+        id: 'today',
+        title: 'Today session',
+        lastActivityAt: DateTime(2026, 8, 21, 9),
+      ),
+      testSession(
+        id: 'older',
+        title: 'Older session',
+        lastActivityAt: DateTime(2026, 8, 20, 23, 59),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AppScope(
+            data: app,
+            child: SessionList(
+              sessions: sessions,
+              daemonId: 'fake',
+              projectId: 'project',
+              now: now,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Previous days'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Today session')).dy,
+      lessThan(tester.getTopLeft(find.text('Previous days')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Previous days')).dy,
+      lessThan(tester.getTopLeft(find.text('Older session')).dy),
+    );
   });
 
   testWidgets('session rows show git badges from the daemon summaries', (

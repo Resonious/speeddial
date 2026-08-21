@@ -435,6 +435,25 @@ void main() {
     expect(changes.last.status, SessionStatus.idle);
   });
 
+  test('turn start and completion advance last activity', () async {
+    final Session created = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+    expect(created.lastActivityAt, created.createdAt);
+
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    await engine.sendMessage(created.id, 'weird');
+    final Session running = store.getSession(created.id)!;
+    expect(running.status, SessionStatus.running);
+    expect(running.lastActivityAt.isAfter(created.lastActivityAt), isTrue);
+
+    await waitFor(() => events.any((t) => t.event is TurnCompleteEvent));
+    final Session completed = store.getSession(created.id)!;
+    expect(completed.status, SessionStatus.idle);
+    expect(completed.lastActivityAt.isAfter(running.lastActivityAt), isTrue);
+  });
+
   test('createSession injects the configured built-in MCP server', () async {
     File(p.join(tempDir.path, 'agent.capture_mcp')).writeAsStringSync('');
     configureTestMcp(engine);

@@ -171,6 +171,11 @@ void main() {
       );
       expect(session.archived, isFalse);
       expect(session.createdAt.isUtc, isTrue);
+      expect(
+        session.lastActivityAt,
+        session.updatedAt,
+        reason: 'lastActivityAt is absent on older daemons',
+      );
 
       final roundtrip = Session.fromJson(session.toJson());
       expect(roundtrip.status, SessionStatus.waitingPermission);
@@ -197,6 +202,7 @@ void main() {
         yolo: true,
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
+        lastActivityAt: DateTime.utc(2026, 1, 2, 2, 3, 4, 567),
         updatedAt: DateTime.utc(2026, 1, 2, 3, 4, 5, 678),
       );
       final decoded = Session.fromJson(model.toJson());
@@ -214,6 +220,7 @@ void main() {
       ]);
       expect(decoded.yolo, isTrue);
       expect(decoded.archived, isTrue);
+      expect(decoded.lastActivityAt, model.lastActivityAt);
       expect(decoded.toJson(), model.toJson());
     });
 

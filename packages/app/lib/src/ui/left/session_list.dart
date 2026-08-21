@@ -400,11 +400,13 @@ class SessionList extends StatelessWidget {
     required this.sessions,
     required this.daemonId,
     required this.projectId,
+    this.now,
   });
 
   final List<Session> sessions;
   final String daemonId;
   final String projectId;
+  final DateTime? now;
 
   @override
   Widget build(BuildContext context) {
@@ -419,19 +421,61 @@ class SessionList extends StatelessWidget {
         ),
       );
     }
+    final DateTime localNow = (now ?? DateTime.now()).toLocal();
+    final DateTime startOfToday = DateTime(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+    );
+    final int firstPreviousDay = sessions.indexWhere(
+      (Session session) =>
+          session.lastActivityAt.toLocal().isBefore(startOfToday),
+    );
+    final bool showPreviousDaysDivider = firstPreviousDay > 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        for (final Session session in sessions)
+        for (int index = 0; index < sessions.length; index++) ...<Widget>[
+          if (showPreviousDaysDivider && index == firstPreviousDay)
+            const _SessionDateDivider(label: 'Previous days'),
           SessionRow(
-            key: ValueKey<String>('session-${session.id}'),
-            session: session,
-            selected: data.selection.selectedSessionId == session.id,
+            key: ValueKey<String>('session-${sessions[index].id}'),
+            session: sessions[index],
+            selected: data.selection.selectedSessionId == sessions[index].id,
             daemonId: daemonId,
             projectId: projectId,
           ),
+        ],
       ],
+    );
+  }
+}
+
+class _SessionDateDivider extends StatelessWidget {
+  const _SessionDateDivider({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 8, 4),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Divider(color: scheme.outlineVariant)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+          Expanded(child: Divider(color: scheme.outlineVariant)),
+        ],
+      ),
     );
   }
 }

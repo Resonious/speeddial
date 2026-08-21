@@ -753,7 +753,7 @@ class FakeDaemonClient implements DaemonClient {
         await renameSession(sessionId, derivedTitle);
       }
     }
-    _setStatus(sessionId, SessionStatus.running);
+    _setStatus(sessionId, SessionStatus.running, activity: true);
     unawaited(_runScript(sessionId, text));
   }
 
@@ -802,6 +802,7 @@ class FakeDaemonClient implements DaemonClient {
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );
@@ -829,6 +830,7 @@ class FakeDaemonClient implements DaemonClient {
         yolo: s.yolo,
         archived: archived,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );
@@ -863,6 +865,7 @@ class FakeDaemonClient implements DaemonClient {
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );
@@ -898,6 +901,7 @@ class FakeDaemonClient implements DaemonClient {
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );
@@ -934,6 +938,7 @@ class FakeDaemonClient implements DaemonClient {
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );
@@ -1435,7 +1440,7 @@ class FakeDaemonClient implements DaemonClient {
     _emit(sessionId, TurnCompleteEvent(stopReason: reason));
     _pendingPermissions.remove(sessionId);
     _runningScripts.remove(sessionId);
-    _setStatus(sessionId, SessionStatus.idle);
+    _setStatus(sessionId, SessionStatus.idle, activity: true);
   }
 
   bool _isCancelled(String sessionId) => _cancelRequested.contains(sessionId);
@@ -1511,6 +1516,7 @@ class FakeDaemonClient implements DaemonClient {
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
+      lastActivityAt: current.lastActivityAt,
       updatedAt: now,
     );
     final Session result = copy(updated);
@@ -1533,9 +1539,14 @@ class FakeDaemonClient implements DaemonClient {
         : '${firstLine.substring(0, 60)}…';
   }
 
-  void _setStatus(String sessionId, SessionStatus status) {
+  void _setStatus(
+    String sessionId,
+    SessionStatus status, {
+    bool activity = false,
+  }) {
     final Session? current = _sessions[sessionId];
     if (current == null || current.status == status) return;
+    final DateTime now = DateTime.now().toUtc();
     _sessions[sessionId] = Session(
       id: current.id,
       projectId: current.projectId,
@@ -1552,7 +1563,8 @@ class FakeDaemonClient implements DaemonClient {
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
-      updatedAt: DateTime.now().toUtc(),
+      lastActivityAt: activity ? now : current.lastActivityAt,
+      updatedAt: now,
     );
     _sessionUpdatesController.add(_sessions[sessionId]!);
   }

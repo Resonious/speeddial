@@ -563,8 +563,9 @@ class Session {
     required this.yolo,
     required this.archived,
     required this.createdAt,
+    DateTime? lastActivityAt,
     required this.updatedAt,
-  });
+  }) : lastActivityAt = lastActivityAt ?? createdAt;
 
   final String id;
   final String projectId;
@@ -602,6 +603,7 @@ class Session {
 
   final bool archived;
   final DateTime createdAt;
+  final DateTime lastActivityAt;
   final DateTime updatedAt;
 
   factory Session.fromJson(Map<String, Object?> json) => Session(
@@ -631,6 +633,9 @@ class Session {
     yolo: json['yolo'] as bool? ?? false,
     archived: json['archived']! as bool,
     createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
+    lastActivityAt: DateTime.parse(
+      (json['lastActivityAt'] ?? json['updatedAt'])! as String,
+    ).toUtc(),
     updatedAt: DateTime.parse(json['updatedAt']! as String).toUtc(),
   );
 
@@ -650,6 +655,7 @@ class Session {
     'yolo': yolo,
     'archived': archived,
     'createdAt': createdAt.toUtc().toIso8601String(),
+    'lastActivityAt': lastActivityAt.toUtc().toIso8601String(),
     'updatedAt': updatedAt.toUtc().toIso8601String(),
   };
 }

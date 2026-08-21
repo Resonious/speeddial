@@ -11,8 +11,8 @@ import 'store_base.dart';
 /// Mutating methods ([create], [fork], [rename], [archive], [delete],
 /// [setMode]) update both the by-project bucket and the by-id index
 /// immediately and notify.
-/// Buckets keep the complete picture (archived included), ordered by creation
-/// time newest-first; the public [sessionsFor] view omits archived sessions.
+/// Buckets keep the complete picture (archived included), ordered by last
+/// activity newest-first; the public [sessionsFor] view omits archived sessions.
 ///
 /// Caches are keyed by composite `daemonId/id` strings because session and
 /// project ids are daemon-scoped (PROTOCOL.md): the same id may exist on
@@ -421,17 +421,19 @@ class SessionsStore extends StoreBase {
   }
 
   static void _upsertNewestFirst(List<Session> bucket, Session session) {
-    final int index = bucket.indexWhere(
-      (Session item) => item.id == session.id,
-    );
-    if (index >= 0) {
-      bucket[index] = session;
-      return;
-    }
+    bucket.removeWhere((Session item) => item.id == session.id);
     final int insertionIndex = bucket.indexWhere(
-      (Session item) => session.createdAt.isAfter(item.createdAt),
+      (Session item) => _compareActivity(session, item) < 0,
     );
     bucket.insert(insertionIndex < 0 ? bucket.length : insertionIndex, session);
+  }
+
+  static int _compareActivity(Session a, Session b) {
+    final int activity = b.lastActivityAt.compareTo(a.lastActivityAt);
+    if (activity != 0) return activity;
+    final int created = b.createdAt.compareTo(a.createdAt);
+    if (created != 0) return created;
+    return a.id.compareTo(b.id);
   }
 
   static String _scopedKey(String daemonId, String id) => '$daemonId/$id';

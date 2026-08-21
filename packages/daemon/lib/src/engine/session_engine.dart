@@ -383,6 +383,7 @@ class SessionEngine {
       yolo: yolo,
       archived: false,
       createdAt: now,
+      lastActivityAt: now,
       updatedAt: now,
     );
     return _createPreparedSession(
@@ -439,6 +440,7 @@ class SessionEngine {
       yolo: source.yolo,
       archived: false,
       createdAt: now,
+      lastActivityAt: now,
       updatedAt: now,
     );
     final Session created = await _createPreparedSession(
@@ -1299,7 +1301,7 @@ class SessionEngine {
         _setTitle(live, derivedTitle);
       }
     }
-    _setStatus(live, SessionStatus.running);
+    _setStatus(live, SessionStatus.running, activity: true);
   }
 
   /// Drives the agent prompt to completion, detached from the caller's
@@ -1329,7 +1331,7 @@ class SessionEngine {
         _store.setForkContextSeq(live.sessionId, null);
       }
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
-      _setStatus(live, SessionStatus.idle);
+      _setStatus(live, SessionStatus.idle, activity: true);
     } on Object catch (error) {
       if (!live.closed) {
         final String message = switch (error) {
@@ -1341,7 +1343,7 @@ class SessionEngine {
         // session back to running.
         _expirePendingPermissions(live, message);
         _emit(live, SessionErrorEvent(message: message));
-        _setStatus(live, SessionStatus.error);
+        _setStatus(live, SessionStatus.error, activity: true);
       }
     } finally {
       await subscription.cancel();
@@ -1670,8 +1672,12 @@ class SessionEngine {
     }
   }
 
-  void _setStatus(_LiveSession live, SessionStatus status) {
-    final updated = _withStatus(live.session, status);
+  void _setStatus(
+    _LiveSession live,
+    SessionStatus status, {
+    bool activity = false,
+  }) {
+    final updated = _withStatus(live.session, status, activity: activity);
     live.session = updated;
     _store.updateSession(updated);
     if (!_sessionChangesController.isClosed) {
@@ -1692,24 +1698,32 @@ class SessionEngine {
     }
   }
 
-  Session _withStatus(Session session, SessionStatus status) => Session(
-    id: session.id,
-    projectId: session.projectId,
-    providerId: session.providerId,
-    title: session.title,
-    status: status,
-    mode: session.mode,
-    model: session.model,
-    models: session.models,
-    cwd: session.cwd,
-    baseBranch: session.baseBranch,
-    thinkingLevel: session.thinkingLevel,
-    thinkingLevels: session.thinkingLevels,
-    yolo: session.yolo,
-    archived: session.archived,
-    createdAt: session.createdAt,
-    updatedAt: DateTime.now().toUtc(),
-  );
+  Session _withStatus(
+    Session session,
+    SessionStatus status, {
+    bool activity = false,
+  }) {
+    final DateTime now = DateTime.now().toUtc();
+    return Session(
+      id: session.id,
+      projectId: session.projectId,
+      providerId: session.providerId,
+      title: session.title,
+      status: status,
+      mode: session.mode,
+      model: session.model,
+      models: session.models,
+      cwd: session.cwd,
+      baseBranch: session.baseBranch,
+      thinkingLevel: session.thinkingLevel,
+      thinkingLevels: session.thinkingLevels,
+      yolo: session.yolo,
+      archived: session.archived,
+      createdAt: session.createdAt,
+      lastActivityAt: activity ? now : session.lastActivityAt,
+      updatedAt: now,
+    );
+  }
 
   Session _withTitle(Session session, String title) => Session(
     id: session.id,
@@ -1727,6 +1741,7 @@ class SessionEngine {
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
   );
 
@@ -1746,6 +1761,7 @@ class SessionEngine {
     yolo: session.yolo,
     archived: archived,
     createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
   );
 
@@ -1765,6 +1781,7 @@ class SessionEngine {
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
   );
 
@@ -1784,6 +1801,7 @@ class SessionEngine {
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
   );
 
@@ -1804,6 +1822,7 @@ class SessionEngine {
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
+        lastActivityAt: session.lastActivityAt,
         updatedAt: DateTime.now().toUtc(),
       );
 
@@ -1827,6 +1846,7 @@ class SessionEngine {
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
+        lastActivityAt: session.lastActivityAt,
         updatedAt: DateTime.now().toUtc(),
       );
 

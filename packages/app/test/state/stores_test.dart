@@ -300,6 +300,39 @@ void main() {
       );
     });
 
+    test('activity moves a session to the top through completion', () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+      app.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = projectId
+        ..selectedSessionId = 'sess-1';
+      expect(app.sessions.sessionsFor(projectId).first.id, 'sess-1');
+
+      final DateTime before = app.sessions.byId('sess-2')!.lastActivityAt;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await fake.sendMessage('sess-2', 'finish in the background');
+      await _waitUntil(
+        () => app.sessions.byId('sess-2')?.status == SessionStatus.running,
+      );
+      final Session running = app.sessions.byId('sess-2')!;
+      expect(running.lastActivityAt.isAfter(before), isTrue);
+      expect(app.sessions.sessionsFor(projectId).first.id, 'sess-2');
+
+      await _waitUntil(() => app.sessions.isDone('fake', 'sess-2'));
+      final Session completed = app.sessions.byId('sess-2')!;
+      expect(completed.lastActivityAt.isAfter(running.lastActivityAt), isTrue);
+      expect(app.sessions.sessionsFor(projectId).first.id, 'sess-2');
+
+      final DateTime inactiveActivity = app.sessions
+          .byId('sess-1')!
+          .lastActivityAt;
+      await fake.renameSession('sess-1', 'Metadata only');
+      await _flushMicrotasks();
+      expect(app.sessions.byId('sess-1')!.lastActivityAt, inactiveActivity);
+      expect(app.sessions.sessionsFor(projectId).first.id, 'sess-2');
+    });
+
     test('marks unseen completed turns done until selected', () async {
       final String projectId = (await fake.listProjects()).single.id;
       await app.sessions.refresh('fake', projectId: projectId);

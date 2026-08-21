@@ -34,6 +34,7 @@ Session session({
   List<String> models = const <String>[],
   bool yolo = false,
   bool archived = false,
+  DateTime? lastActivityAt,
 }) => Session(
   id: id,
   projectId: projectId,
@@ -50,6 +51,7 @@ Session session({
   yolo: yolo,
   archived: archived,
   createdAt: DateTime.utc(2026, 1, 2),
+  lastActivityAt: lastActivityAt ?? DateTime.utc(2026, 1, 2),
   updatedAt: DateTime.utc(2026, 1, 2),
 );
 
@@ -328,6 +330,7 @@ void main() {
       yolo: true,
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
+      lastActivityAt: DateTime.utc(2026, 1, 2, 12),
       updatedAt: DateTime.utc(2026, 1, 3),
     );
     store.updateSession(update);
@@ -348,6 +351,7 @@ void main() {
     ]);
     expect(reloaded.yolo, isTrue);
     expect(reloaded.archived, isTrue);
+    expect(reloaded.lastActivityAt, DateTime.utc(2026, 1, 2, 12).toUtc());
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
 
     expect(
@@ -426,6 +430,11 @@ void main() {
       migrated.models,
       isEmpty,
       reason: 'legacy rows default to no advertised models',
+    );
+    expect(
+      migrated.lastActivityAt,
+      migrated.updatedAt,
+      reason: 'legacy rows use their last metadata update as activity',
     );
     expect(
       store.providerSessionIdOf('s1'),

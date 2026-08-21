@@ -109,6 +109,7 @@ Session = {
   yolo: boolean,              // daemon auto-approves the agent's permission requests
   archived: boolean,
   createdAt: string,
+  lastActivityAt: string,     // last accepted user message or terminal turn outcome
   updatedAt: string,
 }
 
@@ -369,6 +370,9 @@ tokens before session creation/resume, and checks them periodically while runnin
   the agent failed to resume (its own state is lost). A daemon restart that interrupts a turn marks
   the session `error` and appends a `sessionError` event to its history; the session becomes usable
   again on the next send.
+  A session's `lastActivityAt` advances when the accepted user message starts the turn and again
+  when the turn reaches its terminal idle/error outcome, so clients can order sessions by recent
+  conversation activity independently of metadata changes.
   A session still titled `New session` is auto-titled from `text`'s first line (whitespace-collapsed,
   capped at 60 characters) right after the `userMessage` event is persisted, and the change is
   broadcast as `session.updated`; explicitly set titles are never overwritten, and an

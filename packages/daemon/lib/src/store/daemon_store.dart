@@ -16,7 +16,7 @@
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
 ///                      yolo INT (auto-approve permissions), archived INT,
-///                      created_at, updated_at
+///                      created_at, last_activity_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
@@ -117,6 +117,7 @@ class DaemonStore {
         fork_context_seq INTEGER,
         archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
+        last_activity_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
     ''');
@@ -153,6 +154,16 @@ class DaemonStore {
     }
     if (!sessionColumns.contains('fork_context_seq')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN fork_context_seq INTEGER');
+    }
+    if (!sessionColumns.contains('last_activity_at')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN last_activity_at INTEGER NOT NULL '
+        'DEFAULT 0',
+      );
+      _db.execute(
+        'UPDATE sessions SET last_activity_at = updated_at '
+        'WHERE last_activity_at = 0',
+      );
     }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
@@ -707,8 +718,9 @@ class DaemonStore {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
-      'thinking_levels, yolo, archived, created_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'thinking_levels, yolo, archived, created_at, last_activity_at, '
+      'updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -725,6 +737,7 @@ class DaemonStore {
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
+        _ts(session.lastActivityAt),
         _ts(session.updatedAt),
       ],
     );
@@ -739,7 +752,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
-      'archived, created_at, updated_at FROM sessions '
+      'archived, created_at, last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -752,7 +765,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
-      'archived, created_at, updated_at FROM sessions WHERE id = ?',
+      'archived, created_at, last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -765,7 +778,8 @@ class DaemonStore {
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
       'thinking_level = ?, thinking_levels = ?, '
-      'yolo = ?, archived = ?, created_at = ?, updated_at = ? WHERE id = ?',
+      'yolo = ?, archived = ?, created_at = ?, last_activity_at = ?, '
+      'updated_at = ? WHERE id = ?',
       [
         session.projectId,
         session.providerId,
@@ -781,6 +795,7 @@ class DaemonStore {
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
+        _ts(session.lastActivityAt),
         _ts(session.updatedAt),
         session.id,
       ],
@@ -1074,6 +1089,9 @@ class DaemonStore {
     yolo: (row['yolo'] as int? ?? 0) != 0,
     archived: (row['archived'] as int) != 0,
     createdAt: _fromTs(row['created_at'] as int),
+    lastActivityAt: _fromTs(
+      (row['last_activity_at'] as int?) ?? row['updated_at'] as int,
+    ),
     updatedAt: _fromTs(row['updated_at'] as int),
   );
 
