@@ -78,14 +78,15 @@ Session createdSession(AppData app, String projectId) {
 }
 
 void main() {
-  testWidgets('the form asks only for provider, worktree and yolo — no '
-      'prompt, model or mode', (WidgetTester tester) async {
+  testWidgets('the form asks for provider, supported safety settings and '
+      'worktree — no prompt, model or mode', (WidgetTester tester) async {
     await pumpSheet(tester);
 
     // Ask-ahead removed: no initial prompt, model autocomplete or mode
-    // selector. What remains is provider, worktree/default-branch and yolo.
+    // selector. Provider-specific safety controls remain capability-gated.
     expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
     expect(find.byKey(const Key('new-session-yolo')), findsOneWidget);
+    expect(find.byKey(const Key('new-session-no-sandbox')), findsNothing);
     expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
     expect(find.byKey(const Key('new-session-prompt')), findsNothing);
@@ -185,6 +186,43 @@ void main() {
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
     expect(yoloTile().value, isFalse);
+  });
+
+  testWidgets('Codex no-sandbox choice is sent and sticky across sheet opens', (
+    WidgetTester tester,
+  ) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('new-session-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex').last);
+    await tester.pumpAndSettle();
+
+    final Finder toggle = find.byKey(const Key('new-session-no-sandbox'));
+    CheckboxListTile sandboxTile() => tester.widget<CheckboxListTile>(toggle);
+    expect(toggle, findsOneWidget);
+    expect(sandboxTile().value, isFalse);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(app.settings.sandboxMode, SessionSandboxMode.unrestricted);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    expect(toggle, findsOneWidget);
+    expect(sandboxTile().value, isTrue);
+
+    await tester.ensureVisible(find.byKey(const Key('new-session-submit')));
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    final Session created = createdSession(app, projectId);
+    expect(created.providerId, 'codex');
+    expect(created.sandboxMode, SessionSandboxMode.unrestricted);
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(SettingsStore.sandboxStorageKey), 'unrestricted');
   });
 
   testWidgets('provider selection is sticky across app instances', (

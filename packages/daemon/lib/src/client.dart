@@ -20,10 +20,7 @@ class DaemonClient {
   DaemonClient._(this._socket, this._peer) {
     // Surface remote closure as error-completing calls instead of hanging
     // forever when the daemon vanishes mid-request.
-    _socket.done.then(
-      (_) => _peer.close(),
-      onError: (_) => _peer.close(),
-    );
+    _socket.done.then((_) => _peer.close(), onError: (_) => _peer.close());
   }
 
   final WebSocket _socket;
@@ -145,8 +142,8 @@ class DaemonClient {
   ///
   /// Delivers `(sessionId, seq, event)`; derives from [notifications], so it
   /// shares the single-subscription constraint.
-  Stream<({String sessionId, int seq, SessionEvent event})>
-      get sessionEvents => _peer.notifications
+  Stream<({String sessionId, int seq, SessionEvent event})> get sessionEvents =>
+      _peer.notifications
           .where((notification) => notification.method == 'session.event')
           .map(_parseSessionEvent);
 
@@ -178,8 +175,9 @@ class DaemonClient {
   // ---------------------------------------------------------------------------
 
   /// `daemon.info` — static daemon identity.
-  Future<DaemonInfo> info() async =>
-      DaemonInfo.fromJson(_asMap(await _peer.call('daemon.info'), 'daemon.info'));
+  Future<DaemonInfo> info() async => DaemonInfo.fromJson(
+    _asMap(await _peer.call('daemon.info'), 'daemon.info'),
+  );
 
   /// `providers.list` — providers (with live availability) known to the daemon.
   Future<List<ProviderInfo>> listProviders() async {
@@ -187,7 +185,8 @@ class DaemonClient {
     final raw = map['providers'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "providers.list" (missing "providers" array)');
+        'Malformed response for "providers.list" (missing "providers" array)',
+      );
     }
     return [
       for (final item in raw)
@@ -205,7 +204,8 @@ class DaemonClient {
     final raw = map['projects'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "projects.list" (missing "projects" array)');
+        'Malformed response for "projects.list" (missing "projects" array)',
+      );
     }
     return [
       for (final item in raw) Project.fromJson(_asMap(item, 'projects.list')),
@@ -214,13 +214,10 @@ class DaemonClient {
 
   /// `projects.add` — registers [path] (an absolute local directory).
   Future<Project> addProject(String path, {String? name}) async {
-    final result = await _peer.call(
-      'projects.add',
-      <String, Object?>{
-        'path': path,
-        'name': ?name,
-      },
-    );
+    final result = await _peer.call('projects.add', <String, Object?>{
+      'path': path,
+      'name': ?name,
+    });
     final map = _asMap(result, 'projects.add');
     return Project.fromJson(_asMap(map['project'], 'projects.add'));
   }
@@ -232,10 +229,10 @@ class DaemonClient {
 
   /// `projects.rename` — renames a project.
   Future<Project> renameProject(String id, String name) async {
-    final result = await _peer.call(
-      'projects.rename',
-      <String, Object?>{'id': id, 'name': name},
-    );
+    final result = await _peer.call('projects.rename', <String, Object?>{
+      'id': id,
+      'name': name,
+    });
     final map = _asMap(result, 'projects.rename');
     return Project.fromJson(_asMap(map['project'], 'projects.rename'));
   }
@@ -249,18 +246,16 @@ class DaemonClient {
     String? projectId,
     bool includeArchived = false,
   }) async {
-    final result = await _peer.call(
-      'sessions.list',
-      <String, Object?>{
-        'projectId': ?projectId,
-        'includeArchived': includeArchived,
-      },
-    );
+    final result = await _peer.call('sessions.list', <String, Object?>{
+      'projectId': ?projectId,
+      'includeArchived': includeArchived,
+    });
     final map = _asMap(result, 'sessions.list');
     final raw = map['sessions'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "sessions.list" (missing "sessions" array)');
+        'Malformed response for "sessions.list" (missing "sessions" array)',
+      );
     }
     return [
       for (final item in raw) Session.fromJson(_asMap(item, 'sessions.list')),
@@ -269,8 +264,9 @@ class DaemonClient {
 
   /// `sessions.create` — spawns an agent session in [projectId]. When
   /// [baseBranch] is given the daemon creates a git worktree off
-  /// `origin/<baseBranch>` and uses it as the session cwd. With [yolo] the
-  /// daemon auto-approves the agent's permission requests.
+  /// `origin/<baseBranch>` and uses it as the session cwd. [sandboxMode]
+  /// selects provider isolation when advertised. With [yolo] the daemon
+  /// auto-approves the agent's permission requests.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -279,21 +275,20 @@ class DaemonClient {
     String? title,
     String? cwd,
     String? baseBranch,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
-    final result = await _peer.call(
-      'sessions.create',
-      <String, Object?>{
-        'projectId': projectId,
-        'providerId': providerId,
-        'model': ?model,
-        'mode': ?mode?.wire,
-        'title': ?title,
-        'cwd': ?cwd,
-        'baseBranch': ?baseBranch,
-        if (yolo) 'yolo': true,
-      },
-    );
+    final result = await _peer.call('sessions.create', <String, Object?>{
+      'projectId': projectId,
+      'providerId': providerId,
+      'model': ?model,
+      'mode': ?mode?.wire,
+      'title': ?title,
+      'cwd': ?cwd,
+      'baseBranch': ?baseBranch,
+      'sandboxMode': ?sandboxMode?.wire,
+      if (yolo) 'yolo': true,
+    });
     final map = _asMap(result, 'sessions.create');
     return Session.fromJson(_asMap(map['session'], 'sessions.create'));
   }
@@ -306,40 +301,40 @@ class DaemonClient {
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
   }) async {
-    await _peer.call(
-      'sessions.send',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'text': text,
-        if (attachments.isNotEmpty)
-          'attachments':
-              attachments.map((e) => e.toJson()).toList(growable: false),
-      },
-    );
+    await _peer.call('sessions.send', <String, Object?>{
+      'sessionId': sessionId,
+      'text': text,
+      if (attachments.isNotEmpty)
+        'attachments': attachments
+            .map((e) => e.toJson())
+            .toList(growable: false),
+    });
   }
 
   /// `sessions.cancel` — cancels the running turn of [sessionId] (no-op when
   /// idle).
   Future<void> cancel(String sessionId) async {
-    await _peer.call('sessions.cancel', <String, Object?>{'sessionId': sessionId});
+    await _peer.call('sessions.cancel', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   /// `sessions.rename` — renames a session.
   Future<Session> renameSession(String sessionId, String title) async {
-    final result = await _peer.call(
-      'sessions.rename',
-      <String, Object?>{'sessionId': sessionId, 'title': title},
-    );
+    final result = await _peer.call('sessions.rename', <String, Object?>{
+      'sessionId': sessionId,
+      'title': title,
+    });
     final map = _asMap(result, 'sessions.rename');
     return Session.fromJson(_asMap(map['session'], 'sessions.rename'));
   }
 
   /// `sessions.archive` — marks a session archived (`archived: true`) or not.
   Future<Session> archiveSession(String sessionId, bool archived) async {
-    final result = await _peer.call(
-      'sessions.archive',
-      <String, Object?>{'sessionId': sessionId, 'archived': archived},
-    );
+    final result = await _peer.call('sessions.archive', <String, Object?>{
+      'sessionId': sessionId,
+      'archived': archived,
+    });
     final map = _asMap(result, 'sessions.archive');
     return Session.fromJson(_asMap(map['session'], 'sessions.archive'));
   }
@@ -347,25 +342,27 @@ class DaemonClient {
   /// `sessions.delete` — kills the agent process, if alive, and removes the
   /// session and its events.
   Future<void> deleteSession(String sessionId) async {
-    await _peer.call('sessions.delete', <String, Object?>{'sessionId': sessionId});
+    await _peer.call('sessions.delete', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   /// `sessions.setMode` — switches the session mode.
   Future<Session> setMode(String sessionId, SessionMode mode) async {
-    final result = await _peer.call(
-      'sessions.setMode',
-      <String, Object?>{'sessionId': sessionId, 'mode': mode.wire},
-    );
+    final result = await _peer.call('sessions.setMode', <String, Object?>{
+      'sessionId': sessionId,
+      'mode': mode.wire,
+    });
     final map = _asMap(result, 'sessions.setMode');
     return Session.fromJson(_asMap(map['session'], 'sessions.setMode'));
   }
 
   /// `sessions.setModel` — persists the selected model.
   Future<Session> setModel(String sessionId, String model) async {
-    final result = await _peer.call(
-      'sessions.setModel',
-      <String, Object?>{'sessionId': sessionId, 'model': model},
-    );
+    final result = await _peer.call('sessions.setModel', <String, Object?>{
+      'sessionId': sessionId,
+      'model': model,
+    });
     final map = _asMap(result, 'sessions.setModel');
     return Session.fromJson(_asMap(map['session'], 'sessions.setModel'));
   }
@@ -377,7 +374,9 @@ class DaemonClient {
       <String, Object?>{'sessionId': sessionId, 'level': level},
     );
     final map = _asMap(result, 'sessions.setThinkingLevel');
-    return Session.fromJson(_asMap(map['session'], 'sessions.setThinkingLevel'));
+    return Session.fromJson(
+      _asMap(map['session'], 'sessions.setThinkingLevel'),
+    );
   }
 
   /// `sessions.history` — persisted events of [sessionId] ascending by `seq`.
@@ -389,19 +388,17 @@ class DaemonClient {
     int? limit,
     int? beforeSeq,
   }) async {
-    final result = await _peer.call(
-      'sessions.history',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'limit': ?limit,
-        'beforeSeq': ?beforeSeq,
-      },
-    );
+    final result = await _peer.call('sessions.history', <String, Object?>{
+      'sessionId': sessionId,
+      'limit': ?limit,
+      'beforeSeq': ?beforeSeq,
+    });
     final map = _asMap(result, 'sessions.history');
     final raw = map['events'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "sessions.history" (missing "events" array)');
+        'Malformed response for "sessions.history" (missing "events" array)',
+      );
     }
     return (
       events: [
@@ -418,14 +415,11 @@ class DaemonClient {
     String requestId,
     String optionId,
   ) async {
-    await _peer.call(
-      'sessions.respondPermission',
-      <String, Object?>{
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'optionId': optionId,
-      },
-    );
+    await _peer.call('sessions.respondPermission', <String, Object?>{
+      'sessionId': sessionId,
+      'requestId': requestId,
+      'optionId': optionId,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -435,18 +429,16 @@ class DaemonClient {
   /// `fs.list` — directory entries under [projectId] (paths relative to the
   /// project root; default `"."`).
   Future<List<FileEntry>> listFiles(String projectId, {String? path}) async {
-    final result = await _peer.call(
-      'fs.list',
-      <String, Object?>{
-        'projectId': projectId,
-        'path': ?path,
-      },
-    );
+    final result = await _peer.call('fs.list', <String, Object?>{
+      'projectId': projectId,
+      'path': ?path,
+    });
     final map = _asMap(result, 'fs.list');
     final raw = map['entries'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "fs.list" (missing "entries" array)');
+        'Malformed response for "fs.list" (missing "entries" array)',
+      );
     }
     return [
       for (final item in raw) FileEntry.fromJson(_asMap(item, 'fs.list')),
@@ -460,14 +452,11 @@ class DaemonClient {
     String path, {
     int? maxBytes,
   }) async {
-    final result = await _peer.call(
-      'fs.read',
-      <String, Object?>{
-        'projectId': projectId,
-        'path': path,
-        'maxBytes': ?maxBytes,
-      },
-    );
+    final result = await _peer.call('fs.read', <String, Object?>{
+      'projectId': projectId,
+      'path': path,
+      'maxBytes': ?maxBytes,
+    });
     return FileReadResult.fromJson(_asMap(result, 'fs.read'));
   }
 
@@ -477,10 +466,9 @@ class DaemonClient {
 
   /// `git.status` — branch, divergence, and changed files.
   Future<GitStatus> gitStatus(String projectId) async {
-    final result = await _peer.call(
-      'git.status',
-      <String, Object?>{'projectId': projectId},
-    );
+    final result = await _peer.call('git.status', <String, Object?>{
+      'projectId': projectId,
+    });
     final map = _asMap(result, 'git.status');
     return GitStatus.fromJson(_asMap(map['status'], 'git.status'));
   }
@@ -492,36 +480,32 @@ class DaemonClient {
     String? path,
     bool staged = false,
   }) async {
-    final result = await _peer.call(
-      'git.diff',
-      <String, Object?>{
-        'projectId': projectId,
-        'path': ?path,
-        'staged': staged,
-      },
-    );
+    final result = await _peer.call('git.diff', <String, Object?>{
+      'projectId': projectId,
+      'path': ?path,
+      'staged': staged,
+    });
     final map = _asMap(result, 'git.diff');
     final raw = map['diffs'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "git.diff" (missing "diffs" array)');
+        'Malformed response for "git.diff" (missing "diffs" array)',
+      );
     }
-    return [
-      for (final item in raw) GitDiff.fromJson(_asMap(item, 'git.diff')),
-    ];
+    return [for (final item in raw) GitDiff.fromJson(_asMap(item, 'git.diff'))];
   }
 
   /// `git.branches` — local branches with upstream info.
   Future<List<Branch>> gitBranches(String projectId) async {
-    final result = await _peer.call(
-      'git.branches',
-      <String, Object?>{'projectId': projectId},
-    );
+    final result = await _peer.call('git.branches', <String, Object?>{
+      'projectId': projectId,
+    });
     final map = _asMap(result, 'git.branches');
     final raw = map['branches'];
     if (raw is! List) {
       throw const FormatException(
-          'Malformed response for "git.branches" (missing "branches" array)');
+        'Malformed response for "git.branches" (missing "branches" array)',
+      );
     }
     return [
       for (final item in raw) Branch.fromJson(_asMap(item, 'git.branches')),
@@ -530,10 +514,10 @@ class DaemonClient {
 
   /// `git.checkout` — checks out an existing [branch].
   Future<void> gitCheckout(String projectId, String branch) async {
-    await _peer.call(
-      'git.checkout',
-      <String, Object?>{'projectId': projectId, 'branch': branch},
-    );
+    await _peer.call('git.checkout', <String, Object?>{
+      'projectId': projectId,
+      'branch': branch,
+    });
   }
 
   /// `git.createBranch` — creates [name], checking it out unless
@@ -543,14 +527,11 @@ class DaemonClient {
     String name, {
     bool checkout = true,
   }) async {
-    await _peer.call(
-      'git.createBranch',
-      <String, Object?>{
-        'projectId': projectId,
-        'name': name,
-        'checkout': checkout,
-      },
-    );
+    await _peer.call('git.createBranch', <String, Object?>{
+      'projectId': projectId,
+      'name': name,
+      'checkout': checkout,
+    });
   }
 
   /// `git.commit` — commits staged changes (or all when [stageAll]) and
@@ -560,32 +541,27 @@ class DaemonClient {
     String message, {
     bool stageAll = false,
   }) async {
-    final result = await _peer.call(
-      'git.commit',
-      <String, Object?>{
-        'projectId': projectId,
-        'message': message,
-        'stageAll': stageAll,
-      },
-    );
+    final result = await _peer.call('git.commit', <String, Object?>{
+      'projectId': projectId,
+      'message': message,
+      'stageAll': stageAll,
+    });
     final map = _asMap(result, 'git.commit');
     final hash = map['commitHash'];
     if (hash is! String) {
       throw const FormatException(
-          'Malformed response for "git.commit" (missing "commitHash")');
+        'Malformed response for "git.commit" (missing "commitHash")',
+      );
     }
     return hash;
   }
 
   /// `git.push` — pushes the current branch.
   Future<void> gitPush(String projectId, {bool setUpstream = false}) async {
-    await _peer.call(
-      'git.push',
-      <String, Object?>{
-        'projectId': projectId,
-        'setUpstream': setUpstream,
-      },
-    );
+    await _peer.call('git.push', <String, Object?>{
+      'projectId': projectId,
+      'setUpstream': setUpstream,
+    });
   }
 
   /// `git.createPullRequest` — opens a PR via `gh` and returns its URL.
@@ -596,21 +572,19 @@ class DaemonClient {
     String? base,
     bool draft = false,
   }) async {
-    final result = await _peer.call(
-      'git.createPullRequest',
-      <String, Object?>{
-        'projectId': projectId,
-        'title': ?title,
-        'body': ?body,
-        'base': ?base,
-        'draft': draft,
-      },
-    );
+    final result = await _peer.call('git.createPullRequest', <String, Object?>{
+      'projectId': projectId,
+      'title': ?title,
+      'body': ?body,
+      'base': ?base,
+      'draft': draft,
+    });
     final map = _asMap(result, 'git.createPullRequest');
     final url = map['url'];
     if (url is! String) {
       throw const FormatException(
-          'Malformed response for "git.createPullRequest" (missing "url")');
+        'Malformed response for "git.createPullRequest" (missing "url")',
+      );
     }
     return url;
   }
@@ -619,10 +593,10 @@ class DaemonClient {
   /// base branch the session was created from, fast-forwarding the local
   /// base to `origin/<baseBranch>` first when the remote moved ahead.
   Future<MergeResult> gitMergeToBase(String projectId, String sessionId) async {
-    final result = await _peer.call(
-      'git.mergeToBase',
-      <String, Object?>{'projectId': projectId, 'sessionId': sessionId},
-    );
+    final result = await _peer.call('git.mergeToBase', <String, Object?>{
+      'projectId': projectId,
+      'sessionId': sessionId,
+    });
     final map = _asMap(result, 'git.mergeToBase');
     return MergeResult.fromJson(_asMap(map['merge'], 'git.mergeToBase'));
   }

@@ -195,6 +195,25 @@ void main() {
     }
   }
 
+  test('rejects sandbox modes for providers without that capability', () async {
+    await expectLater(
+      engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        sandboxMode: SessionSandboxMode.unrestricted,
+      ),
+      throwsA(
+        isA<DaemonError>()
+            .having((DaemonError error) => error.code, 'code', -32602)
+            .having(
+              (DaemonError error) => error.message,
+              'message',
+              contains('does not support sandboxMode'),
+            ),
+      ),
+    );
+  });
+
   test('Codex sessions stream native rich events and attachments', () async {
     await eventsSub.cancel();
     await changesSub.cancel();
@@ -210,11 +229,18 @@ void main() {
     final Session session = await engine.createSession(
       projectId: project.id,
       providerId: 'fakeCodex',
+      sandboxMode: SessionSandboxMode.unrestricted,
     );
     expect(session.model, 'gpt-test');
     expect(session.models, <String>['gpt-test', 'gpt-fast']);
     expect(session.thinkingLevel, 'medium');
     expect(session.thinkingLevels, <String>['low', 'medium', 'high']);
+    expect(session.sandboxMode, SessionSandboxMode.unrestricted);
+    expect(
+      store.getSession(session.id)!.sandboxMode,
+      SessionSandboxMode.unrestricted,
+      reason: 'the sandbox choice must survive daemon restarts',
+    );
 
     final Future<PermissionRequestEvent> permissionFuture =
         waitForPermissionRequest();

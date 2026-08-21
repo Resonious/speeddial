@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
 import 'package:speeddial_daemon/src/agents/agent_client.dart';
 import 'package:speeddial_daemon/src/codex/codex_client.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 String fakeCodexScript() => <String>[
@@ -151,6 +152,41 @@ void main() {
       expect(resume['sandbox'], 'workspace-write');
     },
   );
+
+  test('maps unrestricted sandbox mode on thread start and resume', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'codex_client_sandbox_test',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final File startReport = File(p.join(tempDir.path, 'start.json'));
+    final File resumeReport = File(p.join(tempDir.path, 'resume.json'));
+    final CodexClient client = spawnCodex(
+      environment: <String, String>{
+        'FAKE_CODEX_START_REPORT': startReport.path,
+      },
+    );
+    addTearDown(client.dispose);
+
+    final created = await client.newSession(
+      cwd: Directory.current.path,
+      sandboxMode: SessionSandboxMode.unrestricted,
+    );
+    expect((await readJsonMap(startReport))['sandbox'], 'danger-full-access');
+
+    await client.dispose();
+    final CodexClient resumed = spawnCodex(
+      environment: <String, String>{
+        'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
+      },
+    );
+    addTearDown(resumed.dispose);
+    await resumed.loadSession(
+      sessionId: created.sessionId,
+      cwd: Directory.current.path,
+      sandboxMode: SessionSandboxMode.unrestricted,
+    );
+    expect((await readJsonMap(resumeReport))['sandbox'], 'danger-full-access');
+  });
 
   test(
     'maps native rich items and resolves exact approval decisions',

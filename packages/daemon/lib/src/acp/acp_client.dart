@@ -11,6 +11,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+
 import 'acp_types.dart';
 import '../agents/agent_client.dart';
 
@@ -440,6 +442,7 @@ class AcpClient implements AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     final result = await _request('session/new', <String, Object?>{
@@ -468,6 +471,7 @@ class AcpClient implements AgentClient {
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
+    SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   }) async {
     final result = await _request('session/load', <String, Object?>{

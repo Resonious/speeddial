@@ -46,6 +46,7 @@ ProviderInfo = {
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)
   models: string[],           // selectable model ids, may be []
+  sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
 }
 
 Project = {
@@ -88,6 +89,7 @@ McpOAuthFlow = {
 
 SessionStatus = "idle" | "running" | "waitingPermission" | "error" | "closed"
 SessionMode   = "build" | "plan"
+SessionSandboxMode = "workspaceWrite" | "unrestricted"
 
 Session = {
   id: string,
@@ -106,6 +108,7 @@ Session = {
                               // null when the provider exposes no thinking-level option
   thinkingLevels: string[],   // selectable levels advertised by the agent (ACP config
                               // option); empty when the provider has none
+  sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
   yolo: boolean,              // daemon auto-approves the agent's permission requests
   archived: boolean,
   createdAt: string,
@@ -313,7 +316,7 @@ tokens before session creation/resume, and checks them periodically while runnin
 
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
-- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, yolo?: boolean}` → `{session: Session}`
+- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean}` → `{session: Session}`
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is
@@ -326,6 +329,11 @@ tokens before session creation/resume, and checks them periodically while runnin
     to the first `allow_once`), emits the `permissionRequest` and `permissionResolved` events
     back-to-back (the session never enters `waitingPermission`), and the turn continues
     uninterrupted. A request offering no allow option still parks for a client response.
+  — `sandboxMode` is accepted only when advertised by the selected provider's
+    `ProviderInfo.sandboxModes` (`-32602` otherwise). Codex advertises `workspaceWrite` and
+    `unrestricted`, defaults to `workspaceWrite`, and maps `unrestricted` to its
+    `danger-full-access` mode, which disables Codex's filesystem and network sandbox. Permission
+    approvals remain independent and continue to follow `yolo`.
   — the daemon adopts the agent's configurable model and effort/thinking options at
     creation: `models`/`thinkingLevels` carry the advertised options and
     `model`/`thinkingLevel` the agent-reported current values. ACP providers use
@@ -341,7 +349,8 @@ tokens before session creation/resume, and checks them periodically while runnin
   session containing the source session's persisted history through `seq`. `seq` must identify a
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
   side of any visible exchange. The fork inherits the source provider, project, cwd/worktree,
-  base branch, mode, model, thinking level, and yolo setting; it is titled `Fork of <source title>`.
+  base branch, mode, model, thinking level, sandbox mode, and yolo setting; it is titled
+  `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
   The daemon starts a fresh provider session and supplies the copied user/agent conversation as
   inherited context with the fork's first new turn. This provider-independent handoff makes

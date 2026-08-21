@@ -32,6 +32,7 @@ Session session({
   String? thinkingLevel,
   List<String> thinkingLevels = const <String>[],
   List<String> models = const <String>[],
+  SessionSandboxMode? sandboxMode,
   bool yolo = false,
   bool archived = false,
   DateTime? lastActivityAt,
@@ -48,6 +49,7 @@ Session session({
   baseBranch: baseBranch,
   thinkingLevel: thinkingLevel,
   thinkingLevels: thinkingLevels,
+  sandboxMode: sandboxMode,
   yolo: yolo,
   archived: archived,
   createdAt: DateTime.utc(2026, 1, 2),
@@ -327,6 +329,7 @@ void main() {
       baseBranch: 'main',
       thinkingLevel: 'high',
       thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
+      sandboxMode: SessionSandboxMode.unrestricted,
       yolo: true,
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
@@ -349,6 +352,7 @@ void main() {
       'high',
       'max',
     ]);
+    expect(reloaded.sandboxMode, SessionSandboxMode.unrestricted);
     expect(reloaded.yolo, isTrue);
     expect(reloaded.archived, isTrue);
     expect(reloaded.lastActivityAt, DateTime.utc(2026, 1, 2, 12).toUtc());
@@ -415,6 +419,11 @@ void main() {
       isNull,
       reason: 'legacy rows gain a null base branch',
     );
+    expect(
+      migrated.sandboxMode,
+      isNull,
+      reason: 'legacy rows gain no provider-managed sandbox mode',
+    );
     expect(migrated.yolo, isFalse, reason: 'legacy rows default to yolo off');
     expect(
       migrated.thinkingLevel,
@@ -442,12 +451,13 @@ void main() {
       reason: 'legacy rows have no resumable provider session id',
     );
 
-    // New inserts carry the base branch, the yolo flag, the thinking level
-    // fields, and the advertised models.
+    // New inserts carry the base branch, sandbox/yolo settings, thinking
+    // level fields, and the advertised models.
     store.insertSession(
       session(
         id: 's2',
         baseBranch: 'main',
+        sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
         thinkingLevel: 'auto',
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
@@ -455,6 +465,10 @@ void main() {
       ),
     );
     expect(store.getSession('s2')!.baseBranch, 'main');
+    expect(
+      store.getSession('s2')!.sandboxMode,
+      SessionSandboxMode.unrestricted,
+    );
     expect(store.getSession('s2')!.yolo, isTrue);
     expect(store.getSession('s2')!.thinkingLevel, 'auto');
     expect(store.getSession('s2')!.thinkingLevels, <String>[

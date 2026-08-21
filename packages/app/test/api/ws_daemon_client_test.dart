@@ -40,6 +40,9 @@ class TestDaemonServer {
   /// Every `sessions.send` params object received, in call order.
   final List<Map<String, Object?>> sends = <Map<String, Object?>>[];
 
+  /// Every `sessions.create` params object received, in call order.
+  final List<Map<String, Object?>> creates = <Map<String, Object?>>[];
+
   /// Every `mcp.oauth.begin` params object received, in call order.
   final List<Map<String, Object?>> oauthBegins = <Map<String, Object?>>[];
 
@@ -54,7 +57,10 @@ class TestDaemonServer {
   int connectionCount = 0;
   int seq = 0;
 
-  static Future<TestDaemonServer> start({String token = 'secret', int port = 0}) async {
+  static Future<TestDaemonServer> start({
+    String token = 'secret',
+    int port = 0,
+  }) async {
     final HttpServer server = await HttpServer.bind(
       InternetAddress.loopbackIPv4,
       port,
@@ -82,20 +88,19 @@ class TestDaemonServer {
     );
     peers.add(peer);
 
-    peer.registerHandler(
-      'auth.authenticate',
-      (Map<String, Object?> params) {
-        if (params['token'] != token) {
-          throw DaemonError(kErrUnauthenticated, 'bad token');
-        }
-        return <String, Object?>{'ok': true, 'daemon': daemonInfoJson()};
-      },
-    );
+    peer.registerHandler('auth.authenticate', (Map<String, Object?> params) {
+      if (params['token'] != token) {
+        throw DaemonError(kErrUnauthenticated, 'bad token');
+      }
+      return <String, Object?>{'ok': true, 'daemon': daemonInfoJson()};
+    });
     peer.registerHandler('daemon.info', (Map<String, Object?> _) {
       return daemonInfoJson();
     });
     peer.registerHandler('projects.list', (Map<String, Object?> _) {
-      return <String, Object?>{'projects': <Object?>[projectJson()]};
+      return <String, Object?>{
+        'projects': <Object?>[projectJson()],
+      };
     });
     peer.registerHandler('mcp.create', (Map<String, Object?> params) {
       mcpCreates.add(params);
@@ -127,6 +132,16 @@ class TestDaemonServer {
         },
       };
     });
+    peer.registerHandler('sessions.create', (Map<String, Object?> params) {
+      creates.add(params);
+      return <String, Object?>{
+        'session': <String, Object?>{
+          ...sessionJson(),
+          'providerId': params['providerId'],
+          'sandboxMode': params['sandboxMode'],
+        },
+      };
+    });
     peer.registerHandler('sessions.send', (Map<String, Object?> params) {
       sends.add(params);
       if (params['text'] == 'boom') {
@@ -151,11 +166,12 @@ class TestDaemonServer {
       final List<Map<String, Object?>> all =
           history[sessionId] ?? const <Map<String, Object?>>[];
       // Strictly below beforeSeq, ascending by seq; newest `limit` kept.
-      final List<Map<String, Object?>> filtered =
-          beforeSeq == null ? all : <Map<String, Object?>>[
-        for (final Map<String, Object?> event in all)
-          if ((event['seq']! as int) < beforeSeq) event,
-      ];
+      final List<Map<String, Object?>> filtered = beforeSeq == null
+          ? all
+          : <Map<String, Object?>>[
+              for (final Map<String, Object?> event in all)
+                if ((event['seq']! as int) < beforeSeq) event,
+            ];
       final bool hasMore = filtered.length > limit;
       return <String, Object?>{
         'events': hasMore
@@ -167,13 +183,12 @@ class TestDaemonServer {
 
     // Liveliness: push `session.event` notifications while this socket lives.
     final Stopwatch firstPush = Stopwatch()..start();
-    final Timer timer = Timer.periodic(
-      const Duration(milliseconds: 20),
-      (Timer _) {
-        if (firstPush.elapsed < const Duration(milliseconds: 30)) return;
-        pushEvent('sess-1');
-      },
-    );
+    final Timer timer = Timer.periodic(const Duration(milliseconds: 20), (
+      Timer _,
+    ) {
+      if (firstPush.elapsed < const Duration(milliseconds: 30)) return;
+      pushEvent('sess-1');
+    });
     timers.add(timer);
     socket.done.whenComplete(() {
       unawaited(peer.close());
@@ -182,27 +197,27 @@ class TestDaemonServer {
   }
 
   Map<String, Object?> daemonInfoJson() => <String, Object?>{
-        'version': '1.2.3',
-        'protocolVersion': 1,
-        'authRequired': true,
-        'providers': <Object?>[
-          <String, Object?>{
-            'id': 'omp',
-            'name': 'OMP Agent',
-            'available': true,
-            'command': 'omp',
-            'models': <Object?>['omp-default'],
-          },
-        ],
-      };
+    'version': '1.2.3',
+    'protocolVersion': 1,
+    'authRequired': true,
+    'providers': <Object?>[
+      <String, Object?>{
+        'id': 'omp',
+        'name': 'OMP Agent',
+        'available': true,
+        'command': 'omp',
+        'models': <Object?>['omp-default'],
+      },
+    ],
+  };
 
   Map<String, Object?> projectJson() => <String, Object?>{
-        'id': 'proj-1',
-        'name': 'Demo',
-        'path': '/demo',
-        'addedAt': '2026-01-01T00:00:00.000Z',
-        'lastActiveAt': '2026-01-01T00:00:00.000Z',
-      };
+    'id': 'proj-1',
+    'name': 'Demo',
+    'path': '/demo',
+    'addedAt': '2026-01-01T00:00:00.000Z',
+    'lastActiveAt': '2026-01-01T00:00:00.000Z',
+  };
 
   Map<String, Object?> sessionJson({String status = 'idle'}) =>
       <String, Object?>{
@@ -228,9 +243,7 @@ class TestDaemonServer {
       'text': text ?? 'msg $nextSeq',
       'seq': nextSeq,
     };
-    history
-        .putIfAbsent(sessionId, () => <Map<String, Object?>>[])
-        .add(event);
+    history.putIfAbsent(sessionId, () => <Map<String, Object?>>[]).add(event);
     peers.last.notify('session.event', <String, Object?>{
       'sessionId': sessionId,
       'seq': nextSeq,
@@ -240,16 +253,16 @@ class TestDaemonServer {
 
   void pushSessionUpdated({String status = 'running'}) {
     if (peers.isEmpty) return;
-    peers.last.notify(
-      'session.updated',
-      <String, Object?>{'session': sessionJson(status: status)},
-    );
+    peers.last.notify('session.updated', <String, Object?>{
+      'session': sessionJson(status: status),
+    });
   }
 
   void pushSessionRemoved(String sessionId) {
     if (peers.isEmpty) return;
-    peers.last
-        .notify('session.removed', <String, Object?>{'sessionId': sessionId});
+    peers.last.notify('session.removed', <String, Object?>{
+      'sessionId': sessionId,
+    });
   }
 
   void pushProjectsChanged() {
@@ -317,14 +330,23 @@ void main() {
     );
     expect(mcp.projectId, 'proj-1');
     expect(server.mcpCreates.single['projectId'], 'proj-1');
-
+    final Session created = await client.createSession(
+      projectId: 'proj-1',
+      providerId: 'codex',
+      sandboxMode: SessionSandboxMode.unrestricted,
+    );
+    expect(created.sandboxMode, SessionSandboxMode.unrestricted);
+    expect(server.creates.single['sandboxMode'], 'unrestricted');
 
     // DaemonError codes pass through untouched (sessions.send).
     await expectLater(
       client.sendMessage('sess-1', 'boom'),
       throwsA(
-        isA<DaemonError>()
-            .having((DaemonError e) => e.code, 'code', kErrConflict),
+        isA<DaemonError>().having(
+          (DaemonError e) => e.code,
+          'code',
+          kErrConflict,
+        ),
       ),
     );
 
@@ -332,30 +354,32 @@ void main() {
     await client.sendMessage('sess-1', 'hello');
   });
 
-  test('beginMcpOAuth canonicalizes plain HTTP callbacks to loopback',
-      () async {
-    final TestDaemonServer server = await TestDaemonServer.start();
-    addTearDown(server.close);
-    final WsDaemonClient client = WsDaemonClient(
-      url: server.url.replaceFirst('127.0.0.1', 'localhost'),
-      token: 'secret',
-      reconnectBase: const Duration(milliseconds: 20),
-    );
-    addTearDown(client.dispose);
-    await client.connect();
+  test(
+    'beginMcpOAuth canonicalizes plain HTTP callbacks to loopback',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url.replaceFirst('127.0.0.1', 'localhost'),
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+      );
+      addTearDown(client.dispose);
+      await client.connect();
 
-    final McpOAuthFlow flow = await client.beginMcpOAuth('mcp-1');
+      final McpOAuthFlow flow = await client.beginMcpOAuth('mcp-1');
 
-    expect(flow.flowId, 'flow-1');
-    expect(flow.authorizationUrl, 'https://auth.example/authorize');
-    expect(server.oauthBegins, <Map<String, Object?>>[
-      <String, Object?>{
-        'id': 'mcp-1',
-        'redirectUri':
-            'http://127.0.0.1:${server.server.port}/oauth/callback',
-      },
-    ]);
-  });
+      expect(flow.flowId, 'flow-1');
+      expect(flow.authorizationUrl, 'https://auth.example/authorize');
+      expect(server.oauthBegins, <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'mcp-1',
+          'redirectUri':
+              'http://127.0.0.1:${server.server.port}/oauth/callback',
+        },
+      ]);
+    },
+  );
 
   test('beginMcpOAuth rejects a remote plaintext daemon', () async {
     final WsDaemonClient client = WsDaemonClient(
@@ -382,79 +406,93 @@ void main() {
     );
   });
 
-  test('sendMessage omits attachments when empty and serializes them otherwise',
-      () async {
-    final TestDaemonServer server = await TestDaemonServer.start();
-    addTearDown(server.close);
-    final WsDaemonClient client = WsDaemonClient(
-      url: server.url,
-      token: 'secret',
-      reconnectBase: const Duration(milliseconds: 20),
-    );
-    addTearDown(client.dispose);
-    await client.connect();
+  test(
+    'sendMessage omits attachments when empty and serializes them otherwise',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+      );
+      addTearDown(client.dispose);
+      await client.connect();
 
-    // PROTOCOL.md: the `attachments` param is absent entirely when empty.
-    await client.sendMessage('sess-1', 'hello');
-    await client.sendMessage('sess-1', '', attachments: <OutgoingAttachment>[
-      const OutgoingAttachment(
-        name: 'shot.png',
-        mimeType: 'image/png',
-        data: 'aGVsbG8=',
-      ),
-    ]);
+      // PROTOCOL.md: the `attachments` param is absent entirely when empty.
+      await client.sendMessage('sess-1', 'hello');
+      await client.sendMessage(
+        'sess-1',
+        '',
+        attachments: <OutgoingAttachment>[
+          const OutgoingAttachment(
+            name: 'shot.png',
+            mimeType: 'image/png',
+            data: 'aGVsbG8=',
+          ),
+        ],
+      );
 
-    expect(server.sends, hasLength(2));
-    expect(server.sends[0].containsKey('attachments'), isFalse);
-    expect(server.sends[0]['text'], 'hello');
-    final Object? wire = server.sends[1]['attachments'];
-    expect(wire, isA<List<Object?>>());
-    final List<Object?> list = wire! as List<Object?>;
-    expect(list, hasLength(1));
-    expect(list.single, <String, Object?>{
-      'name': 'shot.png',
-      'mimeType': 'image/png',
-      'data': 'aGVsbG8=',
-    });
-  });
-
-  test('readAttachment decodes the attachment result and errors on unknowns',
-      () async {
-    final TestDaemonServer server = await TestDaemonServer.start();
-    addTearDown(server.close);
-    server.attachments['sess-1'] = <String, Map<String, Object?>>{
-      'att-1': <String, Object?>{
-        'id': 'att-1',
+      expect(server.sends, hasLength(2));
+      expect(server.sends[0].containsKey('attachments'), isFalse);
+      expect(server.sends[0]['text'], 'hello');
+      final Object? wire = server.sends[1]['attachments'];
+      expect(wire, isA<List<Object?>>());
+      final List<Object?> list = wire! as List<Object?>;
+      expect(list, hasLength(1));
+      expect(list.single, <String, Object?>{
         'name': 'shot.png',
         'mimeType': 'image/png',
-        'size': 5,
         'data': 'aGVsbG8=',
-      },
-    };
-    final WsDaemonClient client = WsDaemonClient(
-      url: server.url,
-      token: 'secret',
-      reconnectBase: const Duration(milliseconds: 20),
-    );
-    addTearDown(client.dispose);
-    await client.connect();
+      });
+    },
+  );
 
-    final AttachmentData data = await client.readAttachment('sess-1', 'att-1');
-    expect(data.id, 'att-1');
-    expect(data.name, 'shot.png');
-    expect(data.mimeType, 'image/png');
-    expect(data.size, 5);
-    expect(data.data, 'aGVsbG8=');
+  test(
+    'readAttachment decodes the attachment result and errors on unknowns',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      server.attachments['sess-1'] = <String, Map<String, Object?>>{
+        'att-1': <String, Object?>{
+          'id': 'att-1',
+          'name': 'shot.png',
+          'mimeType': 'image/png',
+          'size': 5,
+          'data': 'aGVsbG8=',
+        },
+      };
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+      );
+      addTearDown(client.dispose);
+      await client.connect();
 
-    // Server-side unknown attachment surfaces as a not-found DaemonError.
-    await expectLater(
-      client.readAttachment('sess-1', 'att-99'),
-      throwsA(
-        isA<DaemonError>()
-            .having((DaemonError e) => e.code, 'code', kErrNotFound),
-      ),
-    );
-  });
+      final AttachmentData data = await client.readAttachment(
+        'sess-1',
+        'att-1',
+      );
+      expect(data.id, 'att-1');
+      expect(data.name, 'shot.png');
+      expect(data.mimeType, 'image/png');
+      expect(data.size, 5);
+      expect(data.data, 'aGVsbG8=');
+
+      // Server-side unknown attachment surfaces as a not-found DaemonError.
+      await expectLater(
+        client.readAttachment('sess-1', 'att-99'),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError e) => e.code,
+            'code',
+            kErrNotFound,
+          ),
+        ),
+      );
+    },
+  );
 
   test('auth failure propagates and leaves the client failed', () async {
     final TestDaemonServer server = await TestDaemonServer.start();
@@ -469,8 +507,11 @@ void main() {
     await expectLater(
       client.connect(),
       throwsA(
-        isA<DaemonError>()
-            .having((DaemonError e) => e.code, 'code', kErrUnauthenticated),
+        isA<DaemonError>().having(
+          (DaemonError e) => e.code,
+          'code',
+          kErrUnauthenticated,
+        ),
       ),
     );
     expect(client.connState.value, DaemonConnectionState.failed);
@@ -493,7 +534,10 @@ void main() {
 
   test('connect to an unreachable socket fails instead of hanging', () async {
     // A port that is guaranteed closed: bind, observe the port, release it.
-    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final HttpServer sink = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
     final int port = sink.port;
     await sink.close(force: true);
 
@@ -511,77 +555,88 @@ void main() {
     expect(client.isConnected, isFalse);
   });
 
-  test('a failed initial connect self-heals once the daemon comes up',
-      () async {
-    // A port that is guaranteed closed: bind, observe the port, release it.
-    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final int port = sink.port;
-    await sink.close(force: true);
+  test(
+    'a failed initial connect self-heals once the daemon comes up',
+    () async {
+      // A port that is guaranteed closed: bind, observe the port, release it.
+      final HttpServer sink = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final int port = sink.port;
+      await sink.close(force: true);
 
-    final WsDaemonClient client = WsDaemonClient(
-      url: 'ws://127.0.0.1:$port/ws',
-      token: 'secret',
-      reconnectBase: const Duration(milliseconds: 20),
-    );
-    addTearDown(client.dispose);
+      final WsDaemonClient client = WsDaemonClient(
+        url: 'ws://127.0.0.1:$port/ws',
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+      );
+      addTearDown(client.dispose);
 
-    await expectLater(client.connect(), throwsA(anything));
-    expect(client.connState.value, DaemonConnectionState.failed);
+      await expectLater(client.connect(), throwsA(anything));
+      expect(client.connState.value, DaemonConnectionState.failed);
 
-    int resyncCount = 0;
-    final StreamSubscription<void> resyncSub =
-        client.resynced.listen((void _) => resyncCount++);
-    addTearDown(resyncSub.cancel);
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
 
-    // The daemon comes up later; the armed backoff retry must connect on its
-    // own (no restart of the app, no manual retry).
-    final TestDaemonServer server =
-        await TestDaemonServer.start(port: port);
-    addTearDown(server.close);
-    await waitFor(
-      () => client.connState.value == DaemonConnectionState.connected,
-    );
-    expect(client.isConnected, isTrue);
-    expect(
-      resyncCount,
-      1,
-      reason: 'stores must backfill what they missed while the daemon '
-          'was unreachable',
-    );
-  });
+      // The daemon comes up later; the armed backoff retry must connect on its
+      // own (no restart of the app, no manual retry).
+      final TestDaemonServer server = await TestDaemonServer.start(port: port);
+      addTearDown(server.close);
+      await waitFor(
+        () => client.connState.value == DaemonConnectionState.connected,
+      );
+      expect(client.isConnected, isTrue);
+      expect(
+        resyncCount,
+        1,
+        reason:
+            'stores must backfill what they missed while the daemon '
+            'was unreachable',
+      );
+    },
+  );
 
-  test('retryNow reconnects immediately instead of waiting out the backoff',
-      () async {
-    // A port that is guaranteed closed: bind, observe the port, release it.
-    final HttpServer sink = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final int port = sink.port;
-    await sink.close(force: true);
+  test(
+    'retryNow reconnects immediately instead of waiting out the backoff',
+    () async {
+      // A port that is guaranteed closed: bind, observe the port, release it.
+      final HttpServer sink = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final int port = sink.port;
+      await sink.close(force: true);
 
-    // A backoff so slow the armed timer cannot fire within the test.
-    final WsDaemonClient client = WsDaemonClient(
-      url: 'ws://127.0.0.1:$port/ws',
-      token: 'secret',
-      reconnectBase: const Duration(seconds: 30),
-    );
-    addTearDown(client.dispose);
+      // A backoff so slow the armed timer cannot fire within the test.
+      final WsDaemonClient client = WsDaemonClient(
+        url: 'ws://127.0.0.1:$port/ws',
+        token: 'secret',
+        reconnectBase: const Duration(seconds: 30),
+      );
+      addTearDown(client.dispose);
 
-    await expectLater(client.connect(), throwsA(anything));
-    expect(client.connState.value, DaemonConnectionState.failed);
+      await expectLater(client.connect(), throwsA(anything));
+      expect(client.connState.value, DaemonConnectionState.failed);
 
-    int resyncCount = 0;
-    final StreamSubscription<void> resyncSub =
-        client.resynced.listen((void _) => resyncCount++);
-    addTearDown(resyncSub.cancel);
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
 
-    final TestDaemonServer server =
-        await TestDaemonServer.start(port: port);
-    addTearDown(server.close);
-    client.retryNow();
-    await waitFor(
-      () => client.connState.value == DaemonConnectionState.connected,
-    );
-    expect(resyncCount, 1);
-  });
+      final TestDaemonServer server = await TestDaemonServer.start(port: port);
+      addTearDown(server.close);
+      client.retryNow();
+      await waitFor(
+        () => client.connState.value == DaemonConnectionState.connected,
+      );
+      expect(resyncCount, 1);
+    },
+  );
 
   test('the first clean connect never emits resynced', () async {
     final TestDaemonServer server = await TestDaemonServer.start();
@@ -594,8 +649,9 @@ void main() {
     addTearDown(client.dispose);
 
     int resyncCount = 0;
-    final StreamSubscription<void> resyncSub =
-        client.resynced.listen((void _) => resyncCount++);
+    final StreamSubscription<void> resyncSub = client.resynced.listen(
+      (void _) => resyncCount++,
+    );
     addTearDown(resyncSub.cancel);
 
     await client.connect();
@@ -606,63 +662,68 @@ void main() {
     expect(resyncCount, 0);
   });
 
-  test('routes session.event / updated / removed notifications to streams',
-      () async {
-    final TestDaemonServer server = await TestDaemonServer.start();
-    addTearDown(server.close);
-    final WsDaemonClient client = WsDaemonClient(
-      url: server.url,
-      token: 'secret',
-      reconnectBase: const Duration(milliseconds: 20),
-    );
-    addTearDown(client.dispose);
-    await client.connect();
+  test(
+    'routes session.event / updated / removed notifications to streams',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+      );
+      addTearDown(client.dispose);
+      await client.connect();
 
-    final List<SessionEvent> events = <SessionEvent>[];
-    final List<Session> updates = <Session>[];
-    final List<String> removals = <String>[];
-    int projectsChanged = 0;
-    final StreamSubscription<SessionEvent> eventSub =
-        client.sessionEvents('sess-1').listen(events.add);
-    final StreamSubscription<Session> updateSub =
-        client.sessionUpdates.listen(updates.add);
-    final StreamSubscription<String> removalSub =
-        client.sessionRemovals.listen(removals.add);
-    final StreamSubscription<void> projectSub =
-        client.projectsChanged.listen((void _) => projectsChanged++);
-    addTearDown(eventSub.cancel);
-    addTearDown(updateSub.cancel);
-    addTearDown(removalSub.cancel);
-    addTearDown(projectSub.cancel);
+      final List<SessionEvent> events = <SessionEvent>[];
+      final List<Session> updates = <Session>[];
+      final List<String> removals = <String>[];
+      int projectsChanged = 0;
+      final StreamSubscription<SessionEvent> eventSub = client
+          .sessionEvents('sess-1')
+          .listen(events.add);
+      final StreamSubscription<Session> updateSub = client.sessionUpdates
+          .listen(updates.add);
+      final StreamSubscription<String> removalSub = client.sessionRemovals
+          .listen(removals.add);
+      final StreamSubscription<void> projectSub = client.projectsChanged.listen(
+        (void _) => projectsChanged++,
+      );
+      addTearDown(eventSub.cancel);
+      addTearDown(updateSub.cancel);
+      addTearDown(removalSub.cancel);
+      addTearDown(projectSub.cancel);
 
-    server.pushEvent('sess-1');
-    server.pushEvent('sess-1');
-    server.pushSessionUpdated();
-    server.pushSessionRemoved('sess-1');
-    server.pushProjectsChanged();
-    await waitFor(
-      () =>
-          events.length >= 2 &&
-          updates.length == 1 &&
-          removals.length == 1 &&
-          projectsChanged == 1,
-    );
+      server.pushEvent('sess-1');
+      server.pushEvent('sess-1');
+      server.pushSessionUpdated();
+      server.pushSessionRemoved('sess-1');
+      server.pushProjectsChanged();
+      await waitFor(
+        () =>
+            events.length >= 2 &&
+            updates.length == 1 &&
+            removals.length == 1 &&
+            projectsChanged == 1,
+      );
 
-    expect(events, everyElement(isA<UserMessageEvent>()));
-    expect(events[0].seq, lessThan(events[1].seq!));
-    expect(updates.single.status, SessionStatus.running);
-    expect(removals.single, 'sess-1');
-    expect(projectsChanged, 1);
+      expect(events, everyElement(isA<UserMessageEvent>()));
+      expect(events[0].seq, lessThan(events[1].seq!));
+      expect(updates.single.status, SessionStatus.running);
+      expect(removals.single, 'sess-1');
+      expect(projectsChanged, 1);
 
-    // Per-session filters: events for sess-1 never leak onto sess-2.
-    final List<SessionEvent> other = <SessionEvent>[];
-    final StreamSubscription<SessionEvent> otherSub =
-        client.sessionEvents('sess-2').listen(other.add);
-    addTearDown(otherSub.cancel);
-    server.pushEvent('sess-1');
-    await Future<void>.delayed(const Duration(milliseconds: 60));
-    expect(other, isEmpty);
-  });
+      // Per-session filters: events for sess-1 never leak onto sess-2.
+      final List<SessionEvent> other = <SessionEvent>[];
+      final StreamSubscription<SessionEvent> otherSub = client
+          .sessionEvents('sess-2')
+          .listen(other.add);
+      addTearDown(otherSub.cancel);
+      server.pushEvent('sess-1');
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      expect(other, isEmpty);
+    },
+  );
 
   test('reconnects after the server closes the socket', () async {
     final TestDaemonServer server = await TestDaemonServer.start();
@@ -681,8 +742,9 @@ void main() {
       states.add(client.connState.value);
     });
     int resyncCount = 0;
-    final StreamSubscription<void> resyncSub =
-        client.resynced.listen((void _) => resyncCount++);
+    final StreamSubscription<void> resyncSub = client.resynced.listen(
+      (void _) => resyncCount++,
+    );
     addTearDown(resyncSub.cancel);
 
     await server.kick(); // server-side drop
@@ -693,17 +755,15 @@ void main() {
           resyncCount == 1,
     );
     // The drop surfaced as reconnecting, then re-auth succeeded.
-    expect(
-      states,
-      contains(DaemonConnectionState.reconnecting),
-    );
+    expect(states, contains(DaemonConnectionState.reconnecting));
     expect(states.last, DaemonConnectionState.connected);
     expect(server.connectionCount, greaterThanOrEqualTo(2));
 
     // Live notifications flow again on the fresh socket.
     final List<SessionEvent> events = <SessionEvent>[];
-    final StreamSubscription<SessionEvent> eventSub =
-        client.sessionEvents('sess-1').listen(events.add);
+    final StreamSubscription<SessionEvent> eventSub = client
+        .sessionEvents('sess-1')
+        .listen(events.add);
     addTearDown(eventSub.cancel);
     await waitFor(() => events.isNotEmpty);
   });
@@ -734,9 +794,7 @@ void main() {
     final List<DaemonConnectionState> observed = <DaemonConnectionState>[];
     client.connState.addListener(() => observed.add(client.connState.value));
     await server.kick();
-    await waitFor(
-      () => observed.contains(DaemonConnectionState.reconnecting),
-    );
+    await waitFor(() => observed.contains(DaemonConnectionState.reconnecting));
     server.pushEvent('sess-1');
     server.pushEvent('sess-1');
     final int offlineSeq = server.seq;
@@ -777,23 +835,29 @@ void main() {
         <String, Object?>{'type': 'userMessage', 'text': 'm$i', 'seq': i},
     ];
 
-    final ({List<SessionEvent> events, bool hasMore}) all =
-        await client.history('sess-paging');
+    final ({List<SessionEvent> events, bool hasMore}) all = await client
+        .history('sess-paging');
     expect(all.hasMore, isFalse);
-    expect(all.events.map((SessionEvent e) => e.seq).toList(), <int>[1, 2, 3, 4, 5]);
+    expect(all.events.map((SessionEvent e) => e.seq).toList(), <int>[
+      1,
+      2,
+      3,
+      4,
+      5,
+    ]);
 
-    final ({List<SessionEvent> events, bool hasMore}) page1 =
-        await client.history('sess-paging', limit: 2);
+    final ({List<SessionEvent> events, bool hasMore}) page1 = await client
+        .history('sess-paging', limit: 2);
     expect(page1.hasMore, isTrue);
     expect(page1.events.map((SessionEvent e) => e.seq).toList(), <int>[4, 5]);
 
-    final ({List<SessionEvent> events, bool hasMore}) page2 =
-        await client.history('sess-paging', limit: 2, beforeSeq: 4);
+    final ({List<SessionEvent> events, bool hasMore}) page2 = await client
+        .history('sess-paging', limit: 2, beforeSeq: 4);
     expect(page2.hasMore, isTrue);
     expect(page2.events.map((SessionEvent e) => e.seq).toList(), <int>[2, 3]);
 
-    final ({List<SessionEvent> events, bool hasMore}) page3 =
-        await client.history('sess-paging', limit: 2, beforeSeq: 2);
+    final ({List<SessionEvent> events, bool hasMore}) page3 = await client
+        .history('sess-paging', limit: 2, beforeSeq: 2);
     expect(page3.hasMore, isFalse);
     expect(page3.events.map((SessionEvent e) => e.seq).toList(), <int>[1]);
   });

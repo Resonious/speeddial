@@ -1062,6 +1062,7 @@ class SpeedDialServer {
     final rawTitle = params['title'];
     final rawCwd = params['cwd'];
     final rawBaseBranch = params['baseBranch'];
+    final rawSandboxMode = params['sandboxMode'];
     final rawYolo = params['yolo'];
     final session = await _engine.createSession(
       projectId: projectId,
@@ -1073,6 +1074,9 @@ class SpeedDialServer {
       baseBranch: rawBaseBranch is String && rawBaseBranch.isNotEmpty
           ? rawBaseBranch
           : null,
+      sandboxMode: rawSandboxMode == null
+          ? null
+          : _parseSandboxMode(rawSandboxMode),
       yolo: rawYolo is bool && rawYolo,
     );
     // The engine already published `session.updated` (suppressed by the
@@ -1547,6 +1551,20 @@ class SpeedDialServer {
       return SessionMode.parse(raw);
     } on FormatException {
       throw DaemonError(_kErrInvalidParams, 'Invalid mode: $raw');
+    }
+  }
+
+  SessionSandboxMode _parseSandboxMode(Object? raw) {
+    if (raw is! String) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: sandboxMode',
+      );
+    }
+    try {
+      return SessionSandboxMode.parse(raw);
+    } on FormatException {
+      throw DaemonError(_kErrInvalidParams, 'Invalid sandboxMode: $raw');
     }
   }
 }

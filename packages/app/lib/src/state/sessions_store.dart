@@ -201,6 +201,7 @@ class SessionsStore extends StoreBase {
     SessionMode? mode,
     String? title,
     String? baseBranch,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     _ensureDaemonSubscriptions(daemonId);
@@ -211,6 +212,7 @@ class SessionsStore extends StoreBase {
       mode: mode,
       title: title,
       baseBranch: baseBranch,
+      sandboxMode: sandboxMode,
       yolo: yolo,
     );
     // Upsert rather than blind-add: daemons surface the created session on

@@ -5,10 +5,11 @@ import '../../scope.dart';
 
 /// Modal sheet used to create a session under [projectId] of [daemonId].
 ///
-/// The sheet asks only for the provider and — when the project is a git
-/// repository — for a worktree base branch: the daemon then fetches
-/// `origin/<base>` and runs the agent in a fresh worktree branched off the
-/// remote tip. Model and thinking level are picked afterwards from the
+/// The sheet asks for the provider, provider-supported safety settings, and
+/// — when the project is a git repository — for a worktree base branch: the
+/// daemon then fetches `origin/<base>` and runs the agent in a fresh worktree
+/// branched off the remote tip.
+/// Model and thinking level are picked afterwards from the
 /// composer on the live session, fed by the options the agent advertises
 /// (`Session.models` / `Session.thinkingLevels`), before any message is
 /// sent.
@@ -39,9 +40,11 @@ typedef _SheetData = ({DaemonInfo info, List<Branch> branches});
 class _NewSessionSheetState extends State<NewSessionSheet> {
   Future<_SheetData>? _data;
   String? _providerId;
+  ProviderInfo? _selectedProvider;
   String? _baseBranch;
   bool _useWorktree = true;
   bool _yolo = false;
+  SessionSandboxMode _sandboxMode = SessionSandboxMode.workspaceWrite;
   bool _submitting = false;
   String? _error;
 
@@ -51,6 +54,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     // Sticky across sheet opens: seed from the last choice (kept on
     // AppData) instead of always starting unchecked.
     _yolo = widget.data.newSessionYolo;
+    _sandboxMode = widget.data.settings.sandboxMode;
   }
 
   @override
@@ -82,6 +86,19 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     }
   }
 
+  Future<void> _setNoSandbox(bool value) async {
+    final SessionSandboxMode mode = value
+        ? SessionSandboxMode.unrestricted
+        : SessionSandboxMode.workspaceWrite;
+    setState(() => _sandboxMode = mode);
+    try {
+      await widget.data.settings.setSandboxMode(mode);
+    } on Object {
+      if (!mounted) return;
+      setState(() => _error = 'Failed to save sandbox preference');
+    }
+  }
+
   Future<void> _submit() async {
     final AppData data = widget.data;
     setState(() {
@@ -94,6 +111,10 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         projectId: widget.projectId,
         providerId: _providerId!,
         baseBranch: _useWorktree ? _baseBranch : null,
+        sandboxMode:
+            _selectedProvider?.sandboxModes.contains(_sandboxMode) == true
+            ? _sandboxMode
+            : null,
         yolo: _yolo,
       );
       data.selection.selectedProjectId = session.projectId;
@@ -153,6 +174,11 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                 orElse: () => providers.first,
               )
               .id;
+    _selectedProvider = providers.firstWhere(
+      (ProviderInfo provider) => provider.id == _providerId,
+    );
+    final bool supportsUnrestrictedSandbox = _selectedProvider!.sandboxModes
+        .contains(SessionSandboxMode.unrestricted);
     if (branches.isNotEmpty && _baseBranch == null) {
       // Prefer the checked-out branch, then main, then the first listed.
       _baseBranch = branches
@@ -193,6 +219,21 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                   if (value != null) _selectProvider(value);
                 },
         ),
+        if (supportsUnrestrictedSandbox)
+          CheckboxListTile(
+            key: const Key('new-session-no-sandbox'),
+            value: _sandboxMode == SessionSandboxMode.unrestricted,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text('No sandbox'),
+            subtitle: const Text(
+              'Run Codex without its filesystem or network sandbox',
+            ),
+            onChanged: _submitting
+                ? null
+                : (bool? value) => _setNoSandbox(value ?? false),
+          ),
         const SizedBox(height: 4),
         CheckboxListTile(
           key: const Key('new-session-yolo'),

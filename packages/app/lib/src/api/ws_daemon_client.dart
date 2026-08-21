@@ -619,6 +619,7 @@ class WsDaemonClient implements DaemonClient {
     SessionMode? mode,
     String? title,
     String? baseBranch,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     final Object? result = await _requirePeer().call(
@@ -630,6 +631,7 @@ class WsDaemonClient implements DaemonClient {
         'mode': ?mode?.wire,
         'title': ?title,
         'baseBranch': ?baseBranch,
+        'sandboxMode': ?sandboxMode?.wire,
         if (yolo) 'yolo': true,
       },
     );

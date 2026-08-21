@@ -1627,6 +1627,39 @@ void main() {
       },
     );
 
+    test('sessions.create validates provider sandbox modes', () async {
+      await startServer();
+      final client = await connect(server!.port);
+
+      for (final Object? sandboxMode in <Object?>['not-a-mode', 42]) {
+        await expectLater(
+          client.peer.call('sessions.create', <String, Object?>{
+            'projectId': 'missing',
+            'providerId': 'fake',
+            'sandboxMode': sandboxMode,
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+      }
+      await expectLater(
+        client.peer.call('sessions.create', <String, Object?>{
+          'projectId': 'missing',
+          'providerId': 'fake',
+          'sandboxMode': 'unrestricted',
+        }),
+        throwsA(
+          isA<DaemonError>()
+              .having((e) => e.code, 'code', -32602)
+              .having(
+                (e) => e.message,
+                'message',
+                contains('does not support sandboxMode'),
+              ),
+        ),
+      );
+      await client.close();
+    });
+
     test(
       'sessions.create with yolo auto-approves permission requests',
       () async {

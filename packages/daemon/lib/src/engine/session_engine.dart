@@ -296,6 +296,7 @@ class SessionEngine {
     String? title,
     String? cwd,
     String? baseBranch,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     final spec = _providers.byId(providerId);
@@ -311,6 +312,15 @@ class SessionEngine {
         'Provider "$providerId" is not available on this host',
       );
     }
+    final SessionSandboxMode? effectiveSandboxMode = switch (spec.protocol) {
+      ProviderProtocol.codex =>
+        sandboxMode ?? SessionSandboxMode.workspaceWrite,
+      _ when sandboxMode == null => null,
+      _ => throw DaemonError(
+        _kErrInvalidParams,
+        'Provider "$providerId" does not support sandboxMode',
+      ),
+    };
     final project = _store.getProject(projectId);
     if (project == null) {
       throw DaemonError(kErrNotFound, 'Unknown project: $projectId');
@@ -381,6 +391,7 @@ class SessionEngine {
       model: model,
       cwd: workingDir,
       baseBranch: baseBranch,
+      sandboxMode: effectiveSandboxMode,
       yolo: yolo,
       archived: false,
       createdAt: now,
@@ -438,6 +449,7 @@ class SessionEngine {
       model: source.model,
       cwd: source.cwd,
       baseBranch: source.baseBranch,
+      sandboxMode: source.sandboxMode,
       yolo: source.yolo,
       archived: false,
       createdAt: now,
@@ -510,6 +522,7 @@ class SessionEngine {
         cwd: baseSession.cwd,
         mcpServers: _mcpServersFor(baseSession, info),
         model: requestedModel,
+        sandboxMode: baseSession.sandboxMode,
         yolo: baseSession.yolo,
       );
       providerSessionId = created.sessionId;
@@ -962,6 +975,7 @@ class SessionEngine {
       configOptions = await client.loadSession(
         sessionId: providerSessionId,
         cwd: session.cwd,
+        sandboxMode: session.sandboxMode,
         mcpServers: _mcpServersFor(session, info),
       );
     } on Object catch (error) {
@@ -1729,6 +1743,7 @@ class SessionEngine {
       baseBranch: session.baseBranch,
       thinkingLevel: session.thinkingLevel,
       thinkingLevels: session.thinkingLevels,
+      sandboxMode: session.sandboxMode,
       yolo: session.yolo,
       archived: session.archived,
       createdAt: session.createdAt,
@@ -1750,6 +1765,7 @@ class SessionEngine {
     baseBranch: session.baseBranch,
     thinkingLevel: session.thinkingLevel,
     thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
@@ -1770,6 +1786,7 @@ class SessionEngine {
     baseBranch: session.baseBranch,
     thinkingLevel: session.thinkingLevel,
     thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     archived: archived,
     createdAt: session.createdAt,
@@ -1790,6 +1807,7 @@ class SessionEngine {
     baseBranch: session.baseBranch,
     thinkingLevel: session.thinkingLevel,
     thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
@@ -1810,6 +1828,7 @@ class SessionEngine {
     baseBranch: session.baseBranch,
     thinkingLevel: session.thinkingLevel,
     thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     archived: session.archived,
     createdAt: session.createdAt,
@@ -1831,6 +1850,7 @@ class SessionEngine {
         baseBranch: session.baseBranch,
         thinkingLevel: level,
         thinkingLevels: levels,
+        sandboxMode: session.sandboxMode,
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,
@@ -1855,6 +1875,7 @@ class SessionEngine {
         baseBranch: session.baseBranch,
         thinkingLevel: snapshot.thinkingLevel,
         thinkingLevels: snapshot.thinkingLevels,
+        sandboxMode: session.sandboxMode,
         yolo: session.yolo,
         archived: session.archived,
         createdAt: session.createdAt,

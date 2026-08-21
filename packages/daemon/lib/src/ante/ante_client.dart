@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:path/path.dart' as p;
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
@@ -115,6 +116,7 @@ class AnteClient implements AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     await initialized;
@@ -154,6 +156,7 @@ class AnteClient implements AgentClient {
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
+    SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   }) async {
     await initialized;

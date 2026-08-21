@@ -152,6 +152,12 @@ class ProviderRegistry {
           available: isAvailable(spec.id),
           command: spec.command.join(' '),
           models: await _modelsFor(spec),
+          sandboxModes: spec.protocol == ProviderProtocol.codex
+              ? const <SessionSandboxMode>[
+                  SessionSandboxMode.workspaceWrite,
+                  SessionSandboxMode.unrestricted,
+                ]
+              : const <SessionSandboxMode>[],
         ),
       );
     }

@@ -1,3 +1,5 @@
+import 'package:speeddial_protocol/speeddial_protocol.dart';
+
 import '../acp/acp_types.dart';
 
 /// Decides how to resolve a provider's permission request.
@@ -24,12 +26,14 @@ abstract interface class AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   });
 
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
+    SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   });
 

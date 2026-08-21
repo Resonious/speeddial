@@ -31,7 +31,13 @@ void main() {
     final DaemonInfo info = await client.info();
     expect(info.version, '0.0.0-fake');
     expect(info.protocolVersion, 1);
-    expect(info.providers, hasLength(2));
+    expect(info.providers, hasLength(3));
+    expect(
+      info.providers
+          .firstWhere((ProviderInfo info) => info.id == 'codex')
+          .sandboxModes,
+      SessionSandboxMode.values,
+    );
     final List<Project> projects = await client.listProjects();
     expect(projects, hasLength(1));
     expect(projects.single.name, 'Demo Project');

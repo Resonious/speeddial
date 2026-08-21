@@ -4,9 +4,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../acp/acp_types.dart';
+
 import '../agents/agent_client.dart';
+
+String _codexSandboxMode(SessionSandboxMode? mode) =>
+    switch (mode ?? SessionSandboxMode.workspaceWrite) {
+      SessionSandboxMode.workspaceWrite => 'workspace-write',
+      SessionSandboxMode.unrestricted => 'danger-full-access',
+    };
 
 /// A failed Codex turn, reported by `turn/completed`.
 class CodexTurnException implements Exception {
@@ -125,12 +133,13 @@ class CodexClient implements AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{
       'cwd': cwd,
-      'sandbox': 'workspace-write',
+      'sandbox': _codexSandboxMode(sandboxMode),
     };
     if (model != null && model.isNotEmpty) params['model'] = model;
     if (yolo) params['approvalPolicy'] = 'never';
@@ -156,13 +165,14 @@ class CodexClient implements AgentClient {
   Future<List<AcpConfigOption>> loadSession({
     required String sessionId,
     required String cwd,
+    SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
   }) async {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{
       'threadId': sessionId,
       'cwd': cwd,
-      'sandbox': 'workspace-write',
+      'sandbox': _codexSandboxMode(sandboxMode),
     };
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;

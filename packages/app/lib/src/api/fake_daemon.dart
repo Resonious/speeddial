@@ -256,6 +256,17 @@ class FakeDaemonClient implements DaemonClient {
           command: 'npx -y @zed-industries/claude-code-acp',
           models: <String>['claude-sonnet'],
         ),
+        ProviderInfo(
+          id: 'codex',
+          name: 'Codex',
+          available: true,
+          command: 'codex app-server --stdio',
+          models: <String>['gpt-5.4'],
+          sandboxModes: <SessionSandboxMode>[
+            SessionSandboxMode.workspaceWrite,
+            SessionSandboxMode.unrestricted,
+          ],
+        ),
       ],
     );
   }
@@ -546,6 +557,7 @@ class FakeDaemonClient implements DaemonClient {
     SessionMode? mode,
     String? title,
     String? baseBranch,
+    SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
     _ensureSeeded();
@@ -584,6 +596,7 @@ class FakeDaemonClient implements DaemonClient {
       thinkingLevels: providerId == 'omp'
           ? const <String>['off', 'auto', 'low', 'high', 'max']
           : const <String>[],
+      sandboxMode: sandboxMode,
       yolo: yolo,
       archived: false,
       createdAt: now,
@@ -646,6 +659,7 @@ class FakeDaemonClient implements DaemonClient {
       baseBranch: source.baseBranch,
       thinkingLevel: source.thinkingLevel,
       thinkingLevels: source.thinkingLevels,
+      sandboxMode: source.sandboxMode,
       yolo: source.yolo,
       archived: false,
       createdAt: now,
@@ -799,6 +813,7 @@ class FakeDaemonClient implements DaemonClient {
         baseBranch: s.baseBranch,
         thinkingLevel: s.thinkingLevel,
         thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
@@ -827,6 +842,7 @@ class FakeDaemonClient implements DaemonClient {
         baseBranch: s.baseBranch,
         thinkingLevel: s.thinkingLevel,
         thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         archived: archived,
         createdAt: s.createdAt,
@@ -862,6 +878,7 @@ class FakeDaemonClient implements DaemonClient {
         baseBranch: s.baseBranch,
         thinkingLevel: s.thinkingLevel,
         thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
@@ -898,6 +915,7 @@ class FakeDaemonClient implements DaemonClient {
         baseBranch: s.baseBranch,
         thinkingLevel: s.thinkingLevel,
         thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
@@ -935,6 +953,7 @@ class FakeDaemonClient implements DaemonClient {
         baseBranch: s.baseBranch,
         thinkingLevel: level,
         thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         archived: s.archived,
         createdAt: s.createdAt,
@@ -1513,6 +1532,7 @@ class FakeDaemonClient implements DaemonClient {
       baseBranch: current.baseBranch,
       thinkingLevel: current.thinkingLevel,
       thinkingLevels: current.thinkingLevels,
+      sandboxMode: current.sandboxMode,
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,
@@ -1560,6 +1580,7 @@ class FakeDaemonClient implements DaemonClient {
       baseBranch: current.baseBranch,
       thinkingLevel: current.thinkingLevel,
       thinkingLevels: current.thinkingLevels,
+      sandboxMode: current.sandboxMode,
       yolo: current.yolo,
       archived: current.archived,
       createdAt: current.createdAt,

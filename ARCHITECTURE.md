@@ -46,13 +46,13 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
 lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. Initializes
-                    the app server, starts/resumes threads with a workspace-write sandbox rooted at
-                    the session cwd, starts/steers/interrupts turns, applies model and reasoning-effort
-                    settings, resolves command and patch approvals, injects MCP server configuration,
-                    and maps native message, reasoning, command, file-change, MCP, collaboration,
-                    web-search, image,
-                    plan, review, usage, compaction, and lifecycle notifications into the
-                    shared agent update stream.
+                    the app server, starts/resumes threads with the session's persisted
+                    sandbox (`workspace-write` by default or opt-in `danger-full-access`),
+                    starts/steers/interrupts turns, applies model and reasoning-effort
+                    settings, resolves command and patch approvals, injects MCP server
+                    configuration, and maps native message, reasoning, command, file-change,
+                    MCP, collaboration, web-search, image, plan, review, usage, compaction,
+                    and lifecycle notifications into the shared agent update stream.
 lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,
                     sends `UserInput`, handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
@@ -177,9 +177,9 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
 lib/src/ui/left/             daemon/project/session rail: connection status dot, project
                              groups, session rows (title, status chip, provider badge),
-                             new-session sheet (provider, worktree branch, yolo only —
-                             model/thinking are picked in the composer on the live
-                             session), rename/archive/delete menus
+                             new-session sheet (provider, provider-supported sandbox,
+                             worktree branch, and yolo — model/thinking are picked in the
+                             composer on the live session), rename/archive/delete menus
 lib/src/ui/settings/         daemon-scoped MCP profile list/editor; stdio command/env and
                              remote HTTP URL/header values are written to the daemon,
                              while stored secret values are never read back into Flutter.

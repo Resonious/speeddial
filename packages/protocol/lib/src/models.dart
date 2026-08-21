@@ -54,6 +54,22 @@ enum SessionMode {
   };
 }
 
+/// Filesystem/network isolation applied to a provider session.
+///
+/// Providers advertise supported values through [ProviderInfo.sandboxModes].
+enum SessionSandboxMode {
+  workspaceWrite,
+  unrestricted;
+
+  String get wire => name;
+
+  static SessionSandboxMode parse(String value) => switch (value) {
+    'workspaceWrite' => SessionSandboxMode.workspaceWrite,
+    'unrestricted' => SessionSandboxMode.unrestricted,
+    _ => throw FormatException('Unknown SessionSandboxMode: "$value"'),
+  };
+}
+
 /// Lifecycle state of a provider-reported background activity.
 enum AgentActivityStatus {
   running,
@@ -584,6 +600,7 @@ class Session {
     required this.baseBranch,
     this.thinkingLevel,
     this.thinkingLevels = const <String>[],
+    this.sandboxMode,
     required this.yolo,
     required this.archived,
     required this.createdAt,
@@ -622,6 +639,9 @@ class Session {
   /// option); empty when the provider has no thinking-level option.
   final List<String> thinkingLevels;
 
+  /// Provider sandbox selection; null when the provider manages isolation.
+  final SessionSandboxMode? sandboxMode;
+
   /// Yolo mode: the daemon auto-approves the agent's permission requests.
   final bool yolo;
 
@@ -653,6 +673,9 @@ class Session {
           growable: false,
         ) ??
         const <String>[],
+    sandboxMode: json['sandboxMode'] == null
+        ? null
+        : SessionSandboxMode.parse(json['sandboxMode']! as String),
     // Absent on pre-yolo daemons.
     yolo: json['yolo'] as bool? ?? false,
     archived: json['archived']! as bool,
@@ -676,6 +699,7 @@ class Session {
     'baseBranch': baseBranch,
     'thinkingLevel': thinkingLevel,
     'thinkingLevels': thinkingLevels,
+    'sandboxMode': sandboxMode?.wire,
     'yolo': yolo,
     'archived': archived,
     'createdAt': createdAt.toUtc().toIso8601String(),
@@ -1080,6 +1104,7 @@ class ProviderInfo {
     required this.available,
     required this.command,
     required this.models,
+    this.sandboxModes = const <SessionSandboxMode>[],
   });
 
   /// "omp" | "claude" | "codex" | custom id.
@@ -1097,6 +1122,9 @@ class ProviderInfo {
   /// Selectable model ids; may be empty.
   final List<String> models;
 
+  /// Isolation modes selectable when creating sessions with this provider.
+  final List<SessionSandboxMode> sandboxModes;
+
   factory ProviderInfo.fromJson(Map<String, Object?> json) => ProviderInfo(
     id: json['id']! as String,
     name: json['name']! as String,
@@ -1105,6 +1133,11 @@ class ProviderInfo {
     models: (json['models']! as List<Object?>)
         .map((e) => e! as String)
         .toList(growable: false),
+    sandboxModes:
+        (json['sandboxModes'] as List<Object?>?)
+            ?.map((Object? value) => SessionSandboxMode.parse(value! as String))
+            .toList(growable: false) ??
+        const <SessionSandboxMode>[],
   );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -1113,6 +1146,9 @@ class ProviderInfo {
     'available': available,
     'command': command,
     'models': models,
+    'sandboxModes': sandboxModes
+        .map((SessionSandboxMode mode) => mode.wire)
+        .toList(growable: false),
   };
 }
 

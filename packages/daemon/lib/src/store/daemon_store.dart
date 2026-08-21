@@ -15,8 +15,9 @@
 ///                      fork_context_seq NULL (copied history to inject into
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
-///                      yolo INT (auto-approve permissions), archived INT,
-///                      created_at, last_activity_at, updated_at
+///                      sandbox_mode TEXT NULL, yolo INT (auto-approve
+///                      permissions), archived INT, created_at,
+///                      last_activity_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
@@ -114,6 +115,7 @@ class DaemonStore {
         models TEXT NOT NULL DEFAULT '[]',
         cwd TEXT NOT NULL,
         base_branch TEXT,
+        sandbox_mode TEXT,
         fork_context_seq INTEGER,
         archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -151,6 +153,9 @@ class DaemonStore {
       _db.execute(
         'ALTER TABLE sessions ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0',
       );
+    }
+    if (!sessionColumns.contains('sandbox_mode')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN sandbox_mode TEXT');
     }
     if (!sessionColumns.contains('fork_context_seq')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN fork_context_seq INTEGER');
@@ -718,9 +723,9 @@ class DaemonStore {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
-      'thinking_levels, yolo, archived, created_at, last_activity_at, '
-      'updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'thinking_levels, sandbox_mode, yolo, archived, created_at, '
+      'last_activity_at, updated_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -734,6 +739,7 @@ class DaemonStore {
         session.baseBranch,
         session.thinkingLevel,
         jsonEncode(session.thinkingLevels),
+        session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
@@ -751,8 +757,8 @@ class DaemonStore {
   }) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
-      'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
-      'archived, created_at, last_activity_at, updated_at FROM sessions '
+      'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
+      'yolo, archived, created_at, last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -764,8 +770,8 @@ class DaemonStore {
   Session? getSession(String id) {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
-      'models, cwd, base_branch, thinking_level, thinking_levels, yolo, '
-      'archived, created_at, last_activity_at, updated_at FROM sessions WHERE id = ?',
+      'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
+      'yolo, archived, created_at, last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -777,7 +783,7 @@ class DaemonStore {
     _db.execute(
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
-      'thinking_level = ?, thinking_levels = ?, '
+      'thinking_level = ?, thinking_levels = ?, sandbox_mode = ?, '
       'yolo = ?, archived = ?, created_at = ?, last_activity_at = ?, '
       'updated_at = ? WHERE id = ?',
       [
@@ -792,6 +798,7 @@ class DaemonStore {
         session.baseBranch,
         session.thinkingLevel,
         jsonEncode(session.thinkingLevels),
+        session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
@@ -1086,6 +1093,9 @@ class DaemonStore {
     baseBranch: row['base_branch'] as String?,
     thinkingLevel: row['thinking_level'] as String?,
     thinkingLevels: _thinkingLevels(row['thinking_levels'] as String?),
+    sandboxMode: row['sandbox_mode'] == null
+        ? null
+        : SessionSandboxMode.parse(row['sandbox_mode']! as String),
     yolo: (row['yolo'] as int? ?? 0) != 0,
     archived: (row['archived'] as int) != 0,
     createdAt: _fromTs(row['created_at'] as int),

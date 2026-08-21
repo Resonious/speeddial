@@ -33,6 +33,16 @@ void main() {
       expect(() => SessionMode.parse('builds'), throwsFormatException);
     });
 
+    test('SessionSandboxMode is name-based', () {
+      for (final SessionSandboxMode mode in SessionSandboxMode.values) {
+        expect(SessionSandboxMode.parse(mode.wire), mode);
+      }
+      expect(
+        () => SessionSandboxMode.parse('danger-full-access'),
+        throwsFormatException,
+      );
+    });
+
     test('ToolCallStatus is name-based', () {
       expect(ToolCallStatus.pending.wire, 'pending');
       expect(ToolCallStatus.running.wire, 'running');
@@ -93,6 +103,10 @@ void main() {
             available: true,
             command: 'omp',
             models: const ['default', 'flash'],
+            sandboxModes: const <SessionSandboxMode>[
+              SessionSandboxMode.workspaceWrite,
+              SessionSandboxMode.unrestricted,
+            ],
           ),
           ProviderInfo(
             id: 'claude',
@@ -113,6 +127,7 @@ void main() {
       expect(decoded.providers[0].available, isTrue);
       expect(decoded.providers[0].command, 'omp');
       expect(decoded.providers[0].models, ['default', 'flash']);
+      expect(decoded.providers[0].sandboxModes, SessionSandboxMode.values);
       expect(decoded.providers[1].models, isEmpty);
       expect(decoded.toJson(), model.toJson());
     });
@@ -169,6 +184,11 @@ void main() {
         isFalse,
         reason: 'yolo is absent on pre-yolo daemons',
       );
+      expect(
+        session.sandboxMode,
+        isNull,
+        reason: 'sandboxMode is absent on older daemons',
+      );
       expect(session.archived, isFalse);
       expect(session.createdAt.isUtc, isTrue);
       expect(
@@ -199,6 +219,7 @@ void main() {
         baseBranch: 'main',
         thinkingLevel: 'auto',
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
+        sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
@@ -218,6 +239,7 @@ void main() {
         'high',
         'max',
       ]);
+      expect(decoded.sandboxMode, SessionSandboxMode.unrestricted);
       expect(decoded.yolo, isTrue);
       expect(decoded.archived, isTrue);
       expect(decoded.lastActivityAt, model.lastActivityAt);

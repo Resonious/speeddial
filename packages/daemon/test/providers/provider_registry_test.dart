@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 /// Probe stub: no provider has models. Keeps tests off real agent CLIs.
@@ -66,6 +67,14 @@ void main() {
     expect(providers.first.command, 'omp acp');
     expect(providers.first.models, isEmpty);
     expect(providers.first.name, isNotEmpty);
+    expect(providers.first.sandboxModes, isEmpty);
+    expect(
+      providers.firstWhere((info) => info.id == 'codex').sandboxModes,
+      <SessionSandboxMode>[
+        SessionSandboxMode.workspaceWrite,
+        SessionSandboxMode.unrestricted,
+      ],
+    );
   });
 
   test('byId returns null for unknown providers', () {
