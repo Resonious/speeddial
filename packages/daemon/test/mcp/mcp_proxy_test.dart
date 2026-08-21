@@ -85,6 +85,92 @@ void main() {
   );
 
   test(
+    'strips lookaround pattern constraints and warns, leaving clean schemas',
+    () async {
+      final _FakeConnection upstream = _FakeConnection(
+        'upstream',
+        <Map<String, Object?>>[
+          <String, Object?>{
+            'name': 'create-contact',
+            'description': 'Create a contact.',
+            'inputSchema': <String, Object?>{
+              'type': 'object',
+              'required': <String>['email', 'names'],
+              'properties': <String, Object?>{
+                'email': <String, Object?>{
+                  'type': 'string',
+                  'format': 'email',
+                  'pattern':
+                      "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)@example\\.com\$",
+                },
+                'names': <String, Object?>{
+                  'type': 'array',
+                  'items': <String, Object?>{
+                    'type': 'string',
+                    'pattern': '^a(?=b)\$',
+                    'minLength': 1,
+                  },
+                },
+                'label': <String, Object?>{
+                  'type': 'string',
+                  'pattern': '^[a-z]+\$',
+                },
+              },
+            },
+          },
+        ],
+      );
+      final StoredMcpServer server = _stored(
+        id: 'upstream',
+        name: 'Resend.com',
+        transport: McpTransport.http,
+      );
+      final McpProxySession proxy = McpProxySession(
+        servers: <StoredMcpServer>[server],
+        cwd: Directory.current.path,
+        connector: (StoredMcpServer s, String cwd) async => upstream,
+      );
+      addTearDown(proxy.close);
+
+      final McpProxyListResult listed = await proxy.listTools();
+      final Map<String, Object?> tool = listed.tools.single;
+      expect(tool['name'], 'Resend_com__create-contact');
+      expect(
+        tool['description'],
+        'MCP server "Resend.com". Create a contact.',
+      );
+      final Map<String, Object?> properties =
+          (tool['inputSchema']! as Map).cast<String, Object?>();
+      final Map<String, Object?> propertiesMap =
+          (properties['properties']! as Map).cast<String, Object?>();
+      final Map<String, Object?> emailProp =
+          (propertiesMap['email']! as Map).cast<String, Object?>();
+      expect(emailProp, isNot(contains('pattern')));
+      expect(emailProp['format'], 'email');
+      expect(emailProp['type'], 'string');
+      final Map<String, Object?> names =
+          (propertiesMap['names']! as Map).cast<String, Object?>();
+      final Map<String, Object?> items =
+          (names['items']! as Map).cast<String, Object?>();
+      expect(items, isNot(contains('pattern')));
+      expect(items['minLength'], 1);
+      final Map<String, Object?> label =
+          (propertiesMap['label']! as Map).cast<String, Object?>();
+      expect(label['pattern'], '^[a-z]+\$');
+      expect(listed.warnings, <String>[
+        'Resend.com: removed 2 JSON-schema pattern constraint(s) using regex '
+            'lookaround unsupported by model providers',
+      ]);
+
+      await proxy.callTool(
+        'Resend_com__create-contact',
+        <String, Object?>{'email': 'a@example.com'},
+      );
+      expect(upstream.calls.single.name, 'create-contact');
+    },
+  );
+
+  test(
     'stdio client initializes, answers roots, paginates, and calls',
     () async {
       final Directory cwd = await Directory.systemTemp.createTemp(

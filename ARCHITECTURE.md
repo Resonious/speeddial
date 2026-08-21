@@ -61,8 +61,9 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     query projects/session history; display_image persists an attachment
                     and emits an image event. McpProxySession owns the matching managed
                     upstreams for that bridge connection, starts stdio servers in the
-                    session cwd, drives Streamable HTTP JSON/SSE sessions, qualifies and
-                    aggregates tool descriptors, routes calls, and closes every upstream
+                    session cwd, drives Streamable HTTP JSON/SSE sessions, qualifies, sanitizes,
+                    aggregates tool descriptors (stripping regex-lookaround `pattern` constraints
+                    model providers reject), routes calls, and closes every upstream
                     with the bridge. Managed commands, URLs, environment values, headers,
                     and OAuth tokens never enter provider configuration. The same hidden
                     subprocess entry works from the daemon CLI and native Flutter

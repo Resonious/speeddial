@@ -279,9 +279,13 @@ configuration.
 
 Managed tools appear inside the `speeddial` server as
 `<normalized-server-name>__<normalized-tool-name>`; deterministic numeric suffixes resolve
-collisions. The bridge preserves each upstream descriptor and result while adding source metadata.
-A profile that fails to initialize contributes a warning without hiding the built-in tools or tools
-from healthy profiles. The upstream connections close with their authenticated bridge connection.
+collisions. The bridge preserves each upstream descriptor and result while adding source metadata,
+except it strips JSON-schema `pattern` constraints that use regex lookaround: OpenAI- and
+Anthropic-family tool-schema validators reject lookaround (`(?=`, `(?!`, `(?<=`, `(?<!`) with an
+HTTP 400 that fails every turn, so unsupported constraints are dropped (server-side validation
+remains authoritative) and the affected server contributes a warning. A profile that fails to
+initialize contributes a warning without hiding the built-in tools or tools from healthy profiles.
+The upstream connections close with their authenticated bridge connection.
 
 Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file on POSIX) so its
 server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data
