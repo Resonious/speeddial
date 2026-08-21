@@ -3,7 +3,7 @@
          debug/profile manifests only carry it for the Flutter tooling. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="speeddial_app"
+        android:label="Speeddial"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

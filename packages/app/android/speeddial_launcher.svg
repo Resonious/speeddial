@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="712" height="708" viewBox="0 0 712 708">
+  <defs>
+    <clipPath id="badge">
+      <rect x="25" y="20" width="662" height="668" rx="78" />
+    </clipPath>
+    <clipPath id="screen">
+      <rect x="274" y="105" width="164" height="520" rx="22" />
+    </clipPath>
+  </defs>
+
+  <rect width="712" height="708" fill="#f5f6f2" />
+  <g clip-path="url(#badge)">
+    <rect x="25" y="20" width="662" height="668" fill="#126575" />
+
+    <path d="M-100 510 C70 407 177 458 305 386 S590 218 812 95"
+          fill="none" stroke="#58b9dc" stroke-width="55" />
+    <path d="M-90 563 C76 458 185 507 317 432 S596 264 816 143"
+          fill="none" stroke="#ffb46e" stroke-width="37" />
+    <path d="M-108 628 C70 521 189 572 327 492 S610 321 820 203"
+          fill="none" stroke="#59b9dc" stroke-width="54" />
+    <path d="M-65 690 C105 581 227 622 360 548 S625 393 795 295"
+          fill="none" stroke="#ffb46e" stroke-width="38" />
+    <path d="M165 760 C284 674 383 649 484 593 S669 488 772 426"
+          fill="none" stroke="#56b9dc" stroke-width="54" />
+    <path d="M360 -60 C415 22 474 42 554 12 S692 -70 768 -107"
+          fill="none" stroke="#59b9dc" stroke-width="35" />
+    <path d="M438 -43 C499 42 564 62 645 24 S737 -37 805 -75"
+          fill="none" stroke="#ffb46e" stroke-width="38" />
+    <path d="M456 40 C515 113 589 129 677 89 S758 32 816 -4"
+          fill="none" stroke="#58b9dc" stroke-width="38" />
+    <path d="M430 166 C522 233 612 227 708 166 S788 105 836 75"
+          fill="none" stroke="#58b9dc" stroke-width="49" />
+
+    <g transform="rotate(-42 356 354)">
+      <rect x="256" y="54" width="200" height="600" rx="38"
+            fill="#fbfbf8" stroke="#050607" stroke-width="8" />
+      <rect x="273" y="101" width="166" height="524" rx="23"
+            fill="#fafaf7" stroke="#050607" stroke-width="5" />
+      <g clip-path="url(#screen)">
+        <rect x="273" y="321" width="166" height="304" fill="#147483" />
+        <path d="M273 332 C315 345 382 337 439 315 L439 360 C385 380 322 390 273 373 Z"
+              fill="#0e6574" opacity=".7" />
+      </g>
+
+      <path d="M322 101 H390 C395 101 398 105 398 111 V125 C398 138 388 148 375 148 H337 C324 148 314 138 314 125 V111 C314 105 317 101 322 101 Z"
+            fill="#050607" />
+      <circle cx="376" cy="115" r="5" fill="#167184" />
+      <rect x="337" y="112" width="28" height="5" rx="2.5" fill="#1c2527" />
+
+      <text x="286" y="206" fill="#050607" font-family="DejaVu Sans, sans-serif"
+            font-size="25" font-weight="700" letter-spacing="1.3">SPEEDDIAL</text>
+
+      <g fill="none" stroke="#13707c" stroke-width="8">
+        <circle cx="350" cy="284" r="46" />
+        <path d="M350 239 V228 M337 228 H363" />
+        <path d="M350 284 L363 256" stroke="#44b3cd" stroke-width="11" stroke-linecap="round" />
+        <path d="M321 255 L309 245 M379 255 L391 245" />
+      </g>
+      <circle cx="350" cy="284" r="8" fill="#13707c" />
+      <g fill="#13707c">
+        <path d="M393 309 H410 V252 H393 Z" />
+        <path d="M415 309 H432 V232 H415 Z" />
+        <path d="M371 309 H388 V274 H371 Z" />
+      </g>
+
+      <g fill="#fafaf7">
+        <rect x="291" y="370" width="45" height="45" rx="11" />
+        <rect x="346" y="370" width="45" height="45" rx="11" />
+        <rect x="401" y="370" width="25" height="45" rx="9" />
+        <rect x="291" y="426" width="45" height="45" rx="11" />
+        <rect x="346" y="426" width="45" height="45" rx="11" />
+        <rect x="401" y="426" width="25" height="45" rx="9" />
+        <rect x="291" y="482" width="45" height="45" rx="11" />
+        <rect x="346" y="482" width="45" height="45" rx="11" />
+        <rect x="401" y="482" width="25" height="45" rx="9" />
+        <rect x="291" y="538" width="45" height="45" rx="11" />
+        <rect x="346" y="538" width="45" height="45" rx="9" />
+        <rect x="401" y="538" width="25" height="45" rx="9" />
+      </g>
+      <g fill="none" stroke="#147483" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M301 390 C307 379 321 379 328 390 C325 402 317 408 312 408 C306 405 302 399 301 390 Z" />
+        <path d="M358 392 C366 377 383 378 385 391 C383 402 367 407 358 392 Z" />
+        <path d="M407 393 L416 384 M408 384 L416 393" />
+        <circle cx="313" cy="449" r="11" /><path d="M329 449 H317" />
+        <rect x="357" y="438" width="23" height="19" rx="3" /><circle cx="369" cy="447" r="5" />
+        <path d="M407 450 Q414 438 421 450" />
+        <circle cx="313" cy="504" r="12" /><path d="M313 486 V492 M313 516 V522 M295 504 H301 M325 504 H331" />
+        <path d="M357 494 H382 V514 H357 Z" /><path d="M363 494 V489 H376 V494" />
+        <circle cx="414" cy="504" r="10" /><path d="M421 512 L425 516" />
+        <path d="M300 561 H328 M300 571 H328" />
+        <path d="M360 550 H381 V573 H360 Z" /><path d="M367 550 V543 H374 V550" />
+        <path d="M407 561 H423 M415 553 V569" />
+      </g>
+
+      <g fill="#050607">
+        <rect x="242" y="170" width="14" height="45" rx="7" />
+        <rect x="242" y="229" width="14" height="70" rx="7" />
+        <rect x="458" y="184" width="14" height="92" rx="7" />
+      </g>
+      <g fill="#bfc2bd" stroke="#050607" stroke-width="4">
+        <circle cx="316" cy="640" r="3" /><circle cx="327" cy="640" r="3" />
+        <circle cx="338" cy="640" r="3" /><circle cx="349" cy="640" r="3" />
+      </g>
+    </g>
+  </g>
+  <rect x="25" y="20" width="662" height="668" rx="78"
+        fill="none" stroke="#ffffff" stroke-width="17" />
+</svg>
