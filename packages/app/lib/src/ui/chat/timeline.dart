@@ -358,7 +358,7 @@ class _ForkableMessage extends StatelessWidget {
       icon: const Icon(Icons.fork_right),
     );
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: isUser
           ? <Widget>[Expanded(child: child), button]
           : <Widget>[button, Expanded(child: child)],
