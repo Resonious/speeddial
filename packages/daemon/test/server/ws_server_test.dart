@@ -3444,5 +3444,69 @@ void main() {
       await a.close();
       await fresh.close();
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('a restarted daemon relays session.updated for sessions that '
+        'predate the server process', () async {
+      await startServer();
+      final a = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_restart_');
+      final project = Project.fromJson(
+        (j(
+                  await a.peer.call('projects.add', <String, Object?>{
+                    'path': dir.path,
+                  }),
+                )['project']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final created = j(
+        await a.peer.call('sessions.create', <String, Object?>{
+          'projectId': project.id,
+          'providerId': 'fake',
+        }),
+      );
+      final sessionId = (created['session']! as Map)['id']! as String;
+      await untilRecorded(a, 'session.created', 1);
+      await a.close();
+
+      // Simulate a daemon restart: a fresh engine and server over the same
+      // store. The session predates this server process, so it never gets a
+      // session.created broadcast; clients discover it via sessions.list.
+      await server!.close();
+      await engine!.dispose();
+      await startServer();
+      final b = await connect(server!.port);
+
+      final listed = j(
+        await b.peer.call('sessions.list', <String, Object?>{
+          'includeArchived': true,
+        }),
+      );
+      expect(
+        (listed['sessions']! as List).map((s) => (s as Map)['id']),
+        contains(sessionId),
+        reason: 'the pre-restart session survives in the store',
+      );
+
+      await b.peer.call('sessions.rename', <String, Object?>{
+        'sessionId': sessionId,
+        'title': 'After restart',
+      });
+      await untilRecorded(b, 'session.updated', 1);
+      expect(
+        b.of('session.updated'),
+        isNotEmpty,
+        reason:
+            'updates for sessions that predate the server process must not '
+            'be suppressed by the session.created ordering gate',
+      );
+      expect(
+        ((b.of('session.updated').first.params['session']! as Map)
+            .cast<String, Object?>())['title'],
+        'After restart',
+      );
+
+      await b.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

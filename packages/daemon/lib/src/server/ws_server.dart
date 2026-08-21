@@ -258,6 +258,16 @@ class SpeedDialServer {
         'event': tuple.event.toJson(),
       });
     });
+    // Sessions persisted before this server process started never get a
+    // `session.created` broadcast (clients discover them via
+    // `sessions.list`), so the gate set below is seeded with everything
+    // already in the store. Without this, a daemon restart would suppress
+    // every `session.updated` for pre-existing sessions for the life of the
+    // process, leaving connected clients with stale statuses (e.g. a session
+    // stuck at `idle` while its turn runs).
+    _createdBroadcast.addAll(
+      _store.listSessions(includeArchived: true).map((session) => session.id),
+    );
     _changesSub = _engine.sessionChanges.listen((session) {
       // Skip updates for sessions whose `session.created` has not been
       // broadcast yet: the engine emits updates while `sessions.create` is
