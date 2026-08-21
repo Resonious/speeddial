@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../scope.dart';
+import '../state/settings_store.dart';
 import '../theme.dart';
 import 'chat/chat_pane.dart';
 import 'left/left_rail.dart';
@@ -26,16 +27,21 @@ class SpeedDialShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Dark app on transparent system bars: light status/nav icons. The
-    // narrow AppBar sets this for itself, but the wide layout has no AppBar.
-    return const AnnotatedRegion<SystemUiOverlayStyle>(
+    // System bars stay transparent; icon brightness follows the active
+    // theme so icons stay legible in both light and dark mode. The narrow
+    // AppBar sets this for itself, but the wide layout has no AppBar.
+    final Brightness icons =
+        Theme.of(context).brightness == Brightness.dark
+            ? Brightness.light
+            : Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
+        statusBarIconBrightness: icons,
         systemNavigationBarColor: Colors.transparent,
-        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarIconBrightness: icons,
       ),
-      child: _Shell(),
+      child: const _Shell(),
     );
   }
 }
@@ -107,6 +113,7 @@ class _ShellState extends State<_Shell> {
             title: const _TopBarTitle(),
             actions: <Widget>[
               const _DaemonStatusChip(),
+              const _ThemeModeButton(),
               const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Open right panel',
@@ -195,6 +202,7 @@ class _DesktopTopBar extends StatelessWidget {
                 ),
               ),
               const _DaemonStatusChip(),
+              const _ThemeModeButton(),
               const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Toggle right panel',
@@ -206,6 +214,37 @@ class _DesktopTopBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Cycles the persisted theme mode: system → light → dark. Lives in the
+/// top bar of both layouts.
+class _ThemeModeButton extends StatelessWidget {
+  const _ThemeModeButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final SettingsStore settings = AppScope.of(context).settings;
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (BuildContext context, Widget? _) {
+        final ThemeMode mode = settings.themeMode;
+        final (IconData icon, String label) = switch (mode) {
+          ThemeMode.system => (Icons.brightness_auto, 'System'),
+          ThemeMode.light => (Icons.light_mode, 'Light'),
+          ThemeMode.dark => (Icons.dark_mode, 'Dark'),
+        };
+        return IconButton(
+          tooltip: 'Theme: $label',
+          icon: Icon(icon),
+          onPressed: () => settings.setThemeMode(switch (mode) {
+            ThemeMode.system => ThemeMode.light,
+            ThemeMode.light => ThemeMode.dark,
+            ThemeMode.dark => ThemeMode.system,
+          }),
+        );
+      },
     );
   }
 }

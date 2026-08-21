@@ -125,7 +125,7 @@ lib/main.dart                hidden native MCP subprocess dispatch, then runApp;
                              SpeedDialApp is a WidgetsBindingObserver that stops the
                              embedded daemon on app shutdown.
 lib/src/scope.dart           AppScope inherited widget + store graph
-lib/src/theme.dart           dark-first Material 3 theme, monospace accents, dense
+lib/src/theme.dart           light + dark Material 3 themes (GitHub palettes), monospace accents, dense
 lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PROTOCOL.md
                                   (auth, reconnect with backoff, request map, notification
                                   stream, seq-gap detection + history refetch)

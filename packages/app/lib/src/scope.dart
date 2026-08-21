@@ -14,6 +14,7 @@ import 'state/git_store.dart';
 import 'state/mcp_store.dart';
 import 'state/projects_store.dart';
 import 'state/sessions_store.dart';
+import 'state/settings_store.dart';
 
 /// Connection state of a daemon endpoint. Driven live from each
 /// [WsDaemonClient]'s `connState`: [connecting] is the first attempt,
@@ -263,9 +264,11 @@ class AppData {
   AppData({
     ConnectionsStore? connections,
     SelectionStore? selection,
+    SettingsStore? settings,
     DaemonClient Function(String daemonId)? clientFor,
   }) : connections = connections ?? ConnectionsStore(),
        selection = selection ?? SelectionStore(),
+       settings = settings ?? SettingsStore(),
        _fallbackClientFor = clientFor {
     projects = ProjectsStore(clientFor: this.clientFor);
     sessions = SessionsStore(clientFor: this.clientFor);
@@ -280,6 +283,7 @@ class AppData {
 
   final ConnectionsStore connections;
   final SelectionStore selection;
+  final SettingsStore settings;
 
   late final ProjectsStore projects;
   late final SessionsStore sessions;

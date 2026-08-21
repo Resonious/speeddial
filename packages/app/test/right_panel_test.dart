@@ -6,7 +6,6 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
-import 'package:speeddial_app/src/ui/right/diff_view.dart';
 import 'package:speeddial_app/src/ui/right/right_panel.dart';
 
 void main() {
@@ -196,15 +195,16 @@ void main() {
       expect(find.text(line), findsWidgets, reason: 'patch line: $line');
     }
     // Color per line prefix: + green, - red, @@ hunk blue, ---/+++ meta amber.
+    final SpeedDialColors colors = buildSpeedDialTheme().speedDialColors;
     final Text remove = tester.widget<Text>(find.text('-void main()').first);
-    expect(remove.style?.color, kDiffRemove);
+    expect(remove.style?.color, colors.diffRemove);
     final Text add = tester
         .widget<Text>(find.text('+void main() { print("hi"); }').first);
-    expect(add.style?.color, kDiffAdd);
+    expect(add.style?.color, colors.success);
     final Text hunk = tester.widget<Text>(find.text('@@ -1 +1 @@').first);
-    expect(hunk.style?.color, kDiffHunk);
+    expect(hunk.style?.color, colors.running);
     final Text meta = tester.widget<Text>(find.text('--- a/lib/main.dart').first);
-    expect(meta.style?.color, kDiffMeta);
+    expect(meta.style?.color, colors.waitingPermission);
   });
 
   testWidgets('commit button asks the session to commit its changes',

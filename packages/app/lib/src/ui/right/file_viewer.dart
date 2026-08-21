@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -49,11 +50,23 @@ class _FileViewerState extends State<FileViewer> {
   Object? _error;
   TextSpan? _highlighted;
   bool _loading = false;
+  Brightness _brightness = Brightness.dark;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _files = AppScope.of(context).files;
+    final Brightness brightness = Theme.of(context).brightness;
+    if (_brightness != brightness) {
+      // Theme switch: re-highlight the loaded content in the new brightness
+      // without refetching the file.
+      _brightness = brightness;
+      final FileReadResult? result = _result;
+      if (result != null && !result.isBinary) {
+        _highlighted = null;
+        unawaited(_applyHighlight(result.content, widget.file.path));
+      }
+    }
     _load();
   }
 
@@ -70,7 +83,7 @@ class _FileViewerState extends State<FileViewer> {
   }
 
   Future<void> _load() async {
-    if (_loading) return;
+    if (_loading || _result != null) return;
     _loading = true;
     final FilesStore files = _files;
     final String path = widget.file.path;
@@ -86,9 +99,7 @@ class _FileViewerState extends State<FileViewer> {
         _highlighted = null;
       });
       if (!result.isBinary) {
-        final TextSpan? highlighted = await _highlight(result.content, path);
-        if (!mounted || widget.file.path != path) return;
-        setState(() => _highlighted = highlighted);
+        await _applyHighlight(result.content, path);
       }
     } on DaemonError catch (error) {
       if (!mounted || widget.file.path != path) return;
@@ -101,11 +112,24 @@ class _FileViewerState extends State<FileViewer> {
     }
   }
 
-  Future<TextSpan?> _highlight(String content, String path) async {
+  Future<void> _applyHighlight(String content, String path) async {
+    final Brightness brightness = _brightness;
+    final TextSpan? highlighted = await _highlight(content, path, brightness);
+    // A theme switch during the await restarts highlighting with the new
+    // brightness; drop this stale span.
+    if (!mounted || widget.file.path != path || _brightness != brightness) {
+      return;
+    }
+    setState(() => _highlighted = highlighted);
+  }
+
+  Future<TextSpan?> _highlight(
+      String content, String path, Brightness brightness) async {
     final String? language = _languageFor(path);
     if (language == null) return null;
     try {
-      final Highlighter highlighter = await _highlighterFor(language);
+      final Highlighter highlighter =
+          await _highlighterFor(language, brightness);
       return highlighter.highlight(content);
     } catch (_) {
       // Missing grammar/theme assets: fall back to plain rendering.
@@ -220,15 +244,15 @@ String? _languageFor(String path) {
 }
 
 // Highlighter construction is async (grammar + theme assets) and cached for
-// the app lifetime: one instantiated Highlighter per language.
-final Map<String, Future<Highlighter>> _highlighterCache =
-    <String, Future<Highlighter>>{};
+// the app lifetime: one instantiated Highlighter per language and brightness.
+final Map<(String, Brightness), Future<Highlighter>> _highlighterCache =
+    <(String, Brightness), Future<Highlighter>>{};
 
-Future<Highlighter> _highlighterFor(String language) {
-  return _highlighterCache.putIfAbsent(language, () async {
+Future<Highlighter> _highlighterFor(String language, Brightness brightness) {
+  return _highlighterCache.putIfAbsent((language, brightness), () async {
     await Highlighter.initialize(<String>[language]);
     final HighlighterTheme theme =
-        await HighlighterTheme.loadForBrightness(Brightness.dark);
+        await HighlighterTheme.loadForBrightness(brightness);
     return Highlighter(language: language, theme: theme);
   });
 }

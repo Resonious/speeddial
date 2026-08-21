@@ -3,11 +3,6 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
 
-/// GitHub-dark green used for success/completed states; matches the app's
-/// GitHub-style palette and is intentional here because [SpeedDialColors]
-/// only carries running/waiting/error/idle/closed statuses.
-const Color _success = Color(0xFF3FB950);
-
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
   final SpeedDialColors c = context.speedDialColors;
@@ -16,13 +11,13 @@ Color _kindColor(BuildContext context, String kind) {
     case 'fetch':
       return c.running;
     case 'edit':
-      return _success;
+      return c.success;
     case 'delete':
       return c.error;
     case 'move':
-      return const Color(0xFFD29922);
+      return c.attention;
     case 'search':
-      return const Color(0xFFA371F7);
+      return c.purple;
     case 'execute':
       return c.running;
     case 'think':
@@ -45,7 +40,7 @@ Color _statusColor(BuildContext context, ToolCallStatus status) {
   return switch (status) {
     ToolCallStatus.pending => c.idle,
     ToolCallStatus.running => c.running,
-    ToolCallStatus.completed => _success,
+    ToolCallStatus.completed => c.success,
     ToolCallStatus.failed => c.error,
   };
 }
@@ -281,11 +276,11 @@ class _DiffView extends StatelessWidget {
     }
     for (final String line in (diff.oldText ?? '').split('\n')) {
       if (line.isEmpty) continue;
-      add('-', line, colors.error);
+      add('-', line, colors.diffRemove);
     }
     for (final String line in diff.newText.split('\n')) {
       if (line.isEmpty) continue;
-      add('+', line, _success);
+      add('+', line, colors.success);
     }
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

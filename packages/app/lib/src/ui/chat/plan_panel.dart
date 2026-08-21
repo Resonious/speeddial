@@ -3,9 +3,6 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
 
-/// GitHub-dark green for completed plan steps (see [tool_call_card]).
-const Color _success = Color(0xFF3FB950);
-
 IconData _statusIcon(PlanEntryStatus status) => switch (status) {
       PlanEntryStatus.pending => Icons.circle_outlined,
       PlanEntryStatus.inProgress => Icons.play_circle_outline,
@@ -17,7 +14,7 @@ Color _statusColor(BuildContext context, PlanEntryStatus status) {
   return switch (status) {
     PlanEntryStatus.pending => c.idle,
     PlanEntryStatus.inProgress => c.running,
-    PlanEntryStatus.completed => _success,
+    PlanEntryStatus.completed => c.success,
   };
 }
 

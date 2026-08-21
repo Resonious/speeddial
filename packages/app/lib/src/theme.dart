@@ -14,6 +14,10 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
     required this.error,
     required this.idle,
     required this.closed,
+    required this.success,
+    required this.attention,
+    required this.purple,
+    required this.diffRemove,
     required this.border,
     required this.codeBackground,
     required this.mono,
@@ -34,6 +38,19 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
   /// Dimmed grey — closed/archived sessions.
   final Color closed;
 
+  /// Green — completed/success states, diff additions.
+  final Color success;
+
+  /// Deep amber — 'move' tool-call accents.
+  final Color attention;
+
+  /// Purple — 'search' tool-call accents.
+  final Color purple;
+
+  /// Red for diff deletions; brighter than [error] in dark mode where the
+  /// button red is too dim for text.
+  final Color diffRemove;
+
   /// Subtle hairline border for rails, dividers, cards, inputs.
   final Color border;
 
@@ -50,6 +67,10 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
     Color? error,
     Color? idle,
     Color? closed,
+    Color? success,
+    Color? attention,
+    Color? purple,
+    Color? diffRemove,
     Color? border,
     Color? codeBackground,
     TextStyle? mono,
@@ -60,6 +81,10 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
       error: error ?? this.error,
       idle: idle ?? this.idle,
       closed: closed ?? this.closed,
+      success: success ?? this.success,
+      attention: attention ?? this.attention,
+      purple: purple ?? this.purple,
+      diffRemove: diffRemove ?? this.diffRemove,
       border: border ?? this.border,
       codeBackground: codeBackground ?? this.codeBackground,
       mono: mono ?? this.mono,
@@ -75,6 +100,10 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
       error: Color.lerp(error, other.error, t)!,
       idle: Color.lerp(idle, other.idle, t)!,
       closed: Color.lerp(closed, other.closed, t)!,
+      success: Color.lerp(success, other.success, t)!,
+      attention: Color.lerp(attention, other.attention, t)!,
+      purple: Color.lerp(purple, other.purple, t)!,
+      diffRemove: Color.lerp(diffRemove, other.diffRemove, t)!,
       border: Color.lerp(border, other.border, t)!,
       codeBackground: Color.lerp(codeBackground, other.codeBackground, t)!,
       mono: TextStyle.lerp(mono, other.mono, t) ?? mono,
@@ -213,6 +242,10 @@ ThemeData buildSpeedDialTheme() {
         error: const Color(0xFFE5534B),
         idle: const Color(0xFF8B949E),
         closed: const Color(0xFF59636E),
+        success: const Color(0xFF3FB950),
+        attention: const Color(0xFFD29922),
+        purple: const Color(0xFFA371F7),
+        diffRemove: const Color(0xFFF85149),
         border: border,
         codeBackground: panel,
         mono: _monoBase.copyWith(fontSize: 12, height: 1.5, color: fg),
@@ -221,8 +254,8 @@ ThemeData buildSpeedDialTheme() {
   );
 }
 
-/// Matching light theme (GitHub-light palette); the app defaults to dark but
-/// exposes this for future theme switching.
+/// Matching light theme (GitHub-light palette); selected when the theme
+/// mode resolves to light (see [SettingsStore]).
 ThemeData buildSpeedDialLightTheme() {
   const Color surface = Color(0xFFF6F8FA);
   const Color panel = Color(0xFFFFFFFF);
@@ -326,6 +359,10 @@ ThemeData buildSpeedDialLightTheme() {
         error: const Color(0xFFCF222E),
         idle: const Color(0xFF6E7781),
         closed: const Color(0xFFAEB6BF),
+        success: const Color(0xFF1A7F37),
+        attention: const Color(0xFF9A6700),
+        purple: const Color(0xFF8250DF),
+        diffRemove: const Color(0xFFCF222E),
         border: border,
         codeBackground: panel,
         mono: _monoBase.copyWith(fontSize: 12, height: 1.5, color: fg),

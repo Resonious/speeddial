@@ -283,7 +283,7 @@ class _GitPaneState extends State<_GitPane> {
                 if (status.behind > 0)
                   _Pill(
                     label: '↓ ${status.behind}',
-                    color: kDiffMeta,
+                    color: context.speedDialColors.waitingPermission,
                   ),
               ],
             ),
@@ -602,7 +602,11 @@ class _StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final String letter = _letter();
-    final Color color = _color(letter, Theme.of(context).colorScheme);
+    final Color color = _color(
+      letter,
+      context.speedDialColors,
+      Theme.of(context).colorScheme,
+    );
     return Container(
       width: 22,
       height: 22,
@@ -632,14 +636,14 @@ class _StatusBadge extends StatelessWidget {
     return 'MADRUCT?'.contains(c) ? c : '?';
   }
 
-  Color _color(String letter, ColorScheme scheme) {
+  Color _color(String letter, SpeedDialColors colors, ColorScheme scheme) {
     switch (letter) {
       case 'A':
-        return kDiffAdd;
+        return colors.success;
       case 'D':
-        return kDiffRemove;
+        return colors.diffRemove;
       case 'M':
-        return kDiffMeta;
+        return colors.waitingPermission;
       default:
         return scheme.onSurfaceVariant;
     }

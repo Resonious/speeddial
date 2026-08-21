@@ -44,6 +44,7 @@ Future<void> main(List<String> args) async {
     // statuses instead of blocking startup.
     unawaited(data.connectAll());
   }
+  await data.settings.init();
   runApp(SpeedDialApp(data: data));
 }
 
@@ -89,13 +90,18 @@ class _SpeedDialAppState extends State<SpeedDialApp>
   Widget build(BuildContext context) {
     return AppScope(
       data: widget.data,
-      child: MaterialApp(
-        title: 'SpeedDial',
-        debugShowCheckedModeBanner: false,
-        theme: buildSpeedDialLightTheme(),
-        darkTheme: buildSpeedDialTheme(),
-        themeMode: ThemeMode.dark,
-        home: const SpeedDialShell(),
+      child: ListenableBuilder(
+        listenable: widget.data.settings,
+        builder: (BuildContext context, Widget? _) {
+          return MaterialApp(
+            title: 'SpeedDial',
+            debugShowCheckedModeBanner: false,
+            theme: buildSpeedDialLightTheme(),
+            darkTheme: buildSpeedDialTheme(),
+            themeMode: widget.data.settings.themeMode,
+            home: const SpeedDialShell(),
+          );
+        },
       ),
     );
   }
