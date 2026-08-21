@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme.dart';
 
@@ -324,6 +325,9 @@ String _formatSize(int size) {
   return '${value.toStringAsFixed(value >= 10 ? 0 : 1)} MiB';
 }
 
+Future<bool> _launchExternal(Uri uri) =>
+    launchUrl(uri, mode: LaunchMode.externalApplication);
+
 /// One agent message: markdown body with syntax-highlighted code blocks.
 ///
 /// While text is still streaming (chunk deltas arriving), code blocks render
@@ -331,10 +335,19 @@ String _formatSize(int size) {
 /// [settleDelay], each block is highlighted once (via [Highlighter]) and the
 /// resulting [TextSpan] cached in this State, keyed by the exact code text.
 class AgentMessageView extends StatefulWidget {
-  const AgentMessageView({super.key, required this.text});
+  const AgentMessageView({
+    super.key,
+    required this.text,
+    this.launchExternal = _launchExternal,
+  });
 
   /// Combined (chunk-merged) markdown body text.
   final String text;
+
+  /// Opens an external URI when a markdown link is activated.
+  ///
+  /// Injected in tests so link activation does not touch the host platform.
+  final Future<bool> Function(Uri uri) launchExternal;
 
   /// How long the text must stop changing before highlighting kicks in.
   static const Duration settleDelay = Duration(milliseconds: 300);
@@ -420,6 +433,15 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     }
   }
 
+  void _onTapLink(String _, String? href, String _) {
+    if (href == null) return;
+    final Uri? uri = Uri.tryParse(href);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      return;
+    }
+    unawaited(widget.launchExternal(uri));
+  }
+
   @override
   Widget build(BuildContext context) {
     final TextStyle? bodyStyle = Theme.of(context).textTheme.bodyMedium;
@@ -444,6 +466,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           data: widget.text,
           styleSheet: _styleSheetFor(context, bodyStyle),
           syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
+          onTapLink: _onTapLink,
         ),
       ),
     );
