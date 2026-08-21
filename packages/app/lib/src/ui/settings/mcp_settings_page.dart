@@ -179,9 +179,8 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
       body: ListenableBuilder(
         listenable: store,
         builder: (BuildContext context, Widget? child) {
-          final List<Project> projects = AppScope.of(
-            context,
-          ).projects.projectsFor(widget.daemonId);
+          final List<Project> projects = AppScope.of(context).projects
+              .projectsFor(widget.daemonId);
           final Map<String, String> projectNames = <String, String>{
             for (final Project project in projects) project.id: project.name,
           };
@@ -224,8 +223,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
                         ) ...<Widget>[
                           _McpServerTile(
                             profile: servers[index],
-                            scopeLabel:
-                                servers[index].projectId == null
+                            scopeLabel: servers[index].projectId == null
                                 ? 'All projects'
                                 : projectNames[servers[index].projectId] ??
                                       'Project unavailable',
@@ -300,10 +298,7 @@ class _McpServerTile extends StatelessWidget {
     subtitle: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          scopeLabel,
-          style: Theme.of(context).textTheme.labelMedium,
-        ),
+        Text(scopeLabel, style: Theme.of(context).textTheme.labelMedium),
         Text(
           profile.transport == McpTransport.stdio
               ? <String>[profile.command!, ...profile.args].join(' ')
@@ -432,6 +427,8 @@ class _OAuthProgressDialogState extends State<_OAuthProgressDialog> {
           case McpOAuthStatus.authorizing:
             await Future<void>.delayed(const Duration(seconds: 1));
         }
+      } on DaemonConnectionError {
+        await Future<void>.delayed(const Duration(seconds: 1));
       } on Object catch (error) {
         if (!mounted) return;
         setState(() => _error = error.toString());

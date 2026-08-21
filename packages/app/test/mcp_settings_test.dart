@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/ui/settings/mcp_settings_page.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
   testWidgets('adds a stdio MCP server and stores credential names', (
@@ -109,10 +110,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Connect account'));
     await tester.pump();
-    expect(
-      launched.toString(),
-      contains('https://auth.example/authorize'),
-    );
+    expect(launched.toString(), contains('https://auth.example/authorize'));
     expect(
       find.textContaining('Finish authorization in your browser'),
       findsOneWidget,
@@ -128,4 +126,74 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('OAuth: Not connected'), findsOneWidget);
   });
+
+  testWidgets('retries OAuth status after a temporary disconnection', (
+    WidgetTester tester,
+  ) async {
+    final _DisconnectingOAuthClient client = _DisconnectingOAuthClient();
+    final AppData data = AppData()..registerClient('daemon', client);
+    addTearDown(data.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          data: data,
+          child: McpSettingsPage(
+            daemonId: 'daemon',
+            daemonName: 'Test daemon',
+            launchExternal: (Uri uri) async => true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mcp-add-server')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('mcp-name')), 'Remote tools');
+    await tester.tap(find.byKey(const Key('mcp-transport')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remote server (HTTP)').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('mcp-endpoint')),
+      'https://mcp.example/tools',
+    );
+    await tester.tap(find.byKey(const Key('mcp-auth-type')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OAuth 2.1').last);
+    await tester.pumpAndSettle();
+    final Finder save = find.byKey(const Key('mcp-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('MCP server actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect account'));
+    await tester.pump();
+
+    expect(find.textContaining('daemon client is not connected'), findsNothing);
+    expect(
+      find.textContaining('Finish authorization in your browser'),
+      findsOneWidget,
+    );
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(client.statusCalls, 2);
+    expect(find.text('OAuth: Authorized'), findsOneWidget);
+  });
+}
+
+class _DisconnectingOAuthClient extends FakeDaemonClient {
+  int statusCalls = 0;
+
+  @override
+  Future<McpServerProfile> mcpOAuthStatus(String id, String flowId) {
+    statusCalls++;
+    if (statusCalls == 1) {
+      throw const DaemonConnectionError('daemon client is not connected');
+    }
+    return super.mcpOAuthStatus(id, flowId);
+  }
 }

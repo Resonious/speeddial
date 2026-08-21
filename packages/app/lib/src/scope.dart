@@ -446,6 +446,15 @@ class AppData {
         DaemonConnectionState.failed => ConnectionStatus.failed,
       };
 
+  /// Retries every app-owned WebSocket immediately after the app resumes.
+  /// Registered clients and constructor-provided clients own their lifecycle.
+  void reconnectAll() {
+    if (_disposed || _fallbackClientFor != null) return;
+    for (final DaemonEndpoint endpoint in connections.endpoints) {
+      reconnect(endpoint.id);
+    }
+  }
+
   /// Manual reconnect hook for the UI ("Retry now" on a failed endpoint):
   /// resets the live client's backoff and retries immediately, or starts the
   /// first connect for a never-touched endpoint. Registered clients (tests,

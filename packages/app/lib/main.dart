@@ -81,7 +81,9 @@ class _SpeedDialAppState extends State<SpeedDialApp>
     // `detached` is the last notification before the process is killed; on
     // desktop there is no `paused`/`resumed`, so this is the only reliable
     // shutdown hook for the in-process daemon.
-    if (state == AppLifecycleState.detached) {
+    if (state == AppLifecycleState.resumed) {
+      widget.data.reconnectAll();
+    } else if (state == AppLifecycleState.detached) {
       unawaited(widget.data.stopLocalDaemon());
     }
   }
