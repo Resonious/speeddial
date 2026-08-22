@@ -33,19 +33,29 @@ void main() {
 
       final Rect userMessage = tester.getRect(find.byType(UserMessageBubble));
       final Rect agentMessage = tester.getRect(find.byType(AgentMessageView));
-      final Offset userCopy = tester.getCenter(
+      final Rect userCopy = tester.getRect(
         find.byKey(const ValueKey<String>('copy-message-1')),
       );
-      final Offset agentCopy = tester.getCenter(
+      final Rect agentCopy = tester.getRect(
         find.byKey(const ValueKey<String>('copy-message-2')),
+      );
+      final Rect userFork = tester.getRect(
+        find.byKey(const ValueKey<String>('fork-message-1')),
+      );
+      final Rect agentFork = tester.getRect(
+        find.byKey(const ValueKey<String>('fork-message-2')),
       );
 
       expect(userMessage.right, 390);
       expect(agentMessage.left, 0);
       // Actions stay toward the conversation's center instead of displacing
       // either bubble from its speaker's conventional outer edge.
-      expect(userCopy.dx, lessThan(userMessage.left));
-      expect(agentCopy.dx, greaterThan(agentMessage.right));
+      expect(userCopy.center.dx, lessThan(userMessage.left));
+      expect(agentCopy.center.dx, greaterThan(agentMessage.right));
+      expect(userCopy.center.dx, closeTo(userFork.center.dx, 0.1));
+      expect(agentCopy.center.dx, closeTo(agentFork.center.dx, 0.1));
+      expect(userFork.top, greaterThanOrEqualTo(userCopy.bottom));
+      expect(agentFork.top, greaterThanOrEqualTo(agentCopy.bottom));
     });
   });
 

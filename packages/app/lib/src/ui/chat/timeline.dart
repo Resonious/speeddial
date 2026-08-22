@@ -379,7 +379,7 @@ class _MessageWithActions extends StatelessWidget {
       );
     }
     if (buttons.isEmpty) return child;
-    final Widget actions = Row(
+    final Widget actions = Column(
       mainAxisSize: MainAxisSize.min,
       children: buttons,
     );
