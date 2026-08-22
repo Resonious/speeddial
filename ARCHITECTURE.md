@@ -61,7 +61,9 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     daemon-owned `speeddial` MCP descriptor is merged into the selected
                     native Ante settings in a private transient `ANTE_HOME`; non-settings
                     state links back to the real home, native MCP entries remain direct,
-                    and the transient directory is removed on process exit.
+                    and the transient directory is removed on process exit. New sessions
+                    are seeded with the settings default model/provider (serve mode
+                    ignores them when StartSession omits a model).
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
@@ -88,7 +90,11 @@ lib/src/providers/  Provider registry. Built-ins:
                     {"providers":{"<id>":{"name":"...","command":["...",...],
                     "protocol":"acp|codex|ante","catalogCommand":["...",...]}}}
                     `protocol` defaults to `acp`; `catalogCommand` is used only by Ante.
-                    Availability = command[0] resolvable via PATH (or absolute exists).
+                    Models come from a static list, `modelsCommand`, or — for
+                    Ante — `catalogCommand`, which yields provider-qualified
+                    ids ("cerebras/gemma-4-31b") because model ids collide
+                    across Ante's upstream providers. Availability = command[0]
+                    resolvable via PATH (or absolute exists).
 lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
                     transport updates to protocol SessionEvents, assigns seq, persists
                     via SessionStore, and broadcasts to listeners. Handles permission

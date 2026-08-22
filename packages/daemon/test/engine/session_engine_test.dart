@@ -390,6 +390,28 @@ void main() {
     expect(store.getSession(session.id)!.status, SessionStatus.error);
   });
 
+  test('Ante sessions pin the provider of a qualified model id', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    engine = SessionEngine(store: store, providers: fakeAnteProviders());
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeAnte',
+      model: 'fake-provider/fake-large',
+    );
+    // The qualified prefix pins the upstream provider; the session carries
+    // the bare model id and that provider's advertised list.
+    expect(session.model, 'fake-large');
+    expect(session.models, <String>['fake-model', 'fake-large']);
+  });
+
   test('Ante sessions stream rich events and attachments', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

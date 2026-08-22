@@ -46,6 +46,9 @@ ProviderInfo = {
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)
   models: string[],           // selectable model ids, may be []
+                             // Ante entries are provider-qualified
+                             // ("cerebras/gemma-4-31b"): model ids collide
+                             // across Ante's upstream providers
   sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
 }
 
@@ -299,6 +302,10 @@ sessions. Idle resume-capable agents are parked immediately and running agents b
 following turn. Agents without resume support retain their current connections; all new sessions
 receive the saved configuration.
 
+Because `ante serve` ignores the settings default provider/model when `StartSession` carries no
+model (it resolves the subscription instead), the daemon reseeds new sessions with the Ante
+settings defaults it already merges into the transient home.
+
 OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
 RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic
 client registration, RFC 8707 resource indicators, refresh tokens, and the token endpoint
@@ -317,6 +324,11 @@ tokens before session creation/resume, and checks them periodically while runnin
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
 - `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean}` → `{session: Session}`
+  For Ante, `model` may carry a `provider/` prefix taken from a qualified
+  `ProviderInfo.models` entry; the daemon pins that upstream provider in
+  `StartSession` and the session reports the bare model id. Mid-session model
+  switches (`sessions.setModel`) stay within the session's provider — Ante's
+  `UpdateSession` cannot change it.
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is

@@ -504,6 +504,20 @@ class SessionEngine {
     String? rollbackProjectPath,
     String? rollbackWorktreePath,
   }) async {
+    // Ante model ids are provider-qualified (`cerebras/gemma-4-31b`) when
+    // they come from the catalog picker: model ids collide across upstream
+    // providers, and serve mode needs the provider pinned explicitly.
+    String? requestedProvider;
+    if (requestedModel != null &&
+        requestedModel.isNotEmpty &&
+        _providers.byId(baseSession.providerId)?.protocol ==
+            ProviderProtocol.ante) {
+      final int slash = requestedModel.indexOf('/');
+      if (slash > 0 && slash < requestedModel.length - 1) {
+        requestedProvider = requestedModel.substring(0, slash);
+        requestedModel = requestedModel.substring(slash + 1);
+      }
+    }
     final client = _spawnAgent(baseSession);
     final String providerSessionId;
     final Session session;
@@ -521,6 +535,7 @@ class SessionEngine {
         cwd: baseSession.cwd,
         mcpServers: _mcpServersFor(baseSession, info),
         model: requestedModel,
+        provider: requestedProvider,
         sandboxMode: baseSession.sandboxMode,
         yolo: baseSession.yolo,
       );

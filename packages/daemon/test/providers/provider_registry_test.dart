@@ -34,6 +34,39 @@ Map<String, Object?> spawnableOmp({Map<String, Object?>? extra}) =>
       },
     };
 
+/// Path of the fake Ante fixture (its `catalog` mode emits the real
+/// `ante catalog` JSON shape).
+String resolveAnteFixture() => <String>[
+  p.join(Directory.current.path, 'test', 'fixtures', 'fake_ante_agent.dart'),
+  p.join(
+    Directory.current.path,
+    'packages',
+    'daemon',
+    'test',
+    'fixtures',
+    'fake_ante_agent.dart',
+  ),
+].firstWhere((String path) => File(path).existsSync());
+
+/// Config that overrides the built-in `ante` entry with a spawnable command
+/// and a fixture-backed catalog command, so probes run without a real ante.
+Map<String, Object?> spawnableAnte({Map<String, Object?>? extra}) =>
+    <String, Object?>{
+      'providers': <String, Object?>{
+        'ante': <String, Object?>{
+          'name': 'Ante',
+          'command': <String>[Platform.resolvedExecutable, 'serve'],
+          'protocol': 'ante',
+          'catalogCommand': <String>[
+            Platform.resolvedExecutable,
+            resolveAnteFixture(),
+            'catalog',
+          ],
+          ...?extra,
+        },
+      },
+    };
+
 void main() {
   test('built-in providers are present and listed first', () async {
     final registry = ProviderRegistry(modelsProbe: noModels);
@@ -263,6 +296,29 @@ void main() {
       final omp = (await registry.list()).firstWhere((p) => p.id == 'omp');
       expect(omp.models, <String>['m1', 'm2']);
       expect(probedWith, <String>['omp', 'models', '--json']);
+    });
+
+    test('ante models are catalog-probed as provider-qualified ids', () async {
+      // The fixture's `catalog` mode emits the real `ante catalog` shape.
+      final registry = ProviderRegistry(
+        configOverrides: spawnableAnte(),
+        modelsProbe: noModels,
+      );
+      final ante = (await registry.list()).firstWhere((p) => p.id == 'ante');
+      expect(ante.models, const <String>[
+        'fake-provider/fake-model',
+        'fake-provider/fake-large',
+      ]);
+    });
+
+    test('ante catalog probe failure degrades to empty models', () async {
+      final registry = ProviderRegistry(
+        configOverrides: spawnableAnte(),
+        modelsProbe: noModels,
+        catalogProbe: (command) async => throw const FileSystemException('x'),
+      );
+      final ante = (await registry.list()).firstWhere((p) => p.id == 'ante');
+      expect(ante.models, isEmpty);
     });
 
     test('static config models win and skip the probe', () async {

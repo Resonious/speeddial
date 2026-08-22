@@ -267,6 +267,19 @@ class FakeDaemonClient implements DaemonClient {
             SessionSandboxMode.unrestricted,
           ],
         ),
+        ProviderInfo(
+          id: 'ante',
+          name: 'Ante',
+          available: true,
+          command: 'ante serve --stdio',
+          // Provider-qualified: the same model id can exist under several
+          // upstream Ante providers.
+          models: <String>[
+            'cerebras/gemma-4-31b',
+            'openai-subscription/gpt-5.6-sol',
+            'zai/glm-5.2',
+          ],
+        ),
       ],
     );
   }
@@ -564,10 +577,35 @@ class FakeDaemonClient implements DaemonClient {
     _project(projectId);
     final DateTime now = DateTime.now().toUtc();
     final String id = 'sess-${_sessionCounter++}';
-    // omp advertises its selectable models; other providers expose none.
-    final List<String> models = providerId == 'omp'
-        ? const <String>['omp-default', 'kimi-k3', 'gpt-5.2']
-        : const <String>[];
+    // omp and ante advertise selectable models; other providers expose none.
+    final List<String> models = switch (providerId) {
+      'omp' => const <String>['omp-default', 'kimi-k3', 'gpt-5.2'],
+      'ante' => const <String>[
+        'cerebras/gemma-4-31b',
+        'openai-subscription/gpt-5.6-sol',
+        'zai/glm-5.2',
+      ],
+      _ => const <String>[],
+    };
+    final String? resolvedModel;
+    final List<String> sessionModels;
+    if (providerId == 'ante') {
+      // Mirror the daemon: a provider-qualified request pins the upstream
+      // provider; the session then carries that provider's bare model list.
+      final String? bare = (model != null && models.contains(model))
+          ? model.split('/').last
+          : null;
+      resolvedModel = bare;
+      sessionModels = bare == null ? const <String>[] : <String>[bare];
+    } else {
+      // falls back to the omp default (mirrors the agent's best-effort
+      // adoption of an unlisted model id). Providers without a model option
+      // keep the caller's id as a locally persisted preference.
+      resolvedModel = models.isEmpty
+          ? model
+          : (models.contains(model) ? model : 'omp-default');
+      sessionModels = models;
+    }
     final Session session = Session(
       id: id,
       projectId: projectId,
@@ -575,14 +613,8 @@ class FakeDaemonClient implements DaemonClient {
       title: title ?? kDefaultSessionTitle,
       status: SessionStatus.idle,
       mode: mode ?? SessionMode.build,
-      // A requested id inside the advertised list sticks; anything else
-      // falls back to the omp default (mirrors the agent's best-effort
-      // adoption of an unlisted model id). Providers without a model option
-      // keep the caller's id as a locally persisted preference.
-      model: models.isEmpty
-          ? model
-          : (models.contains(model) ? model : 'omp-default'),
-      models: models,
+      model: resolvedModel,
+      models: sessionModels,
       // No real git here: a base branch just moves the cwd to a plausible
       // worktree path, mirroring the daemon's layout.
       cwd: baseBranch == null

@@ -26,6 +26,7 @@ abstract interface class AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
   });

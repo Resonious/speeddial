@@ -44,6 +44,11 @@ import '../paths.dart';
 /// tests inject stubs. A throwing probe degrades to an empty list.
 typedef ModelsProbe = Future<List<String>> Function(List<String> command);
 
+/// Runs an Ante-style `catalog` command and returns `provider/model` ids
+/// qualified by their upstream provider. Tests inject stubs; a throwing
+/// probe degrades to an empty list.
+typedef CatalogProbe = Future<List<String>> Function(List<String> command);
+
 /// Wire protocol spoken by a provider process.
 enum ProviderProtocol { acp, codex, ante }
 
@@ -93,7 +98,9 @@ class ProviderRegistry {
   ProviderRegistry({
     Map<String, Object?>? configOverrides,
     ModelsProbe? modelsProbe,
-  }) : _modelsProbe = modelsProbe ?? _runModelsCommand {
+    CatalogProbe? catalogProbe,
+  }) : _modelsProbe = modelsProbe ?? _runModelsCommand,
+       _catalogProbe = catalogProbe ?? _runCatalogCommand {
     _providers = <String, ProviderSpec>{
       'omp': const ProviderSpec(
         id: 'omp',
@@ -125,6 +132,7 @@ class ProviderRegistry {
 
   late final Map<String, ProviderSpec> _providers;
   final ModelsProbe _modelsProbe;
+  final CatalogProbe _catalogProbe;
 
   /// Successful probe results by provider id.
   final Map<String, List<String>> _probedModels = <String, List<String>>{};
@@ -189,22 +197,31 @@ class ProviderRegistry {
   }
 
   /// The selectable models for [spec]: the static list when configured,
-  /// otherwise a cached or fresh probe of [ProviderSpec.modelsCommand].
-  /// Unavailable providers and probe failures yield an empty list.
+  /// otherwise a cached or fresh probe of [ProviderSpec.modelsCommand] (or,
+  /// for Ante, [ProviderSpec.catalogCommand]). Unavailable providers and
+  /// probe failures yield an empty list.
   Future<List<String>> _modelsFor(ProviderSpec spec) {
     if (spec.models.isNotEmpty) return Future<List<String>>.value(spec.models);
     final cached = _probedModels[spec.id];
     if (cached != null) return Future<List<String>>.value(cached);
-    final command = spec.modelsCommand;
-    if (command == null || command.isEmpty || !isAvailable(spec.id)) {
+    final bool hasModelsCommand =
+        spec.modelsCommand != null && spec.modelsCommand!.isNotEmpty;
+    final bool hasCatalogCommand =
+        spec.catalogCommand != null && spec.catalogCommand!.isNotEmpty;
+    if ((!hasModelsCommand && !hasCatalogCommand) || !isAvailable(spec.id)) {
       return Future<List<String>>.value(const <String>[]);
     }
+    final List<String> command = hasModelsCommand
+        ? spec.modelsCommand!
+        : spec.catalogCommand!;
     final inFlight = _probesInFlight[spec.id];
     if (inFlight != null) return inFlight;
     final future = () async {
       List<String> models;
       try {
-        models = await _modelsProbe(command);
+        models = hasModelsCommand
+            ? await _modelsProbe(command)
+            : await _catalogProbe(command);
       } on Object {
         models = const <String>[];
       }
@@ -238,6 +255,44 @@ class ProviderRegistry {
         if (entry is! Map) continue;
         final id = entry['selector'] ?? entry['id'];
         if (id is String && id.isNotEmpty && seen.add(id)) models.add(id);
+      }
+      return models;
+    } on Object {
+      return const <String>[];
+    }
+  }
+
+  /// Default [CatalogProbe]: runs the command and parses the
+  /// `ante catalog` shape into provider-qualified model ids, so ambiguous
+  /// model ids (the same id under several upstream providers) stay
+  /// selectable. Never throws.
+  static Future<List<String>> _runCatalogCommand(List<String> command) async {
+    try {
+      final result = await Process.run(
+        command.first,
+        command.sublist(1),
+      ).timeout(const Duration(seconds: 5));
+      if (result.exitCode != 0) return const <String>[];
+      final decoded = jsonDecode(result.stdout as String);
+      if (decoded is! Map) return const <String>[];
+      final rawProviders = decoded['providers'];
+      if (rawProviders is! List) return const <String>[];
+      final seen = <String>{};
+      final models = <String>[];
+      for (final rawProvider in rawProviders) {
+        if (rawProvider is! Map) continue;
+        final providerId = rawProvider['id'];
+        if (providerId is! String || providerId.isEmpty) continue;
+        final rawModels = rawProvider['preferred_models'];
+        if (rawModels is! List) continue;
+        for (final rawModel in rawModels) {
+          if (rawModel is! Map) continue;
+          final modelId = rawModel['id'];
+          if (modelId is! String || modelId.isEmpty) continue;
+          if (seen.add('$providerId/$modelId')) {
+            models.add('$providerId/$modelId');
+          }
+        }
       }
       return models;
     } on Object {

@@ -74,6 +74,38 @@ void main() {
     ]);
   });
 
+  test('seeds new sessions with the Ante settings default model', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'ante_defaults_test',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final Directory anteHome = Directory(p.join(tempDir.path, 'ante'));
+    await anteHome.create();
+    await File(p.join(anteHome.path, 'settings.json')).writeAsString(
+      jsonEncode(<String, Object?>{
+        'model': 'gemma-4-31b',
+        'provider': 'cerebras',
+      }),
+    );
+
+    // `ante serve` ignores settings defaults when StartSession carries no
+    // model, resolving the subscription instead. SpeedDial must reseed them.
+    final AnteClient client = spawnAnte(
+      environment: <String, String>{'ANTE_HOME': anteHome.path},
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(
+      cwd: Directory.current.path,
+      mcpServers: <Map<String, Object?>>[
+        <String, Object?>{'name': 'managed', 'command': 'managed-mcp'},
+      ],
+    );
+    final AcpConfigOption model = created.configOptions.firstWhere(
+      (AcpConfigOption option) => option.id == 'model',
+    );
+    expect(model.currentValue, 'gemma-4-31b');
+  });
+
   test(
     'projects managed MCP servers into transient homes for start and resume',
     () async {

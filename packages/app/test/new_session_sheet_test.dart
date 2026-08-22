@@ -78,20 +78,21 @@ Session createdSession(AppData app, String projectId) {
 }
 
 void main() {
-  testWidgets('the form asks for provider, supported safety settings and '
-      'worktree — no prompt, model or mode', (WidgetTester tester) async {
+  testWidgets('the form asks for provider, safety settings and worktree; a '
+      'model picker appears for providers that advertise models', (
+    WidgetTester tester,
+  ) async {
     await pumpSheet(tester);
 
-    // Ask-ahead removed: no initial prompt, model autocomplete or mode
-    // selector. Provider-specific safety controls remain capability-gated.
     expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
     expect(find.byKey(const Key('new-session-yolo')), findsOneWidget);
     expect(find.byKey(const Key('new-session-no-sandbox')), findsNothing);
     expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
     expect(find.byKey(const Key('new-session-prompt')), findsNothing);
-    expect(find.byKey(const Key('new-session-model')), findsNothing);
     expect(find.byKey(const Key('new-session-mode')), findsNothing);
+    // The default provider (omp) advertises models, so the picker shows.
+    expect(find.byKey(const Key('new-session-model')), findsOneWidget);
     // The provider defaults to the daemon's first available provider.
     expect(find.text('OMP Agent'), findsOneWidget);
   });
@@ -126,6 +127,31 @@ void main() {
       app.chat.eventsFor(created.id).whereType<UserMessageEvent>(),
       isEmpty,
     );
+  });
+
+  testWidgets('picking a provider-qualified model pins the upstream '
+      'provider', (WidgetTester tester) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('new-session-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ante').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-session-model')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('cerebras/gemma-4-31b').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    // The daemon splits the qualified id: the session carries the bare
+    // model and the pinned provider's model list.
+    final Session created = createdSession(app, projectId);
+    expect(created.providerId, 'ante');
+    expect(created.model, 'gemma-4-31b');
+    expect(created.models, <String>['gemma-4-31b']);
   });
 
   testWidgets('yolo mode is off by default and sent when checked', (

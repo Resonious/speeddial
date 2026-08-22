@@ -368,11 +368,11 @@ void main() {
     expect(find.text('New session'), findsOneWidget);
     // Provider dropdown defaults to the daemon's first available provider.
     expect(find.text('OMP Agent'), findsOneWidget);
-    // The reduced form: provider + yolo + worktree/default-branch only. No
-    // prompt, model autocomplete or mode selector — those moved to the
-    // composer of the live session.
+    // The reduced form: provider + model + yolo + worktree/default-branch.
+    // No prompt or mode selector — those moved to the composer of the live
+    // session. The model picker appears because omp advertises models.
     expect(find.byKey(const Key('new-session-prompt')), findsNothing);
-    expect(find.byKey(const Key('new-session-model')), findsNothing);
+    expect(find.byKey(const Key('new-session-model')), findsOneWidget);
     expect(find.byKey(const Key('new-session-mode')), findsNothing);
     expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);

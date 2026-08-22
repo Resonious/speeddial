@@ -59,6 +59,11 @@ class AnteClient implements AgentClient {
   Future<void>? _mcpHomeRemovalFuture;
   Future<void>? _imageDirectoryRemovalFuture;
   Directory? _mcpHome;
+  // Ante settings defaults (read while preparing the MCP home). `ante serve`
+  // ignores these when StartSession omits a model, falling back to the
+  // subscription, so newSession reseeds them explicitly.
+  String? _settingsModel;
+  String? _settingsProvider;
   Directory? _imageDirectory;
   int _imageFileIndex = 0;
   final StreamController<String> _stderrController =
@@ -116,6 +121,7 @@ class AnteClient implements AgentClient {
     required String cwd,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     String? model,
+    String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
   }) async {
@@ -128,12 +134,29 @@ class AnteClient implements AgentClient {
       // auto-resolution while retaining request/resolution history.
       'permission_mode': 'strict',
     };
-    if (model != null && model.isNotEmpty) {
-      config['model'] = model;
-      final String? provider = _uniqueProviderForModel(catalog, model);
-      if (provider != null) config['provider'] = provider;
+    // Seed the Ante settings default when the caller did not pick a model:
+    // serve mode otherwise resolves the subscription instead of the
+    // configured provider. An explicit provider (from a provider-qualified
+    // model id) wins over every default.
+    final String? settingsModel = _settingsModel;
+    final String? settingsProvider = _settingsProvider;
+    final bool hasCallerModel = model != null && model.isNotEmpty;
+    final bool hasCallerProvider = provider != null && provider.isNotEmpty;
+    final bool seedFromSettings =
+        !hasCallerModel && settingsModel != null && settingsModel.isNotEmpty;
+    final String? effectiveModel = seedFromSettings ? settingsModel : model;
+    if (hasCallerProvider) config['provider'] = provider;
+    if (effectiveModel != null && effectiveModel.isNotEmpty) {
+      config['model'] = effectiveModel;
+      if (!hasCallerProvider) {
+        final String? resolved = seedFromSettings
+            ? ((settingsProvider != null && settingsProvider.isNotEmpty)
+                  ? settingsProvider
+                  : _uniqueProviderForModel(catalog, effectiveModel))
+            : _uniqueProviderForModel(catalog, effectiveModel);
+        if (resolved != null) config['provider'] = resolved;
+      }
     }
-
     final String opId = _nextOpId();
     final Completer<_AnteSessionState> completer =
         Completer<_AnteSessionState>();
@@ -367,6 +390,8 @@ class AnteClient implements AgentClient {
       }
       settings.addAll(Map<String, Object?>.from(decoded));
     }
+    _settingsModel = settings['model'] as String?;
+    _settingsProvider = settings['provider'] as String?;
 
     final Map<String, Object?> mergedServers =
         switch (settings['mcp_servers']) {

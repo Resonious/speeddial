@@ -41,6 +41,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   Future<_SheetData>? _data;
   String? _providerId;
   ProviderInfo? _selectedProvider;
+  String? _modelId;
   String? _baseBranch;
   bool _useWorktree = true;
   bool _yolo = false;
@@ -75,7 +76,12 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   }
 
   Future<void> _selectProvider(String providerId) async {
-    setState(() => _providerId = providerId);
+    setState(() {
+      _providerId = providerId;
+      // Models are provider-scoped; a stale pick would mismatch the new
+      // provider's catalog.
+      _modelId = null;
+    });
     try {
       await widget.data.settings.setProviderId(providerId);
     } on Object {
@@ -95,6 +101,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         widget.daemonId,
         projectId: widget.projectId,
         providerId: _providerId!,
+        model: (_modelId == null || _modelId!.isEmpty) ? null : _modelId,
         baseBranch: _useWorktree ? _baseBranch : null,
         sandboxMode:
             _selectedProvider?.sandboxModes.contains(
@@ -206,6 +213,31 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                 },
         ),
         const SizedBox(height: 4),
+        if (_selectedProvider != null && _selectedProvider!.models.isNotEmpty)
+          KeyedSubtree(
+            // Remount per provider: DropdownMenu only takes an initial
+            // selection, and a provider switch resets the model pick.
+            key: ValueKey<String>('new-session-model-$_providerId'),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: DropdownMenu<String>(
+                key: const Key('new-session-model'),
+                initialSelection: _modelId ?? '',
+                label: const Text('Model'),
+                expandedInsets: EdgeInsets.zero,
+                enableFilter: true,
+                requestFocusOnTap: true,
+                enabled: !_submitting,
+                dropdownMenuEntries: <DropdownMenuEntry<String>>[
+                  DropdownMenuEntry<String>(value: '', label: 'Default'),
+                  for (final String model in _selectedProvider!.models)
+                    DropdownMenuEntry<String>(value: model, label: model),
+                ],
+                onSelected: (String? value) =>
+                    setState(() => _modelId = value),
+              ),
+            ),
+          ),
         CheckboxListTile(
           key: const Key('new-session-yolo'),
           value: _yolo,
