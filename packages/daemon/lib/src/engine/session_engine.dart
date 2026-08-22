@@ -313,8 +313,7 @@ class SessionEngine {
       );
     }
     final SessionSandboxMode? effectiveSandboxMode = switch (spec.protocol) {
-      ProviderProtocol.codex =>
-        sandboxMode ?? SessionSandboxMode.workspaceWrite,
+      ProviderProtocol.codex => SessionSandboxMode.unrestricted,
       _ when sandboxMode == null => null,
       _ => throw DaemonError(
         _kErrInvalidParams,

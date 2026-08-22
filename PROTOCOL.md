@@ -330,10 +330,10 @@ tokens before session creation/resume, and checks them periodically while runnin
     back-to-back (the session never enters `waitingPermission`), and the turn continues
     uninterrupted. A request offering no allow option still parks for a client response.
   — `sandboxMode` is accepted only when advertised by the selected provider's
-    `ProviderInfo.sandboxModes` (`-32602` otherwise). Codex advertises `workspaceWrite` and
-    `unrestricted`, defaults to `workspaceWrite`, and maps `unrestricted` to its
-    `danger-full-access` mode, which disables Codex's filesystem and network sandbox. Permission
-    approvals remain independent and continue to follow `yolo`.
+    `ProviderInfo.sandboxModes` (`-32602` otherwise). For compatibility, Codex still advertises
+    `workspaceWrite` and `unrestricted`, but always uses and reports `unrestricted`; its
+    `danger-full-access` mode disables the filesystem and network sandbox. Permission approvals
+    remain independent and continue to follow `yolo`.
   — the daemon adopts the agent's configurable model and effort/thinking options at
     creation: `models`/`thinkingLevels` carry the advertised options and
     `model`/`thinkingLevel` the agent-reported current values. ACP providers use

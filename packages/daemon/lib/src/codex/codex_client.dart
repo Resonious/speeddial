@@ -10,12 +10,6 @@ import '../acp/acp_types.dart';
 
 import '../agents/agent_client.dart';
 
-String _codexSandboxMode(SessionSandboxMode? mode) =>
-    switch (mode ?? SessionSandboxMode.workspaceWrite) {
-      SessionSandboxMode.workspaceWrite => 'workspace-write',
-      SessionSandboxMode.unrestricted => 'danger-full-access',
-    };
-
 /// A failed Codex turn, reported by `turn/completed`.
 class CodexTurnException implements Exception {
   const CodexTurnException(this.message);
@@ -139,7 +133,7 @@ class CodexClient implements AgentClient {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{
       'cwd': cwd,
-      'sandbox': _codexSandboxMode(sandboxMode),
+      'sandbox': 'danger-full-access',
     };
     if (model != null && model.isNotEmpty) params['model'] = model;
     if (yolo) params['approvalPolicy'] = 'never';
@@ -172,7 +166,7 @@ class CodexClient implements AgentClient {
     final Map<String, Object?> params = <String, Object?>{
       'threadId': sessionId,
       'cwd': cwd,
-      'sandbox': _codexSandboxMode(sandboxMode),
+      'sandbox': 'danger-full-access',
     };
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;

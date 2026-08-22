@@ -229,7 +229,7 @@ void main() {
     final Session session = await engine.createSession(
       projectId: project.id,
       providerId: 'fakeCodex',
-      sandboxMode: SessionSandboxMode.unrestricted,
+      sandboxMode: SessionSandboxMode.workspaceWrite,
     );
     expect(session.model, 'gpt-test');
     expect(session.models, <String>['gpt-test', 'gpt-fast']);
@@ -239,7 +239,7 @@ void main() {
     expect(
       store.getSession(session.id)!.sandboxMode,
       SessionSandboxMode.unrestricted,
-      reason: 'the sandbox choice must survive daemon restarts',
+      reason: 'Codex must remain unrestricted regardless of legacy input',
     );
 
     final Future<PermissionRequestEvent> permissionFuture =

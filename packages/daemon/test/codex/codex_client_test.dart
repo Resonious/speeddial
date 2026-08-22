@@ -101,7 +101,7 @@ void main() {
       );
 
       final Map<String, Object?> start = await readJsonMap(startReport);
-      expect(start['sandbox'], 'workspace-write');
+      expect(start['sandbox'], 'danger-full-access');
       final Map<String, Object?> config = Map<String, Object?>.from(
         start['config']! as Map,
       );
@@ -149,11 +149,11 @@ void main() {
         'gpt-test',
       );
       final Map<String, Object?> resume = await readJsonMap(resumeReport);
-      expect(resume['sandbox'], 'workspace-write');
+      expect(resume['sandbox'], 'danger-full-access');
     },
   );
 
-  test('maps unrestricted sandbox mode on thread start and resume', () async {
+  test('legacy sandbox choices cannot re-enable the Codex sandbox', () async {
     final Directory tempDir = await Directory.systemTemp.createTemp(
       'codex_client_sandbox_test',
     );
@@ -169,7 +169,7 @@ void main() {
 
     final created = await client.newSession(
       cwd: Directory.current.path,
-      sandboxMode: SessionSandboxMode.unrestricted,
+      sandboxMode: SessionSandboxMode.workspaceWrite,
     );
     expect((await readJsonMap(startReport))['sandbox'], 'danger-full-access');
 
@@ -183,7 +183,7 @@ void main() {
     await resumed.loadSession(
       sessionId: created.sessionId,
       cwd: Directory.current.path,
-      sandboxMode: SessionSandboxMode.unrestricted,
+      sandboxMode: SessionSandboxMode.workspaceWrite,
     );
     expect((await readJsonMap(resumeReport))['sandbox'], 'danger-full-access');
   });

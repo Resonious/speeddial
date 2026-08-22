@@ -188,7 +188,7 @@ void main() {
     expect(yoloTile().value, isFalse);
   });
 
-  testWidgets('Codex no-sandbox choice is sent and sticky across sheet opens', (
+  testWidgets('Codex always disables its sandbox without showing a choice', (
     WidgetTester tester,
   ) async {
     final (:app, :projectId) = await pumpSheet(tester);
@@ -198,21 +198,7 @@ void main() {
     await tester.tap(find.text('Codex').last);
     await tester.pumpAndSettle();
 
-    final Finder toggle = find.byKey(const Key('new-session-no-sandbox'));
-    CheckboxListTile sandboxTile() => tester.widget<CheckboxListTile>(toggle);
-    expect(toggle, findsOneWidget);
-    expect(sandboxTile().value, isFalse);
-    await tester.ensureVisible(toggle);
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    expect(app.settings.sandboxMode, SessionSandboxMode.unrestricted);
-
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('open-sheet'));
-    await tester.pumpAndSettle();
-    expect(toggle, findsOneWidget);
-    expect(sandboxTile().value, isTrue);
+    expect(find.byKey(const Key('new-session-no-sandbox')), findsNothing);
 
     await tester.ensureVisible(find.byKey(const Key('new-session-submit')));
     await tester.tap(find.byKey(const Key('new-session-submit')));
@@ -220,9 +206,6 @@ void main() {
     final Session created = createdSession(app, projectId);
     expect(created.providerId, 'codex');
     expect(created.sandboxMode, SessionSandboxMode.unrestricted);
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString(SettingsStore.sandboxStorageKey), 'unrestricted');
   });
 
   testWidgets('provider selection is sticky across app instances', (
