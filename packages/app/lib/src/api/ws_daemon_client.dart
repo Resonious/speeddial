@@ -27,10 +27,13 @@ class WsDaemonClient implements DaemonClient {
   WsDaemonClient({
     required this.url,
     this.token,
-    // The explicit initializer (rather than a `this.` formal) keeps the
+    // The explicit initializers (rather than `this.` formals) keep each
     // field's default next to its declaration.
     Duration reconnectBase = const Duration(milliseconds: 500),
-  }) : reconnectBase = reconnectBase; // ignore: prefer_initializing_formals
+    Duration livenessProbeTimeout = const Duration(seconds: 3),
+  }) : reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
+       // ignore: prefer_initializing_formals
+       livenessProbeTimeout = livenessProbeTimeout;
 
   /// WebSocket endpoint, e.g. `ws://127.0.0.1:7331/ws`.
   final String url;
@@ -42,6 +45,10 @@ class WsDaemonClient implements DaemonClient {
   /// Delay of the first reconnect attempt; every retry doubles this,
   /// capped at 15 seconds.
   final Duration reconnectBase;
+
+  /// How long [verifyLiveness] waits for the daemon to answer its probe
+  /// before declaring the socket half-dead (see there).
+  final Duration livenessProbeTimeout;
 
   /// Live connection state; drive UI/status off this (or [isConnected]).
   /// Starts at [DaemonConnectionState.connecting].
@@ -312,6 +319,39 @@ class WsDaemonClient implements DaemonClient {
     _reconnectTimer?.cancel();
     _reconnectAttempt = 0;
     unawaited(connect());
+  }
+
+  /// Probes a socket that believes itself connected and tears it down when
+  /// the daemon does not answer within [livenessProbeTimeout].
+  ///
+  /// Device suspend can kill the TCP connection without delivering a close
+  /// event: [connState] then stays `connected` while every call hangs and
+  /// no resync ever runs. Call this on app resume; a failed probe flips to
+  /// [DaemonConnectionState.reconnecting] and arms the backoff retry, whose
+  /// successful establish emits [resynced] like any other reconnect. A
+  /// merely slow answer is treated as dead too — the reconnect it triggers
+  /// is cheap, unlike a stale socket. `daemon.info` is answered pre-auth,
+  /// so the probe works even if the daemon forgot the authentication.
+  Future<void> verifyLiveness() async {
+    if (_disposed || connState.value != DaemonConnectionState.connected) {
+      return;
+    }
+    final RpcPeer? peer = _peer;
+    if (peer == null || !_socketReady) return;
+    try {
+      await peer.call('daemon.info').timeout(livenessProbeTimeout);
+    } on Object {
+      // A genuine drop raced the probe: its close handler already tore the
+      // socket down and armed its own reconnect; do not double up.
+      if (_disposed || connState.value != DaemonConnectionState.connected) {
+        return;
+      }
+      _resyncNeeded = true;
+      connState.value = DaemonConnectionState.reconnecting;
+      await _tearDownSocket();
+      if (_disposed) return;
+      _scheduleReconnect();
+    }
   }
 
   @override

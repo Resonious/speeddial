@@ -452,7 +452,12 @@ class AppData {
       };
 
   /// Retries every app-owned WebSocket immediately after the app resumes.
-  /// Registered clients and constructor-provided clients own their lifecycle.
+  /// Clients already marked connected get a [WsDaemonClient.verifyLiveness]
+  /// probe instead of [retryNow]: a socket that survived on paper may be
+  /// half-dead (device suspend can drop the TCP connection without a close
+  /// event), in which case the probe tears it down and the reconnect it
+  /// triggers backfills whatever the stores missed. Registered clients and
+  /// constructor-provided clients own their lifecycle.
   void reconnectAll() {
     if (_disposed || _fallbackClientFor != null) return;
     for (final DaemonEndpoint endpoint in connections.endpoints) {
@@ -462,13 +467,19 @@ class AppData {
 
   /// Manual reconnect hook for the UI ("Retry now" on a failed endpoint):
   /// resets the live client's backoff and retries immediately, or starts the
-  /// first connect for a never-touched endpoint. Registered clients (tests,
-  /// demo mode) own their lifecycle; nothing happens for them.
+  /// first connect for a never-touched endpoint. A client that already
+  /// believes itself connected is probed for liveness instead (a no-op when
+  /// the daemon answers). Registered clients (tests, demo mode) own their
+  /// lifecycle; nothing happens for them.
   void reconnect(String daemonId) {
     if (_clients.containsKey(daemonId)) return;
     final WsDaemonClient? live = _websocketClients[daemonId];
     if (live != null) {
-      live.retryNow();
+      if (live.connState.value == DaemonConnectionState.connected) {
+        unawaited(live.verifyLiveness());
+      } else {
+        live.retryNow();
+      }
       return;
     }
     if (!_connectedEndpointIds.add(daemonId)) return;

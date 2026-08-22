@@ -180,6 +180,10 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         final PermissionRequest? pending = _pending;
         final Session? session = data.sessions.byId(sessionId);
         final HistoryStatus historyStatus = chat.historyStatusFor(sessionId);
+        // A just-reconnected daemon refetches what was missed offline; the
+        // buffered timeline is stale for that window (but valid — nothing
+        // is lost), so say so instead of silently showing old content.
+        final bool catchingUp = chat.isCatchingUp(sessionId);
 
         // While the first fetch runs (or after it failed with nothing live
         // to show), a bare timeline would read as an empty session.
@@ -207,6 +211,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         return Column(
           children: <Widget>[
             Expanded(child: surface),
+            if (catchingUp) const _CatchingUp(),
             if (pending != null)
               PermissionBanner(
                 request: pending,
@@ -453,6 +458,44 @@ class _HistoryError extends StatelessWidget {
             label: const Text('Retry'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown while the daemon reconnects and the watched session's history is
+/// refetched to backfill events missed offline: the rendered timeline is
+/// stale for that window. Auto-dismisses once the backfill lands.
+class _CatchingUp extends StatelessWidget {
+  const _CatchingUp();
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    return Material(
+      color: scheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: <Widget>[
+            const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.5),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Catching up…',
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

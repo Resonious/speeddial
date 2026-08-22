@@ -165,7 +165,8 @@ lib/src/scope.dart           AppScope inherited widget + store graph
 lib/src/theme.dart           light + dark Material 3 themes (GitHub palettes), monospace accents, dense
 lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PROTOCOL.md
                                   (auth, reconnect with backoff, request map, notification
-                                  stream, seq-gap detection + history refetch)
+                                  stream, seq-gap detection + history refetch, resume
+                                  liveness probe that catches half-dead sockets)
 lib/src/api/fake_daemon.dart      FakeDaemonClient: in-memory scripted implementation used
                                   by widget tests AND by --demo mode; simulates streaming
 lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditional

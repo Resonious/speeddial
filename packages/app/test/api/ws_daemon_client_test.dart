@@ -57,6 +57,11 @@ class TestDaemonServer {
   int connectionCount = 0;
   int seq = 0;
 
+  /// When non-zero, every `daemon.info` handler waits this long before
+  /// answering — used to simulate a half-dead socket that accepts frames
+  /// but never gets a response.
+  Duration daemonInfoDelay = Duration.zero;
+
   static Future<TestDaemonServer> start({
     String token = 'secret',
     int port = 0,
@@ -94,7 +99,8 @@ class TestDaemonServer {
       }
       return <String, Object?>{'ok': true, 'daemon': daemonInfoJson()};
     });
-    peer.registerHandler('daemon.info', (Map<String, Object?> _) {
+    peer.registerHandler('daemon.info', (Map<String, Object?> _) async {
+      if (daemonInfoDelay > Duration.zero) await Future<void>.delayed(daemonInfoDelay);
       return daemonInfoJson();
     });
     peer.registerHandler('projects.list', (Map<String, Object?> _) {
@@ -658,6 +664,67 @@ void main() {
     expect(client.isConnected, isTrue);
     // Nothing was missed on a clean first connect; emitting anyway would
     // make every store refetch for no reason.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(resyncCount, 0);
+  });
+
+  test('verifyLiveness tears down a half-dead socket and resyncs', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+      livenessProbeTimeout: const Duration(milliseconds: 100),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+    expect(client.isConnected, isTrue);
+
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub = client.resynced.listen(
+      (void _) => resyncCount++,
+    );
+    addTearDown(resyncSub.cancel);
+
+    // The daemon stops answering while the socket stays open (device
+    // suspend): the probe must not trust the `connected` state.
+    server.daemonInfoDelay = const Duration(seconds: 5);
+    await client.verifyLiveness();
+    expect(client.connState.value, DaemonConnectionState.reconnecting);
+
+    // The daemon answers again; the probe-triggered reconnect must land and
+    // emit resynced so stores backfill what the dead socket swallowed.
+    server.daemonInfoDelay = Duration.zero;
+    await waitFor(
+      () =>
+          client.connState.value == DaemonConnectionState.connected &&
+          resyncCount == 1,
+    );
+  });
+
+  test('verifyLiveness keeps a healthy socket untouched', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+      livenessProbeTimeout: const Duration(seconds: 5),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    int resyncCount = 0;
+    final StreamSubscription<void> resyncSub = client.resynced.listen(
+      (void _) => resyncCount++,
+    );
+    addTearDown(resyncSub.cancel);
+
+    await client.verifyLiveness();
+    expect(client.connState.value, DaemonConnectionState.connected);
+    expect(server.connectionCount, 1);
+    // A healthy probe must not make every store refetch for no reason.
     await Future<void>.delayed(const Duration(milliseconds: 50));
     expect(resyncCount, 0);
   });

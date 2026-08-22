@@ -207,6 +207,14 @@ class ChatStore extends StoreBase {
     return buffer.historyError;
   }
 
+  /// True while [sessionId]'s buffer is mid-resync: the daemon just
+  /// reconnected and persisted history is being refetched to backfill what
+  /// was missed offline. The buffered events are stale for that window but
+  /// valid — live events park in the buffer's pending queue during the
+  /// refetch, so nothing is lost. False for never-watched sessions.
+  bool isCatchingUp(String sessionId) =>
+      _bufferFor(sessionId)?.resyncing ?? false;
+
   /// Retries the persisted-history fetch for a session whose load failed.
   /// No-op while a fetch is in flight or when there is nothing to retry.
   void retryHistory(String daemonId, String sessionId) {
@@ -449,6 +457,9 @@ class ChatStore extends StoreBase {
     for (final _SessionBuffer buffer in buffers) {
       buffer.resyncing = true;
     }
+    // The timeline is stale for the duration of the refetch; notify so the
+    // catch-up surface shows immediately, not only when the backfill lands.
+    _scheduleNotify();
     try {
       for (final _SessionBuffer buffer in buffers) {
         try {

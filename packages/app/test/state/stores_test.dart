@@ -107,6 +107,38 @@ class _GatedSessionListFake extends FakeDaemonClient {
   }
 }
 
+/// Fake whose `history()` can be blocked on demand, so tests can hold a
+/// resync's refetch open and observe the store's catch-up state.
+class _GatedResyncFake extends FakeDaemonClient {
+  _GatedResyncFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  bool blockHistory = false;
+  final List<Completer<void>> _gates = <Completer<void>>[];
+
+  void releaseHistory() {
+    for (final Completer<void> gate in _gates) {
+      if (!gate.isCompleted) gate.complete();
+    }
+    _gates.clear();
+  }
+
+  @override
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) {
+    if (!blockHistory) {
+      return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
+    }
+    final Completer<void> gate = Completer<void>();
+    _gates.add(gate);
+    return gate.future.then(
+      (_) => super.history(sessionId, limit: limit, beforeSeq: beforeSeq),
+    );
+  }
+}
+
 /// Fake whose `history()` serves the newest page normally and can hold
 /// older pages behind a gate or fail them, so tests can observe the
 /// store's incremental page application and mid-backfill retries.
@@ -909,6 +941,44 @@ void main() {
             instrumented.historyCalls > historyBefore,
       );
     });
+
+    test(
+      'isCatchingUp is true while the resync history refetch is in flight',
+      () async {
+        final _GatedResyncFake gated = _GatedResyncFake();
+        app.registerClient('gated', gated);
+        gated.seedHistory('sess-1', <SessionEvent>[
+          UserMessageEvent(text: 'before the drop'),
+        ]);
+        app.chat.watchSession('gated', 'sess-1');
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
+        expect(app.chat.isCatchingUp('sess-1'), isFalse);
+
+        // Hold the resync refetch open: while it runs the session must
+        // report that it is catching up on missed events.
+        gated.blockHistory = true;
+        gated.triggerResync();
+        await _flushMicrotasks();
+        expect(app.chat.isCatchingUp('sess-1'), isTrue);
+        // The existing content stays visible meanwhile; the load state is
+        // still ready (this is a backfill, not a first load).
+        expect(app.chat.eventsFor('sess-1'), isNotEmpty);
+        expect(
+          app.chat.historyStatusFor('sess-1'),
+          HistoryStatus.ready,
+        );
+
+        gated.blockHistory = false;
+        gated.releaseHistory();
+        await _waitUntil(() => !app.chat.isCatchingUp('sess-1'));
+        expect(
+          app.chat.historyStatusFor('sess-1'),
+          HistoryStatus.ready,
+        );
+      },
+    );
   });
 
   group('files', () {

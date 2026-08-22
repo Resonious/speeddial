@@ -350,6 +350,42 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets(
+    'a resync after reconnect shows a catching-up strip until history '
+    'lands',
+    (WidgetTester tester) async {
+      final _GatedFake gated = _GatedFake();
+      final String sessionId = (await gated.listSessions()).first.id;
+      gated.seedHistory(sessionId, <SessionEvent>[
+        UserMessageEvent(text: 'from disk'),
+      ]);
+      await pumpChat(tester, fake: gated);
+      await pumpUntil(
+        tester,
+        () => find.text('from disk').evaluate().isNotEmpty,
+      );
+
+      // Hold the resync's history refetch open: the pane must mark the
+      // (stale) timeline as catching up instead of silently showing it.
+      gated.blockHistory = true;
+      gated.triggerResync();
+      await pumpUntil(
+        tester,
+        () => find.text('Catching up…').evaluate().isNotEmpty,
+      );
+      expect(find.text('from disk'), findsOneWidget);
+
+      gated.blockHistory = false;
+      gated.releaseHistory();
+      await pumpUntil(
+        tester,
+        () => find.text('Catching up…').evaluate().isEmpty,
+      );
+      expect(find.text('from disk'), findsOneWidget);
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('streaming fake events render markdown, tool card and plan', (
     WidgetTester tester,
   ) async {
