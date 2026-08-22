@@ -102,6 +102,7 @@ class UserMessageBubble extends StatelessWidget {
     ];
     return Align(
       alignment: Alignment.centerRight,
+      widthFactor: 1,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -451,6 +452,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
     return Align(
       alignment: Alignment.centerLeft,
+      widthFactor: 1,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),

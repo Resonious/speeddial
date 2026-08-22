@@ -2,12 +2,53 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
+  group('message alignment', () {
+    testWidgets('user messages sit right and agent messages sit left', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: Timeline(
+              items: const <TimelineItem>[
+                UserMessageItem(text: 'My message', forkSeq: 1),
+                AgentMessageItem(text: 'Agent message', forkSeq: 2),
+              ],
+              onFork: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      final Rect userMessage = tester.getRect(find.byType(UserMessageBubble));
+      final Rect agentMessage = tester.getRect(find.byType(AgentMessageView));
+      final Offset userCopy = tester.getCenter(
+        find.byKey(const ValueKey<String>('copy-message-1')),
+      );
+      final Offset agentCopy = tester.getCenter(
+        find.byKey(const ValueKey<String>('copy-message-2')),
+      );
+
+      expect(userMessage.right, 390);
+      expect(agentMessage.left, 0);
+      // Actions stay toward the conversation's center instead of displacing
+      // either bubble from its speaker's conventional outer edge.
+      expect(userCopy.dx, lessThan(userMessage.left));
+      expect(agentCopy.dx, greaterThan(agentMessage.right));
+    });
+  });
+
   group('deriveTimelineItems active thought', () {
     test('trailing thought chunk is active while running', () {
       final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[

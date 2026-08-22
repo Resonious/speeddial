@@ -384,10 +384,13 @@ class _MessageWithActions extends StatelessWidget {
       children: buttons,
     );
     return Row(
+      mainAxisAlignment: isUser
+          ? MainAxisAlignment.end
+          : MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: isUser
-          ? <Widget>[Expanded(child: child), actions]
-          : <Widget>[actions, Expanded(child: child)],
+          ? <Widget>[actions, Flexible(child: child)]
+          : <Widget>[Flexible(child: child), actions],
     );
   }
 
