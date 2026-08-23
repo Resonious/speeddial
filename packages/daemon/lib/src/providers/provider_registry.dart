@@ -52,11 +52,15 @@ typedef CatalogProbe = Future<List<String>> Function(List<String> command);
 /// Wire protocol spoken by a provider process.
 enum ProviderProtocol { acp, codex, ante }
 
-/// Auth material discovered in the Ante home for catalog filtering.
+/// Auth material discovered in the Ante home for catalog filtering, plus
+/// the per-provider default models chosen in Ante settings (used to order
+/// each provider's models: clients present the provider choice and take
+/// its first entry).
 typedef _AnteAuthState = ({
   Set<String> settingsProviders,
   Set<String> storedKeys,
   Set<String> oauthPresets,
+  Map<String, String> providerModels,
 });
 
 /// How to spawn one provider's agent, and how to list its models.
@@ -306,10 +310,21 @@ class ProviderRegistry {
         }
         final rawModels = rawProvider['preferred_models'];
         if (rawModels is! List) continue;
-        for (final rawModel in rawModels) {
-          if (rawModel is! Map) continue;
-          final modelId = rawModel['id'];
-          if (modelId is! String || modelId.isEmpty) continue;
+        // The settings-chosen model for this provider sorts first: clients
+        // present the provider choice and take each provider's first entry
+        // as its default.
+        final String? defaultModel = authState.providerModels[providerId];
+        final List<String> ids = <String>[
+          for (final rawModel in rawModels)
+            if (rawModel is Map &&
+                rawModel['id'] is String &&
+                (rawModel['id'] as String).isNotEmpty)
+              rawModel['id'] as String,
+        ];
+        if (defaultModel != null && ids.remove(defaultModel)) {
+          ids.insert(0, defaultModel);
+        }
+        for (final String modelId in ids) {
           if (seen.add('$providerId/$modelId')) {
             models.add('$providerId/$modelId');
           }
@@ -331,6 +346,7 @@ class ProviderRegistry {
     final Set<String> settingsProviders = <String>{};
     final Set<String> storedKeys = <String>{};
     final Set<String> oauthPresets = <String>{};
+    final Map<String, String> providerModels = <String, String>{};
     final String? home = switch (env['ANTE_HOME']) {
       final String v when v.isNotEmpty => v,
       _ => switch (env['HOME'] ?? env['USERPROFILE']) {
@@ -343,6 +359,7 @@ class ProviderRegistry {
         settingsProviders: settingsProviders,
         storedKeys: storedKeys,
         oauthPresets: oauthPresets,
+        providerModels: providerModels,
       );
     }
     try {
@@ -356,7 +373,24 @@ class ProviderRegistry {
           }
           final Object? providerModel = decoded['provider_model'];
           if (providerModel is Map) {
-            settingsProviders.addAll(providerModel.keys.whereType<String>());
+            for (final MapEntry<Object?, Object?> entry
+                in providerModel.entries) {
+              if (entry.key is String &&
+                  (entry.key as String).isNotEmpty &&
+                  entry.value is String &&
+                  (entry.value as String).isNotEmpty) {
+                settingsProviders.add(entry.key as String);
+                providerModels[entry.key as String] = entry.value as String;
+              }
+            }
+          }
+          // The global settings default is that provider's default model.
+          final Object? settingsModel = decoded['model'];
+          if (provider is String &&
+              provider.isNotEmpty &&
+              settingsModel is String &&
+              settingsModel.isNotEmpty) {
+            providerModels.putIfAbsent(provider, () => settingsModel);
           }
         }
       }
@@ -391,6 +425,7 @@ class ProviderRegistry {
       settingsProviders: settingsProviders,
       storedKeys: storedKeys,
       oauthPresets: oauthPresets,
+      providerModels: providerModels,
     );
   }
 

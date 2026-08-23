@@ -41,6 +41,27 @@ typedef _SheetData = ({DaemonInfo info, List<Branch> branches});
 /// valid model id.
 const String _kCustomModelChoice = '\u0000custom-model';
 
+/// The first qualified id (`provider/model`) per upstream Ante provider, in
+/// catalog order. The daemon lists each provider's settings-chosen default
+/// model first, so this doubles as the provider's default model.
+List<String> _firstPerAnteProvider(List<String> models) {
+  final Set<String> seen = <String>{};
+  final List<String> first = <String>[];
+  for (final String model in models) {
+    final int slash = model.indexOf('/');
+    if (slash <= 0) continue;
+    if (seen.add(model.substring(0, slash))) first.add(model);
+  }
+  return first;
+}
+
+/// `provider/model` → `provider — model` for the Ante provider dropdown.
+String _anteProviderLabel(String qualified) {
+  final int slash = qualified.indexOf('/');
+  if (slash <= 0 || slash == qualified.length - 1) return qualified;
+  return '${qualified.substring(0, slash)} — ${qualified.substring(slash + 1)}';
+}
+
 class _NewSessionSheetState extends State<NewSessionSheet> {
   Future<_SheetData>? _data;
   String? _providerId;
@@ -224,14 +245,17 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                 },
         ),
         const SizedBox(height: 4),
-        // The sheet-level model picker is Ante-only: Ante pins the upstream
-        // provider at session creation (its UpdateSession cannot change it
-        // later), while ACP/Codex advertise their config options on the live
-        // session and are picked in the composer — showing them here too
-        // would give two competing switches.
+        // The sheet-level picker is Ante-only, and it picks the upstream
+        // PROVIDER: Ante pins it at session creation (UpdateSession cannot
+        // change it later), while the model within a provider switches
+        // freely from the composer. ACP/Codex advertise their config options
+        // on the live session, so their model selection stays in the
+        // composer entirely. One dropdown entry per upstream provider; its
+        // value is that provider's first catalog model (the daemon orders
+        // the settings-chosen default first), and its label shows both.
         if (_selectedProvider != null &&
             _selectedProvider!.protocol == 'ante' &&
-            _selectedProvider!.models.isNotEmpty) ...[
+            _selectedProvider!.models.isNotEmpty) ...<Widget>[
           KeyedSubtree(
             // Remount when the provider (or the custom-model mode) changes:
             // DropdownMenu only takes an initial selection.
@@ -245,15 +269,20 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                 initialSelection: _customModel != null
                     ? _kCustomModelChoice
                     : _modelId ?? '',
-                label: const Text('Model'),
+                label: const Text('Ante provider'),
                 expandedInsets: EdgeInsets.zero,
                 enableFilter: true,
                 requestFocusOnTap: true,
                 enabled: !_submitting,
                 dropdownMenuEntries: <DropdownMenuEntry<String>>[
                   DropdownMenuEntry<String>(value: '', label: 'Default'),
-                  for (final String model in _selectedProvider!.models)
-                    DropdownMenuEntry<String>(value: model, label: model),
+                  for (final String model in _firstPerAnteProvider(
+                    _selectedProvider!.models,
+                  ))
+                    DropdownMenuEntry<String>(
+                      value: model,
+                      label: _anteProviderLabel(model),
+                    ),
                   DropdownMenuEntry<String>(
                     value: _kCustomModelChoice,
                     label: 'Custom model…',

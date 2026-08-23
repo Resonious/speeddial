@@ -328,6 +328,7 @@ void main() {
       File(p.join(anteHome.path, 'settings.json')).writeAsStringSync(
         jsonEncode(<String, Object?>{
           'provider': 'settings-default',
+          'model': 'default-model',
           'provider_model': <String, Object?>{'settings-model': 'm'},
         }),
       );
@@ -344,11 +345,12 @@ void main() {
 import 'dart:convert';
 import 'dart:io';
 void main() {
-  Map<String, Object?> provider(String id, Object? auth) =>
+  Map<String, Object?> provider(String id, Object? auth, [List<String>? models]) =>
       <String, Object?>{
         'id': id,
         'preferred_models': <Object?>[
-          <String, Object?>{'id': 'model-\$id'},
+          for (final String m in models ?? <String>['model-\$id'])
+            <String, Object?>{'id': m},
         ],
         if (auth != null) 'auth': auth,
       };
@@ -357,8 +359,10 @@ void main() {
       provider('env-ok', <String, Object?>{'bearer': <String, Object?>{'env_key': 'PRESENT_KEY'}}),
       provider('stored-ok', <String, Object?>{'bearer': <String, Object?>{'env_key': 'STORED_KEY'}}),
       provider('oauth-ok', <String, Object?>{'bearer': <String, Object?>{'oauth_preset': 'preset-ok'}}),
-      provider('settings-default', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
-      provider('settings-model', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
+      // Settings-chosen default models are catalog-last here; the probe
+      // must order them first so clients can offer the provider pick.
+      provider('settings-default', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}, <String>['other', 'default-model']),
+      provider('settings-model', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}, <String>['other', 'm']),
       provider('header-ok', <String, Object?>{'header': <String, Object?>{'name': 'x-api-key', 'env_key': 'PRESENT_KEY'}}),
       provider('env-missing', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
       provider('oauth-missing', <String, Object?>{'bearer': <String, Object?>{'oauth_preset': 'preset-missing'}}),
@@ -394,13 +398,15 @@ void main() {
           'env-ok/model-env-ok',
           'stored-ok/model-stored-ok',
           'oauth-ok/model-oauth-ok',
-          'settings-default/model-settings-default',
-          'settings-model/model-settings-model',
+          'settings-default/default-model',
+          'settings-default/other',
+          'settings-model/m',
+          'settings-model/other',
           'header-ok/model-header-ok',
           'no-auth/model-no-auth',
         ],
-        reason: 'unconfigured providers are filtered; everything usable '
-            'stays qualified and selectable',
+        reason: 'unconfigured providers are filtered; usable providers keep '
+            'their settings-chosen default model first',
       );
       expect(ante.protocol, 'ante');
     });

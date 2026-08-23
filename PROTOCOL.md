@@ -59,7 +59,12 @@ ProviderInfo = {
                              // `auth/api_keys.json`, OAuth preset with a token file
                              // under `auth/`), plus providers named by the Ante
                              // settings (`provider`, `provider_model` keys) and
-                             // providers with no auth descriptor.
+                             // providers with no auth descriptor. Entries are
+                             // grouped by upstream provider in catalog order, with
+                             // the settings-chosen default model first per provider
+                             // — Ante pins the provider at session creation, so
+                             // clients present a provider picker and submit the
+                             // provider's first entry.
   sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
 }
 

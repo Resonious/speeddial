@@ -131,8 +131,8 @@ void main() {
     );
   });
 
-  testWidgets('picking a provider-qualified model pins the upstream '
-      'provider', (WidgetTester tester) async {
+  testWidgets('picking an Ante provider pins it and uses its default model',
+      (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
     await tester.tap(find.byKey(const Key('new-session-provider')));
@@ -140,9 +140,15 @@ void main() {
     await tester.tap(find.text('Ante').last);
     await tester.pumpAndSettle();
 
+    // One entry per upstream provider; the label shows the provider and its
+    // default model (the daemon orders the settings-chosen model first).
     await tester.tap(find.byKey(const Key('new-session-model')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('cerebras/gemma-4-31b').last);
+    expect(find.text('Default'), findsWidgets);
+    expect(find.text('cerebras — gemma-4-31b'), findsOneWidget);
+    expect(find.text('openai-subscription — gpt-5.6-sol'), findsOneWidget);
+    expect(find.text('zai — glm-5.2'), findsOneWidget);
+    await tester.tap(find.text('cerebras — gemma-4-31b').last);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('new-session-submit')));
