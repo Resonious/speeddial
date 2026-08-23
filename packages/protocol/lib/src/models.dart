@@ -772,6 +772,36 @@ class FileReadResult {
   };
 }
 
+/// Complete binary-safe payload returned by `fs.download`.
+class FileDownload {
+  const FileDownload({
+    required this.name,
+    required this.size,
+    required this.data,
+  });
+
+  /// Basename of the source file, suitable for a local temporary copy.
+  final String name;
+
+  /// Decoded payload size in bytes.
+  final int size;
+
+  /// Base64-encoded file bytes.
+  final String data;
+
+  factory FileDownload.fromJson(Map<String, Object?> json) => FileDownload(
+    name: json['name']! as String,
+    size: json['size']! as int,
+    data: json['data']! as String,
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'name': name,
+    'size': size,
+    'data': data,
+  };
+}
+
 /// One file's git state, as reported by `git status --porcelain=v2`.
 class GitStatusFile {
   const GitStatusFile({

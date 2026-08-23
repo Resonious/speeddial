@@ -3158,6 +3158,42 @@ void main() {
         expect((huge['content']! as String), hasLength(4 * 1024 * 1024));
         expect(huge['truncated'], isTrue);
 
+        // Chat-link downloads are session-scoped, binary-safe, and accept
+        // absolute paths only when they remain inside that session's cwd.
+        final created = j(
+          await client.peer.call('sessions.create', <String, Object?>{
+            'projectId': project.id,
+            'providerId': 'fake',
+          }),
+        );
+        final session = Session.fromJson(
+          (created['session']! as Map).cast<String, Object?>(),
+        );
+        final downloaded = FileDownload.fromJson(
+          j(
+            await client.peer.call('fs.download', <String, Object?>{
+              'sessionId': session.id,
+              'path': p.join(dir.path, 'bin.dat'),
+            }),
+          ),
+        );
+        expect(downloaded.name, 'bin.dat');
+        expect(base64Decode(downloaded.data), <int>[
+          0x89,
+          0x50,
+          0x4E,
+          0x47,
+          0x00,
+          0x01,
+        ]);
+        await expectLater(
+          client.peer.call('fs.download', <String, Object?>{
+            'sessionId': session.id,
+            'path': p.join(dir.parent.path, 'outside.bin'),
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+
         // Missing files/dirs are invalid params.
         await expectLater(
           client.peer.call('fs.read', <String, Object?>{

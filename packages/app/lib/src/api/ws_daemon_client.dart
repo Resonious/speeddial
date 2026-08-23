@@ -848,6 +848,15 @@ class WsDaemonClient implements DaemonClient {
     return FileReadResult.fromJson(_resultMap(result));
   }
 
+  @override
+  Future<FileDownload> downloadFile(String sessionId, String path) async {
+    final Object? result = await _requirePeer().call(
+      'fs.download',
+      <String, Object?>{'sessionId': sessionId, 'path': path},
+    );
+    return FileDownload.fromJson(_resultMap(result));
+  }
+
   // ---------------------------------------------------------------------
   // Git
   // ---------------------------------------------------------------------

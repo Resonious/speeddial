@@ -460,6 +460,16 @@ class DaemonClient {
     return FileReadResult.fromJson(_asMap(result, 'fs.read'));
   }
 
+  /// `fs.download` — fetches the complete binary payload for [path], resolved
+  /// against the session's working directory.
+  Future<FileDownload> downloadFile(String sessionId, String path) async {
+    final result = await _peer.call('fs.download', <String, Object?>{
+      'sessionId': sessionId,
+      'path': path,
+    });
+    return FileDownload.fromJson(_asMap(result, 'fs.download'));
+  }
+
   // ---------------------------------------------------------------------------
   // Git
   // ---------------------------------------------------------------------------

@@ -225,6 +225,7 @@ class Timeline extends StatelessWidget {
     required this.items,
     this.attachmentLoader,
     this.onFork,
+    this.openLocalFile,
   });
 
   final List<TimelineItem> items;
@@ -236,6 +237,9 @@ class Timeline extends StatelessWidget {
 
   /// Forks the selected session through the message event at [seq].
   final void Function(int seq)? onFork;
+
+  /// Downloads and opens a path linked from an agent markdown message.
+  final Future<void> Function(String path)? openLocalFile;
 
   @override
   Widget build(BuildContext context) {
@@ -253,6 +257,7 @@ class Timeline extends StatelessWidget {
           item: items[items.length - 1 - index],
           attachmentLoader: attachmentLoader,
           onFork: onFork,
+          openLocalFile: openLocalFile,
         ),
       ),
     );
@@ -260,13 +265,19 @@ class Timeline extends StatelessWidget {
 }
 
 class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.item, this.attachmentLoader, this.onFork});
+  const _TimelineRow({
+    required this.item,
+    this.attachmentLoader,
+    this.onFork,
+    this.openLocalFile,
+  });
 
   final TimelineItem item;
 
   /// See [Timeline.attachmentLoader].
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
   final void Function(int seq)? onFork;
+  final Future<void> Function(String path)? openLocalFile;
 
   @override
   Widget build(BuildContext context) {
@@ -291,7 +302,7 @@ class _TimelineRow extends StatelessWidget {
         text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
-        child: AgentMessageView(text: i.text),
+        child: AgentMessageView(text: i.text, openLocalFile: openLocalFile),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),

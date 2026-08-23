@@ -92,6 +92,14 @@ void main() {
     expect(truncated.content, 'import');
     expect(truncated.truncated, isTrue);
 
+    final FileDownload download = await client.downloadFile(
+      'sess-1',
+      '/demo/lib/main.dart',
+    );
+    expect(download.name, 'main.dart');
+    expect(download.size, base64Decode(download.data).length);
+    expect(utf8.decode(base64Decode(download.data)), contains('runApp'));
+
     // Git.
     final GitStatus status = await client.gitStatus(projects.single.id);
     expect(status.branch, 'main');

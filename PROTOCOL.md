@@ -139,6 +139,7 @@ Session = {
 }
 
 FileEntry = { name: string, path: string, isDir: boolean, size: int, modifiedAt: string }
+FileDownload = { name: string, size: int, data: string } // full file payload, base64 encoded
 
 // Attachments (files the user attaches to a message)
 OutgoingAttachment = {           // client → daemon payload (sessions.send only)
@@ -486,9 +487,16 @@ receives that session-bound secret. It may then call
 cannot call the public daemon API and receives no broadcasts. Public clients cannot use the
 internal methods without the MCP secret.
 
-### Files (paths are relative to the project root; absolute rejected with `-32602`)
+### Files
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending
 - `fs.read {projectId: string, path: string, maxBytes?: int}` → `{content: string, truncated: boolean, isBinary: boolean}` — default maxBytes 512 KiB, hard cap 4 MiB; binary files return `isBinary: true` with empty content
+- `fs.download {sessionId: string, path: string}` → `FileDownload` — fetches a complete
+  binary-safe file for a chat link. Relative paths resolve from the session's `cwd`; absolute paths
+  are accepted only when they resolve inside that `cwd`. Symlink escapes, directories, missing
+  files, and files larger than 64 MiB are rejected with `-32602`.
+
+`fs.list` and `fs.read` paths are relative to the project root; absolute paths are rejected with
+`-32602`.
 
 ### Git (scoped to the project's repo, or to a session's worktree)
 

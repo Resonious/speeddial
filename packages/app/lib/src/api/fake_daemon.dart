@@ -1114,6 +1114,32 @@ class FakeDaemonClient implements DaemonClient {
     return FileReadResult(content: content, truncated: false, isBinary: false);
   }
 
+  @override
+  Future<FileDownload> downloadFile(String sessionId, String path) async {
+    _ensureSeeded();
+    final Session? session = _sessions[sessionId];
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'unknown session: $sessionId');
+    }
+    var relative = path;
+    final String cwdPrefix = session.cwd.endsWith('/')
+        ? session.cwd
+        : '${session.cwd}/';
+    if (relative.startsWith(cwdPrefix)) {
+      relative = relative.substring(cwdPrefix.length);
+    }
+    final String? content = _fileContents[relative];
+    if (content == null) {
+      throw DaemonError(kErrNotFound, 'file not found: $path');
+    }
+    final List<int> bytes = utf8.encode(content);
+    return FileDownload(
+      name: relative.split('/').last,
+      size: bytes.length,
+      data: base64Encode(bytes),
+    );
+  }
+
   // ---------------------------------------------------------------------
   // Git
   // ---------------------------------------------------------------------

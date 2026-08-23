@@ -330,6 +330,36 @@ String _formatSize(int size) {
 Future<bool> _launchExternal(Uri uri) =>
     launchUrl(uri, mode: LaunchMode.externalApplication);
 
+/// Returns the daemon-side path represented by a non-web markdown [href].
+///
+/// File URIs, absolute paths, and cwd-relative paths are supported. Codex's
+/// clickable-file convention appends `:line[:column]`; that location suffix
+/// is removed because the host application opens the downloaded file itself.
+String? localFilePathFromHref(String href) {
+  if (href.isEmpty || href.startsWith('#') || href.startsWith('//')) {
+    return null;
+  }
+  String path;
+  final bool windowsPath = RegExp(r'^[A-Za-z]:[/\\]').hasMatch(href);
+  if (windowsPath) {
+    path = href;
+  } else {
+    final Uri? uri = Uri.tryParse(href);
+    if (uri == null || uri.scheme == 'http' || uri.scheme == 'https') {
+      return null;
+    }
+    if (uri.scheme.isNotEmpty && uri.scheme != 'file') return null;
+    path = Uri.decodeComponent(uri.path);
+    if (uri.scheme == 'file' && uri.host.isNotEmpty) {
+      path = '//${uri.host}$path';
+    } else if (uri.scheme == 'file' && RegExp(r'^/[A-Za-z]:/').hasMatch(path)) {
+      path = path.substring(1);
+    }
+  }
+  path = path.replaceFirst(RegExp(r':\d+(?::\d+)?$'), '');
+  return path.isEmpty ? null : path;
+}
+
 /// One agent message: markdown body with syntax-highlighted code blocks.
 ///
 /// While text is still streaming (chunk deltas arriving), code blocks render
@@ -341,6 +371,7 @@ class AgentMessageView extends StatefulWidget {
     super.key,
     required this.text,
     this.launchExternal = _launchExternal,
+    this.openLocalFile,
   });
 
   /// Combined (chunk-merged) markdown body text.
@@ -350,6 +381,10 @@ class AgentMessageView extends StatefulWidget {
   ///
   /// Injected in tests so link activation does not touch the host platform.
   final Future<bool> Function(Uri uri) launchExternal;
+
+  /// Downloads and opens a daemon-local file path. Production supplies this
+  /// from the selected session; standalone views may leave it null.
+  final Future<void> Function(String path)? openLocalFile;
 
   /// How long the text must stop changing before highlighting kicks in.
   static const Duration settleDelay = Duration(milliseconds: 300);
@@ -438,10 +473,13 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   void _onTapLink(String _, String? href, String _) {
     if (href == null) return;
     final Uri? uri = Uri.tryParse(href);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      unawaited(widget.launchExternal(uri));
       return;
     }
-    unawaited(widget.launchExternal(uri));
+    final String? path = localFilePathFromHref(href);
+    final Future<void> Function(String path)? opener = widget.openLocalFile;
+    if (path != null && opener != null) unawaited(opener(path));
   }
 
   @override

@@ -49,6 +49,9 @@ class TestDaemonServer {
   /// Every `mcp.create` params object received, in call order.
   final List<Map<String, Object?>> mcpCreates = <Map<String, Object?>>[];
 
+  /// Every `fs.download` params object received, in call order.
+  final List<Map<String, Object?>> downloads = <Map<String, Object?>>[];
+
   /// Attachment payloads keyed by session id then attachment id, served by
   /// the `attachments.read` handler.
   final Map<String, Map<String, Map<String, Object?>>> attachments =
@@ -100,7 +103,9 @@ class TestDaemonServer {
       return <String, Object?>{'ok': true, 'daemon': daemonInfoJson()};
     });
     peer.registerHandler('daemon.info', (Map<String, Object?> _) async {
-      if (daemonInfoDelay > Duration.zero) await Future<void>.delayed(daemonInfoDelay);
+      if (daemonInfoDelay > Duration.zero) {
+        await Future<void>.delayed(daemonInfoDelay);
+      }
       return daemonInfoJson();
     });
     peer.registerHandler('projects.list', (Map<String, Object?> _) {
@@ -164,6 +169,10 @@ class TestDaemonServer {
         throw DaemonError(kErrNotFound, 'unknown attachment: $attachmentId');
       }
       return <String, Object?>{'attachment': stored};
+    });
+    peer.registerHandler('fs.download', (Map<String, Object?> params) {
+      downloads.add(params);
+      return <String, Object?>{'name': 'result.bin', 'size': 3, 'data': 'AAf/'};
     });
     peer.registerHandler('sessions.history', (Map<String, Object?> params) {
       final String sessionId = params['sessionId']! as String;
@@ -499,6 +508,31 @@ void main() {
       );
     },
   );
+
+  test('downloadFile sends the session path and decodes binary data', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+
+    final FileDownload download = await client.downloadFile(
+      'sess-1',
+      '/demo/result.bin',
+    );
+
+    expect(server.downloads.single, <String, Object?>{
+      'sessionId': 'sess-1',
+      'path': '/demo/result.bin',
+    });
+    expect(download.name, 'result.bin');
+    expect(download.size, 3);
+    expect(download.data, 'AAf/');
+  });
 
   test('auth failure propagates and leaves the client failed', () async {
     final TestDaemonServer server = await TestDaemonServer.start();

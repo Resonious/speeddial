@@ -132,7 +132,9 @@ lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porc
                     `git.changed`. PrService uses `gh pr create`. All ops take an
                     absolute repo path.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
-                    PROTOCOL.md. JsonRpcPeer from the protocol package does framing.
+                    PROTOCOL.md. JsonRpcPeer from the protocol package does framing. FsService
+                    confines project browsing and binary session-cwd link downloads, including
+                    symlink resolution, before any bytes cross the wire.
 lib/src/client.dart DaemonClient: Dart client for the same protocol (used by the CLI
                     subcommands to talk to a running daemon).
 lib/src/local_daemon.dart  LocalDaemon: in-process daemon (same engine/store/server as
@@ -196,7 +198,9 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor; stdio comman
                              while stored secret values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
-                             markdown + syntax-highlighted code blocks, collapsible
+                             markdown + syntax-highlighted code blocks, remote file links that
+                             download to a client-local temporary copy and open via the OS,
+                             collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments

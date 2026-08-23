@@ -183,6 +183,11 @@ abstract class DaemonClient {
     int? maxBytes,
   });
 
+  /// Downloads a complete binary-safe file referenced by an agent message.
+  /// Relative paths resolve from the session's cwd; absolute paths must stay
+  /// inside it.
+  Future<FileDownload> downloadFile(String sessionId, String path);
+
   // ---------------------------------------------------------------------
   // Git
   // ---------------------------------------------------------------------
