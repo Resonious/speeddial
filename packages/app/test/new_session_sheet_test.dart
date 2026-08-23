@@ -91,8 +91,10 @@ void main() {
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
     expect(find.byKey(const Key('new-session-prompt')), findsNothing);
     expect(find.byKey(const Key('new-session-mode')), findsNothing);
-    // The default provider (omp) advertises models, so the picker shows.
-    expect(find.byKey(const Key('new-session-model')), findsOneWidget);
+    // The model picker is Ante-only: omp advertises its models as ACP
+    // config options on the live session, so the composer owns that pick —
+    // offering it here too would duplicate the control.
+    expect(find.byKey(const Key('new-session-model')), findsNothing);
     // The provider defaults to the daemon's first available provider.
     expect(find.text('OMP Agent'), findsOneWidget);
   });
@@ -152,6 +154,37 @@ void main() {
     expect(created.providerId, 'ante');
     expect(created.model, 'gemma-4-31b');
     expect(created.models, <String>['gemma-4-31b']);
+  });
+
+  testWidgets('a custom model id reaches the Ante provider provider-pinned',
+      (WidgetTester tester) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    await tester.tap(find.byKey(const Key('new-session-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ante').last);
+    await tester.pumpAndSettle();
+
+    // Catalog providers with no preferred models (e.g. a custom
+    // OpenAI-compatible upstream) cannot be enumerated, so the sheet
+    // offers a free-form `provider/model` entry.
+    await tester.tap(find.byKey(const Key('new-session-model')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom model…').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('new-session-custom-model')),
+      'openai-compatible/my-custom-model',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    final Session created = createdSession(app, projectId);
+    expect(created.providerId, 'ante');
+    expect(created.model, 'my-custom-model');
+    expect(created.models, <String>['my-custom-model']);
   });
 
   testWidgets('yolo mode is off by default and sent when checked', (

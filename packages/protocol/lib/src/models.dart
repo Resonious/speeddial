@@ -1104,6 +1104,7 @@ class ProviderInfo {
     required this.available,
     required this.command,
     required this.models,
+    this.protocol = 'acp',
     this.sandboxModes = const <SessionSandboxMode>[],
   });
 
@@ -1122,6 +1123,13 @@ class ProviderInfo {
   /// Selectable model ids; may be empty.
   final List<String> models;
 
+  /// Wire protocol spoken by the provider: "acp" | "codex" | "ante".
+  /// Clients use it to know where model selection lives: ACP and Codex
+  /// advertise config options on the live session (composer picker), while
+  /// Ante pins the upstream provider at creation, so its models are picked
+  /// in the new-session sheet.
+  final String protocol;
+
   /// Isolation modes selectable when creating sessions with this provider.
   final List<SessionSandboxMode> sandboxModes;
 
@@ -1133,6 +1141,7 @@ class ProviderInfo {
     models: (json['models']! as List<Object?>)
         .map((e) => e! as String)
         .toList(growable: false),
+    protocol: json['protocol'] as String? ?? 'acp',
     sandboxModes:
         (json['sandboxModes'] as List<Object?>?)
             ?.map((Object? value) => SessionSandboxMode.parse(value! as String))
@@ -1146,6 +1155,7 @@ class ProviderInfo {
     'available': available,
     'command': command,
     'models': models,
+    'protocol': protocol,
     'sandboxModes': sandboxModes
         .map((SessionSandboxMode mode) => mode.wire)
         .toList(growable: false),

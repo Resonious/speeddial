@@ -37,11 +37,19 @@ class NewSessionSheet extends StatefulWidget {
 /// Providers plus the project's branch list (empty for non-git projects).
 typedef _SheetData = ({DaemonInfo info, List<Branch> branches});
 
+/// Dropdown sentinel for the sheet's free-form model entry. NUL is not a
+/// valid model id.
+const String _kCustomModelChoice = '\u0000custom-model';
+
 class _NewSessionSheetState extends State<NewSessionSheet> {
   Future<_SheetData>? _data;
   String? _providerId;
   ProviderInfo? _selectedProvider;
   String? _modelId;
+  // Free-form model id (provider-qualified) for Ante upstreams the catalog
+  // cannot enumerate, e.g. a custom OpenAI-compatible provider: the user
+  // types `openai-compatible/<model>` and the daemon pins that provider.
+  String? _customModel;
   String? _baseBranch;
   bool _useWorktree = true;
   bool _yolo = false;
@@ -81,6 +89,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       // Models are provider-scoped; a stale pick would mismatch the new
       // provider's catalog.
       _modelId = null;
+      _customModel = null;
     });
     try {
       await widget.data.settings.setProviderId(providerId);
@@ -101,7 +110,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         widget.daemonId,
         projectId: widget.projectId,
         providerId: _providerId!,
-        model: (_modelId == null || _modelId!.isEmpty) ? null : _modelId,
+        model: (_customModel != null && _customModel!.isNotEmpty)
+            ? _customModel
+            : (_modelId == null || _modelId!.isEmpty) ? null : _modelId,
         baseBranch: _useWorktree ? _baseBranch : null,
         sandboxMode:
             _selectedProvider?.sandboxModes.contains(
@@ -213,16 +224,27 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                 },
         ),
         const SizedBox(height: 4),
-        if (_selectedProvider != null && _selectedProvider!.models.isNotEmpty)
+        // The sheet-level model picker is Ante-only: Ante pins the upstream
+        // provider at session creation (its UpdateSession cannot change it
+        // later), while ACP/Codex advertise their config options on the live
+        // session and are picked in the composer — showing them here too
+        // would give two competing switches.
+        if (_selectedProvider != null &&
+            _selectedProvider!.protocol == 'ante' &&
+            _selectedProvider!.models.isNotEmpty) ...[
           KeyedSubtree(
-            // Remount per provider: DropdownMenu only takes an initial
-            // selection, and a provider switch resets the model pick.
-            key: ValueKey<String>('new-session-model-$_providerId'),
+            // Remount when the provider (or the custom-model mode) changes:
+            // DropdownMenu only takes an initial selection.
+            key: ValueKey<String>(
+              'new-session-model-$_providerId-${_customModel == null}',
+            ),
             child: Padding(
               padding: const EdgeInsets.only(top: 4),
               child: DropdownMenu<String>(
                 key: const Key('new-session-model'),
-                initialSelection: _modelId ?? '',
+                initialSelection: _customModel != null
+                    ? _kCustomModelChoice
+                    : _modelId ?? '',
                 label: const Text('Model'),
                 expandedInsets: EdgeInsets.zero,
                 enableFilter: true,
@@ -232,12 +254,46 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                   DropdownMenuEntry<String>(value: '', label: 'Default'),
                   for (final String model in _selectedProvider!.models)
                     DropdownMenuEntry<String>(value: model, label: model),
+                  DropdownMenuEntry<String>(
+                    value: _kCustomModelChoice,
+                    label: 'Custom model…',
+                  ),
                 ],
-                onSelected: (String? value) =>
-                    setState(() => _modelId = value),
+                onSelected: (String? value) => setState(() {
+                  if (value == _kCustomModelChoice) {
+                    _customModel = '';
+                    _modelId = null;
+                  } else {
+                    _customModel = null;
+                    _modelId = value;
+                  }
+                }),
               ),
             ),
           ),
+          if (_customModel != null) ...<Widget>[
+            // Ante catalog providers with no preferred models (e.g. a
+            // custom OpenAI-compatible upstream) cannot be enumerated; the
+            // model id is whatever the provider's API accepts, so let the
+            // user type the qualified `provider/model` id.
+            const SizedBox(height: 4),
+            TextField(
+              key: const Key('new-session-custom-model'),
+              autofocus: true,
+              enabled: !_submitting,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontFamily: 'monospace',
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Custom model (provider/model)',
+                hintText: 'openai-compatible/my-model',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (String value) => _customModel = value,
+            ),
+          ],
+        ],
         CheckboxListTile(
           key: const Key('new-session-yolo'),
           value: _yolo,

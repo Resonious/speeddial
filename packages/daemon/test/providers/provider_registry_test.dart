@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -309,6 +310,99 @@ void main() {
         'fake-provider/fake-model',
         'fake-provider/fake-large',
       ]);
+    });
+
+    test('ante catalog drops providers the user cannot run', () async {
+      // A provider is usable when its catalog auth descriptor resolves:
+      // env_key in the daemon environment or the Ante home's stored
+      // api_keys.json, oauth_preset with a token file under auth/, or the
+      // provider is named by settings (`provider` / `provider_model`).
+      // Everything else is dead weight in the picker: selecting it would
+      // only fail at turn time.
+      final Directory tempDir = await Directory.systemTemp.createTemp(
+        'ante_filter_test',
+      );
+      addTearDown(() => tempDir.delete(recursive: true));
+      final Directory anteHome = Directory(p.join(tempDir.path, '.ante'))
+        ..createSync();
+      File(p.join(anteHome.path, 'settings.json')).writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'provider': 'settings-default',
+          'provider_model': <String, Object?>{'settings-model': 'm'},
+        }),
+      );
+      Directory(p.join(anteHome.path, 'auth')).createSync();
+      File(
+        p.join(anteHome.path, 'auth', 'api_keys.json'),
+      ).writeAsStringSync(jsonEncode(<String, Object?>{'STORED_KEY': 'k'}));
+      File(p.join(anteHome.path, 'auth', 'preset-ok.json')).writeAsStringSync(
+        '{}',
+      );
+
+      final File catalogScript = File(p.join(tempDir.path, 'catalog.dart'));
+      catalogScript.writeAsStringSync('''
+import 'dart:convert';
+import 'dart:io';
+void main() {
+  Map<String, Object?> provider(String id, Object? auth) =>
+      <String, Object?>{
+        'id': id,
+        'preferred_models': <Object?>[
+          <String, Object?>{'id': 'model-\$id'},
+        ],
+        if (auth != null) 'auth': auth,
+      };
+  stdout.writeln(jsonEncode(<String, Object?>{
+    'providers': <Object?>[
+      provider('env-ok', <String, Object?>{'bearer': <String, Object?>{'env_key': 'PRESENT_KEY'}}),
+      provider('stored-ok', <String, Object?>{'bearer': <String, Object?>{'env_key': 'STORED_KEY'}}),
+      provider('oauth-ok', <String, Object?>{'bearer': <String, Object?>{'oauth_preset': 'preset-ok'}}),
+      provider('settings-default', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
+      provider('settings-model', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
+      provider('header-ok', <String, Object?>{'header': <String, Object?>{'name': 'x-api-key', 'env_key': 'PRESENT_KEY'}}),
+      provider('env-missing', <String, Object?>{'bearer': <String, Object?>{'env_key': 'MISSING_KEY'}}),
+      provider('oauth-missing', <String, Object?>{'bearer': <String, Object?>{'oauth_preset': 'preset-missing'}}),
+      provider('no-auth', null),
+    ],
+  }));
+}
+''');
+      final registry = ProviderRegistry(
+        configOverrides: <String, Object?>{
+          'providers': <String, Object?>{
+            'ante': <String, Object?>{
+              'name': 'Ante',
+              'command': <String>[Platform.resolvedExecutable, 'serve'],
+              'protocol': 'ante',
+              'catalogCommand': <String>[
+                Platform.resolvedExecutable,
+                catalogScript.path,
+              ],
+            },
+          },
+        },
+        modelsProbe: noModels,
+        environment: <String, String>{
+          'HOME': tempDir.path,
+          'PRESENT_KEY': 'present',
+        },
+      );
+      final ante = (await registry.list()).firstWhere((p) => p.id == 'ante');
+      expect(
+        ante.models,
+        const <String>[
+          'env-ok/model-env-ok',
+          'stored-ok/model-stored-ok',
+          'oauth-ok/model-oauth-ok',
+          'settings-default/model-settings-default',
+          'settings-model/model-settings-model',
+          'header-ok/model-header-ok',
+          'no-auth/model-no-auth',
+        ],
+        reason: 'unconfigured providers are filtered; everything usable '
+            'stays qualified and selectable',
+      );
+      expect(ante.protocol, 'ante');
     });
 
     test('ante catalog probe failure degrades to empty models', () async {

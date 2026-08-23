@@ -93,7 +93,11 @@ lib/src/providers/  Provider registry. Built-ins:
                     Models come from a static list, `modelsCommand`, or — for
                     Ante — `catalogCommand`, which yields provider-qualified
                     ids ("cerebras/gemma-4-31b") because model ids collide
-                    across Ante's upstream providers. Availability = command[0]
+                    across Ante's upstream providers. The Ante catalog is
+                    filtered to providers the user can actually run: auth
+                    descriptors that resolve (env key set or stored in the
+                    Ante home's auth/, OAuth preset with a token file), plus
+                    settings-named providers. Availability = command[0]
                     resolvable via PATH (or absolute exists).
 lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
                     transport updates to protocol SessionEvents, assigns seq, persists

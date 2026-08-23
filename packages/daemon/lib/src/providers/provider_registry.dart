@@ -52,6 +52,13 @@ typedef CatalogProbe = Future<List<String>> Function(List<String> command);
 /// Wire protocol spoken by a provider process.
 enum ProviderProtocol { acp, codex, ante }
 
+/// Auth material discovered in the Ante home for catalog filtering.
+typedef _AnteAuthState = ({
+  Set<String> settingsProviders,
+  Set<String> storedKeys,
+  Set<String> oauthPresets,
+});
+
 /// How to spawn one provider's agent, and how to list its models.
 class ProviderSpec {
   const ProviderSpec({
@@ -99,8 +106,13 @@ class ProviderRegistry {
     Map<String, Object?>? configOverrides,
     ModelsProbe? modelsProbe,
     CatalogProbe? catalogProbe,
+    Map<String, String>? environment,
   }) : _modelsProbe = modelsProbe ?? _runModelsCommand,
-       _catalogProbe = catalogProbe ?? _runCatalogCommand {
+       // `environment` overrides the process environment for catalog auth
+       // filtering (tests); null means the daemon's own environment.
+       _catalogProbe =
+           catalogProbe ??
+           ((List<String> command) => _runCatalogCommand(command, environment)) {
     _providers = <String, ProviderSpec>{
       'omp': const ProviderSpec(
         id: 'omp',
@@ -160,6 +172,7 @@ class ProviderRegistry {
           available: isAvailable(spec.id),
           command: spec.command.join(' '),
           models: await _modelsFor(spec),
+          protocol: spec.protocol.name,
           sandboxModes: spec.protocol == ProviderProtocol.codex
               ? const <SessionSandboxMode>[
                   SessionSandboxMode.workspaceWrite,
@@ -262,11 +275,14 @@ class ProviderRegistry {
     }
   }
 
-  /// Default [CatalogProbe]: runs the command and parses the
-  /// `ante catalog` shape into provider-qualified model ids, so ambiguous
-  /// model ids (the same id under several upstream providers) stay
-  /// selectable. Never throws.
-  static Future<List<String>> _runCatalogCommand(List<String> command) async {
+  /// Default [CatalogProbe]: runs the command, parses the `ante catalog`
+  /// shape into provider-qualified model ids (ambiguous bare ids collide
+  /// across upstream providers), and drops providers the user cannot
+  /// actually run — see [_usableAnteProviderIds]. Never throws.
+  static Future<List<String>> _runCatalogCommand(
+    List<String> command,
+    Map<String, String>? environment,
+  ) async {
     try {
       final result = await Process.run(
         command.first,
@@ -277,12 +293,17 @@ class ProviderRegistry {
       if (decoded is! Map) return const <String>[];
       final rawProviders = decoded['providers'];
       if (rawProviders is! List) return const <String>[];
+      final Map<String, String> env = environment ?? Platform.environment;
+      final _AnteAuthState authState = _readAnteAuthState(env);
       final seen = <String>{};
       final models = <String>[];
       for (final rawProvider in rawProviders) {
         if (rawProvider is! Map) continue;
         final providerId = rawProvider['id'];
         if (providerId is! String || providerId.isEmpty) continue;
+        if (!_anteProviderUsable(rawProvider, providerId, env, authState)) {
+          continue;
+        }
         final rawModels = rawProvider['preferred_models'];
         if (rawModels is! List) continue;
         for (final rawModel in rawModels) {
@@ -298,6 +319,112 @@ class ProviderRegistry {
     } on Object {
       return const <String>[];
     }
+  }
+
+  /// Auth material found in the Ante home (`ANTE_HOME` or `~/.ante`):
+  /// providers named by settings (`provider` plus the `provider_model`
+  /// keys — providers the user has actually chosen), API keys stored in
+  /// `auth/api_keys.json`, and OAuth presets with a token file under
+  /// `auth/`. Reading the home is best-effort: any failure just yields
+  /// fewer usable providers, never a probe crash.
+  static _AnteAuthState _readAnteAuthState(Map<String, String> env) {
+    final Set<String> settingsProviders = <String>{};
+    final Set<String> storedKeys = <String>{};
+    final Set<String> oauthPresets = <String>{};
+    final String? home = switch (env['ANTE_HOME']) {
+      final String v when v.isNotEmpty => v,
+      _ => switch (env['HOME'] ?? env['USERPROFILE']) {
+        final String v when v.isNotEmpty => p.join(v, '.ante'),
+        _ => null,
+      },
+    };
+    if (home == null) {
+      return (
+        settingsProviders: settingsProviders,
+        storedKeys: storedKeys,
+        oauthPresets: oauthPresets,
+      );
+    }
+    try {
+      final File settingsFile = File(p.join(home, 'settings.json'));
+      if (settingsFile.existsSync()) {
+        final Object? decoded = jsonDecode(settingsFile.readAsStringSync());
+        if (decoded is Map) {
+          final Object? provider = decoded['provider'];
+          if (provider is String && provider.isNotEmpty) {
+            settingsProviders.add(provider);
+          }
+          final Object? providerModel = decoded['provider_model'];
+          if (providerModel is Map) {
+            settingsProviders.addAll(providerModel.keys.whereType<String>());
+          }
+        }
+      }
+    } on Object {
+      // Malformed settings: filter by auth state alone.
+    }
+    try {
+      final File keysFile = File(p.join(home, 'auth', 'api_keys.json'));
+      if (keysFile.existsSync()) {
+        final Object? decoded = jsonDecode(keysFile.readAsStringSync());
+        if (decoded is Map) {
+          storedKeys.addAll(decoded.keys.whereType<String>());
+        }
+      }
+    } on Object {
+      // Malformed api_keys.json: env vars still count.
+    }
+    try {
+      final Directory authDir = Directory(p.join(home, 'auth'));
+      if (authDir.existsSync()) {
+        for (final FileSystemEntity entry in authDir.listSync()) {
+          final String name = p.basename(entry.path);
+          if (name.endsWith('.json') && name != 'api_keys.json') {
+            oauthPresets.add(name.substring(0, name.length - 5));
+          }
+        }
+      }
+    } on Object {
+      // Unreadable auth dir: OAuth presets are simply not usable.
+    }
+    return (
+      settingsProviders: settingsProviders,
+      storedKeys: storedKeys,
+      oauthPresets: oauthPresets,
+    );
+  }
+
+  /// Whether a catalog provider entry can actually run: providers with no
+  /// auth descriptor are always usable; `env_key` auth needs the variable
+  /// in the process environment or stored in `auth/api_keys.json`;
+  /// `oauth_preset` auth needs a token file under `auth/`; settings-listed
+  /// providers are always kept.
+  static bool _anteProviderUsable(
+    Map<Object?, Object?> rawProvider,
+    String providerId,
+    Map<String, String> env,
+    _AnteAuthState authState,
+  ) {
+    if (authState.settingsProviders.contains(providerId)) return true;
+    final Object? auth = rawProvider['auth'];
+    if (auth is! Map) return true;
+    for (final Object? shape in auth.values) {
+      if (shape is! Map) continue;
+      final Object? envKey = shape['env_key'];
+      if (envKey is String &&
+          envKey.isNotEmpty &&
+          (env.containsKey(envKey) ||
+              authState.storedKeys.contains(envKey))) {
+        return true;
+      }
+      final Object? preset = shape['oauth_preset'];
+      if (preset is String &&
+          preset.isNotEmpty &&
+          authState.oauthPresets.contains(preset)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Loads `~/.speeddial/config.json`; a missing or malformed file yields

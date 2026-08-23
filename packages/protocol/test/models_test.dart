@@ -129,6 +129,20 @@ void main() {
       expect(decoded.providers[0].models, ['default', 'flash']);
       expect(decoded.providers[0].sandboxModes, SessionSandboxMode.values);
       expect(decoded.providers[1].models, isEmpty);
+      // protocol defaults to acp for old daemons that do not send it.
+      expect(decoded.providers[0].protocol, 'acp');
+      expect(decoded.providers[1].protocol, 'acp');
+      final decodedWithProtocol = DaemonInfo.fromJson(<String, Object?>{
+        ...model.toJson(),
+        'providers': <Object?>[
+          <String, Object?>{
+            ...model.providers[0].toJson(),
+            'protocol': 'ante',
+          },
+          model.providers[1].toJson(),
+        ],
+      });
+      expect(decodedWithProtocol.providers[0].protocol, 'ante');
       expect(decoded.toJson(), model.toJson());
     });
 

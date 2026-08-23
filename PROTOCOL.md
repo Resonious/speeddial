@@ -45,10 +45,21 @@ ProviderInfo = {
   name: string,               // display name
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)
+  protocol: "acp" | "codex" | "ante", // wire protocol; tells clients where model
+                             // selection lives — Ante pins the upstream provider at
+                             // session creation, so its models are picked there;
+                             // ACP/Codex advertise config options on the live session
   models: string[],           // selectable model ids, may be []
                              // Ante entries are provider-qualified
                              // ("cerebras/gemma-4-31b"): model ids collide
-                             // across Ante's upstream providers
+                             // across Ante's upstream providers. Only upstream
+                             // providers the user can actually run are listed:
+                             // the catalog is filtered to auth descriptors that
+                             // resolve (env key set or stored in the Ante home's
+                             // `auth/api_keys.json`, OAuth preset with a token file
+                             // under `auth/`), plus providers named by the Ante
+                             // settings (`provider`, `provider_model` keys) and
+                             // providers with no auth descriptor.
   sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
 }
 
@@ -103,8 +114,11 @@ Session = {
   mode: SessionMode,
   model: string | null,       // current model id — agent-reported when the provider
                               // advertises a model config option, else a local preference
+                              // (for Ante: the bare id; the upstream provider is fixed
+                              // at session creation)
   models: string[],           // selectable model ids advertised by the agent (ACP config
-                              // option); empty when the provider has none
+                              // option); empty when the provider has none (for Ante: the
+                              // session provider's own catalog models, bare)
   cwd: string,                // working dir of the agent (project path or worktree)
   baseBranch: string | null,  // base branch the session's worktree was created from
   thinkingLevel: string | null,   // current agent thinking level (e.g. omp's "auto");
@@ -324,10 +338,15 @@ tokens before session creation/resume, and checks them periodically while runnin
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
 - `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean}` → `{session: Session}`
-  For Ante, `model` may carry a `provider/` prefix taken from a qualified
-  `ProviderInfo.models` entry; the daemon pins that upstream provider in
-  `StartSession` and the session reports the bare model id. Mid-session model
-  switches (`sessions.setModel`) stay within the session's provider — Ante's
+  For Ante, `model` carries a `provider/` prefix taken from a qualified
+  `ProviderInfo.models` entry (or a custom typed id such as
+  `openai-compatible/<model>`); the daemon pins that upstream provider in
+  `StartSession` and the session reports the bare model id plus that
+  provider's own model list. Catalog providers with no preferred models
+  (e.g. a custom OpenAI-compatible upstream) cannot be enumerated, so
+  clients may submit any `provider/model` pair the provider's API accepts —
+  the model id passes through to that provider. Mid-session model switches
+  (`sessions.setModel`) stay within the session's provider — Ante's
   `UpdateSession` cannot change it.
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
@@ -418,6 +437,9 @@ tokens before session creation/resume, and checks them periodically while runnin
   level/levels, since those can be model-dependent); without a live agent the choice is persisted
   and reapplied on resume. Providers without a model option keep the legacy local-preference
   behavior (any string is stored verbatim).
+  For Ante, `Session.models` contains only the session provider's models (bare ids), so any
+  validated pick forwards as-is; switching upstream providers is impossible mid-session
+  (`UpdateSession` ignores provider changes) — choose the provider when creating the session.
 - `sessions.setThinkingLevel {sessionId: string, level: string}` → `{session: Session}` — sets the
   agent's thinking level (forwarded to a live agent through the provider transport; otherwise
   persisted and reapplied on resume). `level` must be one of the session's `thinkingLevels`;

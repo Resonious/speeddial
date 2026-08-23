@@ -262,6 +262,7 @@ class FakeDaemonClient implements DaemonClient {
           available: true,
           command: 'codex app-server --stdio',
           models: <String>['gpt-5.4'],
+          protocol: 'codex',
           sandboxModes: <SessionSandboxMode>[
             SessionSandboxMode.workspaceWrite,
             SessionSandboxMode.unrestricted,
@@ -272,11 +273,13 @@ class FakeDaemonClient implements DaemonClient {
           name: 'Ante',
           available: true,
           command: 'ante serve --stdio',
+          protocol: 'ante',
           // Provider-qualified: the same model id can exist under several
           // upstream Ante providers.
           models: <String>[
             'cerebras/gemma-4-31b',
             'openai-subscription/gpt-5.6-sol',
+            'openai-subscription/gpt-5.6-luna',
             'zai/glm-5.2',
           ],
         ),
@@ -583,6 +586,7 @@ class FakeDaemonClient implements DaemonClient {
       'ante' => const <String>[
         'cerebras/gemma-4-31b',
         'openai-subscription/gpt-5.6-sol',
+        'openai-subscription/gpt-5.6-luna',
         'zai/glm-5.2',
       ],
       _ => const <String>[],
@@ -591,12 +595,24 @@ class FakeDaemonClient implements DaemonClient {
     final List<String> sessionModels;
     if (providerId == 'ante') {
       // Mirror the daemon: a provider-qualified request pins the upstream
-      // provider; the session then carries that provider's bare model list.
-      final String? bare = (model != null && models.contains(model))
+      // provider; the session reports the bare model id plus that
+      // provider's own (bare) preferred list, with the current model kept
+      // selectable even when the catalog does not prefer it (custom ids).
+      final List<String> qualified = models;
+      final String? bare = (model != null && model.isNotEmpty)
           ? model.split('/').last
           : null;
       resolvedModel = bare;
-      sessionModels = bare == null ? const <String>[] : <String>[bare];
+      final String? pinnedProvider = (model != null && model.contains('/'))
+          ? model.split('/').first
+          : null;
+      sessionModels = <String>[
+        ?bare,
+        for (final String entry in qualified)
+          if (entry.split('/').first == pinnedProvider &&
+              entry.split('/').last != bare)
+            entry.split('/').last,
+      ];
     } else {
       // falls back to the omp default (mirrors the agent's best-effort
       // adoption of an unlisted model id). Providers without a model option

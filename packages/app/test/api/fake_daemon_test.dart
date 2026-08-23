@@ -38,6 +38,19 @@ void main() {
           .sandboxModes,
       SessionSandboxMode.values,
     );
+    // The sheet's model picker keys on the provider protocol.
+    expect(
+      info.providers
+          .firstWhere((ProviderInfo info) => info.id == 'ante')
+          .protocol,
+      'ante',
+    );
+    expect(
+      info.providers
+          .firstWhere((ProviderInfo info) => info.id == 'omp')
+          .protocol,
+      'acp',
+    );
     final List<Project> projects = await client.listProjects();
     expect(projects, hasLength(1));
     expect(projects.single.name, 'Demo Project');
@@ -833,6 +846,30 @@ void main() {
       final Session local = await fake.setModel(claude.id, 'other/claude-x');
       expect(local.model, 'other/claude-x');
       expect(local.models, isEmpty);
+
+      // Ante sessions mirror the daemon: a qualified create pins the
+      // provider and reports the bare model plus that provider's list…
+      final Session ante = await fake.createSession(
+        projectId: projectId,
+        providerId: 'ante',
+        model: 'openai-subscription/gpt-5.6-sol',
+      );
+      expect(ante.model, 'gpt-5.6-sol');
+      expect(ante.models, <String>['gpt-5.6-sol', 'gpt-5.6-luna']);
+
+      // …so mid-session switching within the provider works…
+      final Session switchedAnte = await fake.setModel(ante.id, 'gpt-5.6-luna');
+      expect(switchedAnte.model, 'gpt-5.6-luna');
+
+      // …and a typed custom id (provider with no preferred models) stays
+      // selectable on the session.
+      final Session custom = await fake.createSession(
+        projectId: projectId,
+        providerId: 'ante',
+        model: 'openai-compatible/my-custom-model',
+      );
+      expect(custom.model, 'my-custom-model');
+      expect(custom.models, <String>['my-custom-model']);
     },
   );
 
