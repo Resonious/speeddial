@@ -8,3 +8,4 @@ workspace:
   - packages/protocol
   - packages/daemon
   - packages/app
+  - packages/wear
