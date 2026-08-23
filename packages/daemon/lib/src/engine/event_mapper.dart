@@ -12,6 +12,11 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../acp/acp_types.dart';
 
+/// Converts an inline ACP image block into attachment-backed protocol content.
+typedef AcpToolImageMapper = ToolCallImage? Function(
+  Map<String, Object?> imageBlock,
+);
+
 /// Maps an ACP tool call status string to the protocol enum.
 ToolCallStatus toolCallStatusFromAcp(String? status) => switch (status) {
   'pending' => ToolCallStatus.pending,
@@ -25,8 +30,9 @@ ToolCallStatus toolCallStatusFromAcp(String? status) => switch (status) {
 /// protocol cannot represent (input/output/... blocks) are dropped; their
 /// structured payload travels in `rawInput`/`rawOutput`.
 List<ToolCallContent> toolCallContentFromAcp(
-  List<AcpToolCallContent> contents,
-) {
+  List<AcpToolCallContent> contents, {
+  AcpToolImageMapper? mapImage,
+}) {
   final out = <ToolCallContent>[];
   for (final content in contents) {
     switch (content) {
@@ -34,6 +40,9 @@ List<ToolCallContent> toolCallContentFromAcp(
         if (block['type'] == 'text') {
           final text = block['text'];
           if (text is String) out.add(ToolCallText(text: text));
+        } else if (block['type'] == 'image') {
+          final ToolCallImage? image = mapImage?.call(block);
+          if (image != null) out.add(image);
         }
       case AcpDiffContent(:final path, :final oldText, :final newText):
         out.add(ToolCallDiff(path: path, oldText: oldText, newText: newText));
@@ -61,12 +70,16 @@ List<String> locationsFromAcpLocationList(
 }
 
 /// Builds a protocol [ToolCall] from a `tool_call` update.
-ToolCall toolCallFromAcp(AcpToolCallData data, {String? cwd}) => ToolCall(
+ToolCall toolCallFromAcp(
+  AcpToolCallData data, {
+  String? cwd,
+  AcpToolImageMapper? mapImage,
+}) => ToolCall(
   id: data.id,
   title: data.title,
   kind: data.kind,
   status: toolCallStatusFromAcp(data.status),
-  content: toolCallContentFromAcp(data.content),
+  content: toolCallContentFromAcp(data.content, mapImage: mapImage),
   locations: locationsFromAcpLocationList(data.locations, cwd: cwd),
   rawInput: data.rawInput,
   rawOutput: data.rawOutput,
@@ -78,6 +91,7 @@ ToolCall mergeToolCallUpdate(
   ToolCall prior,
   AcpToolCallUpdate update, {
   String? cwd,
+  AcpToolImageMapper? mapImage,
 }) {
   final fields = update.fields;
   final rawTitle = _field<String>(fields, 'title');
@@ -89,7 +103,10 @@ ToolCall mergeToolCallUpdate(
     kind: rawKind ?? prior.kind,
     status: rawStatus != null ? toolCallStatusFromAcp(rawStatus) : prior.status,
     content: fields['content'] is List
-        ? toolCallContentFromAcp(AcpToolCallContent.listFrom(fields['content']))
+        ? toolCallContentFromAcp(
+            AcpToolCallContent.listFrom(fields['content']),
+            mapImage: mapImage,
+          )
         : prior.content,
     locations: fields['locations'] is List
         ? _locationPaths(fields['locations'], cwd: cwd)
@@ -137,6 +154,7 @@ ToolCall toolCallFromAcpUpdate(
   String toolCallId,
   Map<String, Object?> fields, {
   String? cwd,
+  AcpToolImageMapper? mapImage,
 }) {
   return ToolCall(
     id: toolCallId,
@@ -144,7 +162,10 @@ ToolCall toolCallFromAcpUpdate(
     kind: _field<String>(fields, 'kind') ?? 'other',
     status: toolCallStatusFromAcp(_field<String>(fields, 'status')),
     content: fields['content'] is List
-        ? toolCallContentFromAcp(AcpToolCallContent.listFrom(fields['content']))
+        ? toolCallContentFromAcp(
+            AcpToolCallContent.listFrom(fields['content']),
+            mapImage: mapImage,
+          )
         : const <ToolCallContent>[],
     locations: _locationPaths(fields['locations'], cwd: cwd),
     rawInput: fields['rawInput'],

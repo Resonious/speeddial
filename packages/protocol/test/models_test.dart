@@ -135,10 +135,7 @@ void main() {
       final decodedWithProtocol = DaemonInfo.fromJson(<String, Object?>{
         ...model.toJson(),
         'providers': <Object?>[
-          <String, Object?>{
-            ...model.providers[0].toJson(),
-            'protocol': 'ante',
-          },
+          <String, Object?>{...model.providers[0].toJson(), 'protocol': 'ante'},
           model.providers[1].toJson(),
         ],
       });
@@ -510,6 +507,14 @@ void main() {
         status: ToolCallStatus.completed,
         content: [
           const ToolCallText(text: 'Applying edit'),
+          const ToolCallImage(
+            attachment: Attachment(
+              id: 'att_tool_image',
+              name: 'screenshot.png',
+              mimeType: 'image/png',
+              size: 68,
+            ),
+          ),
           ToolCallDiff(
             path: 'lib/src/rpc.dart',
             oldText: 'old line',
@@ -527,7 +532,7 @@ void main() {
       final json = model.toJson();
       expect(json['kind'], 'edit');
       expect(json['status'], 'completed');
-      expect(json['content'], hasLength(3));
+      expect(json['content'], hasLength(4));
       expect(json['locations'], ['lib/src/rpc.dart']);
 
       final decoded = ToolCall.fromJson(json);
@@ -535,16 +540,22 @@ void main() {
       expect(decoded.title, 'Edit rpc.dart');
       expect(decoded.kind, 'edit');
       expect(decoded.status, ToolCallStatus.completed);
-      expect(decoded.content, hasLength(3));
+      expect(decoded.content, hasLength(4));
       expect(decoded.content[0], isA<ToolCallText>());
       expect((decoded.content[0] as ToolCallText).text, 'Applying edit');
-      expect(decoded.content[1], isA<ToolCallDiff>());
-      final diff = decoded.content[1] as ToolCallDiff;
+      expect(decoded.content[1], isA<ToolCallImage>());
+      final image = decoded.content[1] as ToolCallImage;
+      expect(image.attachment.id, 'att_tool_image');
+      expect(image.attachment.name, 'screenshot.png');
+      expect(image.attachment.mimeType, 'image/png');
+      expect(image.attachment.size, 68);
+      expect(decoded.content[2], isA<ToolCallDiff>());
+      final diff = decoded.content[2] as ToolCallDiff;
       expect(diff.path, 'lib/src/rpc.dart');
       expect(diff.oldText, 'old line');
       expect(diff.newText, 'new line');
-      expect(decoded.content[2], isA<ToolCallPatch>());
-      final patch = decoded.content[2] as ToolCallPatch;
+      expect(decoded.content[3], isA<ToolCallPatch>());
+      final patch = decoded.content[3] as ToolCallPatch;
       expect(patch.path, 'lib/src/native.dart');
       expect(patch.diff, '@@ -1 +1 @@\n-old\n+new');
       expect(decoded.locations, ['lib/src/rpc.dart']);

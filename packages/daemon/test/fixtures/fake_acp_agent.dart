@@ -451,6 +451,50 @@ Future<void> _runTurn(
     return _resolvePrompt(promptId, 'end_turn');
   }
 
+  if (text == 'view image') {
+    const String imageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+        'DwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    final String imagePath = p.join(Directory.current.path, 'sheet.png');
+    File(imagePath).writeAsBytesSync(base64Decode(imageData));
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'image-1',
+      'title': 'View sheet screenshot',
+      'kind': 'read',
+      'status': 'in_progress',
+      'content': <Object?>[],
+      'locations': <Object?>[
+        <String, Object?>{'path': imagePath},
+      ],
+      'rawInput': <String, Object?>{'path': imagePath},
+    });
+    if (_cancelled(promptId)) return;
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'image-1',
+      'status': 'completed',
+      'content': <Object?>[
+        <String, Object?>{
+          'type': 'content',
+          'content': <String, Object?>{
+            'type': 'text',
+            'text': 'Read image file [image/png]',
+          },
+        },
+        <String, Object?>{
+          'type': 'content',
+          'content': <String, Object?>{
+            'type': 'image',
+            'data': imageData,
+            'mimeType': 'image/png',
+          },
+        },
+      ],
+    });
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
   if (text == 'stream raw output') {
     // Progressive raw output on running updates: the daemon must trim the
     // raw fields from non-terminal snapshots while the terminal one keeps

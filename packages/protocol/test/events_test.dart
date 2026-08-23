@@ -413,7 +413,7 @@ void main() {
 
     test('unknown type throws FormatException', () {
       expect(
-        () => ToolCallContent.fromJson(const {'type': 'image'}),
+        () => ToolCallContent.fromJson(const {'type': 'unknown'}),
         throwsFormatException,
       );
     });

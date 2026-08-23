@@ -308,6 +308,40 @@ void main() {
     expect(warmup.details, ['Ready']);
   });
 
+  test('preserves image tool result blocks for the session engine', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+    final StreamSubscription<AcpSessionUpdate> subscription = client
+        .sessionUpdates(created.sessionId)
+        .listen(updates.add);
+    addTearDown(subscription.cancel);
+
+    final PromptResult result = await client.prompt(
+      created.sessionId,
+      textBlocks('view image'),
+    );
+    expect(result.stopReason, 'end_turn');
+    final AcpToolCall started = updates.whereType<AcpToolCall>().single;
+    expect(started.toolCall.kind, 'read');
+
+    final AcpToolCallUpdate completed = updates
+        .whereType<AcpToolCallUpdate>()
+        .single;
+    final List<Object?> content = completed.fields['content']! as List<Object?>;
+    expect(content, hasLength(2));
+    final Map<Object?, Object?> image =
+        (content.last! as Map<Object?, Object?>)['content']!
+            as Map<Object?, Object?>;
+    expect(image['type'], 'image');
+    expect(image['mimeType'], 'image/png');
+    expect(
+      image['data'],
+      isA<String>().having((String data) => data, 'data', isNotEmpty),
+    );
+  });
+
   test(
     'flattens text resources and materializes images into Ante UserInput',
     () async {

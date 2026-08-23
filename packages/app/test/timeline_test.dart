@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -248,48 +250,150 @@ void main() {
   });
 
   group('tool call details', () {
-    testWidgets('renders raw input and output when typed content is absent', (
+    testWidgets(
+      'uses the execute command as the heading and renders raw details',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildSpeedDialTheme(),
+            home: const Scaffold(
+              body: SizedBox(
+                width: 600,
+                child: ToolCallCard(
+                  toolCall: ToolCall(
+                    id: 'bash-1',
+                    title: 'Bash',
+                    kind: 'execute',
+                    status: ToolCallStatus.completed,
+                    content: <ToolCallContent>[],
+                    locations: <String>[],
+                    rawInput: <String, Object?>{
+                      'command': 'git status --short',
+                      'description': 'Shows working tree status',
+                    },
+                    rawOutput: <String, Object?>{
+                      'Completed': <String, Object?>{
+                        'exit_code': 0,
+                        'stdout': ' M lib/main.dart',
+                      },
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        expect(find.text('git status --short'), findsOneWidget);
+        expect(find.text('Bash'), findsNothing);
+
+        await tester.tap(find.text('git status --short'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Input'), findsOneWidget);
+        expect(find.text('Output'), findsOneWidget);
+        expect(find.textContaining('git status --short'), findsWidgets);
+        expect(find.textContaining('M lib/main.dart'), findsOneWidget);
+        expect(find.text('No output'), findsNothing);
+      },
+    );
+
+    testWidgets('accepts argv-style cmd input and falls back to the title', (
       WidgetTester tester,
     ) async {
+      Future<void> pump(ToolCall toolCall) => tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: SizedBox(width: 600, child: ToolCallCard(toolCall: toolCall)),
+          ),
+        ),
+      );
+
+      await pump(
+        const ToolCall(
+          id: 'shell-1',
+          title: 'Shell',
+          kind: 'execute',
+          status: ToolCallStatus.completed,
+          content: <ToolCallContent>[],
+          locations: <String>[],
+          rawInput: <String, Object?>{
+            'cmd': <Object?>['dart', 'test'],
+          },
+        ),
+      );
+      expect(find.text('dart test'), findsOneWidget);
+      expect(find.text('Shell'), findsNothing);
+
+      await pump(
+        const ToolCall(
+          id: 'shell-2',
+          title: 'Bash',
+          kind: 'execute',
+          status: ToolCallStatus.completed,
+          content: <ToolCallContent>[],
+          locations: <String>[],
+        ),
+      );
+      expect(find.text('Bash'), findsOneWidget);
+    });
+
+    testWidgets('loads and renders attachment-backed image output', (
+      WidgetTester tester,
+    ) async {
+      const String imageData =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+          'DwAChwGA60e6kgAAAABJRU5ErkJggg==';
+      const Attachment attachment = Attachment(
+        id: 'tool-image-1',
+        name: 'sheet.png',
+        mimeType: 'image/png',
+        size: 70,
+      );
+      String? loadedId;
       await tester.pumpWidget(
         MaterialApp(
           theme: buildSpeedDialTheme(),
-          home: const Scaffold(
-            body: SizedBox(
-              width: 600,
-              child: ToolCallCard(
-                toolCall: ToolCall(
-                  id: 'bash-1',
-                  title: 'Bash',
-                  kind: 'execute',
-                  status: ToolCallStatus.completed,
-                  content: <ToolCallContent>[],
-                  locations: <String>[],
-                  rawInput: <String, Object?>{
-                    'command': 'git status --short',
-                    'description': 'Shows working tree status',
-                  },
-                  rawOutput: <String, Object?>{
-                    'Completed': <String, Object?>{
-                      'exit_code': 0,
-                      'stdout': ' M lib/main.dart',
-                    },
-                  },
+          home: Scaffold(
+            body: Timeline(
+              items: const <TimelineItem>[
+                ToolCallTimelineItem(
+                  toolCall: ToolCall(
+                    id: 'view-1',
+                    title: 'View sheet screenshot',
+                    kind: 'read',
+                    status: ToolCallStatus.completed,
+                    content: <ToolCallContent>[
+                      ToolCallText(text: 'Read image file [image/png]'),
+                      ToolCallImage(attachment: attachment),
+                    ],
+                    locations: <String>['sheet.png'],
+                  ),
                 ),
-              ),
+              ],
+              attachmentLoader: (String attachmentId) async {
+                loadedId = attachmentId;
+                return AttachmentData(
+                  id: attachment.id,
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  size: base64Decode(imageData).length,
+                  data: imageData,
+                );
+              },
             ),
           ),
         ),
       );
 
-      await tester.tap(find.text('Bash'));
+      expect(loadedId, isNull);
+      await tester.tap(find.text('View sheet screenshot'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Input'), findsOneWidget);
-      expect(find.text('Output'), findsOneWidget);
-      expect(find.textContaining('git status --short'), findsOneWidget);
-      expect(find.textContaining('M lib/main.dart'), findsOneWidget);
-      expect(find.text('No output'), findsNothing);
+      expect(loadedId, attachment.id);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.text('Read image file [image/png]'), findsOneWidget);
     });
   });
 

@@ -1429,6 +1429,22 @@ class AnteClient implements AgentClient {
       };
 
   static List<Object?> _toolResultContent(Object? rawResult) {
+    if (rawResult is Map) {
+      final Object? rawContent = rawResult['content'];
+      if (rawContent is List) {
+        final List<Object?> content = <Object?>[];
+        for (final Object? rawBlock in rawContent) {
+          if (rawBlock is! Map) continue;
+          final Map<String, Object?> block = Map<String, Object?>.from(
+            rawBlock,
+          );
+          if (block['type'] == 'text' || block['type'] == 'image') {
+            content.add(<String, Object?>{'type': 'content', 'content': block});
+          }
+        }
+        if (content.isNotEmpty) return content;
+      }
+    }
     final String? text = _toolResultText(rawResult);
     if (text == null || text.isEmpty) return const <Object?>[];
     return <Object?>[
@@ -1465,7 +1481,10 @@ class AnteClient implements AgentClient {
 
   static String _toolKind(String name) {
     final String lower = name.toLowerCase();
-    if (lower.contains('read')) return 'read';
+    if (lower.contains('read') ||
+        (lower.contains('view') && lower.contains('image'))) {
+      return 'read';
+    }
     if (lower.contains('write') ||
         lower.contains('edit') ||
         lower.contains('patch')) {

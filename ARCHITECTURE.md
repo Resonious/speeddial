@@ -103,7 +103,9 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     transport updates to protocol SessionEvents, assigns seq, persists
                     via SessionStore, and broadcasts to listeners. Handles permission
                     requests (parked until respondPermission), cancel, process exit, and
-                    turn lifecycle. MCP injection supports ACP, Codex, and Ante. ACP
+                    turn lifecycle. Inline tool-result images and provider-reported image
+                    file reads are deduplicated into attachment-backed tool content. MCP
+                    injection supports ACP, Codex, and Ante. ACP
                     receives structured attachments; Codex receives native text, image,
                     and audio inputs; Ante inlines UTF-8 text attachments and
                     materializes images as transient `@` file mentions for Ante's native
@@ -198,6 +200,7 @@ lib/src/ui/chat/             timeline (virtualized ListView, reversed), message 
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, collapsible
                              tool-call cards (status icon, title, expandable content/diff),
+                             including lazily loaded image outputs,
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips, mode

@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
 import 'active_pulse.dart';
+import 'message_view.dart';
 
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
@@ -53,23 +54,53 @@ Color _statusColor(BuildContext context, ToolCallStatus status) {
 /// terminal). Expanded by default while the call is running, collapsed once
 /// it completes; the user can toggle freely.
 class ToolCallCard extends StatefulWidget {
-  const ToolCallCard({super.key, required this.toolCall});
+  const ToolCallCard({
+    super.key,
+    required this.toolCall,
+    this.attachmentLoader,
+  });
 
   final ToolCall toolCall;
+
+  /// Resolves image content through `attachments.read`. When absent, image
+  /// content degrades to its attachment metadata.
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   State<ToolCallCard> createState() => _ToolCallCardState();
 }
 
 class _ToolCallCardState extends State<ToolCallCard> {
+  static final RegExp _commandLineBreak = RegExp(r'[\r\n]+');
+
   late bool _expanded = _shouldDefaultExpand(widget.toolCall.status);
+  late String _title = _displayTitle(widget.toolCall);
 
   static bool _shouldDefaultExpand(ToolCallStatus status) =>
       status == ToolCallStatus.running || status == ToolCallStatus.pending;
 
+  static String _displayTitle(ToolCall toolCall) {
+    if (toolCall.kind != 'execute') return toolCall.title;
+    final Object? rawInput = toolCall.rawInput;
+    if (rawInput is! Map<Object?, Object?>) return toolCall.title;
+
+    String command = _commandText(rawInput['command']);
+    if (command.trim().isEmpty) command = _commandText(rawInput['cmd']);
+    final String trimmed = command.trim();
+    if (trimmed.isEmpty) return toolCall.title;
+    return trimmed.replaceAll(_commandLineBreak, ' ');
+  }
+
+  static String _commandText(Object? rawCommand) => switch (rawCommand) {
+    final String value => value,
+    final List<Object?> values => values.whereType<String>().join(' '),
+    _ => '',
+  };
+
   @override
   void didUpdateWidget(ToolCallCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _title = _displayTitle(widget.toolCall);
     if (oldWidget.toolCall.status != widget.toolCall.status) {
       // Track the agent's lifecycle: jump open while running, collapse when
       // the call settles.
@@ -123,7 +154,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
                       active: toolCall.status == ToolCallStatus.running,
                       pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
                       child: Text(
-                        toolCall.title,
+                        _title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: titleStyle,
@@ -167,6 +198,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
             secondChild: _ToolCallContentList(
               toolCall: toolCall,
               kindColor: kindBorder,
+              attachmentLoader: _expanded ? widget.attachmentLoader : null,
             ),
           ),
         ],
@@ -176,10 +208,15 @@ class _ToolCallCardState extends State<ToolCallCard> {
 }
 
 class _ToolCallContentList extends StatelessWidget {
-  const _ToolCallContentList({required this.toolCall, required this.kindColor});
+  const _ToolCallContentList({
+    required this.toolCall,
+    required this.kindColor,
+    required this.attachmentLoader,
+  });
 
   final ToolCall toolCall;
   final BorderSide kindColor;
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +227,10 @@ class _ToolCallContentList extends StatelessWidget {
       if (hasInput) _RawToolDataView(label: 'Input', value: toolCall.rawInput!),
       if (hasTypedOutput) const _ToolDataLabel(label: 'Output'),
       for (final ToolCallContent content in toolCall.content)
-        _ToolCallContentView(content: content),
+        _ToolCallContentView(
+          content: content,
+          attachmentLoader: attachmentLoader,
+        ),
       if (!hasTypedOutput && hasRawOutput)
         _RawToolDataView(label: 'Output', value: toolCall.rawOutput!),
       if (!hasTypedOutput && !hasRawOutput)
@@ -221,9 +261,13 @@ class _ToolCallContentList extends StatelessWidget {
 }
 
 class _ToolCallContentView extends StatelessWidget {
-  const _ToolCallContentView({required this.content});
+  const _ToolCallContentView({
+    required this.content,
+    required this.attachmentLoader,
+  });
 
   final ToolCallContent content;
+  final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -233,6 +277,14 @@ class _ToolCallContentView extends StatelessWidget {
         return _ScrollableMono(
           background: colors.codeBackground,
           child: Text(text.text, style: colors.mono),
+        );
+      case ToolCallImage image:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: AttachmentView(
+            attachment: image.attachment,
+            loader: attachmentLoader,
+          ),
         );
       case ToolCallDiff diff:
         return _DiffView(diff: diff);
