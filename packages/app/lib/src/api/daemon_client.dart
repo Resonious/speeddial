@@ -39,6 +39,21 @@ abstract class DaemonClient {
   /// Static daemon identity: version, protocol, auth, providers.
   Future<DaemonInfo> info();
 
+  /// Installed built-in harness CLIs and their current versions.
+  Future<List<HarnessInfo>> listHarnesses();
+
+  /// Runs the harness's native updater and returns its new version.
+  Future<HarnessInfo> updateHarness(String id);
+
+  /// Names of daemon-managed environment variables. Values are write-only.
+  Future<List<String>> listEnvironmentNames();
+
+  /// Atomically sets/replaces and removes daemon-managed variables.
+  Future<List<String>> updateEnvironment({
+    Map<String, String> set = const <String, String>{},
+    List<String> remove = const <String>[],
+  });
+
   /// All known projects, any order.
   Future<List<Project>> listProjects();
 

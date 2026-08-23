@@ -68,6 +68,12 @@ ProviderInfo = {
   sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
 }
 
+HarnessInfo = {
+  id: string,                 // "omp" | "claude" | "codex" | "ante"
+  name: string,               // display name
+  version: string,            // installed CLI's version output
+}
+
 Project = {
   id: string,
   name: string,
@@ -263,6 +269,26 @@ UsageInfo = {
 ### Daemon
 - `daemon.info {}` → `DaemonInfo`
 - `providers.list {}` → `{providers: ProviderInfo[]}`
+
+### Harnesses
+- `harnesses.list {}` → `{harnesses: HarnessInfo[]}` — returns only installed built-in
+  harnesses (OMP, Claude Code, Codex, and Ante) and probes each with its native `--version`
+  command
+- `harnesses.update {id: string}` → `{harness: HarnessInfo}` — runs the installed harness's
+  native `update` command and returns its newly probed version; errors `-32002` for an unknown
+  harness, `-32009` when an update is already running, `-32010` when it is not installed, and
+  `-32011` when the updater fails
+
+### Environment
+- `environment.list {}` → `{names: string[]}`
+- `environment.update {set?: {[name: string]: string}, remove?: string[]}` →
+  `{names: string[]}`
+
+Environment values are write-only and remain in daemon SQLite; public clients receive only sorted
+names. Names must match `[A-Za-z_][A-Za-z0-9_]*`. `environment.update` atomically removes requested
+names and sets/replaces supplied values (a name in both inputs is set). The saved values overlay the
+daemon process environment for every harness process started after the update, including new and
+resumed sessions; already-running harness processes are not restarted.
 
 ### Projects
 - `projects.list {}` → `{projects: Project[]}`

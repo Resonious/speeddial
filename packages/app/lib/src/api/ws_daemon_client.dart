@@ -463,6 +463,43 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<List<HarnessInfo>> listHarnesses() async {
+    final Object? result = await _requirePeer().call('harnesses.list');
+    return _decodeList(_resultField(result, 'harnesses'), HarnessInfo.fromJson);
+  }
+
+  @override
+  Future<HarnessInfo> updateHarness(String id) async {
+    final Object? result = await _requirePeer().call(
+      'harnesses.update',
+      <String, Object?>{'id': id},
+    );
+    return HarnessInfo.fromJson(_resultMap(_resultField(result, 'harness')));
+  }
+
+  @override
+  Future<List<String>> listEnvironmentNames() async {
+    final Object? result = await _requirePeer().call('environment.list');
+    return (_resultField(result, 'names') as List<Object?>)
+        .cast<String>()
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<String>> updateEnvironment({
+    Map<String, String> set = const <String, String>{},
+    List<String> remove = const <String>[],
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'environment.update',
+      <String, Object?>{'set': set, 'remove': remove},
+    );
+    return (_resultField(result, 'names') as List<Object?>)
+        .cast<String>()
+        .toList(growable: false);
+  }
+
+  @override
   Future<List<Project>> listProjects() async {
     final Object? result = await _requirePeer().call('projects.list');
     return _decodeList(_resultField(result, 'projects'), Project.fromJson);

@@ -85,18 +85,43 @@ void main() {
     expect(find.text('Demo Project'), findsNothing);
     expect(app.selection.selectedDaemonId, isNull);
   });
-  testWidgets('daemon actions open its MCP settings page', (
+  testWidgets('daemon actions rename Settings to MCP servers', (
     WidgetTester tester,
   ) async {
     await pumpRail(tester);
     await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('endpoint-action-settings')));
+    expect(find.text('Settings'), findsNothing);
+    expect(find.text('MCP servers'), findsOneWidget);
+    expect(find.text('Harnesses'), findsOneWidget);
+    expect(find.text('Environment'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('endpoint-action-mcp-servers')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Fake daemon settings'), findsOneWidget);
+    expect(find.text('Fake daemon MCP servers'), findsOneWidget);
     expect(find.text('MCP servers'), findsOneWidget);
     expect(find.byKey(const Key('mcp-add-server')), findsOneWidget);
+  });
+
+  testWidgets('daemon actions open Harnesses and Environment pages', (
+    WidgetTester tester,
+  ) async {
+    await pumpRail(tester);
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-action-harnesses')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fake daemon Harnesses'), findsOneWidget);
+    expect(find.byKey(const Key('harness-codex')), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-action-environment')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fake daemon Environment'), findsOneWidget);
+    expect(find.byKey(const Key('environment-add-variable')), findsOneWidget);
   });
 
   testWidgets('selecting the fake daemon loads and lists the seeded project', (

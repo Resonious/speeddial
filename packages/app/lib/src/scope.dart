@@ -9,6 +9,7 @@ import 'api/fake_daemon.dart';
 import 'api/ws_daemon_client.dart';
 import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
+import 'state/daemon_config_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
 import 'state/mcp_store.dart';
@@ -281,6 +282,7 @@ class AppData {
     files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
     mcp = McpStore(clientFor: this.clientFor);
+    daemonConfig = DaemonConfigStore(clientFor: this.clientFor);
     // Endpoints added after construction connect on arrival; status-only
     // changes are filtered out by [_connectedEndpointIds] to avoid churn.
     this.connections.addListener(_onConnectionsChanged);
@@ -296,6 +298,7 @@ class AppData {
   late final FilesStore files;
   late final GitStore git;
   late final McpStore mcp;
+  late final DaemonConfigStore daemonConfig;
 
   /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
   /// sheet seeds its toggle from here and writes back on change, so the
@@ -524,6 +527,7 @@ class AppData {
     files.dispose();
     git.dispose();
     mcp.dispose();
+    daemonConfig.dispose();
     settings.dispose();
   }
 }

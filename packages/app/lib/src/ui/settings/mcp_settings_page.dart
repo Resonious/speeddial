@@ -169,7 +169,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
   Widget build(BuildContext context) {
     final McpStore store = AppScope.of(context).mcp;
     return Scaffold(
-      appBar: AppBar(title: Text('${widget.daemonName} settings')),
+      appBar: AppBar(title: Text('${widget.daemonName} MCP servers')),
       floatingActionButton: FloatingActionButton.extended(
         key: const Key('mcp-add-server'),
         onPressed: _openEditor,

@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 import '../engine/session_engine.dart';
 import '../git/git_service.dart';
 import '../git/pr_service.dart';
+import '../harnesses/harness_service.dart';
 import '../mcp/built_in_mcp_server.dart';
 import '../mcp/mcp_proxy.dart';
 import '../paths.dart';
@@ -42,6 +43,10 @@ const List<String> _kProtocolMethods = <String>[
   'auth.authenticate',
   'daemon.info',
   'providers.list',
+  'harnesses.list',
+  'harnesses.update',
+  'environment.list',
+  'environment.update',
   'attachments.read',
   'mcp.list',
   'mcp.create',
@@ -119,11 +124,15 @@ class SpeedDialServer {
     PrService? pr,
     String? authToken,
     McpUpstreamConnector? mcpConnector,
+    HarnessService? harnesses,
     this.gitPollInterval = const Duration(seconds: 15),
     this.gitFetchInterval = const Duration(minutes: 2),
   }) : _engine = engine, // ignore: prefer_initializing_formals
        _store = store, // ignore: prefer_initializing_formals
        _providers = providers, // ignore: prefer_initializing_formals
+       _harnesses =
+           harnesses ??
+           HarnessService(environmentProvider: store.daemonEnvironment),
        _authToken = authToken, // ignore: prefer_initializing_formals
        _git = git ?? GitService(),
        _pr = pr ?? PrService(),
@@ -142,6 +151,7 @@ class SpeedDialServer {
     GitService? git,
     PrService? pr,
     McpUpstreamConnector? mcpConnector,
+    HarnessService? harnesses,
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
   }) async {
@@ -153,6 +163,7 @@ class SpeedDialServer {
       git: git,
       pr: pr,
       mcpConnector: mcpConnector,
+      harnesses: harnesses,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
     );
@@ -163,6 +174,7 @@ class SpeedDialServer {
   final SessionEngine _engine;
   final DaemonStore _store;
   final ProviderRegistry _providers;
+  final HarnessService _harnesses;
   final String? _authToken;
   final GitService _git;
   final PrService _pr;
@@ -472,6 +484,10 @@ class SpeedDialServer {
       'auth.authenticate' => _authenticate(client, params),
       'daemon.info' => _daemonInfo(),
       'providers.list' => _providersList(),
+      'harnesses.list' => _harnessesList(),
+      'harnesses.update' => _harnessesUpdate(params),
+      'environment.list' => _environmentList(),
+      'environment.update' => _environmentUpdate(params),
       'mcp.list' => _mcpList(),
       'mcp.create' => _mcpCreate(params),
       'mcp.update' => _mcpUpdate(params),
@@ -658,6 +674,70 @@ class SpeedDialServer {
         .map((info) => info.toJson())
         .toList(growable: false),
   };
+
+  Future<Object?> _harnessesList() async => <String, Object?>{
+    'harnesses': (await _harnesses.list())
+        .map((HarnessInfo harness) => harness.toJson())
+        .toList(growable: false),
+  };
+
+  Future<Object?> _harnessesUpdate(Map<String, Object?> params) async =>
+      <String, Object?>{
+        'harness': (await _harnesses.update(_requiredString(params, 'id')))
+            .toJson(),
+      };
+
+  Object? _environmentList() => <String, Object?>{
+    'names': _store.daemonEnvironmentNames(),
+  };
+
+  Object? _environmentUpdate(Map<String, Object?> params) {
+    final Map<String, String> set = _environmentSetParam(params);
+    final List<String> remove = _stringListParam(params, 'remove');
+    for (final String name in remove) {
+      _validateEnvironmentName(name);
+    }
+    _store.updateDaemonEnvironment(set: set, remove: remove);
+    _providers.environmentChanged();
+    return _environmentList();
+  }
+
+  Map<String, String> _environmentSetParam(Map<String, Object?> params) {
+    final Object? raw = params['set'];
+    if (raw == null) return const <String, String>{};
+    if (raw is! Map) {
+      throw DaemonError(_kErrInvalidParams, 'set must be an object');
+    }
+    final Map<String, String> environment = <String, String>{};
+    for (final MapEntry<Object?, Object?> entry in raw.entries) {
+      if (entry.key is! String || entry.value is! String) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'environment names and values must be strings',
+        );
+      }
+      final String name = entry.key! as String;
+      final String value = entry.value! as String;
+      _validateEnvironmentName(name);
+      if (value.contains('\u0000')) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'environment values must not contain NUL',
+        );
+      }
+      environment[name] = value;
+    }
+    return environment;
+  }
+
+  void _validateEnvironmentName(String name) {
+    if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(name)) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'environment names must match [A-Za-z_][A-Za-z0-9_]*',
+      );
+    }
+  }
   // -------------------------------------------------------------------------
   // mcp.*
   // -------------------------------------------------------------------------

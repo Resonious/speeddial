@@ -214,6 +214,23 @@ void main() {
     );
   });
 
+  test(
+    'daemon-managed environment is passed to new harness processes',
+    () async {
+      final String reportPath = p.join(tempDir.path, 'agent.environment');
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_ACP_ENV_REPORT': reportPath,
+          'SPEEDIAL_TEST_ENV': 'managed-value',
+        },
+      );
+
+      await engine.createSession(projectId: project.id, providerId: 'fake');
+
+      expect(File(reportPath).readAsStringSync(), 'managed-value');
+    },
+  );
+
   test('Codex sessions stream native rich events and attachments', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

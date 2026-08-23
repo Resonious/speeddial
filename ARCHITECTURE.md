@@ -102,6 +102,11 @@ lib/src/providers/  Provider registry. Built-ins:
                     Ante home's auth/, OAuth preset with a token file), plus
                     settings-named providers. Availability = command[0]
                     resolvable via PATH (or absolute exists).
+lib/src/harnesses/  HarnessService detects the four supported installed CLIs
+                    (OMP, Claude Code, Codex, Ante), probes their versions, and
+                    runs their native update commands. Daemon-managed
+                    environment values are overlaid on probes, updates, and new
+                    agent processes.
 lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
                     transport updates to protocol SessionEvents, assigns seq, persists
                     via SessionStore, and broadcasts to listeners. Handles permission
@@ -119,13 +124,15 @@ lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLit
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,
                     attachments (message and MCP-displayed image payloads, FK-cascaded
                     with their session; events carry metadata only, `attachments.read`
-                    serves blobs), mcp_servers, mcp_secrets, and mcp_oauth. MCP static
-                    secrets, OAuth client secrets, and access/refresh tokens stay
+                    serves blobs), mcp_servers, mcp_secrets, mcp_oauth, and
+                    daemon_environment. MCP static secrets, OAuth client
+                    secrets, and access/refresh tokens stay
                     daemon-side; public reads expose only credential names and OAuth
-                    connection metadata. SQLite database/WAL files are restricted to
-                    owner access (0600) on POSIX hosts. WAL mode, foreign keys on. Events
-                    are stored as JSON blobs + seq. Session/event substring queries back
-                    MCP search.
+                    connection metadata. Daemon environment values are likewise
+                    write-only over the public API. SQLite database/WAL files are
+                    restricted to owner access (0600) on POSIX hosts. WAL mode,
+                    foreign keys on. Events are stored as JSON blobs + seq.
+                    Session/event substring queries back MCP search.
 lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porcelain v2
                     for status, --no-color unified diffs, branch lists; fetch and
                     worktree add/remove back per-session worktrees. mergeIntoBase
@@ -188,7 +195,8 @@ lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditi
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental chunk append),
-                             FilesStore, GitStore, McpStore, SettingsStore (theme
+                             FilesStore, GitStore, McpStore, DaemonConfigStore (installed
+                             harnesses + write-only environment names), SettingsStore (theme
                              mode persisted locally). Stores NEVER hold BuildContext.
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
                              chat flexible, right 360, both collapsible); <1000px →
@@ -198,9 +206,10 @@ lib/src/ui/left/             daemon/project/session rail: connection status dot,
                              new-session sheet (provider, worktree branch, and yolo —
                              model/thinking are picked in the
                              composer on the live session), rename/archive/delete menus
-lib/src/ui/settings/         daemon-scoped MCP profile list/editor; stdio command/env and
-                             remote HTTP URL/header values are written to the daemon,
-                             while stored secret values are never read back into Flutter.
+lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
+                             harness/version list with update actions, and
+                             write-only daemon environment editor; stored secret
+                             values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that

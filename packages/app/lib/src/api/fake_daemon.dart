@@ -28,6 +28,28 @@ class FakeDaemonClient implements DaemonClient {
       <String, McpServerProfile>{};
   final Map<String, Map<String, String>> _mcpSecrets =
       <String, Map<String, String>>{};
+  final Map<String, HarnessInfo> _harnesses = <String, HarnessInfo>{
+    'omp': const HarnessInfo(id: 'omp', name: 'OMP', version: 'omp/17.3.5'),
+    'claude': const HarnessInfo(
+      id: 'claude',
+      name: 'Claude Code',
+      version: '2.1.7 (Claude Code)',
+    ),
+    'codex': const HarnessInfo(
+      id: 'codex',
+      name: 'Codex',
+      version: 'codex-cli 0.148.0',
+    ),
+    'ante': const HarnessInfo(
+      id: 'ante',
+      name: 'Ante',
+      version: 'ante 0.preview.83',
+    ),
+  };
+  final Map<String, String> _environment = <String, String>{};
+
+  /// Harness ids updated through [updateHarness], for demo/widget assertions.
+  final List<String> harnessUpdateCalls = <String>[];
   final Map<String, List<SessionEvent>> _history =
       <String, List<SessionEvent>>{};
   final Map<String, int> _seqBySession = <String, int>{};
@@ -285,6 +307,42 @@ class FakeDaemonClient implements DaemonClient {
         ),
       ],
     );
+  }
+
+  @override
+  Future<List<HarnessInfo>> listHarnesses() async =>
+      List<HarnessInfo>.unmodifiable(_harnesses.values);
+
+  @override
+  Future<HarnessInfo> updateHarness(String id) async {
+    final HarnessInfo? current = _harnesses[id];
+    if (current == null) {
+      throw DaemonError(kErrNotFound, 'Unknown harness: $id');
+    }
+    harnessUpdateCalls.add(id);
+    final HarnessInfo updated = HarnessInfo(
+      id: current.id,
+      name: current.name,
+      version: current.version,
+    );
+    _harnesses[id] = updated;
+    return updated;
+  }
+
+  @override
+  Future<List<String>> listEnvironmentNames() async =>
+      _environment.keys.toList(growable: false)..sort();
+
+  @override
+  Future<List<String>> updateEnvironment({
+    Map<String, String> set = const <String, String>{},
+    List<String> remove = const <String>[],
+  }) async {
+    for (final String name in remove) {
+      _environment.remove(name);
+    }
+    _environment.addAll(set);
+    return listEnvironmentNames();
   }
 
   @override
