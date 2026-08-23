@@ -1162,6 +1162,36 @@ class ProviderInfo {
   };
 }
 
+/// An installed coding-agent CLI managed by the daemon.
+class HarnessInfo {
+  const HarnessInfo({
+    required this.id,
+    required this.name,
+    required this.version,
+  });
+
+  /// Stable built-in id: "omp", "claude", "codex", or "ante".
+  final String id;
+
+  /// Human-readable CLI name.
+  final String name;
+
+  /// The installed CLI's version output, normalized to one line.
+  final String version;
+
+  factory HarnessInfo.fromJson(Map<String, Object?> json) => HarnessInfo(
+    id: json['id']! as String,
+    name: json['name']! as String,
+    version: json['version']! as String,
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'version': version,
+  };
+}
+
 /// Daemon-managed MCP server configuration.
 ///
 /// Secret environment/header values never appear on the wire. Only their

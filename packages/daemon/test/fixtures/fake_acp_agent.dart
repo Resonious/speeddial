@@ -81,6 +81,12 @@ Future<void> _writeQueue = Future<void>.value();
 int _nextId = 1;
 
 void main() {
+  final String? environmentReport = Platform.environment['FAKE_ACP_ENV_REPORT'];
+  if (environmentReport != null && environmentReport.isNotEmpty) {
+    File(environmentReport).writeAsStringSync(
+      Platform.environment['SPEEDIAL_TEST_ENV'] ?? '<missing>',
+    );
+  }
   // The target path travels via the environment: argv is unreliable across
   // Dart VM wrappers (flags like --executable_name can be spliced in).
   final targetPath =

@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
+import 'package:speeddial_daemon/src/harnesses/harness_service.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:speeddial_daemon/src/mcp/mcp_proxy.dart';
 import 'package:speeddial_daemon/src/server/ws_server.dart';
@@ -245,6 +246,7 @@ void main() {
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
     McpUpstreamConnector? mcpConnector,
+    HarnessService? harnesses,
   }) async {
     engine = SessionEngine(
       store: store,
@@ -262,6 +264,7 @@ void main() {
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
       mcpConnector: mcpConnector,
+      harnesses: harnesses,
     );
     return server!;
   }
@@ -344,6 +347,117 @@ void main() {
         'fake-smart',
       ]);
 
+      await client.close();
+    });
+  });
+
+  group('daemon configuration', () {
+    test('lists installed harness versions and runs native updates', () async {
+      final Map<String, String> versions = <String, String>{
+        'omp': 'omp/1.0.0',
+        'codex': 'codex-cli 2.0.0',
+      };
+      final List<String> invocations = <String>[];
+      final HarnessService harnesses = HarnessService(
+        environmentProvider: store.daemonEnvironment,
+        executableResolver: (
+          String executable,
+          Map<String, String> environment,
+        ) => versions.containsKey(executable),
+        processRunner:
+            (
+              String executable,
+              List<String> arguments, {
+              required Map<String, String> environment,
+            }) async {
+              invocations.add('$executable ${arguments.join(' ')}');
+              if (arguments.single == 'update') {
+                versions[executable] = '$executable updated';
+              }
+              return ProcessResult(1, 0, versions[executable], '');
+            },
+      );
+      await startServer(harnesses: harnesses);
+      final WsClient client = await connect(server!.port);
+
+      final Map<String, Object?> listed = j(
+        await client.peer.call('harnesses.list'),
+      );
+      final List<HarnessInfo> installed =
+          (listed['harnesses']! as List<Object?>)
+              .map(
+                (Object? value) => HarnessInfo.fromJson(
+                  (value! as Map).cast<String, Object?>(),
+                ),
+              )
+              .toList(growable: false);
+      expect(installed.map((HarnessInfo value) => value.id), <String>[
+        'omp',
+        'codex',
+      ]);
+
+      final Map<String, Object?> result = j(
+        await client.peer.call('harnesses.update', <String, Object?>{
+          'id': 'codex',
+        }),
+      );
+      final HarnessInfo updated = HarnessInfo.fromJson(
+        (result['harness']! as Map).cast<String, Object?>(),
+      );
+      expect(updated.version, 'codex updated');
+      expect(
+        invocations,
+        containsAllInOrder(<String>['codex update', 'codex --version']),
+      );
+
+      await client.close();
+    });
+
+    test('environment values are write-only and validated', () async {
+      await startServer();
+      final WsClient client = await connect(server!.port);
+
+      final Map<String, Object?> updated = j(
+        await client.peer.call('environment.update', <String, Object?>{
+          'set': <String, String>{'API_TOKEN': 'top-secret'},
+        }),
+      );
+      expect(updated['names'], <Object?>['API_TOKEN']);
+      expect(updated.toString(), isNot(contains('top-secret')));
+      expect(store.daemonEnvironment(), <String, String>{
+        'API_TOKEN': 'top-secret',
+      });
+      final Map<String, Object?> listed = j(
+        await client.peer.call('environment.list'),
+      );
+      expect(listed, <String, Object?>{
+        'names': <Object?>['API_TOKEN'],
+      });
+
+      for (final Map<String, Object?> invalid in <Map<String, Object?>>[
+        <String, Object?>{
+          'set': <String, String>{'BAD-NAME': 'value'},
+        },
+        <String, Object?>{
+          'set': <String, String>{'GOOD_NAME': 'bad\u0000value'},
+        },
+      ]) {
+        await expectLater(
+          client.peer.call('environment.update', invalid),
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError error) => error.code,
+              'code',
+              -32602,
+            ),
+          ),
+        );
+      }
+
+      await client.peer.call('environment.update', <String, Object?>{
+        'remove': <String>['API_TOKEN'],
+      });
+      expect(store.daemonEnvironmentNames(), isEmpty);
       await client.close();
     });
   });

@@ -48,6 +48,7 @@ typedef ModelsProbe = Future<List<String>> Function(List<String> command);
 /// qualified by their upstream provider. Tests inject stubs; a throwing
 /// probe degrades to an empty list.
 typedef CatalogProbe = Future<List<String>> Function(List<String> command);
+typedef ProviderEnvironmentProvider = Map<String, String> Function();
 
 /// Wire protocol spoken by a provider process.
 enum ProviderProtocol { acp, codex, ante }
@@ -103,20 +104,29 @@ class ProviderSpec {
 /// The registry is immutable after construction: [configOverrides] (or the
 /// on-disk config file when null) is merged over the built-ins once, and the
 /// built-ins can be overridden by a user entry with the same id. Model probe
-/// results are cached for the daemon's lifetime; failed probes are retried
-/// on the next [list] call.
+/// results are cached until the managed environment changes; failed probes
+/// are retried on the next [list] call.
 class ProviderRegistry {
   ProviderRegistry({
     Map<String, Object?>? configOverrides,
     ModelsProbe? modelsProbe,
     CatalogProbe? catalogProbe,
     Map<String, String>? environment,
-  }) : _modelsProbe = modelsProbe ?? _runModelsCommand,
+    ProviderEnvironmentProvider? environmentProvider,
+  }) : _modelsProbe =
+           modelsProbe ??
+           ((List<String> command) => _runModelsCommand(
+             command,
+             _effectiveEnvironment(environment, environmentProvider),
+           )),
        // `environment` overrides the process environment for catalog auth
        // filtering (tests); null means the daemon's own environment.
        _catalogProbe =
            catalogProbe ??
-           ((List<String> command) => _runCatalogCommand(command, environment)) {
+           ((List<String> command) => _runCatalogCommand(
+             command,
+             _effectiveEnvironment(environment, environmentProvider),
+           )) {
     _providers = <String, ProviderSpec>{
       'omp': const ProviderSpec(
         id: 'omp',
@@ -156,6 +166,14 @@ class ProviderRegistry {
   /// In-flight probes by provider id, so concurrent [list] calls share one.
   final Map<String, Future<List<String>>> _probesInFlight =
       <String, Future<List<String>>>{};
+  int _environmentRevision = 0;
+
+  /// Clears environment-sensitive model/catalog results after a settings edit.
+  void environmentChanged() {
+    _environmentRevision++;
+    _probedModels.clear();
+    _probesInFlight.clear();
+  }
 
   /// Path of the user config file (`~/.speeddial/config.json`).
   static String configFilePath() {
@@ -233,6 +251,7 @@ class ProviderRegistry {
         : spec.catalogCommand!;
     final inFlight = _probesInFlight[spec.id];
     if (inFlight != null) return inFlight;
+    final int environmentRevision = _environmentRevision;
     final future = () async {
       List<String> models;
       try {
@@ -244,22 +263,35 @@ class ProviderRegistry {
       }
       // Only successes are cached: a transient failure (e.g. the tool was
       // briefly missing) recovers on the next list() call.
-      if (models.isNotEmpty) _probedModels[spec.id] = models;
+      if (models.isNotEmpty && environmentRevision == _environmentRevision) {
+        _probedModels[spec.id] = models;
+      }
       return models;
     }();
     _probesInFlight[spec.id] = future;
-    unawaited(future.whenComplete(() => _probesInFlight.remove(spec.id)));
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_probesInFlight[spec.id], future)) {
+          _probesInFlight.remove(spec.id);
+        }
+      }),
+    );
     return future;
   }
 
   /// Default [ModelsProbe]: runs the command and parses the
   /// `omp models --json` output shape. Never throws: any failure (spawn,
   /// timeout, non-zero exit, malformed JSON) yields an empty list.
-  static Future<List<String>> _runModelsCommand(List<String> command) async {
+  static Future<List<String>> _runModelsCommand(
+    List<String> command,
+    Map<String, String> environment,
+  ) async {
     try {
       final result = await Process.run(
         command.first,
         command.sublist(1),
+        environment: environment,
+        includeParentEnvironment: false,
       ).timeout(const Duration(seconds: 5));
       if (result.exitCode != 0) return const <String>[];
       final decoded = jsonDecode(result.stdout as String);
@@ -285,19 +317,21 @@ class ProviderRegistry {
   /// actually run — see [_usableAnteProviderIds]. Never throws.
   static Future<List<String>> _runCatalogCommand(
     List<String> command,
-    Map<String, String>? environment,
+    Map<String, String> environment,
   ) async {
     try {
       final result = await Process.run(
         command.first,
         command.sublist(1),
+        environment: environment,
+        includeParentEnvironment: false,
       ).timeout(const Duration(seconds: 5));
       if (result.exitCode != 0) return const <String>[];
       final decoded = jsonDecode(result.stdout as String);
       if (decoded is! Map) return const <String>[];
       final rawProviders = decoded['providers'];
       if (rawProviders is! List) return const <String>[];
-      final Map<String, String> env = environment ?? Platform.environment;
+      final Map<String, String> env = environment;
       final _AnteAuthState authState = _readAnteAuthState(env);
       final seen = <String>{};
       final models = <String>[];
@@ -334,6 +368,14 @@ class ProviderRegistry {
     } on Object {
       return const <String>[];
     }
+  }
+
+  static Map<String, String> _effectiveEnvironment(
+    Map<String, String>? override,
+    ProviderEnvironmentProvider? provider,
+  ) {
+    if (override != null) return override;
+    return <String, String>{...Platform.environment, ...?provider?.call()};
   }
 
   /// Auth material found in the Ante home (`ANTE_HOME` or `~/.ante`):
@@ -448,8 +490,7 @@ class ProviderRegistry {
       final Object? envKey = shape['env_key'];
       if (envKey is String &&
           envKey.isNotEmpty &&
-          (env.containsKey(envKey) ||
-              authState.storedKeys.contains(envKey))) {
+          (env.containsKey(envKey) || authState.storedKeys.contains(envKey))) {
         return true;
       }
       final Object? preset = shape['oauth_preset'];

@@ -22,6 +22,8 @@
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
 ///                      name, mime_type, size, data
+///   * `daemon_environment` name TEXT PK, value TEXT; values are write-only
+///                          over the public daemon API
 library;
 
 import 'dart:io';
@@ -257,6 +259,12 @@ class DaemonStore {
     if (!mcpOAuthColumns.contains('resource')) {
       _db.execute('ALTER TABLE mcp_oauth ADD COLUMN resource TEXT');
     }
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS daemon_environment (
+        name TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    ''');
     _db.execute(
       "UPDATE mcp_oauth SET status = 'not_connected', "
       "error = 'Authorization was interrupted by a daemon restart' "
@@ -273,6 +281,50 @@ class DaemonStore {
       } on ProcessException {
         // Best-effort. SQLite remains usable on hosts without chmod.
       }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Daemon-managed harness environment
+  // -------------------------------------------------------------------------
+
+  /// Sorted configured variable names. Values never cross the public API.
+  List<String> daemonEnvironmentNames() => _db
+      .select('SELECT name FROM daemon_environment ORDER BY name')
+      .map((Row row) => row['name'] as String)
+      .toList(growable: false);
+
+  /// The environment overlay used only inside the daemon when spawning.
+  Map<String, String> daemonEnvironment() => <String, String>{
+    for (final Row row in _db.select(
+      'SELECT name, value FROM daemon_environment ORDER BY name',
+    ))
+      row['name'] as String: row['value'] as String,
+  };
+
+  /// Atomically removes names, then sets/replaces values. Set wins on overlap.
+  void updateDaemonEnvironment({
+    Map<String, String> set = const <String, String>{},
+    List<String> remove = const <String>[],
+  }) {
+    _db.execute('BEGIN');
+    try {
+      for (final String name in remove) {
+        _db.execute('DELETE FROM daemon_environment WHERE name = ?', <Object?>[
+          name,
+        ]);
+      }
+      for (final MapEntry<String, String> variable in set.entries) {
+        _db.execute(
+          'INSERT INTO daemon_environment (name, value) VALUES (?, ?) '
+          'ON CONFLICT(name) DO UPDATE SET value = excluded.value',
+          <Object?>[variable.key, variable.value],
+        );
+      }
+      _db.execute('COMMIT');
+    } on Object {
+      _db.execute('ROLLBACK');
+      rethrow;
     }
   }
 

@@ -648,6 +648,10 @@ class SessionEngine {
   /// engine's permission and filesystem handlers where supported.
   AgentClient _spawnAgent(Session session) {
     final ProviderSpec spec = _providers.byId(session.providerId)!;
+    final Map<String, String> managedEnvironment = _store.daemonEnvironment();
+    final Map<String, String>? environment = managedEnvironment.isEmpty
+        ? null
+        : managedEnvironment;
     Future<String> permissionHandler(
       String providerSessionId,
       String? toolCallId,
@@ -658,6 +662,7 @@ class SessionEngine {
       ProviderProtocol.acp => AcpClient.spawn(
         spec.command,
         cwd: session.cwd,
+        environment: environment,
         requestPermission: permissionHandler,
         readTextFile: (providerSessionId, path) =>
             _readTextFile(session.id, path),
@@ -667,12 +672,14 @@ class SessionEngine {
       ProviderProtocol.codex => CodexClient.spawn(
         spec.command,
         cwd: session.cwd,
+        environment: environment,
         requestPermission: permissionHandler,
       ),
       ProviderProtocol.ante => AnteClient.spawn(
         spec.command,
         cwd: session.cwd,
         catalogCommand: spec.catalogCommand,
+        environment: environment,
         requestPermission: permissionHandler,
       ),
     };

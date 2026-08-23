@@ -135,10 +135,7 @@ void main() {
       final decodedWithProtocol = DaemonInfo.fromJson(<String, Object?>{
         ...model.toJson(),
         'providers': <Object?>[
-          <String, Object?>{
-            ...model.providers[0].toJson(),
-            'protocol': 'ante',
-          },
+          <String, Object?>{...model.providers[0].toJson(), 'protocol': 'ante'},
           model.providers[1].toJson(),
         ],
       });
@@ -166,6 +163,24 @@ void main() {
       expect(decoded.lastActiveAt, DateTime.utc(2026, 8, 18, 9, 15, 42));
       expect(decoded.addedAt.isUtc, isTrue);
       expect(decoded.toJson(), json);
+    });
+
+    test('HarnessInfo', () {
+      const HarnessInfo model = HarnessInfo(
+        id: 'codex',
+        name: 'Codex',
+        version: 'codex-cli 0.148.0',
+      );
+      final Map<String, Object?> json = model.toJson();
+      expect(json, <String, Object?>{
+        'id': 'codex',
+        'name': 'Codex',
+        'version': 'codex-cli 0.148.0',
+      });
+      final HarnessInfo decoded = HarnessInfo.fromJson(json);
+      expect(decoded.id, model.id);
+      expect(decoded.name, model.name);
+      expect(decoded.version, model.version);
     });
 
     test('Session parses enum wire spellings and null model', () {

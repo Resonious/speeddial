@@ -81,6 +81,34 @@ void main() {
     expect(stat.mode & 0x1ff, 0x180);
   });
 
+  test('daemon environment persists values while listing only names', () {
+    store.updateDaemonEnvironment(
+      set: const <String, String>{
+        'Z_TOKEN': 'secret-z',
+        'API_TOKEN': 'secret-a',
+      },
+    );
+    expect(store.daemonEnvironmentNames(), <String>['API_TOKEN', 'Z_TOKEN']);
+    expect(store.daemonEnvironment(), <String, String>{
+      'API_TOKEN': 'secret-a',
+      'Z_TOKEN': 'secret-z',
+    });
+
+    store.updateDaemonEnvironment(
+      set: const <String, String>{'API_TOKEN': 'replacement'},
+      remove: const <String>['API_TOKEN', 'Z_TOKEN'],
+    );
+    expect(store.daemonEnvironmentNames(), <String>['API_TOKEN']);
+    expect(store.daemonEnvironment(), <String, String>{
+      'API_TOKEN': 'replacement',
+    });
+
+    store.dispose();
+    store = openStore(tempDir);
+    expect(store.daemonEnvironmentNames(), <String>['API_TOKEN']);
+    expect(store.daemonEnvironment()['API_TOKEN'], 'replacement');
+  });
+
   test('project CRUD roundtrips and touch bumps lastActiveAt', () {
     final before = project();
     store.insertProject(before);

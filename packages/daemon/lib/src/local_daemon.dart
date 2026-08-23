@@ -41,22 +41,22 @@ class LocalDaemon {
   ///
   /// [port] defaults to 0 (OS-assigned free port). [dbPath] defaults to
   /// `~/.speeddial/speeddial.db`.
-  static Future<LocalDaemon> start({
-    int port = 0,
-    String? dbPath,
-  }) async {
-    final String resolvedDb = dbPath ??
-        p.join(homeDir() ?? Directory.current.path, '.speeddial', 'speeddial.db');
+  static Future<LocalDaemon> start({int port = 0, String? dbPath}) async {
+    final String resolvedDb =
+        dbPath ??
+        p.join(
+          homeDir() ?? Directory.current.path,
+          '.speeddial',
+          'speeddial.db',
+        );
     Directory(p.dirname(resolvedDb)).createSync(recursive: true);
 
     final store = DaemonStore(resolvedDb);
-    final providers = ProviderRegistry();
-    final git = GitService();
-    final engine = SessionEngine(
-      store: store,
-      providers: providers,
-      git: git,
+    final providers = ProviderRegistry(
+      environmentProvider: store.daemonEnvironment,
     );
+    final git = GitService();
+    final engine = SessionEngine(store: store, providers: providers, git: git);
     final pr = PrService();
     await engine.restore();
 

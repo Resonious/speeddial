@@ -22,18 +22,28 @@ import 'cli_runner.dart';
 class ServeCommand extends Command<int> {
   ServeCommand() {
     argParser
-      ..addOption('port',
-          defaultsTo: '7331',
-          help: 'Port to listen on (default: 7331; 0 picks a free port).')
-      ..addOption('host',
-          defaultsTo: '127.0.0.1',
-          help: 'Interface to bind (default: 127.0.0.1).')
-      ..addOption('token',
-          help: 'Auth token; overrides \$SPEEDIAL_TOKEN. A crypto-random token '
-              'is generated and printed when binding non-loopback without one.')
-      ..addOption('db',
-          help: 'SQLite database path (default: ~/.speeddial/speeddial.db, '
-              'overridable with \$SPEEDIAL_DB).');
+      ..addOption(
+        'port',
+        defaultsTo: '7331',
+        help: 'Port to listen on (default: 7331; 0 picks a free port).',
+      )
+      ..addOption(
+        'host',
+        defaultsTo: '127.0.0.1',
+        help: 'Interface to bind (default: 127.0.0.1).',
+      )
+      ..addOption(
+        'token',
+        help:
+            'Auth token; overrides \$SPEEDIAL_TOKEN. A crypto-random token '
+            'is generated and printed when binding non-loopback without one.',
+      )
+      ..addOption(
+        'db',
+        help:
+            'SQLite database path (default: ~/.speeddial/speeddial.db, '
+            'overridable with \$SPEEDIAL_DB).',
+      );
   }
 
   @override
@@ -53,20 +63,24 @@ class ServeCommand extends Command<int> {
     if (port == null) {
       throw UsageException('Invalid --port value: "$portRaw".', '');
     }
-    final dbPath = argResults!['db'] as String? ??
+    final dbPath =
+        argResults!['db'] as String? ??
         Platform.environment['SPEEDIAL_DB'] ??
         p.join(speeddialHomeDir(), 'speeddial.db');
     Directory(p.dirname(dbPath)).createSync(recursive: true);
 
     final store = DaemonStore(dbPath);
-    final providers = ProviderRegistry();
+    final providers = ProviderRegistry(
+      environmentProvider: store.daemonEnvironment,
+    );
     final git = GitService();
     final engine = SessionEngine(store: store, providers: providers, git: git);
     final pr = PrService();
     await engine.restore();
 
     final nonLoopback = !_isLoopbackHost(host);
-    final token = argResults!['token'] as String? ??
+    final token =
+        argResults!['token'] as String? ??
         Platform.environment['SPEEDIAL_TOKEN'];
     final String? authToken;
     final bool generated;
@@ -106,8 +120,9 @@ class ServeCommand extends Command<int> {
       token: authToken,
       pid: _currentPid(),
     );
-    stdout
-        .writeln('speeddial daemon listening on ws://$host:${server.port}$kWsPath');
+    stdout.writeln(
+      'speeddial daemon listening on ws://$host:${server.port}$kWsPath',
+    );
 
     final done = Completer<void>();
     Future<void> shutdown() async {
@@ -148,14 +163,18 @@ class TokenCommand extends Command<int> {
   Future<int> run() async {
     final discovery = readDiscoveryFile();
     if (discovery == null) {
-      stderr.writeln('speeddial: no discovery file at '
-          '${p.join(speeddialHomeDir(), 'daemon.json')} — is the daemon running?');
+      stderr.writeln(
+        'speeddial: no discovery file at '
+        '${p.join(speeddialHomeDir(), 'daemon.json')} — is the daemon running?',
+      );
       return Exit.unreachable;
     }
     final token = discovery['token'];
     if (token is! String || token.isEmpty) {
-      stderr.writeln('speeddial: the running daemon has no auth token '
-          '(loopback-only daemon).');
+      stderr.writeln(
+        'speeddial: the running daemon has no auth token '
+        '(loopback-only daemon).',
+      );
       return Exit.unreachable;
     }
     stdout.writeln(token);

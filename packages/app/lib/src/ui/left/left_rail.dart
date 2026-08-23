@@ -6,6 +6,8 @@ import '../../state/projects_store.dart';
 import '../../theme.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
+import '../settings/environment_page.dart';
+import '../settings/harnesses_page.dart';
 import '../settings/mcp_settings_page.dart';
 
 /// Daemon rail: configured endpoints, then the project/session tree of the
@@ -64,8 +66,10 @@ class LeftRail extends StatelessWidget {
                             data.selection.selectedDaemonId == endpoint.id,
                         onTap: () => _selectDaemon(context, endpoint),
                         onRetry: () => data.reconnect(endpoint.id),
-                        onSettings: () =>
-                            _showDaemonSettings(context, endpoint),
+                        onMcpServers: () => _showMcpServers(context, endpoint),
+                        onHarnesses: () => _showHarnesses(context, endpoint),
+                        onEnvironment: () =>
+                            _showEnvironment(context, endpoint),
                         onEdit: () => _showDaemonDialog(context, endpoint),
                         onRemove: () => _removeDaemon(context, endpoint),
                       );
@@ -136,16 +140,43 @@ class LeftRail extends StatelessWidget {
     );
   }
 
-  Future<void> _showDaemonSettings(
-    BuildContext context,
-    DaemonEndpoint endpoint,
-  ) {
+  Future<void> _showMcpServers(BuildContext context, DaemonEndpoint endpoint) {
     final AppData data = AppScope.of(context);
     return Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => AppScope(
           data: data,
           child: McpSettingsPage(
+            daemonId: endpoint.id,
+            daemonName: endpoint.name,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showHarnesses(BuildContext context, DaemonEndpoint endpoint) {
+    final AppData data = AppScope.of(context);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AppScope(
+          data: data,
+          child: HarnessesPage(
+            daemonId: endpoint.id,
+            daemonName: endpoint.name,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEnvironment(BuildContext context, DaemonEndpoint endpoint) {
+    final AppData data = AppScope.of(context);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AppScope(
+          data: data,
+          child: EnvironmentPage(
             daemonId: endpoint.id,
             daemonName: endpoint.name,
           ),
@@ -579,7 +610,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
 }
 
 /// Menu entries on a daemon endpoint tile.
-enum _EndpointAction { retry, settings, edit, remove }
+enum _EndpointAction { retry, mcpServers, harnesses, environment, edit, remove }
 
 class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
@@ -588,7 +619,9 @@ class _EndpointTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onRetry,
-    required this.onSettings,
+    required this.onMcpServers,
+    required this.onHarnesses,
+    required this.onEnvironment,
     required this.onEdit,
     required this.onRemove,
   });
@@ -601,7 +634,9 @@ class _EndpointTile extends StatelessWidget {
   /// Resets the reconnect backoff and retries immediately ([AppData.reconnect]).
   final VoidCallback onRetry;
   final VoidCallback onEdit;
-  final VoidCallback onSettings;
+  final VoidCallback onMcpServers;
+  final VoidCallback onHarnesses;
+  final VoidCallback onEnvironment;
   final VoidCallback onRemove;
 
   @override
@@ -613,7 +648,8 @@ class _EndpointTile extends StatelessWidget {
     final bool canRetry =
         status == ConnectionStatus.failed ||
         status == ConnectionStatus.reconnecting;
-    // Embedded daemons expose settings and retry, but not URL editing/removal.
+    // Embedded daemons expose configuration and retry, but not URL
+    // editing/removal.
     final bool embedded = endpoint.embedded;
     return ListTile(
       dense: true,
@@ -641,9 +677,19 @@ class _EndpointTile extends StatelessWidget {
         itemBuilder: (BuildContext context) =>
             <PopupMenuEntry<_EndpointAction>>[
               const PopupMenuItem<_EndpointAction>(
-                key: Key('endpoint-action-settings'),
-                value: _EndpointAction.settings,
-                child: Text('Settings'),
+                key: Key('endpoint-action-mcp-servers'),
+                value: _EndpointAction.mcpServers,
+                child: Text('MCP servers'),
+              ),
+              const PopupMenuItem<_EndpointAction>(
+                key: Key('endpoint-action-harnesses'),
+                value: _EndpointAction.harnesses,
+                child: Text('Harnesses'),
+              ),
+              const PopupMenuItem<_EndpointAction>(
+                key: Key('endpoint-action-environment'),
+                value: _EndpointAction.environment,
+                child: Text('Environment'),
               ),
               if (canRetry)
                 const PopupMenuItem<_EndpointAction>(
@@ -664,7 +710,9 @@ class _EndpointTile extends StatelessWidget {
             ],
         onSelected: (_EndpointAction action) => switch (action) {
           _EndpointAction.retry => onRetry(),
-          _EndpointAction.settings => onSettings(),
+          _EndpointAction.mcpServers => onMcpServers(),
+          _EndpointAction.harnesses => onHarnesses(),
+          _EndpointAction.environment => onEnvironment(),
           _EndpointAction.edit => onEdit(),
           _EndpointAction.remove => onRemove(),
         },

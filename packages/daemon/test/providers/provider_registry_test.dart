@@ -299,6 +299,61 @@ void main() {
       expect(probedWith, <String>['omp', 'models', '--json']);
     });
 
+    test(
+      'managed environment reaches probes and invalidates cached models',
+      () async {
+        final Directory tempDir = await Directory.systemTemp.createTemp(
+          'provider_environment_test',
+        );
+        addTearDown(() => tempDir.delete(recursive: true));
+        final String reportPath = p.join(tempDir.path, 'environment.txt');
+        final File probe = File(p.join(tempDir.path, 'models.dart'));
+        probe.writeAsStringSync('''
+import 'dart:convert';
+import 'dart:io';
+void main() {
+  final String value = Platform.environment['MANAGED_PROVIDER_ENV'] ?? '<missing>';
+  File(${jsonEncode(reportPath)}).writeAsStringSync(value);
+  stdout.writeln(jsonEncode(<String, Object?>{
+    'models': <Object?>[<String, Object?>{'id': value}],
+  }));
+}
+''');
+        String managedValue = 'first';
+        final ProviderRegistry registry = ProviderRegistry(
+          configOverrides: <String, Object?>{
+            'providers': <String, Object?>{
+              'omp': <String, Object?>{
+                'name': 'OMP',
+                'command': <String>[Platform.resolvedExecutable],
+                'modelsCommand': <String>[
+                  Platform.resolvedExecutable,
+                  probe.path,
+                ],
+              },
+            },
+          },
+          environmentProvider: () => <String, String>{
+            'MANAGED_PROVIDER_ENV': managedValue,
+          },
+        );
+
+        ProviderInfo omp = (await registry.list()).firstWhere(
+          (ProviderInfo value) => value.id == 'omp',
+        );
+        expect(omp.models, <String>['first']);
+        expect(File(reportPath).readAsStringSync(), 'first');
+
+        managedValue = 'second';
+        registry.environmentChanged();
+        omp = (await registry.list()).firstWhere(
+          (ProviderInfo value) => value.id == 'omp',
+        );
+        expect(omp.models, <String>['second']);
+        expect(File(reportPath).readAsStringSync(), 'second');
+      },
+    );
+
     test('ante models are catalog-probed as provider-qualified ids', () async {
       // The fixture's `catalog` mode emits the real `ante catalog` shape.
       final registry = ProviderRegistry(
@@ -333,12 +388,10 @@ void main() {
         }),
       );
       Directory(p.join(anteHome.path, 'auth')).createSync();
-      File(
-        p.join(anteHome.path, 'auth', 'api_keys.json'),
-      ).writeAsStringSync(jsonEncode(<String, Object?>{'STORED_KEY': 'k'}));
-      File(p.join(anteHome.path, 'auth', 'preset-ok.json')).writeAsStringSync(
-        '{}',
-      );
+      File(p.join(anteHome.path, 'auth', 'api_keys.json'))
+          .writeAsStringSync(jsonEncode(<String, Object?>{'STORED_KEY': 'k'}));
+      File(p.join(anteHome.path, 'auth', 'preset-ok.json'))
+          .writeAsStringSync('{}');
 
       final File catalogScript = File(p.join(tempDir.path, 'catalog.dart'));
       catalogScript.writeAsStringSync('''
@@ -405,7 +458,8 @@ void main() {
           'header-ok/model-header-ok',
           'no-auth/model-no-auth',
         ],
-        reason: 'unconfigured providers are filtered; usable providers keep '
+        reason:
+            'unconfigured providers are filtered; usable providers keep '
             'their settings-chosen default model first',
       );
       expect(ante.protocol, 'ante');
