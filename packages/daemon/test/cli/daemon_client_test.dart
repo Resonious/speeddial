@@ -162,4 +162,25 @@ void main() {
     await subscription.cancel();
     await client.close();
   });
+
+  test('downloadFile returns a binary-safe session-cwd file', () async {
+    final client = await DaemonClient.connect(url, token: token);
+    final project = await client.addProject(tempDir.path);
+    final session = await client.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    final File binary = File(p.join(tempDir.path, 'result.bin'))
+      ..writeAsBytesSync(<int>[0, 7, 255]);
+
+    final FileDownload download = await client.downloadFile(
+      session.id,
+      binary.path,
+    );
+
+    expect(download.name, 'result.bin');
+    expect(download.size, 3);
+    expect(download.data, 'AAf/');
+    await client.close();
+  });
 }

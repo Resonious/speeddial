@@ -180,6 +180,79 @@ void main() {
     });
   });
 
+  group('download', () {
+    test('returns complete binary bytes for relative and absolute paths', () {
+      final File binary = File(p.join(tempDir.path, 'artifacts', 'data.bin'));
+      binary.parent.createSync(recursive: true);
+      binary.writeAsBytesSync(<int>[0, 1, 2, 255]);
+
+      final FileDownload relative = fs.download(
+        rootPath: tempDir.path,
+        path: 'artifacts/data.bin',
+      );
+      final FileDownload absolute = fs.download(
+        rootPath: tempDir.path,
+        path: binary.path,
+      );
+
+      expect(relative.name, 'data.bin');
+      expect(relative.size, 4);
+      expect(relative.data, 'AAEC/w==');
+      expect(absolute.toJson(), relative.toJson());
+    });
+
+    test('rejects files outside the session cwd and directories', () {
+      final File outside = File(p.join(tempDir.parent.path, 'outside.bin'))
+        ..writeAsBytesSync(<int>[1]);
+      addTearDown(() {
+        if (outside.existsSync()) outside.deleteSync();
+      });
+
+      expect(
+        () => fs.download(rootPath: tempDir.path, path: outside.path),
+        throwsA(isA<DaemonError>().
+            having((e) => e.code, 'code', -32602)),
+      );
+      expect(
+        () => fs.download(rootPath: tempDir.path, path: '.'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+    });
+
+    test('rejects a symlinked file escape', () {
+      final File outside = File(p.join(tempDir.parent.path, 'outside.bin'))
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      addTearDown(() {
+        if (outside.existsSync()) outside.deleteSync();
+      });
+      Link(p.join(tempDir.path, 'escape.bin')).createSync(outside.path);
+
+      expect(
+        () => fs.download(rootPath: tempDir.path, path: 'escape.bin'),
+        throwsA(isA<DaemonError>()
+            .having((e) => e.code, 'code', -32602)),
+      );
+    });
+
+    test('rejects payloads above the 64 MiB wire cap', () {
+      final RandomAccessFile oversized = File(
+        p.join(tempDir.path, 'oversized.bin'),
+      ).openSync(mode: FileMode.write);
+      oversized.truncateSync(kFsDownloadHardCapBytes + 1);
+      oversized.closeSync();
+
+      expect(
+        () => fs.download(rootPath: tempDir.path, path: 'oversized.bin'),
+        throwsA(
+          isA<DaemonError>()
+              .having((e) => e.code, 'code', -32602)
+              .having((e) => e.message, 'message', contains('64 MiB')),
+        ),
+      );
+    });
+  });
+
   group('resolveInRoot', () {
     test('confines nested paths and rejects escapes', () {
       expect(fs.resolveInRoot(tempDir.path, '.'), p.canonicalize(tempDir.path));

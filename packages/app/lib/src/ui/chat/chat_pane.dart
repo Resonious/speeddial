@@ -7,6 +7,7 @@ import '../../scope.dart';
 import '../../state/chat_store.dart';
 import '../daemon_error_text.dart';
 import 'composer.dart';
+import 'downloaded_file_opener.dart';
 import 'permission_banner.dart';
 import 'timeline.dart';
 
@@ -205,6 +206,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 : (int seq) {
                     unawaited(_forkFrom(seq));
                   },
+            openLocalFile: _openLocalFile,
           );
         }
 
@@ -283,6 +285,22 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     }
   }
 
+  Future<void> _openLocalFile(String path) async {
+    try {
+      final FileDownload download = await widget.data
+          .clientFor(widget.daemonId)
+          .downloadFile(widget.sessionId, path);
+      final bool opened = await openDownloadedFile(download);
+      if (!opened) {
+        await _showMessage('Could not open ${download.name}');
+      }
+    } on DaemonError catch (error) {
+      await _showError(error);
+    } on Object catch (error) {
+      await _showMessage('Could not open file: $error');
+    }
+  }
+
   Future<void> _sendMessage(
     String text,
     List<OutgoingAttachment> attachments,
@@ -353,6 +371,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     final String text = error is DaemonConnectionError
         ? kConnectionLostMessage
         : error.message;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _showMessage(String text) async {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 

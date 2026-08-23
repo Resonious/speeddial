@@ -69,6 +69,7 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.respondPermission',
   'fs.list',
   'fs.read',
+  'fs.download',
   'git.status',
   'git.diff',
   'git.branches',
@@ -498,6 +499,7 @@ class SpeedDialServer {
       'sessions.respondPermission' => _sessionsRespondPermission(params),
       'fs.list' => _fsList(params),
       'fs.read' => _fsRead(params),
+      'fs.download' => _fsDownload(params),
       'git.status' => _gitStatus(params),
       'git.diff' => _gitDiff(params),
       'git.branches' => _gitBranches(params),
@@ -1332,6 +1334,17 @@ class SpeedDialServer {
       maxBytes: rawMaxBytes is int && rawMaxBytes > 0 ? rawMaxBytes : null,
     );
     return result.toJson();
+  }
+
+  Object? _fsDownload(Map<String, Object?> params) {
+    final sessionId = _requiredString(params, 'sessionId');
+    final session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    return _fs
+        .download(rootPath: session.cwd, path: _requiredString(params, 'path'))
+        .toJson();
   }
 
   // -------------------------------------------------------------------------

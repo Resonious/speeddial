@@ -34,4 +34,49 @@ void main() {
 
     expect(opened, Uri.parse('https://example.com/docs'));
   });
+
+  test('local file href parsing supports agent link formats', () {
+    expect(localFilePathFromHref('lib/main.dart'), 'lib/main.dart');
+    expect(
+      localFilePathFromHref('/work/project/lib/main.dart:42:7'),
+      '/work/project/lib/main.dart',
+    );
+    expect(
+      localFilePathFromHref('file:///work/project/my%20report.pdf#L4'),
+      '/work/project/my report.pdf',
+    );
+    expect(
+      localFilePathFromHref(r'C:\work\project\main.dart:12'),
+      r'C:\work\project\main.dart',
+    );
+    expect(localFilePathFromHref('https://example.com/file.txt'), isNull);
+    expect(localFilePathFromHref('mailto:person@example.com'), isNull);
+    expect(localFilePathFromHref('#section'), isNull);
+  });
+
+  testWidgets('agent markdown local links request a session file', (
+    WidgetTester tester,
+  ) async {
+    String? openedPath;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            child: AgentMessageView(
+              text: '[Open result](/work/project/result.pdf:12)',
+              openLocalFile: (String path) async {
+                openedPath = path;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open result', findRichText: true));
+    await tester.pump();
+
+    expect(openedPath, '/work/project/result.pdf');
+  });
 }

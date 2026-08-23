@@ -309,6 +309,19 @@ void main() {
       expect(decoded.toJson(), model.toJson());
     });
 
+    test('FileDownload', () {
+      const model = FileDownload(
+        name: 'report.pdf',
+        size: 4,
+        data: 'AAECAw==',
+      );
+      final decoded = FileDownload.fromJson(model.toJson());
+      expect(decoded.name, 'report.pdf');
+      expect(decoded.size, 4);
+      expect(decoded.data, 'AAECAw==');
+      expect(decoded.toJson(), model.toJson());
+    });
+
     test('GitStatusFile / GitStatus', () {
       final file = GitStatusFile(
         path: 'lib/src/rpc.dart',
