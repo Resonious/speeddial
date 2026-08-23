@@ -237,6 +237,7 @@ sealed class ToolCallContent {
   factory ToolCallContent.fromJson(Map<String, Object?> json) =>
       switch (json['type']) {
         'text' => ToolCallText.fromJson(json),
+        'image' => ToolCallImage.fromJson(json),
         'diff' => ToolCallDiff.fromJson(json),
         'patch' => ToolCallPatch.fromJson(json),
         'terminal' => ToolCallTerminal.fromJson(json),
@@ -261,6 +262,28 @@ class ToolCallText extends ToolCallContent {
   Map<String, Object?> toJson() => <String, Object?>{
     'type': 'text',
     'text': text,
+  };
+}
+
+/// An image produced or viewed by a tool call.
+///
+/// Only attachment metadata travels with session events; clients fetch the
+/// payload lazily through `attachments.read`.
+class ToolCallImage extends ToolCallContent {
+  const ToolCallImage({required this.attachment});
+
+  final Attachment attachment;
+
+  factory ToolCallImage.fromJson(Map<String, Object?> json) => ToolCallImage(
+    attachment: Attachment.fromJson(
+      (json['attachment']! as Map).cast<String, Object?>(),
+    ),
+  );
+
+  @override
+  Map<String, Object?> toJson() => <String, Object?>{
+    'type': 'image',
+    'attachment': attachment.toJson(),
   };
 }
 

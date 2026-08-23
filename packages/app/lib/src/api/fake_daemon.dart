@@ -716,33 +716,71 @@ class FakeDaemonClient implements DaemonClient {
 
     final copiedEvents = <SessionEvent>[];
     final copiedAttachments = <String, AttachmentData>{};
+    final copiedAttachmentIds = <String, Attachment>{};
     var attachmentCounter = 0;
+
+    Attachment copyAttachment(Attachment attachment) {
+      final Attachment? existing = copiedAttachmentIds[attachment.id];
+      if (existing != null) return existing;
+      final AttachmentData? data =
+          _attachmentsBySession[sessionId]?[attachment.id];
+      if (data == null) {
+        throw StateError('Missing attachment payload for ${attachment.id}');
+      }
+      final String attachmentId = 'att-${++attachmentCounter}';
+      final AttachmentData cloned = AttachmentData(
+        id: attachmentId,
+        name: data.name,
+        mimeType: data.mimeType,
+        size: data.size,
+        data: data.data,
+      );
+      copiedAttachments[attachmentId] = cloned;
+      final Attachment metadata = Attachment(
+        id: cloned.id,
+        name: cloned.name,
+        mimeType: cloned.mimeType,
+        size: cloned.size,
+      );
+      copiedAttachmentIds[attachment.id] = metadata;
+      return metadata;
+    }
+
     for (final SessionEvent event in sourceHistory) {
       final int? eventSeq = event.seq;
       if (eventSeq == null || eventSeq > seq) break;
       final SessionEvent copy;
       if (event case UserMessageEvent(:final text, :final attachments)) {
-        final metadata = <Attachment>[];
-        for (final Attachment attachment in attachments) {
-          final AttachmentData? data =
-              _attachmentsBySession[sessionId]?[attachment.id];
-          if (data == null) {
-            throw StateError('Missing attachment payload for ${attachment.id}');
-          }
-          final String attachmentId = 'att-${++attachmentCounter}';
-          final cloned = AttachmentData(
-            id: attachmentId,
-            name: data.name,
-            mimeType: data.mimeType,
-            size: data.size,
-            data: data.data,
-          );
-          copiedAttachments[attachmentId] = cloned;
-          metadata.add(cloned);
-        }
         copy = UserMessageEvent(
           text: text,
-          attachments: metadata,
+          attachments: attachments.map(copyAttachment).toList(growable: false),
+          seq: eventSeq,
+          timestamp: event.timestamp,
+        );
+      } else if (event case ImageEvent(:final attachment)) {
+        copy = ImageEvent(
+          attachment: copyAttachment(attachment),
+          seq: eventSeq,
+          timestamp: event.timestamp,
+        );
+      } else if (event case ToolCallEvent(:final toolCall)) {
+        copy = ToolCallEvent(
+          toolCall: ToolCall(
+            id: toolCall.id,
+            title: toolCall.title,
+            kind: toolCall.kind,
+            status: toolCall.status,
+            content: <ToolCallContent>[
+              for (final ToolCallContent content in toolCall.content)
+                if (content case ToolCallImage(:final attachment))
+                  ToolCallImage(attachment: copyAttachment(attachment))
+                else
+                  content,
+            ],
+            locations: toolCall.locations,
+            rawInput: toolCall.rawInput,
+            rawOutput: toolCall.rawOutput,
+          ),
           seq: eventSeq,
           timestamp: event.timestamp,
         );

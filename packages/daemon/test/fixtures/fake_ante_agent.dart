@@ -239,6 +239,46 @@ Future<void> _runTurn(String parent, String text) async {
     }, parent);
     return;
   }
+  if (text == 'view image') {
+    const String imageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhf'
+        'DwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    await _event(<String, Object?>{
+      'ToolStart': <String, Object?>{
+        'id': 'image-1',
+        'name': 'view_image',
+        'args': <String, Object?>{'path': '/tmp/sheet.png'},
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolEnd': <String, Object?>{
+        'tool_use_id': 'image-1',
+        'status': 'Completed',
+        'result_json': <String, Object?>{
+          'content': <Object?>[
+            <String, Object?>{
+              'type': 'text',
+              'text': 'Read image file [image/png]',
+            },
+            <String, Object?>{
+              'type': 'image',
+              'data': imageData,
+              'mimeType': 'image/png',
+            },
+          ],
+        },
+        'is_error': false,
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'TurnEnd': <String, Object?>{
+        'turn_id': parent,
+        'status': 'Completed',
+        'steps': 1,
+      },
+    }, parent);
+    return;
+  }
   await _event(<String, Object?>{'ThinkingDelta': 'Considering'}, parent);
   await _event(<String, Object?>{'Thinking': 'Considering'}, parent);
   await _event(<String, Object?>{'MessageDelta': 'Hello '}, parent);

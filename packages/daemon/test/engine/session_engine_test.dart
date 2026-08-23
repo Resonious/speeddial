@@ -874,6 +874,47 @@ void main() {
     expect(store.getSession(session.id)!.status, SessionStatus.idle);
   });
 
+  test(
+    'image-view tool calls persist and reference their image output',
+    () async {
+      final Session session = await engine.createSession(
+        projectId: 'p1',
+        providerId: 'fake',
+      );
+
+      await engine.sendMessage(session.id, 'view image');
+      await waitFor(() => events.any((t) => t.event is TurnCompleteEvent));
+
+      final List<ToolCall> snapshots = events
+          .map((t) => t.event)
+          .whereType<ToolCallEvent>()
+          .map((ToolCallEvent event) => event.toolCall)
+          .where((ToolCall call) => call.id == 'image-1')
+          .toList(growable: false);
+      expect(snapshots, hasLength(2));
+      final ToolCallImage started = snapshots.first.content
+          .whereType<ToolCallImage>()
+          .single;
+      final ToolCallImage completed = snapshots.last.content
+          .whereType<ToolCallImage>()
+          .single;
+      expect(completed.attachment.id, started.attachment.id);
+      expect(completed.attachment.name, 'sheet.png');
+      expect(completed.attachment.mimeType, 'image/png');
+      expect(
+        snapshots.last.content.whereType<ToolCallText>().single.text,
+        'Read image file [image/png]',
+      );
+
+      final AttachmentData stored = store.getAttachment(
+        session.id,
+        completed.attachment.id,
+      )!;
+      expect(stored.size, completed.attachment.size);
+      expect(base64Decode(stored.data), isNotEmpty);
+    },
+  );
+
   test('forkSession copies history and attachments through a message boundary '
       'and hands context to the first new turn', () async {
     final source = await engine.createSession(
@@ -889,7 +930,15 @@ void main() {
       size: 5,
       data: 'aGVsbG8=',
     );
+    const toolImage = AttachmentData(
+      id: 'source-tool-image',
+      name: 'sheet.png',
+      mimeType: 'image/png',
+      size: 1,
+      data: 'AA==',
+    );
     store.insertAttachment(source.id, attachment);
+    store.insertAttachment(source.id, toolImage);
     store.appendEvent(
       source.id,
       1,
@@ -906,22 +955,36 @@ void main() {
     store.appendEvent(
       source.id,
       3,
-      const AgentMessageChunkEvent(text: 'answer'),
+      const ToolCallEvent(
+        toolCall: ToolCall(
+          id: 'view-1',
+          title: 'View sheet',
+          kind: 'read',
+          status: ToolCallStatus.completed,
+          content: <ToolCallContent>[ToolCallImage(attachment: toolImage)],
+          locations: <String>['sheet.png'],
+        ),
+      ),
     );
     store.appendEvent(
       source.id,
       4,
-      const TurnCompleteEvent(stopReason: 'end_turn'),
+      const AgentMessageChunkEvent(text: 'answer'),
     );
     store.appendEvent(
       source.id,
       5,
+      const TurnCompleteEvent(stopReason: 'end_turn'),
+    );
+    store.appendEvent(
+      source.id,
+      6,
       const UserMessageEvent(text: 'Excluded later message'),
     );
 
     final Session fork = await engine.forkSession(
       sourceSessionId: source.id,
-      throughSeq: 3,
+      throughSeq: 4,
     );
 
     expect(fork.id, isNot(source.id));
@@ -933,7 +996,7 @@ void main() {
     expect(fork.model, source.model);
     expect(fork.yolo, isTrue);
     final List<SessionEvent> copied = store.listEvents(fork.id).events;
-    expect(copied.map((SessionEvent e) => e.seq), <int>[1, 2, 3]);
+    expect(copied.map((SessionEvent e) => e.seq), <int>[1, 2, 3, 4]);
     final UserMessageEvent copiedUser = copied.first as UserMessageEvent;
     expect(copiedUser.text, 'Original question');
     expect(copiedUser.attachments, hasLength(1));
@@ -942,10 +1005,22 @@ void main() {
       store.getAttachment(fork.id, copiedUser.attachments.single.id)?.data,
       attachment.data,
     );
-    expect(store.forkContextSeqOf(fork.id), 3);
+    final ToolCallImage copiedImage = copied
+        .whereType<ToolCallEvent>()
+        .single
+        .toolCall
+        .content
+        .whereType<ToolCallImage>()
+        .single;
+    expect(copiedImage.attachment.id, isNot(toolImage.id));
+    expect(
+      store.getAttachment(fork.id, copiedImage.attachment.id)?.data,
+      toolImage.data,
+    );
+    expect(store.forkContextSeqOf(fork.id), 4);
 
     await expectLater(
-      engine.forkSession(sourceSessionId: source.id, throughSeq: 4),
+      engine.forkSession(sourceSessionId: source.id, throughSeq: 5),
       throwsA(
         isA<DaemonError>().having(
           (DaemonError error) => error.code,

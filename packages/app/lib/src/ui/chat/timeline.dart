@@ -294,7 +294,10 @@ class _TimelineRow extends StatelessWidget {
         child: AgentMessageView(text: i.text),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
-      ToolCallTimelineItem i => ToolCallCard(toolCall: i.toolCall),
+      ToolCallTimelineItem i => ToolCallCard(
+        toolCall: i.toolCall,
+        attachmentLoader: attachmentLoader,
+      ),
       AgentActivityItem i => _ActivityCard(activity: i.activity),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
       PermissionRequestItem i => _InlinePermissionRecord(request: i.request),

@@ -25,6 +25,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:uuid/uuid.dart';
@@ -219,6 +220,12 @@ class SessionEngine {
   /// Per-session in-flight tool call state (toolCallId → protocol ToolCall),
   /// cleared at the start of every turn.
   final Map<String, Map<String, ToolCall>> _toolCalls = {};
+
+  /// Attachment metadata for image bytes already persisted during the
+  /// current turn, keyed by session then MIME+digest. Providers commonly
+  /// repeat the complete tool content on terminal updates; this prevents
+  /// those snapshots from storing the same image more than once.
+  final Map<String, Map<String, Attachment>> _toolCallImages = {};
 
   // Synchronous broadcast controllers: subscription listeners that are
   // attached *before* an engine call (createSession/delete/sendMessage/...)
@@ -603,7 +610,11 @@ class SessionEngine {
     String targetSessionId,
     int throughSeq,
   ) {
+    final Map<String, Attachment> copiedAttachmentIds = <String, Attachment>{};
+
     Attachment copyAttachment(Attachment attachment) {
+      final Attachment? existing = copiedAttachmentIds[attachment.id];
+      if (existing != null) return existing;
       final AttachmentData? data = _store.getAttachment(
         sourceSessionId,
         attachment.id,
@@ -619,7 +630,14 @@ class SessionEngine {
         data: data.data,
       );
       _store.insertAttachment(targetSessionId, copied);
-      return copied;
+      final Attachment metadata = Attachment(
+        id: copied.id,
+        name: copied.name,
+        mimeType: copied.mimeType,
+        size: copied.size,
+      );
+      copiedAttachmentIds[attachment.id] = metadata;
+      return metadata;
     }
 
     for (final SessionEvent event in _store.eventsThrough(
@@ -634,6 +652,16 @@ class SessionEngine {
         );
       } else if (event case ImageEvent(:final attachment)) {
         copy = ImageEvent(attachment: copyAttachment(attachment));
+      } else if (event case ToolCallEvent(:final toolCall)) {
+        copy = ToolCallEvent(
+          toolCall: _withToolCallContent(toolCall, <ToolCallContent>[
+            for (final ToolCallContent content in toolCall.content)
+              if (content case ToolCallImage(:final attachment))
+                ToolCallImage(attachment: copyAttachment(attachment))
+              else
+                content,
+          ]),
+        );
       } else {
         final json = Map<String, Object?>.from(event.toJson())
           ..remove('seq')
@@ -1279,6 +1307,7 @@ class SessionEngine {
       // observe them as resolvable once the session is gone.
       _expirePendingPermissions(live, 'Session deleted');
       _toolCalls.remove(sessionId);
+      _toolCallImages.remove(sessionId);
       await live.client.dispose();
     }
     _store.deleteSession(sessionId);
@@ -1296,6 +1325,7 @@ class SessionEngine {
     }
     _live.clear();
     _toolCalls.clear();
+    _toolCallImages.clear();
     _mcpReloadPending.clear();
     if (!_eventsController.isClosed) _eventsController.close();
     if (!_sessionChangesController.isClosed) _sessionChangesController.close();
@@ -1321,6 +1351,7 @@ class SessionEngine {
   ) {
     final sessionId = live.sessionId;
     _toolCalls[sessionId] = <String, ToolCall>{};
+    _toolCallImages[sessionId] = <String, Attachment>{};
     _emit(
       live,
       UserMessageEvent(
@@ -1468,6 +1499,160 @@ class SessionEngine {
     live.pendingPermissions.clear();
   }
 
+  ToolCallImage? _persistInlineToolImage(
+    _LiveSession live,
+    Map<String, Object?> block, {
+    String? pathHint,
+  }) {
+    final String? data = block['data'] as String?;
+    final String? mimeType =
+        block['mimeType'] as String? ?? block['mime_type'] as String?;
+    if (data == null || mimeType == null || !isImageMimeType(mimeType)) {
+      return null;
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(data);
+    } on FormatException {
+      return null;
+    }
+    if (bytes.isEmpty || bytes.length > kMaxAttachmentBytes) return null;
+    final String? blockName = block['name'] as String?;
+    return _persistToolImageBytes(
+      live,
+      bytes,
+      mimeType: mimeType,
+      name: blockName == null || blockName.isEmpty
+          ? _imageName(pathHint, mimeType)
+          : blockName,
+      data: data,
+    );
+  }
+
+  ToolCallImage _persistToolImageBytes(
+    _LiveSession live,
+    List<int> bytes, {
+    required String name,
+    required String mimeType,
+    String? data,
+  }) {
+    final String fingerprint =
+        '${mimeType.toLowerCase()}:${sha256.convert(bytes)}';
+    final Map<String, Attachment> turnImages = _toolCallImages.putIfAbsent(
+      live.sessionId,
+      () => <String, Attachment>{},
+    );
+    Attachment? metadata = turnImages[fingerprint];
+    if (metadata == null) {
+      final AttachmentData attachment = AttachmentData(
+        id: _uuid.v4(),
+        name: name,
+        mimeType: mimeType,
+        size: bytes.length,
+        data: data ?? base64Encode(bytes),
+      );
+      _store.insertAttachment(live.sessionId, attachment);
+      metadata = Attachment(
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      );
+      turnImages[fingerprint] = metadata;
+    }
+    return ToolCallImage(attachment: metadata);
+  }
+
+  ToolCall _withFileImage(_LiveSession live, ToolCall toolCall) {
+    if (toolCall.kind != 'read' ||
+        toolCall.content.any((ToolCallContent c) => c is ToolCallImage)) {
+      return toolCall;
+    }
+    final String? path = _toolImagePath(toolCall.rawInput, toolCall.locations);
+    if (path == null) return toolCall;
+    final String mimeType = mimeTypeForFileName(path);
+    if (!isImageMimeType(mimeType)) return toolCall;
+
+    final String resolvedPath = p.isAbsolute(path)
+        ? p.normalize(path)
+        : p.normalize(p.join(live.cwd, path));
+    final File file = File(resolvedPath);
+    try {
+      final int size = file.lengthSync();
+      if (size <= 0 || size > kMaxAttachmentBytes) return toolCall;
+      final List<int> bytes = file.readAsBytesSync();
+      if (bytes.isEmpty || bytes.length > kMaxAttachmentBytes) return toolCall;
+      final ToolCallImage image = _persistToolImageBytes(
+        live,
+        bytes,
+        name: p.basename(resolvedPath),
+        mimeType: mimeType,
+      );
+      return _withToolCallContent(toolCall, <ToolCallContent>[
+        ...toolCall.content,
+        image,
+      ]);
+    } on FileSystemException {
+      // The provider may report a transient path after deleting it, or the
+      // daemon may not share its filesystem. Keep the ordinary tool record.
+      return toolCall;
+    }
+  }
+
+  static String? _toolImagePath(Object? rawInput, Iterable<String> locations) {
+    if (rawInput is Map<Object?, Object?>) {
+      for (final String key in const <String>[
+        'path',
+        'file_path',
+        'filepath',
+        'image_path',
+      ]) {
+        final Object? value = rawInput[key];
+        if (value is String && value.isNotEmpty) return value;
+      }
+    }
+    for (final String path in locations) {
+      if (path.isNotEmpty) return path;
+    }
+    return null;
+  }
+
+  static String _imageName(String? path, String mimeType) {
+    if (path != null && path.isNotEmpty) return p.basename(path);
+    final String subtype = mimeType.split('/').last.split('+').first;
+    return subtype.isEmpty ? 'image' : 'image.$subtype';
+  }
+
+  static ToolCall _withToolCallContent(
+    ToolCall toolCall,
+    List<ToolCallContent> content,
+  ) => ToolCall(
+    id: toolCall.id,
+    title: toolCall.title,
+    kind: toolCall.kind,
+    status: toolCall.status,
+    content: content,
+    locations: toolCall.locations,
+    rawInput: toolCall.rawInput,
+    rawOutput: toolCall.rawOutput,
+  );
+
+  static ToolCall _withPriorToolImages(ToolCall toolCall, ToolCall? prior) {
+    if (prior == null ||
+        toolCall.content.any((ToolCallContent c) => c is ToolCallImage)) {
+      return toolCall;
+    }
+    final List<ToolCallImage> images = prior.content
+        .whereType<ToolCallImage>()
+        .toList(growable: false);
+    return images.isEmpty
+        ? toolCall
+        : _withToolCallContent(toolCall, <ToolCallContent>[
+            ...toolCall.content,
+            ...images,
+          ]);
+  }
+
   SessionEvent? _mapUpdate(_LiveSession live, AcpSessionUpdate update) {
     final sessionId = live.sessionId;
     switch (update) {
@@ -1478,19 +1663,52 @@ class SessionEngine {
       case AcpUserMessageChunk():
         return null; // Echo of the user's own text; not persisted.
       case final AcpToolCall toolCall:
-        final mapped = toolCallFromAcp(toolCall.toolCall, cwd: live.cwd);
+        final AcpToolCallData data = toolCall.toolCall;
+        final String? pathHint = _toolImagePath(
+          data.rawInput,
+          data.locations.map((AcpToolCallLocation location) => location.path),
+        );
+        final ToolCall mapped = _withFileImage(
+          live,
+          toolCallFromAcp(
+            data,
+            cwd: live.cwd,
+            mapImage: (Map<String, Object?> block) =>
+                _persistInlineToolImage(live, block, pathHint: pathHint),
+          ),
+        );
         _toolCalls[sessionId]?[mapped.id] = mapped;
         return ToolCallEvent(toolCall: mapped);
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
         final prior = _toolCalls[sessionId]?[toolCallId];
-        final merged = prior == null
+        final Map<String, Object?> fields = toolCallUpdate.fields;
+        final Object? rawInput = fields.containsKey('rawInput')
+            ? fields['rawInput']
+            : prior?.rawInput;
+        final String? pathHint = _toolImagePath(
+          rawInput,
+          prior?.locations ?? const <String>[],
+        );
+        ToolCallImage? mapImage(Map<String, Object?> block) =>
+            _persistInlineToolImage(live, block, pathHint: pathHint);
+        final ToolCall mapped = prior == null
             ? toolCallFromAcpUpdate(
                 toolCallId,
-                toolCallUpdate.fields,
+                fields,
                 cwd: live.cwd,
+                mapImage: mapImage,
               )
-            : mergeToolCallUpdate(prior, toolCallUpdate, cwd: live.cwd);
+            : mergeToolCallUpdate(
+                prior,
+                toolCallUpdate,
+                cwd: live.cwd,
+                mapImage: mapImage,
+              );
+        final ToolCall merged = _withFileImage(
+          live,
+          _withPriorToolImages(mapped, prior),
+        );
         _toolCalls[sessionId]?[toolCallId] = merged;
         // The persisted/broadcast snapshot drops raw fields while the call
         // is still running (they are re-sent in full on the terminal

@@ -223,6 +223,7 @@ ToolCall = {
 }
 ToolCallContent =
   | { type: "text", text: string }
+  | { type: "image", attachment: Attachment }          // payload fetched through attachments.read
   | { type: "diff", path: string, oldText: string | null, newText: string }
   | { type: "patch", path: string, diff: string }       // provider-native unified diff for one file
   | { type: "terminal", terminalId: string, output: string }
