@@ -14,6 +14,9 @@ packages/daemon/     Dart CLI + library. Spawns ACP and Ante agent CLIs, owns
                      session/project bookkeeping (SQLite), git/gh operations, WebSocket
                      JSON-RPC server.
 packages/app/        Flutter app (desktop + mobile + web). Three-pane control surface.
+packages/wear/       Standalone Wear OS Flutter target. Reuses the app's daemon client/store
+                     graph and exposes only connection bootstrap, project/session browsing,
+                     session creation, and compact chat/send/permission flows.
 ```
 
 Pub workspace: root `pubspec.yaml` lists all three in `workspace:`; every package sets
@@ -218,11 +221,27 @@ Performance rules for the app:
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to
   the narrowest widget.
 
+## Wear OS app
+
+`packages/wear` is a separate Android application (`sh.speeddial.speeddial_wear`) so its
+watch-only manifest and Play Store filtering do not affect the main app. It declares
+`android.hardware.type.watch` and is standalone: it connects directly to an existing daemon
+over WebSocket and does not require a companion phone process.
+
+The reusable watch UI lives under `packages/app/lib/src/ui/wear/` and consumes the same
+`AppData`, `ProjectsStore`, `SessionsStore`, and `ChatStore` as the full client. The watch does
+not expose files, git, MCP, worktree, project, or daemon settings. A small connection-bootstrap
+form is retained because Wear OS app storage is independent from phone app storage; an endpoint
+can instead be provisioned at build time with `SPEEDDIAL_DAEMON_URL`,
+`SPEEDDIAL_DAEMON_TOKEN`, and `SPEEDDIAL_DAEMON_NAME` Dart defines.
+
 ## Verification gates (orchestrator runs these, subagents NEVER do)
 
 - `dart analyze` in packages/protocol and packages/daemon; `flutter analyze` in packages/app
+  and packages/wear
 - `dart test` in packages/protocol and packages/daemon; `flutter test` in packages/app
 - UI: `flutter run -d web-server` + screenshots at desktop (1440x900) and mobile (390x844)
+- Wear OS: watch widget tests run from packages/app; `flutter build apk` runs from packages/wear
   sizes
 
 ## Deferred (explicitly out of scope for this build)
