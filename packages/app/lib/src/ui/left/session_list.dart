@@ -31,7 +31,9 @@ class SessionStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final SpeedDialColors colors = context.speedDialColors;
-    final Color color = sessionStatusColor(colors, status);
+    final Color color = done
+        ? colors.success
+        : sessionStatusColor(colors, status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
@@ -275,10 +277,12 @@ class SessionRow extends StatelessWidget {
               height: 8,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: sessionStatusColor(
-                  context.speedDialColors,
-                  session.status,
-                ),
+                color: done
+                    ? context.speedDialColors.success
+                    : sessionStatusColor(
+                        context.speedDialColors,
+                        session.status,
+                      ),
               ),
             ),
           ),
