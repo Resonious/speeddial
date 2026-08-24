@@ -78,6 +78,7 @@ class AnteClient implements AgentClient {
       <String, Completer<PromptResult>>{};
   final Map<String, SplayTreeMap<int, String>> _toolProgress =
       <String, SplayTreeMap<int, String>>{};
+  final Set<String> _planToolIds = <String>{};
   final Map<String, AcpAgentActivityUpdate> _activities =
       <String, AcpAgentActivityUpdate>{};
 
@@ -272,6 +273,7 @@ class AnteClient implements AgentClient {
     _sawMessageDelta = false;
     _sawThinkingDelta = false;
     _toolProgress.clear();
+    _planToolIds.clear();
     try {
       await _sendOp(<String, Object?>{'UserInput': text}, opId);
     } on Object {
@@ -884,6 +886,12 @@ class AnteClient implements AgentClient {
     final Map<String, Object?> input = args.isNotEmpty
         ? args
         : _map(value['input']);
+    final List<AcpPlanEntry>? plan = _planFromTodoWrite(name, input);
+    if (plan != null) {
+      _planToolIds.add(id);
+      _publish(AcpPlan(entries: plan));
+      return;
+    }
     _toolProgress[id] = SplayTreeMap<int, String>();
     _publish(
       AcpToolCall(
@@ -904,6 +912,7 @@ class AnteClient implements AgentClient {
   void _handleToolUpdate(Map<String, Object?> value) {
     final String id = value['tool_use_id'] as String? ?? '';
     if (id.isEmpty) return;
+    if (_planToolIds.contains(id)) return;
     final int seq = (value['seq'] as num?)?.toInt() ?? 0;
     final String message = value['message'] as String? ?? '';
     final SplayTreeMap<int, String> progress = _toolProgress.putIfAbsent(
@@ -934,6 +943,7 @@ class AnteClient implements AgentClient {
   void _handleToolEnd(Map<String, Object?> value) {
     final String id = value['tool_use_id'] as String? ?? '';
     if (id.isEmpty) return;
+    if (_planToolIds.remove(id)) return;
     final String status = value['status'] as String? ?? 'Failed';
     final bool isError = value['is_error'] as bool? ?? false;
     final Object? rawResult = value['result_json'];
@@ -1506,6 +1516,32 @@ class AnteClient implements AgentClient {
     if (lower.contains('fetch') || lower.contains('web')) return 'fetch';
     if (lower.contains('think')) return 'think';
     return 'other';
+  }
+
+  static List<AcpPlanEntry>? _planFromTodoWrite(
+    String name,
+    Map<String, Object?> input,
+  ) {
+    final String lowerName = name.toLowerCase();
+    if (lowerName != 'todowrite' && lowerName != 'todo_write') return null;
+    if (input['todos'] is! List) return null;
+
+    final List<AcpPlanEntry> entries = <AcpPlanEntry>[];
+    for (final Object? rawTodo in input['todos']! as List<Object?>) {
+      if (rawTodo is! Map) continue;
+      final Map<String, Object?> todo = Map<String, Object?>.from(rawTodo);
+      final String content = todo['content'] as String? ?? '';
+      if (content.isEmpty) continue;
+      final String status = switch (todo['status']) {
+        'in_progress' => 'in_progress',
+        'completed' => 'completed',
+        _ => 'pending',
+      };
+      entries.add(
+        AcpPlanEntry(content: content, priority: 'medium', status: status),
+      );
+    }
+    return entries;
   }
 
   static List<AcpToolCallLocation> _toolLocations(Map<String, Object?> input) {

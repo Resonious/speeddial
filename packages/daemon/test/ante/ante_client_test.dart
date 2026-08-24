@@ -342,6 +342,41 @@ void main() {
     );
   });
 
+  test('normalizes TodoWrite calls into shared plan updates', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+    final StreamSubscription<AcpSessionUpdate> subscription = client
+        .sessionUpdates(created.sessionId)
+        .listen(updates.add);
+    addTearDown(subscription.cancel);
+
+    final PromptResult result = await client.prompt(
+      created.sessionId,
+      textBlocks('write todos'),
+    );
+
+    expect(result.stopReason, 'end_turn');
+    expect(updates.whereType<AcpToolCall>(), isEmpty);
+    expect(updates.whereType<AcpToolCallUpdate>(), isEmpty);
+    final AcpPlan plan = updates.whereType<AcpPlan>().single;
+    expect(plan.entries.map((AcpPlanEntry entry) => entry.content), <String>[
+      'Inspect the provider adapter',
+      'Normalize TodoWrite updates',
+      'Verify the shared plan UI',
+    ]);
+    expect(plan.entries.map((AcpPlanEntry entry) => entry.status), <String>[
+      'completed',
+      'in_progress',
+      'pending',
+    ]);
+    expect(
+      plan.entries.map((AcpPlanEntry entry) => entry.priority),
+      everyElement('medium'),
+    );
+  });
+
   test(
     'flattens text resources and materializes images into Ante UserInput',
     () async {

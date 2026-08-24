@@ -279,6 +279,57 @@ Future<void> _runTurn(String parent, String text) async {
     }, parent);
     return;
   }
+  if (text == 'write todos') {
+    await _event(<String, Object?>{
+      'ToolStart': <String, Object?>{
+        'id': 'todo-1',
+        'name': 'TodoWrite',
+        'args': <String, Object?>{
+          'todos': <Object?>[
+            <String, Object?>{
+              'activeForm': 'Inspecting the adapter',
+              'content': 'Inspect the provider adapter',
+              'status': 'completed',
+            },
+            <String, Object?>{
+              'activeForm': 'Normalizing todos',
+              'content': 'Normalize TodoWrite updates',
+              'status': 'in_progress',
+            },
+            <String, Object?>{
+              'activeForm': 'Verifying the result',
+              'content': 'Verify the shared plan UI',
+              'status': 'pending',
+            },
+          ],
+        },
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolUpdate': <String, Object?>{
+        'tool_use_id': 'todo-1',
+        'seq': 0,
+        'message': 'Updating todos',
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolEnd': <String, Object?>{
+        'tool_use_id': 'todo-1',
+        'status': 'Completed',
+        'result_json': <String, Object?>{
+          'message': 'Todos have been modified successfully.',
+        },
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'TurnEnd': <String, Object?>{
+        'turn_id': parent,
+        'status': 'Completed',
+        'steps': 1,
+      },
+    }, parent);
+    return;
+  }
   await _event(<String, Object?>{'ThinkingDelta': 'Considering'}, parent);
   await _event(<String, Object?>{'Thinking': 'Considering'}, parent);
   await _event(<String, Object?>{'MessageDelta': 'Hello '}, parent);
