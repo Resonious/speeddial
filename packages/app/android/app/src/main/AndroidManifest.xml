@@ -2,6 +2,9 @@
     <!-- INTERNET is required by the app itself (WebSocket to daemons); the
          debug/profile manifests only carry it for the Flutter tooling. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
     <application
         android:label="Speeddial"
         android:name="${applicationName}"
@@ -28,6 +31,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".WearProxyService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CHANNEL_EVENT"/>
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:path="/speeddial/proxy/v1"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

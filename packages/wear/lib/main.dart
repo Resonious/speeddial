@@ -9,15 +9,23 @@ Future<void> main() async {
   await connections.init();
   final CompanionEndpointSync companionSync = CompanionEndpointSync();
   await companionSync.startWatch(connections);
+  final PhoneProxyChannelFactory phoneProxy = PhoneProxyChannelFactory();
 
   final AppData data = AppData(
     connections: connections,
     selection: SelectionStore(),
+    daemonChannelFactory: phoneProxy.connect,
   );
   await data.settings.init();
   if (connections.endpoints.length == 1) {
     data.selection.selectedDaemonId = connections.endpoints.single.id;
   }
   unawaited(data.connectAll());
-  runApp(WearSpeedDialApp(data: data, companionSync: companionSync));
+  runApp(
+    WearSpeedDialApp(
+      data: data,
+      companionSync: companionSync,
+      phoneProxy: phoneProxy,
+    ),
+  );
 }

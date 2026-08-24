@@ -7,6 +7,41 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'daemon_client.dart';
 
+/// One bidirectional stream of daemon WebSocket text frames.
+///
+/// The normal implementation wraps `package:web_socket_channel`. The Wear OS
+/// target injects a channel whose frames cross the Wear Data Layer and whose
+/// actual WebSocket is opened by the paired phone. Keeping this boundary at
+/// raw text frames preserves the protocol codec, authentication, reconnect,
+/// and notification behavior in one place.
+abstract interface class DaemonFrameChannel {
+  Future<void> get ready;
+  Stream<Object?> get stream;
+  void add(Object? data);
+  Future<void> close();
+}
+
+typedef DaemonFrameChannelFactory = DaemonFrameChannel Function(Uri uri);
+
+class _WebSocketDaemonFrameChannel implements DaemonFrameChannel {
+  _WebSocketDaemonFrameChannel(Uri uri)
+    : _channel = WebSocketChannel.connect(uri);
+
+  final WebSocketChannel _channel;
+
+  @override
+  Future<void> get ready => _channel.ready;
+
+  @override
+  Stream<Object?> get stream => _channel.stream;
+
+  @override
+  void add(Object? data) => _channel.sink.add(data);
+
+  @override
+  Future<void> close() => _channel.sink.close();
+}
+
 /// Live [DaemonClient] speaking PROTOCOL.md's JSON-RPC 2.0 envelope over a
 /// WebSocket. Transport is `package:web_socket_channel` (works on native and
 /// web; no `dart:io` import), decoded frames are fed to an [RpcPeer].
@@ -27,11 +62,13 @@ class WsDaemonClient implements DaemonClient {
   WsDaemonClient({
     required this.url,
     this.token,
+    DaemonFrameChannelFactory? channelFactory,
     // The explicit initializers (rather than `this.` formals) keep each
     // field's default next to its declaration.
     Duration reconnectBase = const Duration(milliseconds: 500),
     Duration livenessProbeTimeout = const Duration(seconds: 3),
-  }) : reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
+  }) : _channelFactory = channelFactory ?? _WebSocketDaemonFrameChannel.new,
+       reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
        // ignore: prefer_initializing_formals
        livenessProbeTimeout = livenessProbeTimeout;
 
@@ -41,6 +78,8 @@ class WsDaemonClient implements DaemonClient {
   /// Token for `auth.authenticate`; null means the daemon requires none
   /// (loopback per PROTOCOL.md).
   final String? token;
+
+  final DaemonFrameChannelFactory _channelFactory;
 
   /// Delay of the first reconnect attempt; every retry doubles this,
   /// capped at 15 seconds.
@@ -76,7 +115,7 @@ class WsDaemonClient implements DaemonClient {
 
   static const Duration _maxReconnectDelay = Duration(seconds: 15);
 
-  WebSocketChannel? _channel;
+  DaemonFrameChannel? _channel;
 
   /// Whether [_channel] has completed its connect handshake (`ready`). Only
   /// an established channel gets a graceful (awaited) close; closing a
@@ -175,7 +214,7 @@ class WsDaemonClient implements DaemonClient {
   /// Closes the current socket and its peer, if any. Idempotent; safe to run
   /// when the transport already shut the channel down on its own.
   Future<void> _tearDownSocket() async {
-    final WebSocketChannel? channel = _channel;
+    final DaemonFrameChannel? channel = _channel;
     final bool established = _socketReady;
     _channel = null;
     _socketReady = false;
@@ -189,7 +228,7 @@ class WsDaemonClient implements DaemonClient {
     if (established) {
       // The handshake completed, so a close frame round-trips normally.
       try {
-        await channel.sink.close();
+        await channel.close();
       } on Object {
         // Already closed by the transport; nothing to do.
       }
@@ -203,9 +242,9 @@ class WsDaemonClient implements DaemonClient {
   }
 
   /// Best-effort close that never blocks or propagates.
-  Future<void> _closeQuietly(WebSocketChannel channel) async {
+  Future<void> _closeQuietly(DaemonFrameChannel channel) async {
     try {
-      await channel.sink.close();
+      await channel.close();
     } on Object {
       // The socket was never established; nothing to clean up.
     }
@@ -221,12 +260,12 @@ class WsDaemonClient implements DaemonClient {
         'WebSocket URL must use ws:// or wss://',
       );
     }
-    final WebSocketChannel channel = WebSocketChannel.connect(uri);
+    final DaemonFrameChannel channel = _channelFactory(uri);
     _channel = channel;
     await channel.ready;
     _socketReady = true;
     if (_disposed) {
-      await channel.sink.close();
+      await channel.close();
       return;
     }
     _peer?.close();
@@ -237,7 +276,7 @@ class WsDaemonClient implements DaemonClient {
       incoming: incoming.stream,
       send: (Object? message) {
         try {
-          channel.sink.add(jsonEncode(message));
+          channel.add(jsonEncode(message));
         } on Object {
           // Socket may be closing underneath; the drop handler covers it.
         }
@@ -360,6 +399,7 @@ class WsDaemonClient implements DaemonClient {
     _disposed = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    await _tearDownSocket();
     await _sessionUpdatesController.close();
     await _gitChangedController.close();
     await _sessionEventFeed.close();

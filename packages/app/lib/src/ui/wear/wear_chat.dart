@@ -498,53 +498,68 @@ class _WearComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool running = status == SessionStatus.running;
-    return Padding(
-      padding: EdgeInsets.only(top: 4, left: 2, right: 2, bottom: 6),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: TextField(
-              key: const Key('wear-message-field'),
-              controller: controller,
-              focusNode: focusNode,
-              enabled: !running && !sending && status != SessionStatus.closed,
-              minLines: 1,
-              maxLines: 3,
-              textCapitalization: TextCapitalization.sentences,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              style: Theme.of(context).textTheme.bodySmall,
-              decoration: InputDecoration(
-                hintText: running ? 'Agent is working…' : 'Message',
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 8,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool compact = constraints.maxWidth <= 260;
+        final double sideInset = compact ? constraints.maxWidth * 0.16 : 2;
+        return Padding(
+          padding: EdgeInsets.only(
+            top: 4,
+            left: sideInset,
+            right: sideInset,
+            bottom: compact ? 16 : 6,
+          ),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: TextField(
+                  key: const Key('wear-message-field'),
+                  controller: controller,
+                  focusNode: focusNode,
+                  enabled:
+                      !running && !sending && status != SessionStatus.closed,
+                  minLines: 1,
+                  maxLines: 3,
+                  textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => onSend(),
+                  style: Theme.of(context).textTheme.bodySmall,
+                  decoration: InputDecoration(
+                    hintText: running ? 'Agent is working…' : 'Message',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 8,
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 4),
+              SizedBox.square(
+                dimension: 42,
+                child: IconButton.filled(
+                  key: Key(running ? 'wear-stop' : 'wear-send'),
+                  tooltip: running ? 'Stop' : 'Send',
+                  padding: EdgeInsets.zero,
+                  onPressed: sending
+                      ? null
+                      : running
+                      ? onStop
+                      : onSend,
+                  icon: sending
+                      ? const SizedBox.square(
+                          dimension: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          running ? Icons.stop : Icons.arrow_upward,
+                          size: 20,
+                        ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 4),
-          SizedBox.square(
-            dimension: 42,
-            child: IconButton.filled(
-              key: Key(running ? 'wear-stop' : 'wear-send'),
-              tooltip: running ? 'Stop' : 'Send',
-              padding: EdgeInsets.zero,
-              onPressed: sending
-                  ? null
-                  : running
-                  ? onStop
-                  : onSend,
-              icon: sending
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(running ? Icons.stop : Icons.arrow_upward, size: 20),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

@@ -6,7 +6,26 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/wear/wear_scaffold.dart';
 import 'package:speeddial_app/src/ui/wear/wear_shell.dart';
+
+void expectInsideRoundScreen(WidgetTester tester, Finder finder, Size size) {
+  final Rect rect = tester.getRect(finder);
+  final Offset center = Offset(size.width / 2, size.height / 2);
+  final double radius = size.shortestSide / 2;
+  for (final Offset corner in <Offset>[
+    rect.topLeft,
+    rect.topRight,
+    rect.bottomLeft,
+    rect.bottomRight,
+  ]) {
+    expect(
+      (corner - center).distance,
+      lessThanOrEqualTo(radius),
+      reason: '$finder at $rect is clipped by the $size round screen',
+    );
+  }
+}
 
 Future<(AppData, FakeDaemonClient)> pumpWear(
   WidgetTester tester, {
@@ -58,6 +77,52 @@ Future<void> openFirstSession(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('keeps header actions inside a 240px round screen', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size.square(240);
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: WearScaffold(
+          title: 'framework',
+          showBack: true,
+          action: IconButton(
+            key: const Key('round-refresh'),
+            onPressed: () {},
+            icon: const Icon(Icons.refresh, size: 19),
+          ),
+          child: WearEmptyState(
+            message: 'Could not load projects',
+            icon: Icons.cloud_off,
+            action: FilledButton(onPressed: () {}, child: const Text('Retry')),
+          ),
+        ),
+      ),
+    );
+
+    final Finder backIcon = find.descendant(
+      of: find.byKey(const Key('wear-back')),
+      matching: find.byType(Icon),
+    );
+    final Finder refreshIcon = find.descendant(
+      of: find.byKey(const Key('round-refresh')),
+      matching: find.byType(Icon),
+    );
+    expectInsideRoundScreen(tester, backIcon, size);
+    expectInsideRoundScreen(tester, refreshIcon, size);
+    expectInsideRoundScreen(
+      tester,
+      find.widgetWithText(FilledButton, 'Retry'),
+      size,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('fits a round watch flow and sends to an existing session', (
     WidgetTester tester,
   ) async {
@@ -68,6 +133,11 @@ void main() {
 
     expect(data.selection.selectedSessionId, 'sess-1');
     expect(find.byKey(const Key('wear-message-field')), findsOneWidget);
+    expectInsideRoundScreen(
+      tester,
+      find.byKey(const Key('wear-send')),
+      const Size(220, 220),
+    );
 
     await tester.enterText(
       find.byKey(const Key('wear-message-field')),

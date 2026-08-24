@@ -11,6 +11,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
     private lateinit var channel: MethodChannel
+    private lateinit var phoneProxy: PhoneProxyBridge
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -24,6 +25,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
                 else -> result.notImplemented()
             }
         }
+        phoneProxy = PhoneProxyBridge(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     override fun onStart() {
@@ -34,6 +36,11 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
     override fun onStop() {
         Wearable.getDataClient(this).removeListener(this)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        if (::phoneProxy.isInitialized) phoneProxy.dispose()
+        super.onDestroy()
     }
 
     override fun onDataChanged(events: DataEventBuffer) {

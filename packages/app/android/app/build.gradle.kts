@@ -49,4 +49,7 @@ flutter {
 
 dependencies {
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
+    // The phone owns Wear proxy WebSockets so they use the phone's active VPN
+    // route (for example Tailscale) even when the Flutter activity is asleep.
+    implementation("com.squareup.okhttp3:okhttp:5.3.0")
 }

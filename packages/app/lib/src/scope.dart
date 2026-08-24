@@ -301,6 +301,7 @@ class AppData {
     SelectionStore? selection,
     SettingsStore? settings,
     DaemonClient Function(String daemonId)? clientFor,
+    this.daemonChannelFactory,
   }) : connections = connections ?? ConnectionsStore(),
        selection = selection ?? SelectionStore(),
        settings = settings ?? SettingsStore(),
@@ -363,6 +364,11 @@ class AppData {
   /// provided it owns all non-registered wiring (the WebSocket clients are not
   /// created in that case).
   final DaemonClient Function(String daemonId)? _fallbackClientFor;
+
+  /// Optional transport override used by the Wear target to open each daemon
+  /// WebSocket through the paired phone. All normal app targets leave this
+  /// null and connect directly.
+  final DaemonFrameChannelFactory? daemonChannelFactory;
 
   /// Registers the client serving [daemonId]. Tests and demo mode inject
   /// fakes this way; registered ids always win over the lazy wiring and are
@@ -454,6 +460,7 @@ class AppData {
     final WsDaemonClient client = WsDaemonClient(
       url: endpoint.url,
       token: endpoint.token,
+      channelFactory: daemonChannelFactory,
     );
     void listener() {
       connections.setStatus(daemonId, _mapClientState(client.connState.value));

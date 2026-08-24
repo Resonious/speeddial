@@ -25,13 +25,17 @@ class WearScaffold extends StatelessWidget {
       body: LayoutBuilder(
         builder: (BuildContext context, BoxConstraints constraints) {
           final bool compact = constraints.maxWidth <= 260;
-          final double headerInset = compact ? constraints.maxWidth * 0.12 : 12;
+          // The header occupies the narrow top arc of a round display. At a
+          // 12% inset its icon centers are inside the circle but the glyphs
+          // themselves are clipped; 20% plus a slightly lower row keeps the
+          // complete touch affordances visible down to 192 logical pixels.
+          final double headerInset = compact ? constraints.maxWidth * 0.20 : 12;
           final double contentInset = compact
-              ? constraints.maxWidth * 0.045
+              ? constraints.maxWidth * 0.075
               : 12;
           return SafeArea(
             minimum: EdgeInsets.only(
-              top: compact ? 4 : 0,
+              top: compact ? 8 : 0,
               bottom: compact ? 5 : 0,
             ),
             child: Column(
@@ -39,17 +43,21 @@ class WearScaffold extends StatelessWidget {
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: headerInset),
                   child: SizedBox(
-                    height: compact ? 42 : 48,
+                    key: const Key('wear-header'),
+                    height: compact ? 46 : 48,
                     child: Row(
                       children: <Widget>[
                         SizedBox(
-                          width: 40,
+                          width: compact ? 32 : 40,
                           child: showBack
                               ? IconButton(
                                   key: const Key('wear-back'),
                                   tooltip: 'Back',
                                   padding: EdgeInsets.zero,
-                                  icon: const Icon(Icons.chevron_left),
+                                  icon: const Icon(
+                                    Icons.chevron_left,
+                                    size: 20,
+                                  ),
                                   onPressed: () => Navigator.of(context).pop(),
                                 )
                               : null,
@@ -64,7 +72,7 @@ class WearScaffold extends StatelessWidget {
                                 ?.copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
-                        SizedBox(width: 40, child: action),
+                        SizedBox(width: compact ? 32 : 40, child: action),
                       ],
                     ),
                   ),
@@ -86,7 +94,7 @@ class WearScaffold extends StatelessWidget {
 
 /// Standard lazy-list padding that keeps the first and last rows away from
 /// the narrowest top and bottom portions of a round screen.
-const EdgeInsets wearListPadding = EdgeInsets.fromLTRB(4, 6, 4, 18);
+const EdgeInsets wearListPadding = EdgeInsets.fromLTRB(4, 10, 4, 28);
 
 class WearEmptyState extends StatelessWidget {
   const WearEmptyState({

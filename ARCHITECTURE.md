@@ -254,9 +254,18 @@ persistent daemon endpoint snapshot at `/speeddial/endpoints`; the watch consume
 persists it locally, and removes stale watch endpoints when the phone removes them. Embedded desktop
 endpoints are never synchronized.
 
-The watch opens its own WebSocket to the synchronized daemon URL. It does not proxy daemon traffic
-through the phone, so the configured daemon still needs to be reachable from the watch's network.
-Credentials remain owned and edited by the phone app; the watch has no endpoint-entry UI.
+The watch opens a bidirectional Wear Data Layer channel at `/speeddial/proxy/v1` for each daemon
+connection. A foreground `WearableListenerService` on the paired phone opens the actual WebSocket
+and forwards its text frames over that channel. Consequently daemon traffic follows the phone's
+active network/VPN route (including Tailscale); the daemon does not need to be public or directly
+reachable from the watch. The paired Android phone must be connected, and it shows a low-priority
+notification while a watch proxy is active. The watch and phone reuse the app's normal JSON-RPC,
+authentication, reconnect, and notification handling around this raw-frame transport. Credentials
+remain owned and edited by the phone app; the watch has no endpoint-entry UI.
+
+Watch layouts derive circular-safe header/content/composer insets from their allocated width. This
+keeps complete header actions, list rows, empty-state actions, and bottom chat controls inside round
+screens down to 192 logical pixels without hardware-type checks.
 
 The reusable watch UI lives under `packages/app/lib/src/ui/wear/` and consumes the same
 `AppData`, `ProjectsStore`, `SessionsStore`, and `ChatStore` as the full client. The watch does

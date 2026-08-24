@@ -2,7 +2,9 @@
 
 Wear OS companion for the SpeedDial Android app. Daemon endpoints are configured
 only on the paired phone and synchronized to the watch with the Wear OS Data
-Layer. The watch then connects directly to the synchronized daemon URL.
+Layer. The watch sends daemon WebSocket frames through the paired phone, so the
+connection uses the phone's active network and VPN routes. Tailscale-only daemons
+work without being exposed publicly or installing Tailscale on the watch.
 
 The phone and watch APKs use the same Android application id and must be signed
 with the same certificate. Install both debug APKs from the same checkout:
@@ -29,5 +31,5 @@ packages/wear/build/app/outputs/flutter-apk/app-debug.apk
 
 After installing both APKs, open SpeedDial on the phone once. Adding, editing,
 or removing a daemon publishes the latest endpoint snapshot to the paired watch.
-The daemon must still be reachable directly from the watch, so do not configure
-`localhost` unless the daemon runs on the watch itself.
+The paired phone must remain connected. Android shows a low-priority SpeedDial
+notification on the phone while it is proxying an active watch connection.

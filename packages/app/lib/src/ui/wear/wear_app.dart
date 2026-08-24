@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../companion/companion_endpoint_sync.dart';
+import '../../companion/phone_proxy_channel.dart';
 import '../../scope.dart';
 import '../../theme.dart';
 import 'wear_shell.dart';
@@ -12,10 +13,16 @@ import 'wear_shell.dart';
 /// It deliberately shares the full client's store graph and wire client, but
 /// exposes only the workflows that make sense on a watch.
 class WearSpeedDialApp extends StatefulWidget {
-  const WearSpeedDialApp({super.key, required this.data, this.companionSync});
+  const WearSpeedDialApp({
+    super.key,
+    required this.data,
+    this.companionSync,
+    this.phoneProxy,
+  });
 
   final AppData data;
   final CompanionEndpointSync? companionSync;
+  final PhoneProxyChannelFactory? phoneProxy;
 
   @override
   State<WearSpeedDialApp> createState() => _WearSpeedDialAppState();
@@ -44,6 +51,7 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.companionSync?.dispose();
+    unawaited(widget.phoneProxy?.dispose());
     widget.data.dispose();
     unawaited(widget.data.stopLocalDaemon());
     super.dispose();
