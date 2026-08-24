@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,13 +16,19 @@ import 'package:speeddial_app/src/ui/wear/wear_scaffold.dart';
 const String rotaryChannelName = 'sh.speeddial/rotary';
 const StandardMethodCodec rotaryCodec = StandardMethodCodec();
 
-Future<void> sendRotaryScroll(double pixels) {
+Future<Object?> sendRotaryScroll(double pixels) async {
   final TestDefaultBinaryMessenger messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   final ByteData message = rotaryCodec.encodeMethodCall(
     MethodCall('scroll', pixels),
   );
-  return messenger.handlePlatformMessage(rotaryChannelName, message, null);
+  final Completer<ByteData?> reply = Completer<ByteData?>();
+  await messenger.handlePlatformMessage(
+    rotaryChannelName,
+    message,
+    reply.complete,
+  );
+  return rotaryCodec.decodeEnvelope((await reply.future)!);
 }
 
 void expectInsideRoundScreen(WidgetTester tester, Finder finder, Size size) {
@@ -197,7 +205,40 @@ void main() {
     expect(scrollable.position.pixels, 0);
     expect(scrollable.position.maxScrollExtent, greaterThan(0));
 
-    await sendRotaryScroll(60);
+    expect(await sendRotaryScroll(60), 60);
+    await tester.pump();
+
+    expect(scrollable.position.pixels, 60);
+
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    expect(await sendRotaryScroll(60), 0);
+  });
+
+  testWidgets('keeps crown direction natural in reversed chat history', (
+    WidgetTester tester,
+  ) async {
+    final (AppData _, FakeDaemonClient fake) = await pumpWear(tester);
+    fake.seedHistory(
+      'sess-1',
+      List<SessionEvent>.generate(
+        24,
+        (int index) => AgentMessageChunkEvent(
+          text: 'A sufficiently long history message number $index',
+        ),
+      ),
+    );
+    await openFirstSession(tester);
+
+    final Finder scrollableFinder = find.descendant(
+      of: find.byKey(const Key('wear-chat-timeline')),
+      matching: find.byType(Scrollable),
+    );
+    final ScrollableState scrollable = tester.state(scrollableFinder);
+    expect(scrollable.position.axisDirection, AxisDirection.up);
+    expect(scrollable.position.maxScrollExtent, greaterThan(120));
+    scrollable.position.jumpTo(100);
+
+    expect(await sendRotaryScroll(40), 40);
     await tester.pump();
 
     expect(scrollable.position.pixels, 60);

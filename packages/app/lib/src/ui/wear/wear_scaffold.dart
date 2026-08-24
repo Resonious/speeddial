@@ -52,31 +52,47 @@ class _WearScaffoldState extends State<WearScaffold> {
     super.dispose();
   }
 
-  static Future<void> _handleRotaryMethodCall(MethodCall call) async {
+  static Future<double> _handleRotaryMethodCall(MethodCall call) async {
     if (call.method != 'scroll') throw MissingPluginException();
     final Object? argument = call.arguments;
-    if (argument is! num) return;
-    _dispatchRotaryScroll(argument.toDouble());
+    if (argument is! num) return 0;
+    return _dispatchRotaryScroll(argument.toDouble());
   }
 
-  static void _dispatchRotaryScroll(double delta) {
-    if (!delta.isFinite || delta == 0) return;
+  static double _dispatchRotaryScroll(double delta) {
+    if (!delta.isFinite || delta == 0) return 0;
     for (final _WearScaffoldState target in _rotaryTargets.toList().reversed) {
-      if (target._scrollBy(delta)) return;
+      if (!target._isCurrentRoute) continue;
+      return target._scrollBy(delta);
     }
+    return 0;
   }
 
-  bool _scrollBy(double delta) {
+  bool get _isCurrentRoute {
     if (!mounted) return false;
     final ModalRoute<dynamic>? route = ModalRoute.of(context);
-    if (route != null && !route.isCurrent) return false;
-    if (_scrollController.hasClients &&
-        _scrollController.positions.length == 1) {
-      _scrollController.position.pointerScroll(delta);
+    return route == null || route.isCurrent;
+  }
+
+  double _scrollBy(double delta) {
+    if (!_scrollController.hasClients ||
+        _scrollController.positions.length != 1) {
+      return 0;
     }
-    // The current page owns rotary input even while its scroll view is being
-    // replaced by a progress or empty state.
-    return true;
+    final ScrollPosition position = _scrollController.position;
+    final double directionalDelta = switch (position.axisDirection) {
+      AxisDirection.down || AxisDirection.right => delta,
+      AxisDirection.up || AxisDirection.left => -delta,
+    };
+    final double before = position.pixels;
+    position.pointerScroll(directionalDelta);
+    final double moved = position.pixels - before;
+    // Report movement in screen coordinates. Reverse lists move their scroll
+    // position in the opposite direction for the same crown rotation.
+    return switch (position.axisDirection) {
+      AxisDirection.down || AxisDirection.right => moved,
+      AxisDirection.up || AxisDirection.left => -moved,
+    };
   }
 
   @override

@@ -1,9 +1,12 @@
 package sh.speeddial.speeddial_wear
 
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.ScrollFeedbackProvider
 import android.view.ViewConfiguration
+import androidx.annotation.RequiresApi
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -12,11 +15,13 @@ import com.google.android.gms.wearable.Wearable
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
     private lateinit var companionChannel: MethodChannel
     private lateinit var rotaryChannel: MethodChannel
     private lateinit var phoneProxy: PhoneProxyBridge
+    private var scrollFeedbackProvider: Any? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -46,7 +51,31 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
             if (axis != 0f && ::rotaryChannel.isInitialized) {
                 // Match Android and Flutter's mouse-wheel direction and scale
                 // the device-specific encoder units into logical scroll pixels.
-                rotaryChannel.invokeMethod("scroll", -axis * verticalScrollFactor())
+                val logicalPixels = -axis * verticalScrollFactor()
+                val inputDeviceId = event.deviceId
+                val source = event.source
+                rotaryChannel.invokeMethod(
+                    "scroll",
+                    logicalPixels,
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {
+                            val moved = (result as? Number)?.toFloat() ?: return
+                            if (moved == 0f) return
+                            val physicalPixels = nonZeroRound(
+                                moved * resources.displayMetrics.density,
+                            )
+                            provideRotaryFeedback(inputDeviceId, source, physicalPixels)
+                        }
+
+                        override fun error(
+                            errorCode: String,
+                            errorMessage: String?,
+                            errorDetails: Any?,
+                        ) = Unit
+
+                        override fun notImplemented() = Unit
+                    },
+                )
                 return true
             }
         }
@@ -85,6 +114,43 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
             48f * resources.displayMetrics.density
         }
         return physicalPixels / resources.displayMetrics.density
+    }
+
+    private fun provideRotaryFeedback(inputDeviceId: Int, source: Int, deltaInPixels: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            providePlatformScrollFeedback(inputDeviceId, source, deltaInPixels)
+            return
+        }
+        val feedback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+        } else {
+            HapticFeedbackConstants.CLOCK_TICK
+        }
+        window.decorView.performHapticFeedback(feedback)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    private fun providePlatformScrollFeedback(
+        inputDeviceId: Int,
+        source: Int,
+        deltaInPixels: Int,
+    ) {
+        val provider = scrollFeedbackProvider as? ScrollFeedbackProvider
+            ?: ScrollFeedbackProvider.createProvider(window.decorView).also {
+                scrollFeedbackProvider = it
+            }
+        provider.onScrollProgress(
+            inputDeviceId,
+            source,
+            MotionEvent.AXIS_SCROLL,
+            deltaInPixels,
+        )
+    }
+
+    private fun nonZeroRound(value: Float): Int {
+        val rounded = value.roundToInt()
+        if (rounded != 0) return rounded
+        return if (value > 0) 1 else -1
     }
 
     private fun readEndpoints(result: MethodChannel.Result) {
