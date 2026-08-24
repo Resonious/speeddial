@@ -41,6 +41,17 @@ class WearProxyService : WearableListenerService() {
         super.onCreate()
         channelClient = Wearable.getChannelClient(this)
         webSocketClient = OkHttpClient.Builder()
+            // OkHttp always offers permessage-deflate, but some WebSocket
+            // servers answer with parameters that OkHttp cannot implement
+            // (notably client_max_window_bits). Its resulting 1010 close is
+            // avoidable here: these JSON-RPC frames do not need compression,
+            // so remove the offer before the HTTP upgrade reaches the server.
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .removeHeader("Sec-WebSocket-Extensions")
+                    .build()
+                chain.proceed(request)
+            }
             .pingInterval(30, TimeUnit.SECONDS)
             .build()
         createNotificationChannel()
