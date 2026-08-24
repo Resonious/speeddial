@@ -74,7 +74,7 @@ void main() {
       channel: platformChannel,
     );
     final WsDaemonClient client = WsDaemonClient(
-      url: 'ws://framework.tailnet.ts.net:7331/ws',
+      url: 'wss://framework.tailnet.ts.net/ws',
       token: 'secret',
       channelFactory: proxy.connect,
     );
@@ -85,7 +85,7 @@ void main() {
     final projects = await client.listProjects();
 
     expect(connectionId, 'proxy-0');
-    expect(openedUrl, 'ws://framework.tailnet.ts.net:7331/ws');
+    expect(openedUrl, 'wss://framework.tailnet.ts.net/ws');
     expect(sentMethods, <String>['auth.authenticate', 'projects.list']);
     expect(projects.single.name, 'Through phone');
   });

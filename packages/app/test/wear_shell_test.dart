@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -98,6 +99,7 @@ void main() {
           ),
           child: WearEmptyState(
             message: 'Could not load projects',
+            details: 'Phone proxy channel closed',
             icon: Icons.cloud_off,
             action: FilledButton(onPressed: () {}, child: const Text('Retry')),
           ),
@@ -120,7 +122,20 @@ void main() {
       find.widgetWithText(FilledButton, 'Retry'),
       size,
     );
+    expect(find.text('Phone proxy channel closed'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('shows the useful message from a native proxy failure', () {
+    expect(
+      wearErrorText(
+        PlatformException(
+          code: 'phone_proxy_failed',
+          message: 'TLS handshake failed',
+        ),
+      ),
+      'TLS handshake failed',
+    );
   });
 
   testWidgets('fits a round watch flow and sends to an existing session', (

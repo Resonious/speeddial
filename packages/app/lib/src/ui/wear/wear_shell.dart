@@ -155,6 +155,7 @@ class _WearProjectListPageState extends State<_WearProjectListPage> {
           if (error != null && items.isEmpty) {
             return WearEmptyState(
               message: 'Could not load projects',
+              details: wearErrorText(error),
               icon: Icons.cloud_off,
               action: FilledButton(
                 onPressed: _refresh,

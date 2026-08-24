@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// A constraint-driven page frame for watch-sized square and round windows.
 ///
@@ -100,11 +101,13 @@ class WearEmptyState extends StatelessWidget {
   const WearEmptyState({
     super.key,
     required this.message,
+    this.details,
     this.icon = Icons.hourglass_empty,
     this.action,
   });
 
   final String message;
+  final String? details;
   final IconData icon;
   final Widget? action;
 
@@ -125,6 +128,16 @@ class WearEmptyState extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: colors.onSurfaceVariant),
             ),
+            if (details != null) ...<Widget>[
+              const SizedBox(height: 4),
+              Text(
+                details!,
+                key: const Key('wear-error-details'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: colors.error),
+              ),
+            ],
             if (action != null) ...<Widget>[const SizedBox(height: 8), action!],
           ],
         ),
@@ -134,6 +147,10 @@ class WearEmptyState extends StatelessWidget {
 }
 
 String wearErrorText(Object error) {
+  if (error is PlatformException) {
+    final String? message = error.message?.trim();
+    return message == null || message.isEmpty ? error.code : message;
+  }
   final String text = error.toString();
   return text.startsWith('DaemonError: ')
       ? text.substring('DaemonError: '.length)

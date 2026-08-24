@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Wearable
@@ -53,6 +55,28 @@ class WearProxyService : WearableListenerService() {
         session.start()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (error: RuntimeException) {
+            // The listener is still bound by the Wear Data Layer for the
+            // active channel. Give up only the started-service state so an
+            // Android-version-specific foreground restriction cannot crash
+            // the phone process and tear down that channel.
+            Log.w(LOG_TAG, "Could not promote watch proxy service", error)
+            stopSelf(startId)
+        }
+        return START_NOT_STICKY
+    }
+
     override fun onChannelClosed(
         channel: ChannelClient.Channel,
         closeReason: Int,
@@ -78,12 +102,12 @@ class WearProxyService : WearableListenerService() {
             } else {
                 startService(serviceIntent)
             }
-        } catch (_: RuntimeException) {
-            // The Data Layer still keeps this listener bound while the channel
-            // is active. Promotion below is best effort on vendor builds that
-            // reject starting an already-bound service.
+        } catch (error: RuntimeException) {
+            // Android 12+ can reject a foreground-service start made while the
+            // phone app is in the background. The Data Layer listener remains
+            // bound for the active channel, so continue without promotion.
+            Log.w(LOG_TAG, "Could not start watch proxy foreground service", error)
         }
-        startForeground(NOTIFICATION_ID, buildNotification())
     }
 
     private fun sessionFinished(channel: ChannelClient.Channel, session: ProxySession) {
@@ -243,6 +267,7 @@ class WearProxyService : WearableListenerService() {
 
     companion object {
         private const val PROXY_PATH = "/speeddial/proxy/v1"
+        private const val LOG_TAG = "SpeedDialWearProxy"
         private const val NOTIFICATION_CHANNEL_ID = "speeddial_wear_proxy"
         private const val NOTIFICATION_ID = 7332
         private const val ERROR_UNSUPPORTED_PATH = 1
