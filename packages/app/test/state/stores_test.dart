@@ -641,7 +641,7 @@ void main() {
 
     test('watch loads one page and older history is explicit', () async {
       fake.seedHistory('sess-1', <SessionEvent>[
-        for (var i = 1; i <= 201; i++) UserMessageEvent(text: 'm$i'),
+        for (var i = 1; i <= 1001; i++) UserMessageEvent(text: 'm$i'),
       ]);
 
       app.chat.watchSession('fake', 'sess-1');
@@ -649,24 +649,24 @@ void main() {
         () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
       );
 
-      expect(app.chat.eventsFor('sess-1'), hasLength(100));
+      expect(app.chat.eventsFor('sess-1'), hasLength(500));
       expect(app.chat.hasOlderHistory('sess-1'), isTrue);
       expect(
         (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
-        'm102',
+        'm502',
       );
 
       await app.chat.loadOlderHistory('fake', 'sess-1');
-      expect(app.chat.eventsFor('sess-1'), hasLength(200));
+      expect(app.chat.eventsFor('sess-1'), hasLength(1000));
       expect(app.chat.hasOlderHistory('sess-1'), isTrue);
 
       await app.chat.loadOlderHistory('fake', 'sess-1');
       final List<SessionEvent> events = app.chat.eventsFor('sess-1');
-      expect(events, hasLength(201));
+      expect(events, hasLength(1001));
       expect(app.chat.hasOlderHistory('sess-1'), isFalse);
       expect(
         events.map((SessionEvent e) => e.seq).toList(),
-        List<int?>.generate(201, (int i) => i + 1),
+        List<int?>.generate(1001, (int i) => i + 1),
       );
     });
 
@@ -676,14 +676,14 @@ void main() {
         final _GatedPageFake gated = _GatedPageFake();
         app.registerClient('gated', gated);
         gated.seedHistory('sess-1', <SessionEvent>[
-          for (var i = 1; i <= 150; i++) UserMessageEvent(text: 'm$i'),
+          for (var i = 1; i <= 550; i++) UserMessageEvent(text: 'm$i'),
         ]);
 
         app.chat.watchSession('gated', 'sess-1');
         await _waitUntil(
           () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
         );
-        expect(app.chat.eventsFor('sess-1'), hasLength(100));
+        expect(app.chat.eventsFor('sess-1'), hasLength(500));
 
         final Future<void> first = app.chat.loadOlderHistory('gated', 'sess-1');
         await _waitUntil(() => app.chat.isLoadingOlderHistory('sess-1'));
@@ -692,11 +692,11 @@ void main() {
           'sess-1',
         );
         await duplicate;
-        expect(app.chat.eventsFor('sess-1'), hasLength(100));
+        expect(app.chat.eventsFor('sess-1'), hasLength(500));
 
         gated.releaseNextPage();
         await first;
-        expect(app.chat.eventsFor('sess-1'), hasLength(150));
+        expect(app.chat.eventsFor('sess-1'), hasLength(550));
         expect(app.chat.hasOlderHistory('sess-1'), isFalse);
       },
     );
@@ -707,7 +707,7 @@ void main() {
         final _GatedPageFake gated = _GatedPageFake()..failOlderPages = true;
         app.registerClient('gated', gated);
         gated.seedHistory('sess-1', <SessionEvent>[
-          for (var i = 1; i <= 150; i++) UserMessageEvent(text: 'm$i'),
+          for (var i = 1; i <= 550; i++) UserMessageEvent(text: 'm$i'),
         ]);
 
         app.chat.watchSession('gated', 'sess-1');
@@ -715,13 +715,13 @@ void main() {
           () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
         );
         await app.chat.loadOlderHistory('gated', 'sess-1');
-        expect(app.chat.eventsFor('sess-1'), hasLength(100));
+        expect(app.chat.eventsFor('sess-1'), hasLength(500));
         expect(app.chat.olderHistoryErrorFor('sess-1'), isA<StateError>());
 
         gated.failOlderPages = false;
         gated.releaseNextPage();
         await app.chat.loadOlderHistory('gated', 'sess-1');
-        expect(app.chat.eventsFor('sess-1'), hasLength(150));
+        expect(app.chat.eventsFor('sess-1'), hasLength(550));
         expect(app.chat.olderHistoryErrorFor('sess-1'), isNull);
       },
     );

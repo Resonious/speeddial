@@ -575,7 +575,7 @@ class ChatStore extends StoreBase {
   /// Page size for history loads. Keeping frames modest protects mobile
   /// clients from oversized JSON responses while still filling a screen in
   /// one round trip.
-  static const int _historyPageSize = 100;
+  static const int _historyPageSize = 500;
 
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
