@@ -17,12 +17,16 @@ class WearSpeedDialShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
     return ListenableBuilder(
-      listenable: data.connections,
+      listenable: Listenable.merge(<Listenable>[
+        data.connections,
+        data.settings,
+      ]),
       builder: (BuildContext context, Widget? _) {
         if (data.connections.endpoints.isEmpty) {
-          return const WearScaffold(
+          return WearScaffold(
             title: 'SpeedDial',
-            child: WearEmptyState(
+            action: _WearThemeToggle(data: data),
+            child: const WearEmptyState(
               message: 'Add a daemon in SpeedDial on your paired phone',
               icon: Icons.phone_android,
             ),
@@ -43,6 +47,7 @@ class _WearDaemonListPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return WearScaffold(
       title: 'SpeedDial',
+      action: _WearThemeToggle(data: data),
       child: ListView.builder(
         key: const Key('wear-daemon-list'),
         padding: wearListPadding,
@@ -82,6 +87,46 @@ class _WearDaemonListPage extends StatelessWidget {
     ConnectionStatus.failed => 'Tap to retry',
     ConnectionStatus.disconnected => 'Disconnected',
   };
+}
+
+class _WearThemeToggle extends StatelessWidget {
+  const _WearThemeToggle({required this.data});
+
+  final AppData data;
+
+  Future<void> _toggle(BuildContext context) async {
+    final ThemeMode next = data.settings.themeMode == ThemeMode.dark
+        ? ThemeMode.light
+        : ThemeMode.dark;
+    try {
+      await data.settings.setThemeMode(next);
+    } on Object catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 2),
+            content: Text(wearErrorText(error), maxLines: 2),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool dark = data.settings.themeMode == ThemeMode.dark;
+    return IconButton(
+      key: const Key('wear-theme-toggle'),
+      tooltip: dark ? 'Use light theme' : 'Use dark theme',
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+        size: 19,
+      ),
+      onPressed: () => _toggle(context),
+    );
+  }
 }
 
 class _WearProjectListPage extends StatefulWidget {

@@ -5,10 +5,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
-import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/scope.dart' show AppData, ConnectionStatus;
+import 'package:speeddial_app/src/state/settings_store.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/wear/wear_app.dart';
 import 'package:speeddial_app/src/ui/wear/wear_scaffold.dart';
-import 'package:speeddial_app/src/ui/wear/wear_shell.dart';
+
+const String rotaryChannelName = 'sh.speeddial/rotary';
+const StandardMethodCodec rotaryCodec = StandardMethodCodec();
+
+Future<void> sendRotaryScroll(double pixels) {
+  final TestDefaultBinaryMessenger messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  final ByteData message = rotaryCodec.encodeMethodCall(
+    MethodCall('scroll', pixels),
+  );
+  return messenger.handlePlatformMessage(rotaryChannelName, message, null);
+}
 
 void expectInsideRoundScreen(WidgetTester tester, Finder finder, Size size) {
   final Rect rect = tester.getRect(finder);
@@ -39,6 +52,7 @@ Future<(AppData, FakeDaemonClient)> pumpWear(
   );
   final AppData data = AppData(clientFor: (_) => fake)
     ..registerClient('fake', fake);
+  await data.settings.init();
   if (withDaemon) {
     await data.connections.addEndpoint(
       id: 'fake',
@@ -55,15 +69,7 @@ Future<(AppData, FakeDaemonClient)> pumpWear(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(
-    AppScope(
-      data: data,
-      child: MaterialApp(
-        theme: buildSpeedDialTheme(),
-        home: const WearSpeedDialShell(),
-      ),
-    ),
-  );
+  await tester.pumpWidget(WearSpeedDialApp(data: data));
   await tester.pump();
   return (data, fake);
 }
@@ -167,6 +173,52 @@ void main() {
 
     expect(find.text('Reply from my watch'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('scrolls the current list from native rotary input', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient _) = await pumpWear(tester);
+    for (int index = 1; index <= 7; index++) {
+      await data.connections.addEndpoint(
+        id: 'fake-$index',
+        name: 'Watch daemon $index',
+        url: 'fake://$index',
+        token: '',
+      );
+    }
+    await tester.pump();
+
+    final Finder scrollableFinder = find.descendant(
+      of: find.byKey(const Key('wear-daemon-list')),
+      matching: find.byType(Scrollable),
+    );
+    final ScrollableState scrollable = tester.state(scrollableFinder);
+    expect(scrollable.position.pixels, 0);
+    expect(scrollable.position.maxScrollExtent, greaterThan(0));
+
+    await sendRotaryScroll(60);
+    await tester.pump();
+
+    expect(scrollable.position.pixels, 60);
+  });
+
+  testWidgets('theme button applies and persists dark mode', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient _) = await pumpWear(tester);
+    expect(data.settings.themeMode, ThemeMode.system);
+
+    await tester.tap(find.byKey(const Key('wear-theme-toggle')));
+    await tester.pump();
+
+    expect(data.settings.themeMode, ThemeMode.dark);
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+      ThemeMode.dark,
+    );
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(SettingsStore.storageKey), ThemeMode.dark.name);
   });
 
   testWidgets('creates a session from the compact provider list', (

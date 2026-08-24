@@ -61,13 +61,18 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
   Widget build(BuildContext context) {
     return AppScope(
       data: widget.data,
-      child: MaterialApp(
-        title: 'SpeedDial Wear',
-        debugShowCheckedModeBanner: false,
-        theme: _wearTheme(buildSpeedDialLightTheme()),
-        darkTheme: _wearTheme(buildSpeedDialTheme()),
-        themeMode: ThemeMode.system,
-        home: const WearSpeedDialShell(),
+      child: ListenableBuilder(
+        listenable: widget.data.settings,
+        builder: (BuildContext context, Widget? _) {
+          return MaterialApp(
+            title: 'SpeedDial Wear',
+            debugShowCheckedModeBanner: false,
+            theme: _wearTheme(buildSpeedDialLightTheme()),
+            darkTheme: _wearTheme(buildSpeedDialTheme()),
+            themeMode: widget.data.settings.themeMode,
+            home: const WearSpeedDialShell(),
+          );
+        },
       ),
     );
   }

@@ -7,7 +7,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 /// Round devices need more room at the upper corners than rectangular phone
 /// layouts. The inset is derived from the allocated width rather than a
 /// hardware-type check, so previews and resizable windows behave identically.
-class WearScaffold extends StatelessWidget {
+class WearScaffold extends StatefulWidget {
   const WearScaffold({
     super.key,
     required this.title,
@@ -20,6 +20,64 @@ class WearScaffold extends StatelessWidget {
   final Widget child;
   final bool showBack;
   final Widget? action;
+
+  @override
+  State<WearScaffold> createState() => _WearScaffoldState();
+}
+
+class _WearScaffoldState extends State<WearScaffold> {
+  static const MethodChannel _rotaryChannel = MethodChannel(
+    'sh.speeddial/rotary',
+  );
+  static final Set<_WearScaffoldState> _rotaryTargets = <_WearScaffoldState>{};
+
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _rotaryTargets.add(this);
+    if (_rotaryTargets.length == 1) {
+      _rotaryChannel.setMethodCallHandler(_handleRotaryMethodCall);
+    }
+  }
+
+  @override
+  void dispose() {
+    _rotaryTargets.remove(this);
+    if (_rotaryTargets.isEmpty) {
+      _rotaryChannel.setMethodCallHandler(null);
+    }
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  static Future<void> _handleRotaryMethodCall(MethodCall call) async {
+    if (call.method != 'scroll') throw MissingPluginException();
+    final Object? argument = call.arguments;
+    if (argument is! num) return;
+    _dispatchRotaryScroll(argument.toDouble());
+  }
+
+  static void _dispatchRotaryScroll(double delta) {
+    if (!delta.isFinite || delta == 0) return;
+    for (final _WearScaffoldState target in _rotaryTargets.toList().reversed) {
+      if (target._scrollBy(delta)) return;
+    }
+  }
+
+  bool _scrollBy(double delta) {
+    if (!mounted) return false;
+    final ModalRoute<dynamic>? route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    if (_scrollController.hasClients &&
+        _scrollController.positions.length == 1) {
+      _scrollController.position.pointerScroll(delta);
+    }
+    // The current page owns rotary input even while its scroll view is being
+    // replaced by a progress or empty state.
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +109,7 @@ class WearScaffold extends StatelessWidget {
                       children: <Widget>[
                         SizedBox(
                           width: compact ? 32 : 40,
-                          child: showBack
+                          child: widget.showBack
                               ? IconButton(
                                   key: const Key('wear-back'),
                                   tooltip: 'Back',
@@ -66,7 +124,7 @@ class WearScaffold extends StatelessWidget {
                         ),
                         Expanded(
                           child: Text(
-                            title,
+                            widget.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
@@ -74,15 +132,21 @@ class WearScaffold extends StatelessWidget {
                                 ?.copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
-                        SizedBox(width: compact ? 32 : 40, child: action),
+                        SizedBox(
+                          width: compact ? 32 : 40,
+                          child: widget.action,
+                        ),
                       ],
                     ),
                   ),
                 ),
                 Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: contentInset),
-                    child: child,
+                  child: PrimaryScrollController(
+                    controller: _scrollController,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: contentInset),
+                      child: widget.child,
+                    ),
                   ),
                 ),
               ],

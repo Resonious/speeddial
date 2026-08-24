@@ -271,13 +271,21 @@ class _WearTimeline extends StatefulWidget {
 }
 
 class _WearTimelineState extends State<_WearTimeline> {
-  final ScrollController _controller = ScrollController();
+  ScrollController? _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ScrollController controller = PrimaryScrollController.of(context);
+    if (identical(controller, _controller)) return;
+    _controller?.removeListener(_onScroll);
+    _controller = controller..addListener(_onScroll);
   }
 
   @override
@@ -290,10 +298,14 @@ class _WearTimelineState extends State<_WearTimeline> {
   }
 
   void _onScroll() {
-    if (!_controller.hasClients || !widget.hasOlder || widget.loadingOlder) {
+    final ScrollController? controller = _controller;
+    if (controller == null ||
+        !controller.hasClients ||
+        !widget.hasOlder ||
+        widget.loadingOlder) {
       return;
     }
-    if (_controller.position.maxScrollExtent - _controller.position.pixels <=
+    if (controller.position.maxScrollExtent - controller.position.pixels <=
         160) {
       widget.onLoadOlder();
     }
@@ -301,9 +313,7 @@ class _WearTimelineState extends State<_WearTimeline> {
 
   @override
   void dispose() {
-    _controller
-      ..removeListener(_onScroll)
-      ..dispose();
+    _controller?.removeListener(_onScroll);
     super.dispose();
   }
 
