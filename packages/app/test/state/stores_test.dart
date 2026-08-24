@@ -639,113 +639,90 @@ void main() {
       },
     );
 
-    test('watch backfills multi-page history by paging backwards', () async {
-      // Seed more than one page (the store pages at the protocol cap, 1000).
+    test('watch loads one page and older history is explicit', () async {
       fake.seedHistory('sess-1', <SessionEvent>[
-        for (var i = 1; i <= 1001; i++) UserMessageEvent(text: 'm$i'),
+        for (var i = 1; i <= 201; i++) UserMessageEvent(text: 'm$i'),
       ]);
 
       app.chat.watchSession('fake', 'sess-1');
-      await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1001);
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
 
+      expect(app.chat.eventsFor('sess-1'), hasLength(100));
+      expect(app.chat.hasOlderHistory('sess-1'), isTrue);
+      expect(
+        (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
+        'm102',
+      );
+
+      await app.chat.loadOlderHistory('fake', 'sess-1');
+      expect(app.chat.eventsFor('sess-1'), hasLength(200));
+      expect(app.chat.hasOlderHistory('sess-1'), isTrue);
+
+      await app.chat.loadOlderHistory('fake', 'sess-1');
       final List<SessionEvent> events = app.chat.eventsFor('sess-1');
-      // Both pages arrived, in ascending seq order, with no overlap.
+      expect(events, hasLength(201));
+      expect(app.chat.hasOlderHistory('sess-1'), isFalse);
       expect(
         events.map((SessionEvent e) => e.seq).toList(),
-        List<int?>.generate(1001, (int i) => i + 1),
-      );
-      expect((events.first as UserMessageEvent).text, 'm1');
-      expect((events.last as UserMessageEvent).text, 'm1001');
-
-      // A live event after the backfill continues from the known max seq.
-      await app.chat.send('fake', 'sess-1', 'after backfill');
-      await _waitUntil(
-        () => app.chat
-            .eventsFor('sess-1')
-            .any((SessionEvent e) => e is TurnCompleteEvent),
-      );
-      // The turn appends 12 raw events, but the 2 thought deltas (1003-1004)
-      // and 3 chunk deltas (1005-1007) each merge into one buffered record:
-      // 1001 + 9 = 1010.
-      expect(app.chat.eventsFor('sess-1'), hasLength(1010));
-      // Merged chunk records the last delta's seq; the tail is contiguous.
-      expect(
-        app.chat
-            .eventsFor('sess-1')
-            .sublist(1001)
-            .map((SessionEvent e) => e.seq),
-        <int>[1002, 1004, 1007, 1008, 1009, 1010, 1011, 1012, 1013],
-      );
-      expect(
-        (app.chat
-                    .eventsFor('sess-1')
-                    .lastWhere((SessionEvent e) => e is UserMessageEvent)
-                as UserMessageEvent)
-            .text,
-        'after backfill',
+        List<int?>.generate(201, (int i) => i + 1),
       );
     });
 
     test(
-      'first history page renders before older pages finish loading',
+      'older history load exposes progress and suppresses duplicates',
       () async {
-        // A gated client holds the SECOND page back, proving the store
-        // applies (and reports ready) after the newest page alone.
         final _GatedPageFake gated = _GatedPageFake();
         app.registerClient('gated', gated);
         gated.seedHistory('sess-1', <SessionEvent>[
-          for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+          for (var i = 1; i <= 150; i++) UserMessageEvent(text: 'm$i'),
         ]);
 
         app.chat.watchSession('gated', 'sess-1');
         await _waitUntil(
           () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
         );
+        expect(app.chat.eventsFor('sess-1'), hasLength(100));
 
-        // Only the newest page (m501..m1500) has arrived; the buffer is
-        // already usable and live events apply directly.
-        expect(app.chat.eventsFor('sess-1'), hasLength(1000));
-        expect(
-          (app.chat.eventsFor('sess-1').first as UserMessageEvent).text,
-          'm501',
+        final Future<void> first = app.chat.loadOlderHistory('gated', 'sess-1');
+        await _waitUntil(() => app.chat.isLoadingOlderHistory('sess-1'));
+        final Future<void> duplicate = app.chat.loadOlderHistory(
+          'gated',
+          'sess-1',
         );
+        await duplicate;
+        expect(app.chat.eventsFor('sess-1'), hasLength(100));
 
         gated.releaseNextPage();
-        await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
-        // The older page prepended in seq order, above nothing, below all.
-        expect(
-          app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq).toList(),
-          List<int?>.generate(1500, (int i) => i + 1),
-        );
+        await first;
+        expect(app.chat.eventsFor('sess-1'), hasLength(150));
+        expect(app.chat.hasOlderHistory('sess-1'), isFalse);
       },
     );
 
     test(
-      'retrying a partially loaded history does not duplicate events',
+      'failed older history can be retried without clearing recent events',
       () async {
         final _GatedPageFake gated = _GatedPageFake()..failOlderPages = true;
         app.registerClient('gated', gated);
         gated.seedHistory('sess-1', <SessionEvent>[
-          for (var i = 1; i <= 1500; i++) UserMessageEvent(text: 'm$i'),
+          for (var i = 1; i <= 150; i++) UserMessageEvent(text: 'm$i'),
         ]);
 
         app.chat.watchSession('gated', 'sess-1');
-        // Page one lands; the second page fetch throws.
         await _waitUntil(
-          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.failed,
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
         );
-        expect(app.chat.eventsFor('sess-1'), hasLength(1000));
+        await app.chat.loadOlderHistory('gated', 'sess-1');
+        expect(app.chat.eventsFor('sess-1'), hasLength(100));
+        expect(app.chat.olderHistoryErrorFor('sess-1'), isA<StateError>());
 
         gated.failOlderPages = false;
-        gated.releaseNextPage(); // Unblocks the retry's second page.
-        app.chat.retryHistory('gated', 'sess-1');
-        await _waitUntil(() => app.chat.eventsFor('sess-1').length == 1500);
-        final List<int?> seqs = app.chat
-            .eventsFor('sess-1')
-            .map((SessionEvent e) => e.seq)
-            .toList();
-        expect(seqs.toSet().length, 1500, reason: 'no duplicated seqs');
-        expect(seqs, List<int?>.generate(1500, (int i) => i + 1));
+        gated.releaseNextPage();
+        await app.chat.loadOlderHistory('gated', 'sess-1');
+        expect(app.chat.eventsFor('sess-1'), hasLength(150));
+        expect(app.chat.olderHistoryErrorFor('sess-1'), isNull);
       },
     );
 
@@ -965,18 +942,12 @@ void main() {
         // The existing content stays visible meanwhile; the load state is
         // still ready (this is a backfill, not a first load).
         expect(app.chat.eventsFor('sess-1'), isNotEmpty);
-        expect(
-          app.chat.historyStatusFor('sess-1'),
-          HistoryStatus.ready,
-        );
+        expect(app.chat.historyStatusFor('sess-1'), HistoryStatus.ready);
 
         gated.blockHistory = false;
         gated.releaseHistory();
         await _waitUntil(() => !app.chat.isCatchingUp('sess-1'));
-        expect(
-          app.chat.historyStatusFor('sess-1'),
-          HistoryStatus.ready,
-        );
+        expect(app.chat.historyStatusFor('sess-1'), HistoryStatus.ready);
       },
     );
   });

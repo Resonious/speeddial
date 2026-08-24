@@ -249,6 +249,63 @@ void main() {
     });
   });
 
+  group('lazy history', () {
+    testWidgets('requests older history when the first page underfills', (
+      WidgetTester tester,
+    ) async {
+      int loads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: Timeline(
+              hasOlder: true,
+              onLoadOlder: () => loads++,
+              items: const <TimelineItem>[
+                AgentMessageItem(text: 'partial latest response'),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(loads, 1);
+    });
+
+    testWidgets('requests older history near the top edge', (
+      WidgetTester tester,
+    ) async {
+      int loads = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: Timeline(
+              hasOlder: true,
+              onLoadOlder: () => loads++,
+              items: <TimelineItem>[
+                for (var i = 0; i < 80; i++)
+                  UserMessageItem(text: 'message $i'),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final ScrollableState scrollable = tester.state(
+        find.descendant(
+          of: find.byKey(const Key('chat-timeline')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pump();
+
+      expect(loads, 1);
+    });
+  });
+
   group('tool call details', () {
     testWidgets(
       'uses the execute command as the heading and renders raw details',
@@ -394,6 +451,38 @@ void main() {
       expect(loadedId, attachment.id);
       expect(find.byType(Image), findsOneWidget);
       expect(find.text('Read image file [image/png]'), findsOneWidget);
+    });
+    testWidgets('bounds oversized raw output before text layout', (
+      WidgetTester tester,
+    ) async {
+      final String payload = 'A' * 50000;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: SizedBox(
+              width: 600,
+              child: ToolCallCard(
+                toolCall: ToolCall(
+                  id: 'read-image',
+                  title: 'Read image',
+                  kind: 'read',
+                  status: ToolCallStatus.completed,
+                  content: const <ToolCallContent>[],
+                  locations: const <String>[],
+                  rawOutput: <String, Object?>{'data': payload},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Read image'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('characters omitted'), findsOneWidget);
+      expect(find.text(payload), findsNothing);
     });
   });
 

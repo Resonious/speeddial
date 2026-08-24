@@ -219,16 +219,24 @@ List<TimelineItem> deriveTimelineItems(
 /// [items] is the [deriveTimelineItems] output for the session; callers
 /// cache it per session revision so every chunk notification does not
 /// re-scan the full raw event list.
-class Timeline extends StatelessWidget {
+class Timeline extends StatefulWidget {
   const Timeline({
     super.key,
     required this.items,
     this.attachmentLoader,
     this.onFork,
     this.openLocalFile,
+    this.hasOlder = false,
+    this.loadingOlder = false,
+    this.olderError,
+    this.onLoadOlder,
   });
 
   final List<TimelineItem> items;
+  final bool hasOlder;
+  final bool loadingOlder;
+  final Object? olderError;
+  final VoidCallback? onLoadOlder;
 
   /// Resolves an attachment's payload by id (through the chat store); when
   /// null, attachment chips render without loading their bytes (defensive
@@ -242,23 +250,108 @@ class Timeline extends StatelessWidget {
   final Future<void> Function(String path)? openLocalFile;
 
   @override
+  State<Timeline> createState() => _TimelineState();
+}
+
+class _TimelineState extends State<Timeline> {
+  static const double _loadThreshold = 320;
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+  }
+
+  @override
+  void didUpdateWidget(Timeline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((!oldWidget.hasOlder && widget.hasOlder) ||
+        (oldWidget.loadingOlder && !widget.loadingOlder)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    }
+  }
+
+  void _onScroll() {
+    if (!mounted ||
+        !_controller.hasClients ||
+        !widget.hasOlder ||
+        widget.loadingOlder ||
+        widget.onLoadOlder == null) {
+      return;
+    }
+    final ScrollPosition position = _controller.position;
+    if (position.maxScrollExtent - position.pixels <= _loadThreshold) {
+      widget.onLoadOlder!();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // SelectionArea makes every Text/RichText descendant (message bubbles,
-    // markdown bodies, tool output, diffs, plan rows) selectable and
-    // copyable; interactive widgets (expansion tiles, buttons) keep working.
+    final int historyRows = widget.loadingOlder || widget.olderError != null
+        ? 1
+        : 0;
     return SelectionArea(
       child: ListView.builder(
+        key: const Key('chat-timeline'),
+        controller: _controller,
         reverse: true,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: items.length,
-        // reverse: true renders index 0 (the newest) at the bottom.
-        itemBuilder: (BuildContext context, int index) => _TimelineRow(
-          item: items[items.length - 1 - index],
-          attachmentLoader: attachmentLoader,
-          onFork: onFork,
-          openLocalFile: openLocalFile,
-        ),
+        itemCount: widget.items.length + historyRows,
+        itemBuilder: (BuildContext context, int index) {
+          if (index == widget.items.length && historyRows == 1) {
+            return _OlderHistoryStatus(
+              loading: widget.loadingOlder,
+              error: widget.olderError,
+              onRetry: widget.onLoadOlder,
+            );
+          }
+          return _TimelineRow(
+            item: widget.items[widget.items.length - 1 - index],
+            attachmentLoader: widget.attachmentLoader,
+            onFork: widget.onFork,
+            openLocalFile: widget.openLocalFile,
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _OlderHistoryStatus extends StatelessWidget {
+  const _OlderHistoryStatus({
+    required this.loading,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final bool loading;
+  final Object? error;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    return Center(
+      child: TextButton.icon(
+        onPressed: onRetry,
+        icon: const Icon(Icons.refresh, size: 16),
+        label: const Text('Retry older history'),
       ),
     );
   }

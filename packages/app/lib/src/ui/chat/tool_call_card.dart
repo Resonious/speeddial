@@ -276,7 +276,7 @@ class _ToolCallContentView extends StatelessWidget {
       case ToolCallText text:
         return _ScrollableMono(
           background: colors.codeBackground,
-          child: Text(text.text, style: colors.mono),
+          child: Text(_boundedToolText(text.text), style: colors.mono),
         );
       case ToolCallImage image:
         return Padding(
@@ -287,14 +287,27 @@ class _ToolCallContentView extends StatelessWidget {
           ),
         );
       case ToolCallDiff diff:
-        return _DiffView(diff: diff);
+        return _DiffView(
+          diff: ToolCallDiff(
+            path: diff.path,
+            oldText: diff.oldText == null
+                ? null
+                : _boundedToolText(diff.oldText!),
+            newText: _boundedToolText(diff.newText),
+          ),
+        );
       case ToolCallPatch patch:
-        return _PatchView(patch: patch);
+        return _PatchView(
+          patch: ToolCallPatch(
+            path: patch.path,
+            diff: _boundedToolText(patch.diff),
+          ),
+        );
       case ToolCallTerminal terminal:
         return _ScrollableMono(
           background: const Color(0xFF000000),
           child: Text(
-            terminal.output,
+            _boundedToolText(terminal.output),
             style: colors.mono.copyWith(color: const Color(0xFFE6EDF3)),
           ),
         );
@@ -353,12 +366,66 @@ bool _hasRawValue(Object? value) => switch (value) {
 };
 
 String _formatRawValue(Object value) {
-  if (value is String) return value;
-  try {
-    return const JsonEncoder.withIndent('  ').convert(value);
-  } on Object {
-    return value.toString();
+  final StringBuffer out = StringBuffer();
+  _writeRawPreview(out, value, 0);
+  return out.toString();
+}
+
+const int _maxToolPreviewCharacters = 12000;
+const int _maxRawDepth = 6;
+const int _maxRawEntries = 100;
+
+void _writeRawPreview(StringBuffer out, Object? value, int depth) {
+  if (out.length >= _maxToolPreviewCharacters) return;
+  if (depth >= _maxRawDepth) {
+    out.write('…');
+    return;
   }
+  switch (value) {
+    case null || bool() || num():
+      out.write(value);
+    case String():
+      out.write(jsonEncode(_boundedToolText(value)));
+    case Map():
+      out.write('{');
+      int index = 0;
+      for (final MapEntry<Object?, Object?> entry in value.entries) {
+        if (index > 0) out.write(', ');
+        if (index >= _maxRawEntries ||
+            out.length >= _maxToolPreviewCharacters) {
+          out.write('…');
+          break;
+        }
+        out.write(jsonEncode(entry.key.toString()));
+        out.write(': ');
+        _writeRawPreview(out, entry.value, depth + 1);
+        index++;
+      }
+      out.write('}');
+    case Iterable():
+      out.write('[');
+      int index = 0;
+      for (final Object? entry in value) {
+        if (index > 0) out.write(', ');
+        if (index >= _maxRawEntries ||
+            out.length >= _maxToolPreviewCharacters) {
+          out.write('…');
+          break;
+        }
+        _writeRawPreview(out, entry, depth + 1);
+        index++;
+      }
+      out.write(']');
+    default:
+      out.write(_boundedToolText(value.toString()));
+  }
+}
+
+String _boundedToolText(String value) {
+  if (value.length <= _maxToolPreviewCharacters) return value;
+  final int omitted = value.length - _maxToolPreviewCharacters;
+  return '${value.substring(0, _maxToolPreviewCharacters)}\n\n'
+      '… $omitted characters omitted';
 }
 
 /// Horizontally scrollable monospace box for long tool output.

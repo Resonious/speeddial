@@ -686,6 +686,19 @@ void main() {
     ]);
   });
 
+  test('listEvents replaces oversized rows with bounded placeholders', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 'a'));
+    store.appendEvent('a', 1, UserMessageEvent(text: 'x' * (600 * 1024)));
+
+    final event = store.listEvents('a').events.single;
+    expect(event, isA<SessionErrorEvent>());
+    expect(event.seq, 1);
+    expect(event.timestamp, isNotNull);
+    expect((event as SessionErrorEvent).message, contains('omitted'));
+    expect(event.message.length, lessThan(100));
+  });
+
   test('all event types round-trip through the store', () {
     store.insertProject(project());
     store.insertSession(session(id: 'a'));

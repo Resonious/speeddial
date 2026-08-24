@@ -120,6 +120,13 @@ class _WearChatPageState extends State<WearChatPage> {
                 child: _WearTimeline(
                   items: _items,
                   historyStatus: chat.historyStatusFor(widget.sessionId),
+                  hasOlder: chat.hasOlderHistory(widget.sessionId),
+                  loadingOlder: chat.isLoadingOlderHistory(widget.sessionId),
+                  onLoadOlder: () {
+                    unawaited(
+                      chat.loadOlderHistory(widget.daemonId, widget.sessionId),
+                    );
+                  },
                   onRetry: () =>
                       chat.retryHistory(widget.daemonId, widget.sessionId),
                 ),
@@ -242,30 +249,80 @@ PermissionRequest? _latestPermission(List<SessionEvent> events) {
   return null;
 }
 
-class _WearTimeline extends StatelessWidget {
+class _WearTimeline extends StatefulWidget {
   const _WearTimeline({
     required this.items,
     required this.historyStatus,
+    required this.hasOlder,
+    required this.loadingOlder,
+    required this.onLoadOlder,
     required this.onRetry,
   });
 
   final List<_WearTimelineItem> items;
   final HistoryStatus historyStatus;
+  final bool hasOlder;
+  final bool loadingOlder;
+  final VoidCallback onLoadOlder;
   final VoidCallback onRetry;
 
   @override
+  State<_WearTimeline> createState() => _WearTimelineState();
+}
+
+class _WearTimelineState extends State<_WearTimeline> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+  }
+
+  @override
+  void didUpdateWidget(_WearTimeline oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((!oldWidget.hasOlder && widget.hasOlder) ||
+        (oldWidget.loadingOlder && !widget.loadingOlder)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    }
+  }
+
+  void _onScroll() {
+    if (!_controller.hasClients || !widget.hasOlder || widget.loadingOlder) {
+      return;
+    }
+    if (_controller.position.maxScrollExtent - _controller.position.pixels <=
+        160) {
+      widget.onLoadOlder();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (items.isEmpty && historyStatus == HistoryStatus.loading) {
+    if (widget.items.isEmpty && widget.historyStatus == HistoryStatus.loading) {
       return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     }
-    if (items.isEmpty && historyStatus == HistoryStatus.failed) {
+    if (widget.items.isEmpty && widget.historyStatus == HistoryStatus.failed) {
       return WearEmptyState(
         message: 'Could not load history',
         icon: Icons.cloud_off,
-        action: FilledButton(onPressed: onRetry, child: const Text('Retry')),
+        action: FilledButton(
+          onPressed: widget.onRetry,
+          child: const Text('Retry'),
+        ),
       );
     }
-    if (items.isEmpty) {
+    if (widget.items.isEmpty) {
       return const WearEmptyState(
         message: 'Start the conversation',
         icon: Icons.chat_bubble_outline,
@@ -273,12 +330,20 @@ class _WearTimeline extends StatelessWidget {
     }
     return ListView.builder(
       key: const Key('wear-chat-timeline'),
+      controller: _controller,
       reverse: true,
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.fromLTRB(4, 4, 4, 8),
-      itemCount: items.length,
+      itemCount: widget.items.length + (widget.loadingOlder ? 1 : 0),
       itemBuilder: (BuildContext context, int index) {
-        final _WearTimelineItem item = items[items.length - 1 - index];
+        if (index == widget.items.length) {
+          return const Padding(
+            padding: EdgeInsets.all(8),
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+        final _WearTimelineItem item =
+            widget.items[widget.items.length - 1 - index];
         return switch (item) {
           _WearMessageItem() => _WearMessageBubble(item: item),
           _WearActivityItem() => _WearActivityRow(item: item),

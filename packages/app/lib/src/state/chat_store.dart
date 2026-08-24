@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'store_base.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -30,7 +31,8 @@ enum HistoryStatus {
 
 /// Per-session event buffer plus its live subscription state.
 class _SessionBuffer {
-  _SessionBuffer(this.sessionId, this.daemonId) : key = _scopedKey(daemonId, sessionId);
+  _SessionBuffer(this.sessionId, this.daemonId)
+    : key = _scopedKey(daemonId, sessionId);
 
   final String sessionId;
   final String daemonId;
@@ -41,6 +43,10 @@ class _SessionBuffer {
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
   bool historyLoaded = false;
+  bool hasOlderHistory = false;
+  bool loadingOlderHistory = false;
+  Object? olderHistoryError;
+  int? oldestSeq;
 
   /// Error of the last failed history fetch; null when the last fetch (or
   /// resync) succeeded. Only meaningful once [historyLoaded] is true.
@@ -89,9 +95,9 @@ class _ChunkRun {
 /// Holds the live event buffer for every watched session.
 ///
 /// [watchSession] subscribes to the client's live event stream and, on first
-/// watch, backfills `history()` (paging backwards through `hasMore` until
-/// every persisted event is loaded); live events with `seq` at or below the
-/// known maximum are dropped as duplicates. Consecutive
+/// watch, loads only the newest persisted-history page. Older pages are fetched
+/// explicitly through [loadOlderHistory] as the user scrolls upward; live events
+/// with `seq` at or below the known maximum are dropped as duplicates. Consecutive
 /// [AgentMessageChunkEvent]/[AgentThoughtChunkEvent] deltas merge into a
 /// single buffered event (events are immutable, so a new event is built with
 /// the concatenated text when the merge run closes or the buffer is read).
@@ -107,8 +113,8 @@ class _ChunkRun {
 /// helpers).
 class ChatStore extends StoreBase {
   ChatStore({required DaemonClient Function(String daemonId) clientFor})
-      // ignore: prefer_initializing_formals
-      : _clientFor = clientFor;
+    // ignore: prefer_initializing_formals
+    : _clientFor = clientFor;
 
   final DaemonClient Function(String daemonId) _clientFor;
 
@@ -160,7 +166,9 @@ class ChatStore extends StoreBase {
   /// Latest derived status; default idle for unknown sessions.
   SessionStatus statusOf(String sessionId) {
     final String? key = _derivedKeyFor(sessionId);
-    return key == null ? SessionStatus.idle : _statusById[key] ?? SessionStatus.idle;
+    return key == null
+        ? SessionStatus.idle
+        : _statusById[key] ?? SessionStatus.idle;
   }
 
   /// Latest usage reported by a `UsageEvent`, if any.
@@ -172,7 +180,9 @@ class ChatStore extends StoreBase {
   /// Latest known mode (from `session.updated`); default build.
   SessionMode modeOf(String sessionId) {
     final String? key = _derivedKeyFor(sessionId);
-    return key == null ? SessionMode.build : _modeById[key] ?? SessionMode.build;
+    return key == null
+        ? SessionMode.build
+        : _modeById[key] ?? SessionMode.build;
   }
 
   /// How many times [sessionId]'s buffer was mutated (events appended or
@@ -215,11 +225,58 @@ class ChatStore extends StoreBase {
   bool isCatchingUp(String sessionId) =>
       _bufferFor(sessionId)?.resyncing ?? false;
 
+  /// Whether persisted events older than the currently buffered page remain.
+  bool hasOlderHistory(String sessionId) =>
+      _bufferFor(sessionId)?.hasOlderHistory ?? false;
+
+  /// Whether an explicit older-page request is currently in flight.
+  bool isLoadingOlderHistory(String sessionId) =>
+      _bufferFor(sessionId)?.loadingOlderHistory ?? false;
+
+  /// Error from the last older-page request, if any.
+  Object? olderHistoryErrorFor(String sessionId) =>
+      _bufferFor(sessionId)?.olderHistoryError;
+
+  /// Loads exactly one page older than the currently buffered history.
+  /// Concurrent calls and calls after the oldest page are no-ops.
+  Future<void> loadOlderHistory(String daemonId, String sessionId) async {
+    final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
+    if (buffer == null ||
+        !buffer.historyLoaded ||
+        !buffer.hasOlderHistory ||
+        buffer.loadingOlderHistory) {
+      return;
+    }
+    final int? beforeSeq = buffer.oldestSeq;
+    if (beforeSeq == null) {
+      buffer.hasOlderHistory = false;
+      _scheduleNotify();
+      return;
+    }
+    buffer.loadingOlderHistory = true;
+    buffer.olderHistoryError = null;
+    _scheduleNotify();
+    try {
+      final page = await _clientFor(daemonId)
+          .history(sessionId, limit: _historyPageSize, beforeSeq: beforeSeq);
+      _prependHistoryPage(buffer, page.events);
+      buffer.hasOlderHistory = page.hasMore;
+      if (page.events.isNotEmpty) buffer.oldestSeq = page.events.first.seq;
+    } catch (error) {
+      buffer.olderHistoryError = error;
+    } finally {
+      buffer.loadingOlderHistory = false;
+      _scheduleNotify();
+    }
+  }
+
   /// Retries the persisted-history fetch for a session whose load failed.
   /// No-op while a fetch is in flight or when there is nothing to retry.
   void retryHistory(String daemonId, String sessionId) {
     final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
-    if (buffer == null || !buffer.historyLoaded || buffer.historyError == null) {
+    if (buffer == null ||
+        !buffer.historyLoaded ||
+        buffer.historyError == null) {
       return;
     }
     buffer.historyLoaded = false;
@@ -240,12 +297,14 @@ class ChatStore extends StoreBase {
     final DaemonClient client = _clientFor(daemonId);
     final _SessionBuffer buffer = _SessionBuffer(sessionId, daemonId);
     _buffers[key] = buffer;
-    buffer.eventSub = client.sessionEvents(sessionId).listen(
-      (SessionEvent event) => _onLiveEvent(buffer, event),
-      onError: (Object _) {
-        // The live stream is best-effort; history backfill covers the gap.
-      },
-    );
+    buffer.eventSub = client
+        .sessionEvents(sessionId)
+        .listen(
+          (SessionEvent event) => _onLiveEvent(buffer, event),
+          onError: (Object _) {
+            // The live stream is best-effort; history backfill covers the gap.
+          },
+        );
     _ensureDaemonSubscriptions(daemonId, client);
     // First watch: catch up on persisted events, then reconcile live ones.
     unawaited(_loadHistory(client, buffer));
@@ -287,8 +346,8 @@ class ChatStore extends StoreBase {
     String attachmentId,
   ) {
     final String key = '$daemonId/$sessionId/$attachmentId';
-    return _attachmentLoads[key] ??=
-        _clientFor(daemonId).readAttachment(sessionId, attachmentId);
+    return _attachmentLoads[key] ??= _clientFor(daemonId)
+        .readAttachment(sessionId, attachmentId);
   }
 
   Future<void> cancel(String daemonId, String sessionId) =>
@@ -299,9 +358,7 @@ class ChatStore extends StoreBase {
     String sessionId,
     String requestId,
     String optionId,
-  ) =>
-      _clientFor(daemonId)
-          .respondPermission(sessionId, requestId, optionId);
+  ) => _clientFor(daemonId).respondPermission(sessionId, requestId, optionId);
 
   // ---------------------------------------------------------------------
   // Cross-daemon id resolution
@@ -313,7 +370,8 @@ class ChatStore extends StoreBase {
   _SessionBuffer? _bufferFor(String sessionId) {
     final String? daemonId = _lastDaemonBySession[sessionId];
     if (daemonId != null) {
-      final _SessionBuffer? preferred = _buffers[_scopedKey(daemonId, sessionId)];
+      final _SessionBuffer? preferred =
+          _buffers[_scopedKey(daemonId, sessionId)];
       if (preferred != null) return preferred;
     }
     for (final _SessionBuffer buffer in _buffers.values) {
@@ -356,13 +414,15 @@ class ChatStore extends StoreBase {
   void _ensureDaemonSubscriptions(String daemonId, DaemonClient client) {
     _updateSubs.putIfAbsent(
       daemonId,
-      () => client.sessionUpdates
-          .listen((Session session) => _onSessionUpdate(daemonId, session)),
+      () => client.sessionUpdates.listen(
+        (Session session) => _onSessionUpdate(daemonId, session),
+      ),
     );
     _removalSubs.putIfAbsent(
       daemonId,
-      () => client.sessionRemovals
-          .listen((String sessionId) => _onSessionRemoved(daemonId, sessionId)),
+      () => client.sessionRemovals.listen(
+        (String sessionId) => _onSessionRemoved(daemonId, sessionId),
+      ),
     );
     _resyncSubs.putIfAbsent(
       daemonId,
@@ -373,8 +433,9 @@ class ChatStore extends StoreBase {
   }
 
   void _maybeReleaseDaemon(String daemonId) {
-    final bool stillWatched = _buffers.values
-        .any((_SessionBuffer b) => b.daemonId == daemonId);
+    final bool stillWatched = _buffers.values.any(
+      (_SessionBuffer b) => b.daemonId == daemonId,
+    );
     if (stillWatched) return;
     _updateSubs.remove(daemonId)?.cancel();
     _removalSubs.remove(daemonId)?.cancel();
@@ -421,8 +482,9 @@ class ChatStore extends StoreBase {
     String sessionId,
   ) async {
     try {
-      final List<Session> sessions =
-          await client.listSessions(includeArchived: true);
+      final List<Session> sessions = await client.listSessions(
+        includeArchived: true,
+      );
       for (final Session session in sessions) {
         if (session.id == sessionId &&
             _buffers.containsKey(_scopedKey(daemonId, sessionId))) {
@@ -436,17 +498,8 @@ class ChatStore extends StoreBase {
   }
 
   /// Reconciles watched buffers with persisted history after a reconnect.
-  /// Replaying the full tail is safe: [_applyLive] dedupes by [seq] against
-  /// [maxSeq], so only events missed while the socket was down are appended.
-  ///
-  /// While the refetch is in flight, live events are staged in [pending]
-  /// (like the initial history load) so a fast live notification can never
-  /// advance [maxSeq] past the gap and make the refetch drop it as a
-  /// duplicate.
-  ///
-  /// Backfill pages backwards (see [_fetchHistoryPages]): each page is
-  /// fetched with `beforeSeq` = the oldest seq of the page before it until
-  /// [DaemonClient.history] reports no older page.
+  /// Pages are fetched newest-first only until they overlap the known tail;
+  /// older history remains lazy and is never walked during reconnect.
   Future<void> _resyncDaemon(String daemonId) async {
     final DaemonClient client = _clientFor(daemonId);
     final List<_SessionBuffer> buffers = <_SessionBuffer>[
@@ -463,18 +516,28 @@ class ChatStore extends StoreBase {
     try {
       for (final _SessionBuffer buffer in buffers) {
         try {
-          // Collect all pages first, then apply oldest→newest: events
-          // missed offline can span a page boundary, and applying pages
-          // as they arrive (newest-first) would append a newer page before
-          // an older one it overlaps.
           final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
-          await _fetchHistoryPages(client, buffer, pages.add);
+          int? beforeSeq;
+          while (true) {
+            final page = await client.history(
+              buffer.sessionId,
+              limit: _historyPageSize,
+              beforeSeq: beforeSeq,
+            );
+            pages.add(page.events);
+            if (page.events.isEmpty ||
+                page.events.first.seq == null ||
+                page.events.first.seq! <= buffer.maxSeq + 1 ||
+                !page.hasMore) {
+              break;
+            }
+            beforeSeq = page.events.first.seq;
+          }
           for (final List<SessionEvent> page in pages.reversed) {
             for (final SessionEvent event in page) {
               _applyLive(buffer, event);
             }
           }
-          // A previously failed (or stale) fetch just succeeded.
           buffer.historyError = null;
         } on Object {
           // Live events still flow; the next resync (or reconnect) retries.
@@ -509,66 +572,29 @@ class ChatStore extends StoreBase {
     _scheduleNotify();
   }
 
-  /// Page size for history backfills — the protocol's per-request cap.
-  /// Larger pages mean fewer round trips (and fewer page-boundary waits)
-  /// when loading long sessions.
-  static const int _historyPageSize = 1000;
+  /// Page size for history loads. Keeping frames modest protects mobile
+  /// clients from oversized JSON responses while still filling a screen in
+  /// one round trip.
+  static const int _historyPageSize = 100;
 
-  /// Fetches persisted history for [buffer], paging backwards through older
-  /// pages until none remain, and hands each page to [onPage] as it arrives
-  /// (newest page first).
-  ///
-  /// The daemon's pages are strict (`seq < beforeSeq`), so the next page is
-  /// requested with [beforeSeq] equal to the oldest seq of the last page —
-  /// PROTOCOL.md: "refetch history with beforeSeq of the oldest known gap".
-  Future<void> _fetchHistoryPages(
-    DaemonClient client,
-    _SessionBuffer buffer,
-    void Function(List<SessionEvent> page) onPage,
-  ) async {
-    int? beforeSeq; // null → the latest page first.
-    while (true) {
-      final ({List<SessionEvent> events, bool hasMore}) page =
-          await client.history(
-        buffer.sessionId,
-        limit: _historyPageSize,
-        beforeSeq: beforeSeq,
-      );
-      onPage(page.events);
-      if (!page.hasMore || page.events.isEmpty) break;
-      final int? oldest = page.events.first.seq;
-      if (oldest == null) break; // no seqs: cannot page further.
-      beforeSeq = oldest;
-    }
-  }
-
-  /// Loads [buffer]'s persisted history: the newest page applies right away
-  /// (the timeline renders while older pages are still streaming in), and
-  /// each older page is then prepended above it.
-  ///
-  /// Pages arrive newest-first and are strictly below everything already
-  /// buffered, so prepending keeps the buffer ascending by `seq`; live
-  /// events meanwhile append at the tail above the newest page. The load is
-  /// total: a retry (see [retryHistory]) after a mid-backfill failure drops
-  /// the partially applied pages before refetching, so nothing duplicates.
+  /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     buffer.events.clear();
     buffer.chunkRun = null;
     buffer.maxSeq = 0;
-    bool latestPageApplied = false;
+    buffer.oldestSeq = null;
+    buffer.hasOlderHistory = false;
+    buffer.olderHistoryError = null;
     try {
-      await _fetchHistoryPages(client, buffer, (List<SessionEvent> page) {
-        if (!latestPageApplied) {
-          latestPageApplied = true;
-          _applyLatestHistoryPage(buffer, page);
-        } else {
-          _prependHistoryPage(buffer, page);
-        }
-      });
+      final page = await client.history(
+        buffer.sessionId,
+        limit: _historyPageSize,
+      );
+      _applyLatestHistoryPage(buffer, page.events);
+      buffer.hasOlderHistory = page.hasMore;
+      if (page.events.isNotEmpty) buffer.oldestSeq = page.events.first.seq;
+      buffer.historyError = null;
     } catch (error) {
-      // Surfaced via historyStatusFor/historyErrorFor: the UI offers a
-      // retry, and the next resync refetches automatically. Live events
-      // still apply meanwhile.
       buffer.historyError = error;
     } finally {
       buffer.historyLoaded = true;
@@ -583,10 +609,7 @@ class ChatStore extends StoreBase {
   /// Appends the newest history page (the first one fetched) oldest-first
   /// and immediately publishes the buffer as loaded, so live events stop
   /// parking and the UI can render while older pages stream in.
-  void _applyLatestHistoryPage(
-    _SessionBuffer buffer,
-    List<SessionEvent> page,
-  ) {
+  void _applyLatestHistoryPage(_SessionBuffer buffer, List<SessionEvent> page) {
     for (final SessionEvent event in page) {
       _append(buffer, event);
       final int? seq = event.seq;
@@ -613,7 +636,6 @@ class ChatStore extends StoreBase {
     _scheduleNotify();
   }
 
-
   /// Appends [event], merging consecutive chunk deltas of the same kind into
   /// one buffered event, and records any derived state it carries. Every
   /// call is a buffer mutation, so it bumps the session's revision.
@@ -624,15 +646,31 @@ class ChatStore extends StoreBase {
     // bindings (an `is A || is B` test would not promote the scrutinee).
     switch (event) {
       case AgentMessageChunkEvent(
-        :final String text, :final int? seq, :final DateTime? timestamp
+        :final String text,
+        :final int? seq,
+        :final DateTime? timestamp,
       ):
-        _mergeChunk(buffer,
-            isMessage: true, text: text, seq: seq, timestamp: timestamp, event: event);
+        _mergeChunk(
+          buffer,
+          isMessage: true,
+          text: text,
+          seq: seq,
+          timestamp: timestamp,
+          event: event,
+        );
       case AgentThoughtChunkEvent(
-        :final String text, :final int? seq, :final DateTime? timestamp
+        :final String text,
+        :final int? seq,
+        :final DateTime? timestamp,
       ):
-        _mergeChunk(buffer,
-            isMessage: false, text: text, seq: seq, timestamp: timestamp, event: event);
+        _mergeChunk(
+          buffer,
+          isMessage: false,
+          text: text,
+          seq: seq,
+          timestamp: timestamp,
+          event: event,
+        );
       default:
         _closeChunkRun(buffer);
         buffer.events.add(event);

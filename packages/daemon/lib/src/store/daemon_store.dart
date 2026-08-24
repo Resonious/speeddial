@@ -1053,25 +1053,39 @@ class DaemonStore {
   /// events strictly below that sequence. `hasMore` reports whether an older
   /// page exists. The default [limit] is 200; there is no hard cap here (the
   /// callers enforce protocol limits).
+  static const int _maxHistoryEventBytes = 512 * 1024;
+
   ({List<SessionEvent> events, bool hasMore}) listEvents(
     String sessionId, {
     int limit = 200,
     int? beforeSeq,
   }) {
     final rows = _db.select(
-      'SELECT json FROM session_events '
+      'SELECT seq, timestamp, '
+      'CASE WHEN length(CAST(json AS BLOB)) > ? THEN NULL ELSE json END AS json, '
+      'length(CAST(json AS BLOB)) AS json_bytes FROM session_events '
       'WHERE session_id = ? AND (? IS NULL OR seq < ?) '
       'ORDER BY seq DESC LIMIT ?',
-      [sessionId, beforeSeq, beforeSeq, limit + 1],
+      [_maxHistoryEventBytes, sessionId, beforeSeq, beforeSeq, limit + 1],
     );
     final hasMore = rows.length > limit;
     final kept = hasMore ? rows.sublist(0, limit) : rows;
     final events = kept.reversed
-        .map(
-          (row) => SessionEvent.fromJson(
-            jsonDecode(row['json'] as String) as Map<String, Object?>,
-          ),
-        )
+        .map((row) {
+          final String? encoded = row['json'] as String?;
+          if (encoded != null) {
+            return SessionEvent.fromJson(
+              jsonDecode(encoded) as Map<String, Object?>,
+            );
+          }
+          final int bytes = row['json_bytes'] as int;
+          return SessionErrorEvent(
+            message:
+                'Oversized history event omitted (${_formatByteCount(bytes)}).',
+            seq: row['seq'] as int,
+            timestamp: _fromTs(row['timestamp'] as int),
+          );
+        })
         .toList(growable: false);
     return (events: events, hasMore: hasMore);
   }
@@ -1185,6 +1199,12 @@ class DaemonStore {
       // Malformed row; fall through to the empty list.
     }
     return const <String>[];
+  }
+
+  static String _formatByteCount(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
   }
 
   static int _ts(DateTime value) => value.toUtc().microsecondsSinceEpoch;

@@ -199,6 +199,12 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         } else {
           surface = Timeline(
             items: _items,
+            hasOlder: chat.hasOlderHistory(sessionId),
+            loadingOlder: chat.isLoadingOlderHistory(sessionId),
+            olderError: chat.olderHistoryErrorFor(sessionId),
+            onLoadOlder: () {
+              unawaited(chat.loadOlderHistory(daemonId, sessionId));
+            },
             attachmentLoader: (String attachmentId) =>
                 chat.attachmentData(daemonId, sessionId, attachmentId),
             onFork: _forking
