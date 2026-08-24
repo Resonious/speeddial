@@ -1,23 +1,33 @@
 # SpeedDial Wear
 
-Standalone Wear OS client for existing SpeedDial daemons. It supports daemon
-selection, project and session browsing, new sessions, live conversation
-history, message sending, stopping turns, and permission responses.
+Wear OS companion for the SpeedDial Android app. Daemon endpoints are configured
+only on the paired phone and synchronized to the watch with the Wear OS Data
+Layer. The watch then connects directly to the synchronized daemon URL.
 
-The first launch offers a compact endpoint bootstrap form. For provisioned
-builds, seed that endpoint at compile time:
+The phone and watch APKs use the same Android application id and must be signed
+with the same certificate. Install both debug APKs from the same checkout:
 
 ```bash
 export PATH="$HOME/p/flutter-sdk/bin:$PATH"
-cd packages/wear
-flutter run \
-  --dart-define=SPEEDDIAL_DAEMON_URL=wss://daemon.example/ws \
-  --dart-define=SPEEDDIAL_DAEMON_TOKEN=secret \
-  --dart-define=SPEEDDIAL_DAEMON_NAME=Workstation
+export ANDROID_HOME="$HOME/Android/Sdk"
+
+(cd packages/app && flutter build apk --debug)
+(cd packages/wear && flutter build apk --debug)
 ```
 
-Build the standalone watch APK with `flutter build apk`. The daemon must be
-reachable directly from the watch; a phone companion is not required. Dart
-defines are embedded in the application binary, so provision a token this way
-only for a private build. For a distributed build, enter the token on first
-launch instead.
+Phone APK:
+
+```text
+packages/app/build/app/outputs/flutter-apk/app-debug.apk
+```
+
+Watch APK:
+
+```text
+packages/wear/build/app/outputs/flutter-apk/app-debug.apk
+```
+
+After installing both APKs, open SpeedDial on the phone once. Adding, editing,
+or removing a daemon publishes the latest endpoint snapshot to the paired watch.
+The daemon must still be reachable directly from the watch, so do not configure
+`localhost` unless the daemon runs on the watch itself.

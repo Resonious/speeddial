@@ -7,7 +7,6 @@ import '../../api/ws_daemon_client.dart';
 import '../../scope.dart';
 import '../../state/projects_store.dart';
 import 'wear_chat.dart';
-import 'wear_connection_page.dart';
 import 'wear_scaffold.dart';
 
 /// Root navigation for the watch client.
@@ -21,7 +20,13 @@ class WearSpeedDialShell extends StatelessWidget {
       listenable: data.connections,
       builder: (BuildContext context, Widget? _) {
         if (data.connections.endpoints.isEmpty) {
-          return WearConnectionPage(data: data);
+          return const WearScaffold(
+            title: 'SpeedDial',
+            child: WearEmptyState(
+              message: 'Add a daemon in SpeedDial on your paired phone',
+              icon: Icons.phone_android,
+            ),
+          );
         }
         return _WearDaemonListPage(data: data);
       },
@@ -38,18 +43,6 @@ class _WearDaemonListPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return WearScaffold(
       title: 'SpeedDial',
-      action: IconButton(
-        key: const Key('wear-add-daemon'),
-        tooltip: 'Connect daemon',
-        padding: EdgeInsets.zero,
-        icon: const Icon(Icons.add, size: 20),
-        onPressed: () => Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (BuildContext context) =>
-                WearConnectionPage(data: data, showBack: true),
-          ),
-        ),
-      ),
       child: ListView.builder(
         key: const Key('wear-daemon-list'),
         padding: wearListPadding,

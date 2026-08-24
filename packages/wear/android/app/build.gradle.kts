@@ -14,7 +14,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "sh.speeddial.speeddial_wear"
+        applicationId = "sh.speeddial.speeddial"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -36,4 +36,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
 }

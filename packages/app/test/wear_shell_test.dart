@@ -135,7 +135,7 @@ void main() {
     expect(find.text('↓3'), findsOneWidget);
   });
 
-  testWidgets('offers endpoint bootstrap when the watch has no daemon', (
+  testWidgets('asks for phone configuration when no daemon is synchronized', (
     WidgetTester tester,
   ) async {
     final (AppData data, FakeDaemonClient _) = await pumpWear(
@@ -143,18 +143,11 @@ void main() {
       withDaemon: false,
     );
 
-    expect(find.byKey(const Key('wear-daemon-url')), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('wear-daemon-url')),
-      'daemon.example:7331',
-    );
-    await tester.tap(find.byKey(const Key('wear-daemon-save')));
-    await tester.pump();
-
-    expect(data.connections.endpoints, hasLength(1));
     expect(
-      data.connections.endpoints.single.url,
-      'ws://daemon.example:7331/ws',
+      find.text('Add a daemon in SpeedDial on your paired phone'),
+      findsOneWidget,
     );
+    expect(find.byKey(const Key('wear-daemon-url')), findsNothing);
+    expect(data.connections.endpoints, isEmpty);
   });
 }

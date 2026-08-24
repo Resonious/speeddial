@@ -175,6 +175,41 @@ void main() {
     expect(store.endpoints.single.name, 'B');
   });
 
+  test('replaceEndpoints applies an authoritative persistent snapshot', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final ConnectionsStore store = ConnectionsStore();
+    await store.addEndpoint(
+      id: 'embedded',
+      name: 'This computer',
+      url: 'ws://127.0.0.1:7331/ws',
+      token: '',
+      persist: false,
+      embedded: true,
+    );
+    await store.addEndpoint(
+      id: 'old',
+      name: 'Old',
+      url: 'old.example:7331',
+      token: 'old',
+    );
+
+    await store.replaceEndpoints(const <DaemonEndpoint>[
+      DaemonEndpoint(
+        id: 'new',
+        name: 'New',
+        url: 'new.example:9000',
+        token: 'new-token',
+      ),
+    ]);
+
+    expect(store.endpoints.map((DaemonEndpoint endpoint) => endpoint.id),
+        <String>['embedded', 'new']);
+    expect(store.endpoints.last.url, 'ws://new.example:9000/ws');
+    final ConnectionsStore reloaded = ConnectionsStore();
+    await reloaded.init();
+    expect(reloaded.endpoints.single.id, 'new');
+  });
+
   testWidgets('demo mode: buildDemoAppData populates the tree without taps',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});

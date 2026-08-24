@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'src/companion/companion_endpoint_sync.dart';
 import 'src/local_daemon/local_daemon.dart';
 import 'src/local_daemon/mcp_entry.dart';
 import 'src/scope.dart';
@@ -13,12 +15,17 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   const bool demoMode = bool.fromEnvironment('demo');
   late final AppData data;
+  CompanionEndpointSync? companionSync;
   if (demoMode) {
     // `--dart-define=demo=true`: in-memory fake daemon, nothing to load.
     data = buildDemoAppData();
   } else {
     final ConnectionsStore connections = ConnectionsStore();
     await connections.init();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      companionSync = CompanionEndpointSync();
+      await companionSync.startPhone(connections);
+    }
     data = AppData(connections: connections, selection: SelectionStore());
     // Desktop builds start an in-process daemon for an out-of-the-box
     // experience; web/mobile skip this (unsupported) and rely on the user
@@ -45,13 +52,14 @@ Future<void> main(List<String> args) async {
     unawaited(data.connectAll());
   }
   await data.settings.init();
-  runApp(SpeedDialApp(data: data));
+  runApp(SpeedDialApp(data: data, companionSync: companionSync));
 }
 
 class SpeedDialApp extends StatefulWidget {
-  const SpeedDialApp({super.key, required this.data});
+  const SpeedDialApp({super.key, required this.data, this.companionSync});
 
   final AppData data;
+  final CompanionEndpointSync? companionSync;
 
   @override
   State<SpeedDialApp> createState() => _SpeedDialAppState();
@@ -71,6 +79,7 @@ class _SpeedDialAppState extends State<SpeedDialApp>
     // Tear down the store graph and stop the embedded daemon (best-effort):
     // agent processes are killed and the WebSocket server closed.
     final AppData data = widget.data;
+    widget.companionSync?.dispose();
     data.dispose();
     unawaited(data.stopLocalDaemon());
     super.dispose();

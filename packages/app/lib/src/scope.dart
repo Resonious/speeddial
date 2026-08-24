@@ -210,6 +210,40 @@ class ConnectionsStore extends ChangeNotifier {
     await _persist();
   }
 
+  /// Replaces all persistent endpoints with a phone-synchronized snapshot.
+  Future<void> replaceEndpoints(Iterable<DaemonEndpoint> endpoints) async {
+    final List<DaemonEndpoint> replacement = <DaemonEndpoint>[
+      for (final DaemonEndpoint endpoint in endpoints)
+        if (!endpoint.embedded)
+          DaemonEndpoint(
+            id: endpoint.id,
+            name: endpoint.name,
+            url: normalizeEndpointUrl(endpoint.url),
+            token: endpoint.token,
+          ),
+    ];
+    final String before = jsonEncode(<Object?>[
+      for (final DaemonEndpoint endpoint in _endpoints)
+        if (!endpoint.embedded) endpoint.toJson(),
+    ]);
+    final String after = jsonEncode(<Object?>[
+      for (final DaemonEndpoint endpoint in replacement) endpoint.toJson(),
+    ]);
+    if (before == after) return;
+    _endpoints
+      ..removeWhere((DaemonEndpoint endpoint) => !endpoint.embedded)
+      ..addAll(replacement);
+    _statuses.removeWhere(
+      (String id, ConnectionStatus _) =>
+          !_endpoints.any((DaemonEndpoint endpoint) => endpoint.id == id),
+    );
+    for (final DaemonEndpoint endpoint in replacement) {
+      _statuses.putIfAbsent(endpoint.id, () => ConnectionStatus.disconnected);
+    }
+    notifyListeners();
+    await _persist();
+  }
+
   Future<void> _persist() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setString(

@@ -245,19 +245,22 @@ Performance rules for the app:
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to
   the narrowest widget.
 
-## Wear OS app
+## Wear OS companion app
 
-`packages/wear` is a separate Android application (`sh.speeddial.speeddial_wear`) so its
-watch-only manifest and Play Store filtering do not affect the main app. It declares
-`android.hardware.type.watch` and is standalone: it connects directly to an existing daemon
-over WebSocket and does not require a companion phone process.
+`packages/wear` is the watch build of the Android application (`sh.speeddial.speeddial`).
+The phone and watch APKs must use the same application id and signing certificate so Google Play
+Services Wearable Data Layer treats them as one companion application. The phone app publishes its
+persistent daemon endpoint snapshot at `/speeddial/endpoints`; the watch consumes that snapshot,
+persists it locally, and removes stale watch endpoints when the phone removes them. Embedded desktop
+endpoints are never synchronized.
+
+The watch opens its own WebSocket to the synchronized daemon URL. It does not proxy daemon traffic
+through the phone, so the configured daemon still needs to be reachable from the watch's network.
+Credentials remain owned and edited by the phone app; the watch has no endpoint-entry UI.
 
 The reusable watch UI lives under `packages/app/lib/src/ui/wear/` and consumes the same
 `AppData`, `ProjectsStore`, `SessionsStore`, and `ChatStore` as the full client. The watch does
-not expose files, git, MCP, worktree, project, or daemon settings. A small connection-bootstrap
-form is retained because Wear OS app storage is independent from phone app storage; an endpoint
-can instead be provisioned at build time with `SPEEDDIAL_DAEMON_URL`,
-`SPEEDDIAL_DAEMON_TOKEN`, and `SPEEDDIAL_DAEMON_NAME` Dart defines.
+not expose files, git mutations, MCP, worktree, project, or daemon settings.
 
 ## Verification gates (orchestrator runs these, subagents NEVER do)
 
