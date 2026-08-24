@@ -33,3 +33,8 @@ After installing both APKs, open SpeedDial on the phone once. Adding, editing,
 or removing a daemon publishes the latest endpoint snapshot to the paired watch.
 The paired phone must remain connected. Android shows a low-priority SpeedDial
 notification on the phone while it is proxying an active watch connection.
+
+Phone/watch proxy peers negotiate gzip without breaking staggered app updates;
+large frames stay in the original format until both sides advertise support.
+The watch requests compact 100-event history pages and keeps the three most
+recent chat buffers in memory so reopening a conversation is immediate.

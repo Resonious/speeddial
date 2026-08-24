@@ -8,6 +8,10 @@ import '../../scope.dart';
 import '../../theme.dart';
 import 'wear_shell.dart';
 
+/// Compact history/cache defaults for the constrained Wear transport.
+const int kWearHistoryPageSize = 100;
+const int kWearRetainedSessionLimit = 3;
+
 /// Compact SpeedDial application surface for the standalone Wear OS target.
 ///
 /// It deliberately shares the full client's store graph and wire client, but

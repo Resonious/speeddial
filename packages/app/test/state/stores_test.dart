@@ -113,6 +113,7 @@ class _GatedResyncFake extends FakeDaemonClient {
   _GatedResyncFake() : super(eventDelay: const Duration(milliseconds: 1));
 
   bool blockHistory = false;
+  int historyCalls = 0;
   final List<Completer<void>> _gates = <Completer<void>>[];
 
   void releaseHistory() {
@@ -128,6 +129,7 @@ class _GatedResyncFake extends FakeDaemonClient {
     int limit = 200,
     int? beforeSeq,
   }) {
+    historyCalls++;
     if (!blockHistory) {
       return super.history(sessionId, limit: limit, beforeSeq: beforeSeq);
     }
@@ -668,6 +670,107 @@ void main() {
         events.map((SessionEvent e) => e.seq).toList(),
         List<int?>.generate(1001, (int i) => i + 1),
       );
+    });
+
+    test('history page size is configurable for compact clients', () async {
+      final AppData compact = AppData(chatHistoryPageSize: 25)
+        ..registerClient('fake', fake);
+      addTearDown(compact.dispose);
+      fake.seedHistory('sess-1', <SessionEvent>[
+        for (var i = 1; i <= 61; i++) UserMessageEvent(text: 'm$i'),
+      ]);
+
+      compact.chat.watchSession('fake', 'sess-1');
+      await _waitUntil(
+        () => compact.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+
+      expect(compact.chat.eventsFor('sess-1'), hasLength(25));
+      expect(compact.chat.hasOlderHistory('sess-1'), isTrue);
+      expect(
+        (compact.chat.eventsFor('sess-1').first as UserMessageEvent).text,
+        'm37',
+      );
+    });
+
+    test(
+      'retained history renders immediately then reconciles on rewatch',
+      () async {
+        final _GatedResyncFake gated = _GatedResyncFake();
+        final AppData compact = AppData(
+          chatHistoryPageSize: 20,
+          chatRetainedSessionLimit: 2,
+        )..registerClient('gated', gated);
+        addTearDown(compact.dispose);
+        addTearDown(gated.dispose);
+        gated.seedHistory('sess-1', <SessionEvent>[
+          const UserMessageEvent(text: 'cached'),
+        ]);
+
+        compact.chat.watchSession('gated', 'sess-1');
+        await _waitUntil(
+          () => compact.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
+        compact.chat.unwatch('sess-1');
+        gated.seedHistory('sess-1', <SessionEvent>[
+          const UserMessageEvent(text: 'missed while closed'),
+        ]);
+        gated.blockHistory = true;
+
+        compact.chat.watchSession('gated', 'sess-1');
+        await _waitUntil(() => compact.chat.isCatchingUp('sess-1'));
+        expect(
+          compact.chat
+              .eventsFor('sess-1')
+              .whereType<UserMessageEvent>()
+              .single
+              .text,
+          'cached',
+        );
+        expect(gated.historyCalls, 2);
+
+        gated.releaseHistory();
+        await _waitUntil(() => !compact.chat.isCatchingUp('sess-1'));
+        expect(
+          compact.chat
+              .eventsFor('sess-1')
+              .whereType<UserMessageEvent>()
+              .map((UserMessageEvent event) => event.text),
+          <String>['cached', 'missed while closed'],
+        );
+      },
+    );
+
+    test('retained history evicts the least recently closed session', () async {
+      final AppData compact = AppData(chatRetainedSessionLimit: 2)
+        ..registerClient('fake', fake);
+      addTearDown(compact.dispose);
+      final Session second = await fake.createSession(
+        projectId: 'proj-demo',
+        providerId: 'fake',
+        title: 'Second',
+      );
+      final Session third = await fake.createSession(
+        projectId: 'proj-demo',
+        providerId: 'fake',
+        title: 'Third',
+      );
+      for (final (String id, String text) in <(String, String)>[
+        ('sess-1', 'first'),
+        (second.id, 'second'),
+        (third.id, 'third'),
+      ]) {
+        fake.seedHistory(id, <SessionEvent>[UserMessageEvent(text: text)]);
+        compact.chat.watchSession('fake', id);
+        await _waitUntil(
+          () => compact.chat.historyStatusFor(id) == HistoryStatus.ready,
+        );
+        compact.chat.unwatch(id);
+      }
+
+      expect(compact.chat.eventsFor('sess-1'), isEmpty);
+      expect(compact.chat.eventsFor(second.id), isNotEmpty);
+      expect(compact.chat.eventsFor(third.id), isNotEmpty);
     });
 
     test(

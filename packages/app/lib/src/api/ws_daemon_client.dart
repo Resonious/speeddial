@@ -68,6 +68,7 @@ class WsDaemonClient implements DaemonClient {
     // field's default next to its declaration.
     Duration reconnectBase = const Duration(milliseconds: 500),
     Duration livenessProbeTimeout = const Duration(seconds: 3),
+    this.historyDetail = SessionHistoryDetail.full,
   }) : _channelFactory = channelFactory ?? _WebSocketDaemonFrameChannel.new,
        reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
        // ignore: prefer_initializing_formals
@@ -89,6 +90,10 @@ class WsDaemonClient implements DaemonClient {
   /// How long [verifyLiveness] waits for the daemon to answer its probe
   /// before declaring the socket half-dead (see there).
   final Duration livenessProbeTimeout;
+
+  /// Projection requested for persisted history pages. Compact targets use
+  /// summary events while desktop/mobile retain the full payload by default.
+  final SessionHistoryDetail historyDetail;
 
   /// Live connection state; drive UI/status off this (or [isConnected]).
   /// Starts at [DaemonConnectionState.connecting].
@@ -907,6 +912,8 @@ class WsDaemonClient implements DaemonClient {
         'sessionId': sessionId,
         'limit': limit,
         'beforeSeq': ?beforeSeq,
+        if (historyDetail != SessionHistoryDetail.full)
+          'detail': historyDetail.wire,
       },
     );
     return (

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'store_base.dart';
 
@@ -112,13 +113,29 @@ class _ChunkRun {
 /// last-write-wins on scan order (see the `_bufferFor` / `_derivedKeyFor`
 /// helpers).
 class ChatStore extends StoreBase {
-  ChatStore({required DaemonClient Function(String daemonId) clientFor})
-    // ignore: prefer_initializing_formals
-    : _clientFor = clientFor;
+  ChatStore({
+    required DaemonClient Function(String daemonId) clientFor,
+    this.historyPageSize = 500,
+    this.retainedSessionLimit = 0,
+  }) : assert(historyPageSize > 0),
+       assert(retainedSessionLimit >= 0),
+       // ignore: prefer_initializing_formals
+       _clientFor = clientFor;
 
   final DaemonClient Function(String daemonId) _clientFor;
 
+  /// Number of raw persisted events requested per backwards history page.
+  final int historyPageSize;
+
+  /// Number of inactive session buffers retained for instant reopen.
+  ///
+  /// Zero preserves the full app's release-on-unwatch behavior. Compact
+  /// clients can retain a small LRU; a rewatch renders it immediately and
+  /// reconciles missed events in the background.
+  final int retainedSessionLimit;
+
   final Map<String, _SessionBuffer> _buffers = <String, _SessionBuffer>{};
+  final LinkedHashSet<String> _retainedKeys = LinkedHashSet<String>();
   final Map<String, Session> _sessionsById = <String, Session>{};
   final Map<String, SessionStatus> _statusById = <String, SessionStatus>{};
   final Map<String, SessionMode> _modeById = <String, SessionMode>{};
@@ -258,7 +275,7 @@ class ChatStore extends StoreBase {
     _scheduleNotify();
     try {
       final page = await _clientFor(daemonId)
-          .history(sessionId, limit: _historyPageSize, beforeSeq: beforeSeq);
+          .history(sessionId, limit: historyPageSize, beforeSeq: beforeSeq);
       _prependHistoryPage(buffer, page.events);
       buffer.hasOlderHistory = page.hasMore;
       if (page.events.isNotEmpty) buffer.oldestSeq = page.events.first.seq;
@@ -293,8 +310,26 @@ class ChatStore extends StoreBase {
   void watchSession(String daemonId, String sessionId) {
     final String key = _scopedKey(daemonId, sessionId);
     _lastDaemonBySession[sessionId] = daemonId;
-    if (_buffers.containsKey(key)) return;
     final DaemonClient client = _clientFor(daemonId);
+    final _SessionBuffer? retained = _buffers[key];
+    if (retained != null) {
+      if (retained.eventSub != null) return;
+      _retainedKeys.remove(key);
+      retained.eventSub = client
+          .sessionEvents(sessionId)
+          .listen(
+            (SessionEvent event) => _onLiveEvent(retained, event),
+            onError: (Object _) {
+              // The resync below covers events missed by the live stream.
+            },
+          );
+      _ensureDaemonSubscriptions(daemonId, client);
+      if (retained.historyLoaded) {
+        unawaited(_resyncBuffer(client, retained));
+      }
+      unawaited(_seedSession(client, daemonId, sessionId));
+      return;
+    }
     final _SessionBuffer buffer = _SessionBuffer(sessionId, daemonId);
     _buffers[key] = buffer;
     buffer.eventSub = client
@@ -318,11 +353,29 @@ class ChatStore extends StoreBase {
   void unwatch(String sessionId) {
     final _SessionBuffer? buffer = _bufferFor(sessionId);
     if (buffer == null) return;
-    _buffers.remove(buffer.key);
     buffer.eventSub?.cancel();
-    _forget(buffer.daemonId, buffer.sessionId);
+    buffer.eventSub = null;
+    if (retainedSessionLimit == 0) {
+      _buffers.remove(buffer.key);
+      _forget(buffer.daemonId, buffer.sessionId);
+    } else {
+      _closeChunkRun(buffer);
+      _retainedKeys
+        ..remove(buffer.key)
+        ..add(buffer.key);
+      _evictRetainedBuffers();
+    }
     _maybeReleaseDaemon(buffer.daemonId);
     _scheduleNotify();
+  }
+
+  void _evictRetainedBuffers() {
+    while (_retainedKeys.length > retainedSessionLimit) {
+      final String key = _retainedKeys.first;
+      _retainedKeys.remove(key);
+      final _SessionBuffer? evicted = _buffers.remove(key);
+      if (evicted != null) _forget(evicted.daemonId, evicted.sessionId);
+    }
   }
 
   /// Starts a turn. Events flow into the buffer via [watchSession].
@@ -434,7 +487,7 @@ class ChatStore extends StoreBase {
 
   void _maybeReleaseDaemon(String daemonId) {
     final bool stillWatched = _buffers.values.any(
-      (_SessionBuffer b) => b.daemonId == daemonId,
+      (_SessionBuffer b) => b.daemonId == daemonId && b.eventSub != null,
     );
     if (stillWatched) return;
     _updateSubs.remove(daemonId)?.cancel();
@@ -456,6 +509,7 @@ class ChatStore extends StoreBase {
   void _onSessionRemoved(String daemonId, String sessionId) {
     final String key = _scopedKey(daemonId, sessionId);
     final _SessionBuffer? buffer = _buffers.remove(key);
+    _retainedKeys.remove(key);
     if (buffer != null) {
       buffer.eventSub?.cancel();
       _maybeReleaseDaemon(buffer.daemonId);
@@ -505,6 +559,7 @@ class ChatStore extends StoreBase {
     final List<_SessionBuffer> buffers = <_SessionBuffer>[
       for (final _SessionBuffer buffer in _buffers.values)
         if (buffer.daemonId == daemonId &&
+            buffer.eventSub != null &&
             buffer.historyLoaded &&
             !buffer.resyncing)
           buffer,
@@ -536,7 +591,7 @@ class ChatStore extends StoreBase {
       while (true) {
         final page = await client.history(
           buffer.sessionId,
-          limit: _historyPageSize,
+          limit: historyPageSize,
           beforeSeq: beforeSeq,
         );
         pages.add(page.events);
@@ -600,8 +655,6 @@ class ChatStore extends StoreBase {
   /// Page size for history loads. Keeping frames modest protects mobile
   /// clients from oversized JSON responses while still filling a screen in
   /// one round trip.
-  static const int _historyPageSize = 500;
-
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     buffer.events.clear();
@@ -613,7 +666,7 @@ class ChatStore extends StoreBase {
     try {
       final page = await client.history(
         buffer.sessionId,
-        limit: _historyPageSize,
+        limit: historyPageSize,
       );
       _applyLatestHistoryPage(buffer, page.events);
       buffer.hasOlderHistory = page.hasMore;
@@ -803,6 +856,7 @@ class ChatStore extends StoreBase {
       buffer.eventSub?.cancel();
     }
     _buffers.clear();
+    _retainedKeys.clear();
     for (final StreamSubscription<Session> sub in _updateSubs.values) {
       sub.cancel();
     }

@@ -684,6 +684,30 @@ void main() {
           <Object?>[6, 7, 8, 9],
         );
         expect(page['hasMore'], isTrue);
+        final summary = j(
+          await client.peer.call('sessions.history', <String, Object?>{
+            'sessionId': session.id,
+            'detail': 'summary',
+          }),
+        );
+        final summaryEvents = summary['events']! as List<Object?>;
+        final summarizedTool = (summaryEvents[3]! as Map)['toolCall']! as Map;
+        expect(summarizedTool['title'], isNotEmpty);
+        expect(summarizedTool['content'], isEmpty);
+        expect(summarizedTool['locations'], isEmpty);
+        expect(summarizedTool['rawInput'], isNull);
+        expect(summarizedTool['rawOutput'], isNull);
+        expect(
+          summaryEvents.map((Object? event) => (event! as Map)['seq']),
+          events.map((SessionEvent event) => event.seq),
+        );
+        await expectLater(
+          client.peer.call('sessions.history', <String, Object?>{
+            'sessionId': session.id,
+            'detail': 'tiny',
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
         await expectLater(
           client.peer.call('sessions.history', <String, Object?>{
             'sessionId': 'nope',

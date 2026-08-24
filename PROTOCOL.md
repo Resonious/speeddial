@@ -493,7 +493,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   `-32602` when it is not or when the session's provider advertises no thinking-level option. The
   returned session reflects the agent-reported state, which may differ from the requested level
   when the agent clamps it.
-- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page
+- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, and activity details for compact clients.
 - `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
 
 ### Attachments

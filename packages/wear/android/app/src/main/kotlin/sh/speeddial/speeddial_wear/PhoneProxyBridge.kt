@@ -5,6 +5,8 @@ import com.google.android.gms.wearable.Wearable
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
@@ -13,6 +15,8 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 
 /** Bridges Flutter daemon text frames onto a bidirectional Wear Data Layer channel. */
 class PhoneProxyBridge(
@@ -153,6 +157,7 @@ class PhoneProxyBridge(
     ) {
         private val closed = AtomicBoolean(false)
         private val ready = AtomicBoolean(false)
+        private val compressionEnabled = AtomicBoolean(false)
         private val writeLock = Any()
 
         fun start(url: String) {
@@ -169,7 +174,7 @@ class PhoneProxyBridge(
         fun send(payload: String, result: MethodChannel.Result) {
             executor.execute {
                 try {
-                    writeRecord(TYPE_DATA, payload)
+                    writeDataRecord(payload)
                     post { result.success(null) }
                 } catch (error: Exception) {
                     post {
@@ -186,34 +191,70 @@ class PhoneProxyBridge(
 
         private fun readLoop() {
             while (!closed.get()) {
-                val (type, payload) = readRecord(input)
-                when (type) {
+                val record = readRecord(input)
+                when (record.type) {
                     TYPE_READY -> {
-                        if (ready.compareAndSet(false, true)) {
-                            post { openResult.success(null) }
+                        if (!ready.get()) {
+                            if (record.text() == CAPABILITY_GZIP) {
+                                // Advertise watch support only after a new
+                                // phone explicitly offered it. Old peers keep
+                                // using the original uncompressed records.
+                                writeRecord(TYPE_CAPABILITIES, CAPABILITY_GZIP)
+                                compressionEnabled.set(true)
+                            }
+                            if (ready.compareAndSet(false, true)) {
+                                post { openResult.success(null) }
+                            }
                         }
                     }
-                    TYPE_DATA -> post {
-                        methodChannel.invokeMethod(
-                            "proxyFrame",
-                            mapOf("id" to id, "payload" to payload),
-                        )
+                    TYPE_DATA, TYPE_DATA_GZIP -> {
+                        if (record.type == TYPE_DATA_GZIP && !compressionEnabled.get()) {
+                            throw IOException("Phone used gzip before negotiation")
+                        }
+                        val payload = if (record.type == TYPE_DATA_GZIP) {
+                            gunzipText(record.payload)
+                        } else {
+                            record.text()
+                        }
+                        post {
+                            methodChannel.invokeMethod(
+                                "proxyFrame",
+                                mapOf("id" to id, "payload" to payload),
+                            )
+                        }
                     }
                     TYPE_ERROR -> {
-                        close(payload.ifEmpty { "Phone could not reach daemon" })
+                        close(record.text().ifEmpty { "Phone could not reach daemon" })
                         return
                     }
                     TYPE_CLOSED -> {
                         close(error = null)
                         return
                     }
-                    else -> throw IOException("Unknown phone proxy record type: $type")
+                    else -> throw IOException(
+                        "Unknown phone proxy record type: ${record.type}",
+                    )
                 }
             }
         }
 
         private fun writeRecord(type: Int, payload: String) {
-            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
+            writeRecord(type, payload.toByteArray(StandardCharsets.UTF_8))
+        }
+
+        private fun writeDataRecord(payload: String) {
+            val plain = payload.toByteArray(StandardCharsets.UTF_8)
+            if (compressionEnabled.get() && plain.size >= COMPRESSION_THRESHOLD_BYTES) {
+                val compressed = gzip(plain)
+                if (compressed.size < plain.size) {
+                    writeRecord(TYPE_DATA_GZIP, compressed)
+                    return
+                }
+            }
+            writeRecord(TYPE_DATA, plain)
+        }
+
+        private fun writeRecord(type: Int, bytes: ByteArray) {
             if (bytes.size + 1 > MAX_RECORD_BYTES) {
                 throw IOException("Daemon frame is too large for phone proxy")
             }
@@ -260,8 +301,16 @@ class PhoneProxyBridge(
         private const val TYPE_DATA = 3
         private const val TYPE_ERROR = 4
         private const val TYPE_CLOSED = 5
+        private const val TYPE_CAPABILITIES = 6
+        private const val TYPE_DATA_GZIP = 7
+        private const val CAPABILITY_GZIP = "gzip-v1"
+        private const val COMPRESSION_THRESHOLD_BYTES = 1024
 
-        private fun readRecord(input: DataInputStream): Pair<Int, String> {
+        private data class ProxyRecord(val type: Int, val payload: ByteArray) {
+            fun text(): String = String(payload, StandardCharsets.UTF_8)
+        }
+
+        private fun readRecord(input: DataInputStream): ProxyRecord {
             val length = try {
                 input.readInt()
             } catch (error: EOFException) {
@@ -273,7 +322,29 @@ class PhoneProxyBridge(
             val type = input.readUnsignedByte()
             val bytes = ByteArray(length - 1)
             input.readFully(bytes)
-            return type to String(bytes, StandardCharsets.UTF_8)
+            return ProxyRecord(type, bytes)
+        }
+
+        private fun gzip(bytes: ByteArray): ByteArray {
+            val output = ByteArrayOutputStream()
+            GZIPOutputStream(output).use { it.write(bytes) }
+            return output.toByteArray()
+        }
+
+        private fun gunzipText(bytes: ByteArray): String {
+            val output = ByteArrayOutputStream()
+            GZIPInputStream(ByteArrayInputStream(bytes)).use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    if (output.size() + 1 > MAX_RECORD_BYTES) {
+                        throw IOException("Inflated daemon frame is too large")
+                    }
+                }
+            }
+            return String(output.toByteArray(), StandardCharsets.UTF_8)
         }
 
         private fun AutoCloseable.closeQuietly() {

@@ -1388,6 +1388,19 @@ class SpeedDialServer {
         : 200;
     final rawBefore = params['beforeSeq'];
     final beforeSeq = rawBefore is int ? rawBefore : null;
+    final Object? rawDetail = params['detail'];
+    if (rawDetail != null && rawDetail is! String) {
+      throw DaemonError(_kErrInvalidParams, 'detail must be a string');
+    }
+    final SessionHistoryDetail detail;
+    try {
+      detail = SessionHistoryDetail.parse((rawDetail as String?) ?? 'full');
+    } on FormatException {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'detail must be "full" or "summary"',
+      );
+    }
     final page = _store.listEvents(
       sessionId,
       limit: limit,
@@ -1395,7 +1408,13 @@ class SpeedDialServer {
     );
     return <String, Object?>{
       'events': page.events
-          .map((event) => event.toJson())
+          .map(
+            (event) =>
+                (detail == SessionHistoryDetail.summary
+                        ? summarizeSessionEvent(event)
+                        : event)
+                    .toJson(),
+          )
           .toList(growable: false),
       'hasMore': page.hasMore,
     };

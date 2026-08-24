@@ -7,6 +7,26 @@ library;
 
 import 'models.dart';
 
+/// Amount of event detail requested from `sessions.history`.
+enum SessionHistoryDetail {
+  /// Returns persisted events without projection.
+  full('full'),
+
+  /// Keeps timeline semantics and sequence metadata while dropping large
+  /// fields that compact clients do not render.
+  summary('summary');
+
+  const SessionHistoryDetail(this.wire);
+
+  final String wire;
+
+  static SessionHistoryDetail parse(String value) => switch (value) {
+    'full' => full,
+    'summary' => summary,
+    _ => throw FormatException('Unknown session history detail: $value'),
+  };
+}
+
 DateTime? _parseTimestamp(Object? value) {
   if (value == null) return null;
   return DateTime.parse(value as String).toUtc();
@@ -46,6 +66,51 @@ sealed class SessionEvent {
 
   Map<String, Object?> toJson();
 }
+
+/// Projects a persisted event for a compact history client.
+///
+/// Event kinds, ordering, sequence numbers, timestamps, user/agent messages,
+/// and permission data remain intact. Only verbose details that compact
+/// timelines summarize are removed, so live sequence reconciliation remains
+/// correct and the result still decodes as an ordinary [SessionEvent].
+SessionEvent summarizeSessionEvent(SessionEvent event) => switch (event) {
+  AgentThoughtChunkEvent e => AgentThoughtChunkEvent(
+    text: '',
+    seq: e.seq,
+    timestamp: e.timestamp,
+  ),
+  ToolCallEvent e => ToolCallEvent(
+    toolCall: ToolCall(
+      id: e.toolCall.id,
+      title: e.toolCall.title,
+      kind: e.toolCall.kind,
+      status: e.toolCall.status,
+      content: const <ToolCallContent>[],
+      locations: const <String>[],
+    ),
+    seq: e.seq,
+    timestamp: e.timestamp,
+  ),
+  PlanEvent e => PlanEvent(
+    entries: <PlanEntry>[
+      for (final PlanEntry entry in e.entries)
+        PlanEntry(content: '', priority: entry.priority, status: entry.status),
+    ],
+    seq: e.seq,
+    timestamp: e.timestamp,
+  ),
+  AgentActivityEvent e => AgentActivityEvent(
+    activity: AgentActivity(
+      id: e.activity.id,
+      kind: e.activity.kind,
+      title: e.activity.title,
+      status: e.activity.status,
+    ),
+    seq: e.seq,
+    timestamp: e.timestamp,
+  ),
+  _ => event,
+};
 
 /// A message the user sent to the session.
 class UserMessageEvent extends SessionEvent {

@@ -14,6 +14,8 @@ void main() {
       ToolCallDiff(path: 'lib/src/rpc.dart', oldText: 'a', newText: 'b'),
     ],
     locations: const ['lib/src/rpc.dart'],
+    rawInput: const <String, Object?>{'path': 'lib/src/rpc.dart'},
+    rawOutput: const <String, Object?>{'changed': true},
   );
 
   final planEntries = [
@@ -192,6 +194,46 @@ void main() {
       expect(decoded.seq, isNull);
       expect(decoded.timestamp, isNull);
       expect(decoded.toJson(), json);
+    }
+  });
+
+  test('summary history preserves semantics while dropping verbose fields', () {
+    expect(SessionHistoryDetail.parse('summary'), SessionHistoryDetail.summary);
+    expect(SessionHistoryDetail.summary.wire, 'summary');
+
+    final thought = summarizeSessionEvent(allEvents[3].event);
+    expect(thought, isA<AgentThoughtChunkEvent>());
+    expect((thought as AgentThoughtChunkEvent).text, isEmpty);
+    expect(thought.seq, 3);
+    expect(thought.timestamp, timestamp);
+
+    final summarizedTool =
+        summarizeSessionEvent(allEvents[4].event) as ToolCallEvent;
+    expect(summarizedTool.toolCall.title, toolCall.title);
+    expect(summarizedTool.toolCall.status, toolCall.status);
+    expect(summarizedTool.toolCall.content, isEmpty);
+    expect(summarizedTool.toolCall.locations, isEmpty);
+    expect(summarizedTool.toolCall.rawInput, isNull);
+    expect(summarizedTool.toolCall.rawOutput, isNull);
+
+    final summarizedPlan =
+        summarizeSessionEvent(allEvents[5].event) as PlanEvent;
+    expect(summarizedPlan.entries, hasLength(planEntries.length));
+    expect(
+      summarizedPlan.entries.every((PlanEntry e) => e.content.isEmpty),
+      isTrue,
+    );
+
+    final summarizedActivity =
+        summarizeSessionEvent(allEvents[9].event) as AgentActivityEvent;
+    expect(summarizedActivity.activity.title, activity.title);
+    expect(summarizedActivity.activity.details, isEmpty);
+
+    for (final int index in <int>[0, 1, 2, 6, 7, 8, 10, 11]) {
+      expect(
+        summarizeSessionEvent(allEvents[index].event),
+        same(allEvents[index].event),
+      );
     }
   });
 

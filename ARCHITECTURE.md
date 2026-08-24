@@ -263,6 +263,14 @@ notification while a watch proxy is active. The watch and phone reuse the app's 
 authentication, reconnect, and notification handling around this raw-frame transport. Credentials
 remain owned and edited by the phone app; the watch has no endpoint-entry UI.
 
+The channel starts with the original uncompressed record format. A new phone advertises `gzip-v1`
+in its ready record and enables compressed data records only after a new watch echoes that
+capability, so phone/watch updates can be installed in either order. Frames of at least 1 KiB are
+gzipped when that shrinks them. Wear also requests 100-event `summary` history pages (verbose
+thought/tool/plan/activity detail is projected out) and retains an LRU of three inactive chat
+buffers; reopens render immediately while normal sequence reconciliation catches up in the
+background.
+
 Watch layouts derive circular-safe header/content/composer insets from their allocated width. This
 keeps complete header actions, list rows, empty-state actions, and bottom chat controls inside round
 screens down to 192 logical pixels without hardware-type checks.

@@ -15,6 +15,9 @@ Future<void> main() async {
     connections: connections,
     selection: SelectionStore(),
     daemonChannelFactory: phoneProxy.connect,
+    daemonHistoryDetail: SessionHistoryDetail.summary,
+    chatHistoryPageSize: kWearHistoryPageSize,
+    chatRetainedSessionLimit: kWearRetainedSessionLimit,
   );
   await data.settings.init();
   if (connections.endpoints.length == 1) {

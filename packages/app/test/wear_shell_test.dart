@@ -58,8 +58,11 @@ Future<(AppData, FakeDaemonClient)> pumpWear(
   final FakeDaemonClient fake = FakeDaemonClient(
     eventDelay: const Duration(milliseconds: 1),
   );
-  final AppData data = AppData(clientFor: (_) => fake)
-    ..registerClient('fake', fake);
+  final AppData data = AppData(
+    clientFor: (_) => fake,
+    chatHistoryPageSize: kWearHistoryPageSize,
+    chatRetainedSessionLimit: kWearRetainedSessionLimit,
+  )..registerClient('fake', fake);
   await data.settings.init();
   if (withDaemon) {
     await data.connections.addEndpoint(
@@ -242,6 +245,22 @@ void main() {
     await tester.pump();
 
     expect(scrollable.position.pixels, 60);
+  });
+
+  testWidgets('loads a watch-sized initial history page', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient fake) = await pumpWear(tester);
+    fake.seedHistory('sess-1', <SessionEvent>[
+      for (var i = 1; i <= 140; i++) UserMessageEvent(text: 'message $i'),
+    ]);
+
+    await openFirstSession(tester);
+
+    expect(data.chat.eventsFor('sess-1'), hasLength(kWearHistoryPageSize));
+    expect(data.chat.hasOlderHistory('sess-1'), isTrue);
+    expect(find.byKey(const Key('wear-chat-timeline')), findsOneWidget);
+    expect(find.text('message 140'), findsOneWidget);
   });
 
   testWidgets('theme button applies and persists dark mode', (

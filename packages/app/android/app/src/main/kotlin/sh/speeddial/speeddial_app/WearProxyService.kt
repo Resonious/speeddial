@@ -12,6 +12,8 @@ import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
@@ -21,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -175,6 +179,7 @@ class WearProxyService : WearableListenerService() {
         private val channel: ChannelClient.Channel,
     ) : WebSocketListener() {
         private val closed = AtomicBoolean(false)
+        private val compressionEnabled = AtomicBoolean(false)
         private val writeLock = Any()
         private var input: DataInputStream? = null
         private var output: DataOutputStream? = null
@@ -185,9 +190,11 @@ class WearProxyService : WearableListenerService() {
                 try {
                     input = DataInputStream(Tasks.await(channelClient.getInputStream(channel)))
                     output = DataOutputStream(Tasks.await(channelClient.getOutputStream(channel)))
-                    val (type, url) = readRecord(input!!)
-                    if (type != TYPE_OPEN) throw IOException("Missing daemon proxy handshake")
-                    val request = Request.Builder().url(url).build()
+                    val record = readRecord(input!!)
+                    if (record.type != TYPE_OPEN) {
+                        throw IOException("Missing daemon proxy handshake")
+                    }
+                    val request = Request.Builder().url(record.text()).build()
                     webSocket = webSocketClient.newWebSocket(request, this)
                     readWatchFrames()
                 } catch (error: Exception) {
@@ -199,9 +206,21 @@ class WearProxyService : WearableListenerService() {
         private fun readWatchFrames() {
             val source = input ?: return
             while (!closed.get()) {
-                val (type, payload) = readRecord(source)
-                if (type != TYPE_DATA) {
-                    throw IOException("Unknown watch proxy record type: $type")
+                val record = readRecord(source)
+                if (record.type == TYPE_CAPABILITIES) {
+                    if (record.text() == CAPABILITY_GZIP) compressionEnabled.set(true)
+                    continue
+                }
+                if (record.type != TYPE_DATA && record.type != TYPE_DATA_GZIP) {
+                    throw IOException("Unknown watch proxy record type: ${record.type}")
+                }
+                if (record.type == TYPE_DATA_GZIP && !compressionEnabled.get()) {
+                    throw IOException("Watch used gzip before negotiation")
+                }
+                val payload = if (record.type == TYPE_DATA_GZIP) {
+                    gunzipText(record.payload)
+                } else {
+                    record.text()
                 }
                 if (webSocket?.send(payload) != true) {
                     throw IOException("Daemon WebSocket is not connected")
@@ -210,11 +229,11 @@ class WearProxyService : WearableListenerService() {
         }
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            writeRecord(TYPE_READY, "")
+            writeRecord(TYPE_READY, CAPABILITY_GZIP)
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            writeRecord(TYPE_DATA, text)
+            writeDataRecord(text)
         }
 
         override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -237,8 +256,23 @@ class WearProxyService : WearableListenerService() {
         }
 
         private fun writeRecord(type: Int, payload: String) {
+            writeRecord(type, payload.toByteArray(StandardCharsets.UTF_8))
+        }
+
+        private fun writeDataRecord(payload: String) {
+            val plain = payload.toByteArray(StandardCharsets.UTF_8)
+            if (compressionEnabled.get() && plain.size >= COMPRESSION_THRESHOLD_BYTES) {
+                val compressed = gzip(plain)
+                if (compressed.size < plain.size) {
+                    writeRecord(TYPE_DATA_GZIP, compressed)
+                    return
+                }
+            }
+            writeRecord(TYPE_DATA, plain)
+        }
+
+        private fun writeRecord(type: Int, bytes: ByteArray) {
             if (closed.get()) return
-            val bytes = payload.toByteArray(StandardCharsets.UTF_8)
             if (bytes.size + 1 > MAX_RECORD_BYTES) {
                 finish("Daemon frame is too large for phone proxy")
                 return
@@ -298,8 +332,16 @@ class WearProxyService : WearableListenerService() {
         private const val TYPE_DATA = 3
         private const val TYPE_ERROR = 4
         private const val TYPE_CLOSED = 5
+        private const val TYPE_CAPABILITIES = 6
+        private const val TYPE_DATA_GZIP = 7
+        private const val CAPABILITY_GZIP = "gzip-v1"
+        private const val COMPRESSION_THRESHOLD_BYTES = 1024
 
-        private fun readRecord(input: DataInputStream): Pair<Int, String> {
+        private data class ProxyRecord(val type: Int, val payload: ByteArray) {
+            fun text(): String = String(payload, StandardCharsets.UTF_8)
+        }
+
+        private fun readRecord(input: DataInputStream): ProxyRecord {
             val length = try {
                 input.readInt()
             } catch (error: EOFException) {
@@ -311,7 +353,29 @@ class WearProxyService : WearableListenerService() {
             val type = input.readUnsignedByte()
             val bytes = ByteArray(length - 1)
             input.readFully(bytes)
-            return type to String(bytes, StandardCharsets.UTF_8)
+            return ProxyRecord(type, bytes)
+        }
+
+        private fun gzip(bytes: ByteArray): ByteArray {
+            val output = ByteArrayOutputStream()
+            GZIPOutputStream(output).use { it.write(bytes) }
+            return output.toByteArray()
+        }
+
+        private fun gunzipText(bytes: ByteArray): String {
+            val output = ByteArrayOutputStream()
+            GZIPInputStream(ByteArrayInputStream(bytes)).use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    if (output.size() + 1 > MAX_RECORD_BYTES) {
+                        throw IOException("Inflated watch frame is too large")
+                    }
+                }
+            }
+            return String(output.toByteArray(), StandardCharsets.UTF_8)
         }
 
         private fun AutoCloseable?.closeQuietly() {

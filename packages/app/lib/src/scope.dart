@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'api/daemon_client.dart';
 import 'api/fake_daemon.dart';
@@ -302,6 +303,9 @@ class AppData {
     SettingsStore? settings,
     DaemonClient Function(String daemonId)? clientFor,
     this.daemonChannelFactory,
+    this.daemonHistoryDetail = SessionHistoryDetail.full,
+    int chatHistoryPageSize = 500,
+    int chatRetainedSessionLimit = 0,
   }) : connections = connections ?? ConnectionsStore(),
        selection = selection ?? SelectionStore(),
        settings = settings ?? SettingsStore(),
@@ -313,7 +317,11 @@ class AppData {
       selectedDaemonId: () => this.selection.selectedDaemonId,
       selectedSessionId: () => this.selection.selectedSessionId,
     );
-    chat = ChatStore(clientFor: this.clientFor);
+    chat = ChatStore(
+      clientFor: this.clientFor,
+      historyPageSize: chatHistoryPageSize,
+      retainedSessionLimit: chatRetainedSessionLimit,
+    );
     files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
     mcp = McpStore(clientFor: this.clientFor);
@@ -369,6 +377,9 @@ class AppData {
   /// WebSocket through the paired phone. All normal app targets leave this
   /// null and connect directly.
   final DaemonFrameChannelFactory? daemonChannelFactory;
+
+  /// Persisted-history projection used by lazily created WebSocket clients.
+  final SessionHistoryDetail daemonHistoryDetail;
 
   /// Registers the client serving [daemonId]. Tests and demo mode inject
   /// fakes this way; registered ids always win over the lazy wiring and are
@@ -461,6 +472,7 @@ class AppData {
       url: endpoint.url,
       token: endpoint.token,
       channelFactory: daemonChannelFactory,
+      historyDetail: daemonHistoryDetail,
     );
     void listener() {
       connections.setStatus(daemonId, _mapClientState(client.connState.value));

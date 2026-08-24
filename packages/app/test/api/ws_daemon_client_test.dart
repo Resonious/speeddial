@@ -40,6 +40,9 @@ class TestDaemonServer {
   /// Every `sessions.send` params object received, in call order.
   final List<Map<String, Object?>> sends = <Map<String, Object?>>[];
 
+  /// Every `sessions.history` params object received, in call order.
+  final List<Map<String, Object?>> historyRequests = <Map<String, Object?>>[];
+
   /// Every `sessions.create` params object received, in call order.
   final List<Map<String, Object?>> creates = <Map<String, Object?>>[];
 
@@ -198,6 +201,7 @@ class TestDaemonServer {
       return <String, Object?>{'name': 'result.bin', 'size': 3, 'data': 'AAf/'};
     });
     peer.registerHandler('sessions.history', (Map<String, Object?> params) {
+      historyRequests.add(params);
       final String sessionId = params['sessionId']! as String;
       final int limit = (params['limit'] as int?) ?? 200;
       final int? beforeSeq = params['beforeSeq'] as int?;
@@ -988,6 +992,7 @@ void main() {
       url: server.url,
       token: 'secret',
       reconnectBase: const Duration(milliseconds: 20),
+      historyDetail: SessionHistoryDetail.summary,
     );
     addTearDown(client.dispose);
     await client.connect();
@@ -1024,5 +1029,9 @@ void main() {
         .history('sess-paging', limit: 2, beforeSeq: 2);
     expect(page3.hasMore, isFalse);
     expect(page3.events.map((SessionEvent e) => e.seq).toList(), <int>[1]);
+    expect(
+      server.historyRequests,
+      everyElement(containsPair('detail', 'summary')),
+    );
   });
 }
