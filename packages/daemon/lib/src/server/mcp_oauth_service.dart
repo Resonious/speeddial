@@ -154,18 +154,12 @@ class McpOAuthService {
     }
   }
 
-  /// Completes a browser redirect at the daemon's callback URI.
+  /// Completes a browser redirect received by the daemon's HTTP listener.
   Future<void> handleCallback(HttpRequest request) async {
     final String? state = request.uri.queryParameters['state'];
-    final _OAuthFlow? flow = state == null ? null : _flows.remove(state);
-    if (flow == null || _isExpired(flow)) {
-      if (flow != null) {
-        _store.setMcpOAuthStatus(
-          flow.serverId,
-          McpOAuthStatus.error,
-          error: 'Authorization timed out',
-        );
-      }
+    _discardExpiredFlows();
+    final _OAuthFlow? flow = state == null ? null : _flows[state];
+    if (flow == null) {
       await _writeCallbackPage(
         request,
         HttpStatus.badRequest,
@@ -175,37 +169,65 @@ class McpOAuthService {
       return;
     }
 
-    final String? oauthError = request.uri.queryParameters['error'];
+    final Uri callbackUri = flow.redirectUri.replace(query: request.uri.query);
+    try {
+      await complete(flow.serverId, state!, callbackUri);
+      await _writeCallbackPage(
+        request,
+        HttpStatus.ok,
+        'Authorization complete',
+        'SpeedDial can now use this MCP server. You may close this tab.',
+      );
+    } on DaemonError catch (error) {
+      await _writeCallbackPage(
+        request,
+        HttpStatus.badRequest,
+        'Authorization failed',
+        error.message,
+      );
+    }
+  }
+
+  /// Completes a callback received by a trusted frontend loopback listener.
+  ///
+  /// The full URI is checked against the redirect URI captured with the flow,
+  /// including its unguessable OAuth state, before the authorization code is
+  /// exchanged. PKCE material and tokens never leave the daemon.
+  Future<void> complete(String serverId, String flowId, Uri callbackUri) async {
+    _discardExpiredFlows();
+    final _OAuthFlow? flow = _flows[flowId];
+    if (flow == null || flow.serverId != serverId) {
+      throw DaemonError(kErrNotFound, 'Unknown or expired OAuth flow');
+    }
+    if (!_matchesRedirect(callbackUri, flow.redirectUri) ||
+        callbackUri.queryParameters['state'] != flowId) {
+      throw DaemonError(
+        kErrConflict,
+        'OAuth callback does not match the authorization flow',
+      );
+    }
+    _flows.remove(flowId);
+
+    final String? oauthError = callbackUri.queryParameters['error'];
     if (oauthError != null) {
       final String description =
-          request.uri.queryParameters['error_description'] ?? oauthError;
+          callbackUri.queryParameters['error_description'] ?? oauthError;
       _store.setMcpOAuthStatus(
         flow.serverId,
         McpOAuthStatus.error,
         error: description,
       );
-      await _writeCallbackPage(
-        request,
-        HttpStatus.badRequest,
-        'Authorization denied',
-        description,
-      );
-      return;
+      throw DaemonError(kErrProviderUnavailable, description);
     }
-    final String? code = request.uri.queryParameters['code'];
+    final String? code = callbackUri.queryParameters['code'];
     if (code == null || code.isEmpty) {
+      const String message = 'Authorization callback did not include a code';
       _store.setMcpOAuthStatus(
         flow.serverId,
         McpOAuthStatus.error,
-        error: 'Authorization callback did not include a code',
+        error: message,
       );
-      await _writeCallbackPage(
-        request,
-        HttpStatus.badRequest,
-        'Authorization failed',
-        'The authorization server did not return an authorization code.',
-      );
-      return;
+      throw const DaemonError(kErrProviderUnavailable, message);
     }
 
     try {
@@ -232,12 +254,6 @@ class McpOAuthService {
         scopes: tokens.scopes,
       );
       await _onChanged(flow.serverId);
-      await _writeCallbackPage(
-        request,
-        HttpStatus.ok,
-        'Authorization complete',
-        'SpeedDial can now use this MCP server. You may close this tab.',
-      );
     } on Object catch (error) {
       final String message = _errorMessage(error);
       _store.setMcpOAuthStatus(
@@ -245,12 +261,7 @@ class McpOAuthService {
         McpOAuthStatus.error,
         error: message,
       );
-      await _writeCallbackPage(
-        request,
-        HttpStatus.badRequest,
-        'Authorization failed',
-        message,
-      );
+      throw DaemonError(kErrProviderUnavailable, message);
     }
   }
 
@@ -284,7 +295,7 @@ class McpOAuthService {
   Future<void> _refreshEnabled() async {
     final DateTime refreshBefore = DateTime.now().toUtc().add(_refreshSkew);
     for (final McpServerProfile profile in _store.listMcpServers()) {
-      if (!profile.enabled || profile.authType != McpAuthType.oauth) continue;
+      if (!profile.enabled || !profile.authType.isOAuth) continue;
       final StoredMcpOAuth? oauth = _store.getMcpOAuth(profile.id);
       if (oauth?.accessToken == null) continue;
       final DateTime? expiresAt = oauth!.expiresAt;
@@ -349,8 +360,7 @@ class McpOAuthService {
     if (profile == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $serverId');
     }
-    if (profile.transport != McpTransport.http ||
-        profile.authType != McpAuthType.oauth) {
+    if (profile.transport != McpTransport.http || !profile.authType.isOAuth) {
       throw DaemonError(
         kErrConflict,
         'OAuth is available only for HTTP MCP servers configured for OAuth',
@@ -808,6 +818,22 @@ class McpOAuthService {
       a.host.toLowerCase() == b.host.toLowerCase() &&
       a.port == b.port &&
       _withoutTrailingSlash(a.path) == _withoutTrailingSlash(b.path);
+
+  bool _matchesRedirect(Uri callback, Uri redirect) {
+    if (callback.hasFragment ||
+        callback.scheme.toLowerCase() != redirect.scheme.toLowerCase() ||
+        callback.host.toLowerCase() != redirect.host.toLowerCase() ||
+        callback.port != redirect.port ||
+        callback.path != redirect.path ||
+        callback.userInfo != redirect.userInfo) {
+      return false;
+    }
+    for (final MapEntry<String, String> entry
+        in redirect.queryParameters.entries) {
+      if (callback.queryParameters[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
 
   String _withoutTrailingSlash(String path) =>
       path.endsWith('/') && path.length > 1

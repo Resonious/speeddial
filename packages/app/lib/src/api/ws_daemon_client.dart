@@ -609,17 +609,26 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<McpOAuthFlow> beginMcpOAuth(String id) async {
+  Future<McpOAuthFlow> beginMcpOAuth(String id, {Uri? redirectUri}) async {
+    final Uri callback = redirectUri ?? _daemonOAuthRedirectUri();
+    final Object? result = await _requirePeer().call(
+      'mcp.oauth.begin',
+      <String, Object?>{'id': id, 'redirectUri': callback.toString()},
+    );
+    return McpOAuthFlow.fromJson(_resultMap(_resultField(result, 'flow')));
+  }
+
+  Uri _daemonOAuthRedirectUri() {
     final Uri endpoint = Uri.parse(url);
     final bool secure = endpoint.scheme == 'wss';
     if (!secure && !_isLoopbackOAuthHost(endpoint.host)) {
       throw DaemonError(
         kErrProviderUnavailable,
         'MCP OAuth for a remote daemon requires a wss:// endpoint with '
-        'HTTPS /oauth/callback routing',
+        'HTTPS /oauth/callback routing, or OAuth 2.1 (localhost)',
       );
     }
-    final Uri redirectUri = endpoint.replace(
+    return endpoint.replace(
       scheme: secure ? 'https' : 'http',
       // Canonicalize local IPv4 aliases because authorization servers may
       // recognize only numeric loopback redirect URIs. IPv6 stays on ::1.
@@ -632,11 +641,6 @@ class WsDaemonClient implements DaemonClient {
       query: null,
       fragment: null,
     );
-    final Object? result = await _requirePeer().call(
-      'mcp.oauth.begin',
-      <String, Object?>{'id': id, 'redirectUri': redirectUri.toString()},
-    );
-    return McpOAuthFlow.fromJson(_resultMap(_resultField(result, 'flow')));
   }
 
   bool _isLoopbackOAuthHost(String host) {
@@ -645,6 +649,25 @@ class WsDaemonClient implements DaemonClient {
         normalized == '::1' ||
         normalized == '0:0:0:0:0:0:0:1' ||
         normalized.startsWith('127.');
+  }
+
+  @override
+  Future<McpServerProfile> completeMcpOAuth(
+    String id,
+    String flowId,
+    Uri callbackUri,
+  ) async {
+    final Object? result = await _requirePeer().call(
+      'mcp.oauth.complete',
+      <String, Object?>{
+        'id': id,
+        'flowId': flowId,
+        'callbackUri': callbackUri.toString(),
+      },
+    );
+    return McpServerProfile.fromJson(
+      _resultMap(_resultField(result, 'server')),
+    );
   }
 
   @override

@@ -82,7 +82,7 @@ Project = {
   lastActiveAt: string,
 }
 McpTransport = "stdio" | "http"
-McpAuthType = "none" | "oauth"
+McpAuthType = "none" | "oauth" | "oauth_localhost"
 McpOAuthStatus = "not_connected" | "authorizing" | "authorized" | "expired" | "error"
 
 McpServerProfile = {
@@ -309,6 +309,9 @@ resumed sessions; already-running harness processes are not restarted.
 - `mcp.oauth.begin {id: string, redirectUri: string}` → `{flow: McpOAuthFlow}` — discovers
   protected-resource and authorization-server metadata, dynamically registers a public client
   when no client ID is configured, and returns an authorization-code URL with S256 PKCE
+- `mcp.oauth.complete {id: string, flowId: string, callbackUri: string}` →
+  `{server: McpServerProfile}` — validates and completes a browser callback received by the app;
+  its origin and path must match the flow redirect URI and it must carry the matching OAuth state
 - `mcp.oauth.status {id: string, flowId: string}` → `{server: McpServerProfile}`
 - `mcp.oauth.disconnect {id: string}` → `{server: McpServerProfile}` — deletes access and refresh
   tokens while retaining client registration settings
@@ -353,15 +356,26 @@ Because `ante serve` ignores the settings default provider/model when `StartSess
 model (it resolves the subscription instead), the daemon reseeds new sessions with the Ante
 settings defaults it already merges into the transient home.
 
-OAuth applies only to HTTP profiles. The daemon implements OAuth 2.1 authorization-code + PKCE,
+OAuth applies only to HTTP profiles. `oauth` sends the browser callback to the daemon;
+`oauth_localhost` starts a temporary HTTP listener in the native frontend at a
+`http://localhost:<ephemeral-port>/oauth/callback` redirect URI, then hands the full callback URI
+to the authenticated daemon through `mcp.oauth.complete`. The authorization code and OAuth state
+cross the app/daemon connection, while the PKCE verifier, client secret, and resulting tokens remain
+daemon-only. The web frontend cannot host a loopback listener and therefore cannot use
+`oauth_localhost`.
+
+The daemon implements OAuth 2.1 authorization-code + PKCE,
 RFC 9728 protected-resource metadata, RFC 8414 authorization-server metadata, RFC 7591 dynamic
 client registration, RFC 8707 resource indicators, refresh tokens, and the token endpoint
 authentication methods `none`, `client_secret_post`, and `client_secret_basic`. For `ws` daemon
 connections, the app uses the daemon port with the canonical loopback callback host `127.0.0.1`
-(`::1` is preserved). The app rejects OAuth through a non-loopback `ws` endpoint because its HTTP
-callback would be insecure and unreachable from a remote device. For `wss` connections, the app
+(`::1` is preserved). The app rejects daemon-callback OAuth through a non-loopback `ws` endpoint
+because its HTTP callback would be insecure and unreachable from a remote device. For `wss`
+connections, the app
 derives an HTTPS callback from the daemon WebSocket URL. Both use `/oauth/callback`; remote HTTPS
-deployments must route that path to the daemon alongside `/ws`.
+deployments must route that path to the daemon alongside `/ws`. Localhost OAuth does not require a
+secure daemon connection because the browser callback terminates at the frontend's loopback-only
+listener and is handed to the daemon over its already-authenticated WebSocket connection.
 Client secrets, access tokens, and refresh tokens remain in daemon SQLite and never cross the
 public RPC surface or enter agent configuration. The daemon adds the current
 `Authorization: Bearer ...` header only to proxied upstream HTTP requests, refreshes expiring

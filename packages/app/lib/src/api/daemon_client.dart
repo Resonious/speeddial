@@ -99,7 +99,13 @@ abstract class DaemonClient {
 
   Future<void> deleteMcpServer(String id);
 
-  Future<McpOAuthFlow> beginMcpOAuth(String id);
+  Future<McpOAuthFlow> beginMcpOAuth(String id, {Uri? redirectUri});
+
+  Future<McpServerProfile> completeMcpOAuth(
+    String id,
+    String flowId,
+    Uri callbackUri,
+  );
 
   Future<McpServerProfile> mcpOAuthStatus(String id, String flowId);
 

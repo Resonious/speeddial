@@ -46,6 +46,9 @@ class TestDaemonServer {
   /// Every `mcp.oauth.begin` params object received, in call order.
   final List<Map<String, Object?>> oauthBegins = <Map<String, Object?>>[];
 
+  /// Every `mcp.oauth.complete` params object received, in call order.
+  final List<Map<String, Object?>> oauthCompletes = <Map<String, Object?>>[];
+
   /// Every `mcp.create` params object received, in call order.
   final List<Map<String, Object?>> mcpCreates = <Map<String, Object?>>[];
 
@@ -140,6 +143,26 @@ class TestDaemonServer {
         'flow': <String, Object?>{
           'flowId': 'flow-1',
           'authorizationUrl': 'https://auth.example/authorize',
+        },
+      };
+    });
+    peer.registerHandler('mcp.oauth.complete', (Map<String, Object?> params) {
+      oauthCompletes.add(params);
+      return <String, Object?>{
+        'server': <String, Object?>{
+          'id': params['id'],
+          'name': 'OAuth tools',
+          'transport': 'http',
+          'enabled': true,
+          'args': const <String>[],
+          'url': 'https://mcp.example/tools',
+          'secretNames': const <String>[],
+          'authType': 'oauth_localhost',
+          'oauthStatus': 'authorized',
+          'oauthClientSecretConfigured': false,
+          'oauthScopes': const <String>['mcp'],
+          'createdAt': '2026-01-01T00:00:00.000Z',
+          'updatedAt': '2026-01-01T00:00:00.000Z',
         },
       };
     });
@@ -419,6 +442,46 @@ void main() {
             ),
       ),
     );
+  });
+
+  test('forwards an explicit localhost OAuth callback to the daemon', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+      reconnectBase: const Duration(milliseconds: 20),
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+    final Uri redirectUri = Uri.parse('http://localhost:49152/oauth/callback');
+
+    final McpOAuthFlow flow = await client.beginMcpOAuth(
+      'mcp-1',
+      redirectUri: redirectUri,
+    );
+    final Uri callbackUri = redirectUri.replace(
+      queryParameters: <String, String>{
+        'code': 'authorization-code',
+        'state': flow.flowId,
+      },
+    );
+    final McpServerProfile profile = await client.completeMcpOAuth(
+      'mcp-1',
+      flow.flowId,
+      callbackUri,
+    );
+
+    expect(server.oauthBegins.single['redirectUri'], redirectUri.toString());
+    expect(server.oauthCompletes, <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 'mcp-1',
+        'flowId': 'flow-1',
+        'callbackUri': callbackUri.toString(),
+      },
+    ]);
+    expect(profile.authType, McpAuthType.oauthLocalhost);
+    expect(profile.oauthStatus, McpOAuthStatus.authorized);
   });
 
   test(

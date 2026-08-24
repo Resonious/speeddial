@@ -53,6 +53,7 @@ const List<String> _kProtocolMethods = <String>[
   'mcp.update',
   'mcp.delete',
   'mcp.oauth.begin',
+  'mcp.oauth.complete',
   'mcp.oauth.status',
   'mcp.oauth.disconnect',
   'projects.list',
@@ -493,6 +494,7 @@ class SpeedDialServer {
       'mcp.update' => _mcpUpdate(params),
       'mcp.delete' => _mcpDelete(params),
       'mcp.oauth.begin' => _mcpOAuthBegin(params),
+      'mcp.oauth.complete' => _mcpOAuthComplete(params),
       'mcp.oauth.status' => _mcpOAuthStatus(params),
       'mcp.oauth.disconnect' => _mcpOAuthDisconnect(params),
       'attachments.read' => _attachmentsRead(params),
@@ -839,6 +841,27 @@ class SpeedDialServer {
     return <String, Object?>{'flow': flow.toJson()};
   }
 
+  Future<Object?> _mcpOAuthComplete(Map<String, Object?> params) async {
+    final String id = _requiredString(params, 'id');
+    final String flowId = _requiredString(params, 'flowId');
+    final String rawCallbackUri = _requiredString(params, 'callbackUri');
+    final Uri? callbackUri = Uri.tryParse(rawCallbackUri);
+    if (callbackUri == null ||
+        !callbackUri.hasAuthority ||
+        callbackUri.hasFragment ||
+        callbackUri.path != '/oauth/callback' ||
+        (callbackUri.scheme != 'https' &&
+            !(callbackUri.scheme == 'http' &&
+                _isLoopbackHost(callbackUri.host)))) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'callbackUri must be HTTPS or loopback HTTP at /oauth/callback',
+      );
+    }
+    await _oauth!.complete(id, flowId, callbackUri);
+    return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
+  }
+
   Object? _mcpOAuthStatus(Map<String, Object?> params) {
     final String id = _requiredString(params, 'id');
     final String flowId = _requiredString(params, 'flowId');
@@ -881,7 +904,7 @@ class SpeedDialServer {
       final String _ => null,
       _ => existingClientId,
     };
-    if (profile.authType == McpAuthType.oauth &&
+    if (profile.authType.isOAuth &&
         rawClientSecret is String &&
         rawClientSecret.isNotEmpty &&
         clientId == null) {
@@ -913,7 +936,7 @@ class SpeedDialServer {
       final String value when value.trim().isNotEmpty => value.trim(),
       _ => reset ? null : existing?.clientId,
     };
-    if (profile.authType == McpAuthType.oauth &&
+    if (profile.authType.isOAuth &&
         rawClientSecret is String &&
         rawClientSecret.isNotEmpty &&
         clientId == null) {
@@ -924,7 +947,7 @@ class SpeedDialServer {
     }
 
     if (reset) _store.resetMcpOAuth(profile.id);
-    if (profile.authType != McpAuthType.oauth) return;
+    if (!profile.authType.isOAuth) return;
     if (clientId == null) {
       _store.setMcpOAuthStatus(profile.id, McpOAuthStatus.notConnected);
       return;
@@ -1000,7 +1023,7 @@ class SpeedDialServer {
     } on Object {
       throw DaemonError(
         _kErrInvalidParams,
-        'authType must be "none" or "oauth"',
+        'authType must be "none", "oauth", or "oauth_localhost"',
       );
     }
     if (transport == McpTransport.stdio && authType != McpAuthType.none) {

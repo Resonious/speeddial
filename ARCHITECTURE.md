@@ -80,7 +80,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     aggregates tool descriptors (stripping regex-lookaround `pattern` constraints
                     model providers reject), routes calls, and closes every upstream
                     with the bridge. Managed commands, URLs, environment values, headers,
-                    and OAuth tokens never enter provider configuration. The same hidden
+                    and OAuth tokens never enter provider configuration. OAuth callbacks can
+                    terminate at the daemon or at a temporary native-app localhost listener;
+                    app-received callbacks are validated and completed through authenticated RPC.
+                    The same hidden
                     subprocess entry works from the daemon CLI and native Flutter
                     executable. Profiles are daemon-wide or project-scoped; a project
                     receives both matching sets. HTTP OAuth 2.1 authorization-code + S256
@@ -189,6 +192,9 @@ lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PR
                                   liveness probe that catches half-dead sockets)
 lib/src/api/fake_daemon.dart      FakeDaemonClient: in-memory scripted implementation used
                                   by widget tests AND by --demo mode; simulates streaming
+lib/src/oauth/                    Conditional native localhost OAuth callback listener; binds
+                                  an ephemeral loopback port and forwards the callback URI to
+                                  the daemon. Web builds expose an unsupported stub.
 lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditional
                              import: local_daemon_native.dart (linux/macos/windows)
                              backs LocalDaemonController with speeddial_daemon's

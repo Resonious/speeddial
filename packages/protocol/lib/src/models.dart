@@ -103,13 +103,25 @@ enum McpTransport {
 /// Authentication managed by SpeedDial for an HTTP MCP server.
 enum McpAuthType {
   none,
-  oauth;
+  oauth,
+  oauthLocalhost;
 
-  String get wire => name;
+  String get wire => switch (this) {
+    McpAuthType.none => 'none',
+    McpAuthType.oauth => 'oauth',
+    McpAuthType.oauthLocalhost => 'oauth_localhost',
+  };
+
+  /// Whether SpeedDial manages OAuth credentials for this profile.
+  bool get isOAuth => this != McpAuthType.none;
+
+  /// Whether the UI, rather than the daemon, receives the browser callback.
+  bool get usesLocalhostRedirect => this == McpAuthType.oauthLocalhost;
 
   static McpAuthType parse(String value) => switch (value) {
     'none' => McpAuthType.none,
     'oauth' => McpAuthType.oauth,
+    'oauth_localhost' => McpAuthType.oauthLocalhost,
     _ => throw FormatException('Unknown McpAuthType: "$value"'),
   };
 }

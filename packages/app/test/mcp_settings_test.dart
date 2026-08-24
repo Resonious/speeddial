@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
+import 'package:speeddial_app/src/oauth/localhost_oauth_callback.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/ui/settings/mcp_settings_page.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -183,6 +184,69 @@ void main() {
     expect(client.statusCalls, 2);
     expect(find.text('OAuth: Authorized'), findsOneWidget);
   });
+
+  testWidgets('localhost OAuth forwards the frontend callback to the daemon', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient client = FakeDaemonClient();
+    final AppData data = AppData()..registerClient('daemon', client);
+    final _FakeLocalhostOAuthCallback callback = _FakeLocalhostOAuthCallback();
+    addTearDown(data.dispose);
+    Uri? launched;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          data: data,
+          child: McpSettingsPage(
+            daemonId: 'daemon',
+            daemonName: 'Test daemon',
+            launchExternal: (Uri uri) async {
+              launched = uri;
+              return true;
+            },
+            startLocalhostCallback: () async => callback,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mcp-add-server')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('mcp-name')), 'Local OAuth');
+    await tester.tap(find.byKey(const Key('mcp-transport')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remote server (HTTP)').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('mcp-endpoint')),
+      'https://mcp.example/tools',
+    );
+    await tester.tap(find.byKey(const Key('mcp-auth-type')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OAuth 2.1 (localhost)').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('temporarily listens on localhost'),
+      findsOneWidget,
+    );
+    final Finder save = find.byKey(const Key('mcp-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    final McpServerProfile created = (await client.listMcpServers()).single;
+    expect(created.authType, McpAuthType.oauthLocalhost);
+    await tester.tap(find.byTooltip('MCP server actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect account'));
+    await tester.pumpAndSettle();
+
+    expect(launched.toString(), contains('https://auth.example/authorize'));
+    expect(callback.receivedFlowId, 'fake-oauth-${created.id}');
+    expect(callback.successResponded, isTrue);
+    expect(callback.closed, isTrue);
+    expect(find.text('OAuth: Authorized'), findsOneWidget);
+  });
 }
 
 class _DisconnectingOAuthClient extends FakeDaemonClient {
@@ -195,5 +259,38 @@ class _DisconnectingOAuthClient extends FakeDaemonClient {
       throw const DaemonConnectionError('daemon client is not connected');
     }
     return super.mcpOAuthStatus(id, flowId);
+  }
+}
+
+class _FakeLocalhostOAuthCallback implements LocalhostOAuthCallback {
+  @override
+  final Uri redirectUri = Uri.parse('http://localhost:49152/oauth/callback');
+
+  String? receivedFlowId;
+  bool successResponded = false;
+  bool closed = false;
+
+  @override
+  Future<Uri> waitForCallback(String flowId) async {
+    receivedFlowId = flowId;
+    return redirectUri.replace(
+      queryParameters: <String, String>{
+        'code': 'authorization-code',
+        'state': flowId,
+      },
+    );
+  }
+
+  @override
+  Future<void> respondSuccess() async {
+    successResponded = true;
+  }
+
+  @override
+  Future<void> respondError(String message) async {}
+
+  @override
+  Future<void> close() async {
+    closed = true;
   }
 }

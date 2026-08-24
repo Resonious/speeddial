@@ -28,6 +28,7 @@ class FakeDaemonClient implements DaemonClient {
       <String, McpServerProfile>{};
   final Map<String, Map<String, String>> _mcpSecrets =
       <String, Map<String, String>>{};
+  final Map<String, Uri> _mcpOAuthRedirects = <String, Uri>{};
   final Map<String, HarnessInfo> _harnesses = <String, HarnessInfo>{
     'omp': const HarnessInfo(id: 'omp', name: 'OMP', version: 'omp/17.3.5'),
     'claude': const HarnessInfo(
@@ -402,6 +403,7 @@ class FakeDaemonClient implements DaemonClient {
     for (final String serverId in removedMcpServers) {
       _mcpServers.remove(serverId);
       _mcpSecrets.remove(serverId);
+      _mcpOAuthRedirects.remove(serverId);
     }
     _projectsChangedController.add(null);
   }
@@ -494,14 +496,14 @@ class FakeDaemonClient implements DaemonClient {
       url: url,
       secretNames: stored.keys.toList(growable: false)..sort(),
       authType: authType,
-      oauthStatus: authType == McpAuthType.oauth && !resetOAuth
+      oauthStatus: authType.isOAuth && !resetOAuth
           ? current.oauthStatus
           : McpOAuthStatus.notConnected,
-      oauthClientId: authType == McpAuthType.oauth
+      oauthClientId: authType.isOAuth
           ? oauthClientId ?? current.oauthClientId
           : null,
       oauthClientSecretConfigured:
-          authType == McpAuthType.oauth &&
+          authType.isOAuth &&
           ((oauthClientSecret != null && oauthClientSecret.isNotEmpty) ||
               (!resetOAuth && current.oauthClientSecretConfigured)),
       oauthScopes: resetOAuth ? const <String>[] : current.oauthScopes,
@@ -511,6 +513,7 @@ class FakeDaemonClient implements DaemonClient {
       updatedAt: DateTime.now().toUtc(),
     );
     _mcpServers[id] = profile;
+    if (resetOAuth) _mcpOAuthRedirects.remove(id);
     return profile;
   }
 
@@ -520,11 +523,17 @@ class FakeDaemonClient implements DaemonClient {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
     _mcpSecrets.remove(id);
+    _mcpOAuthRedirects.remove(id);
   }
 
   @override
-  Future<McpOAuthFlow> beginMcpOAuth(String id) async {
+  Future<McpOAuthFlow> beginMcpOAuth(String id, {Uri? redirectUri}) async {
     final McpServerProfile current = _requireMcpOAuth(id);
+    if (redirectUri == null) {
+      _mcpOAuthRedirects.remove(id);
+    } else {
+      _mcpOAuthRedirects[id] = redirectUri;
+    }
     _mcpServers[id] = _copyMcpOAuth(
       current,
       status: McpOAuthStatus.authorizing,
@@ -536,12 +545,41 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<McpServerProfile> completeMcpOAuth(
+    String id,
+    String flowId,
+    Uri callbackUri,
+  ) async {
+    final McpServerProfile current = _requireMcpOAuth(id);
+    final Uri? redirectUri = _mcpOAuthRedirects[id];
+    if (flowId != 'fake-oauth-$id' ||
+        redirectUri == null ||
+        callbackUri.queryParameters['state'] != flowId ||
+        callbackUri.scheme != redirectUri.scheme ||
+        callbackUri.host != redirectUri.host ||
+        callbackUri.port != redirectUri.port ||
+        callbackUri.path != redirectUri.path) {
+      throw DaemonError(kErrConflict, 'OAuth callback does not match flow');
+    }
+    final McpServerProfile authorized = _copyMcpOAuth(
+      current,
+      status: McpOAuthStatus.authorized,
+      scopes: const <String>['mcp'],
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+    );
+    _mcpServers[id] = authorized;
+    _mcpOAuthRedirects.remove(id);
+    return authorized;
+  }
+
+  @override
   Future<McpServerProfile> mcpOAuthStatus(String id, String flowId) async {
     final McpServerProfile current = _requireMcpOAuth(id);
     if (flowId != 'fake-oauth-$id') {
       throw DaemonError(kErrNotFound, 'Unknown OAuth flow');
     }
-    if (current.oauthStatus == McpOAuthStatus.authorizing) {
+    if (current.oauthStatus == McpOAuthStatus.authorizing &&
+        !_mcpOAuthRedirects.containsKey(id)) {
       final McpServerProfile authorized = _copyMcpOAuth(
         current,
         status: McpOAuthStatus.authorized,
@@ -562,6 +600,7 @@ class FakeDaemonClient implements DaemonClient {
       status: McpOAuthStatus.notConnected,
     );
     _mcpServers[id] = disconnected;
+    _mcpOAuthRedirects.remove(id);
     return disconnected;
   }
 
@@ -570,8 +609,7 @@ class FakeDaemonClient implements DaemonClient {
     if (profile == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
-    if (profile.transport != McpTransport.http ||
-        profile.authType != McpAuthType.oauth) {
+    if (profile.transport != McpTransport.http || !profile.authType.isOAuth) {
       throw DaemonError(kErrConflict, 'MCP server does not use OAuth');
     }
     return profile;

@@ -1498,6 +1498,77 @@ void main() {
         (staticUpdated['server']! as Map)['oauthClientSecretConfigured'],
         isTrue,
       );
+
+      final Uri frontendRedirect = Uri.parse(
+        'http://localhost:49152/oauth/callback',
+      );
+      final Map<String, Object?> localhostUpdated = j(
+        await client.peer.call('mcp.update', <String, Object?>{
+          'id': profileId,
+          'name': 'oauth-tools',
+          'transport': 'http',
+          'enabled': true,
+          'url': oauthBase.resolve('/mcp').toString(),
+          'authType': 'oauth_localhost',
+        }),
+      );
+      expect(
+        (localhostUpdated['server']! as Map)['authType'],
+        'oauth_localhost',
+      );
+      final Map<String, Object?> frontendBegin = j(
+        await client.peer.call('mcp.oauth.begin', <String, Object?>{
+          'id': profileId,
+          'redirectUri': frontendRedirect.toString(),
+        }),
+      );
+      final Map<String, Object?> frontendFlow = (frontendBegin['flow']! as Map)
+          .cast<String, Object?>();
+      await expectLater(
+        client.peer.call('mcp.oauth.complete', <String, Object?>{
+          'id': profileId,
+          'flowId': frontendFlow['flowId'],
+          'callbackUri': frontendRedirect
+              .replace(
+                queryParameters: const <String, String>{
+                  'code': 'forwarded-code',
+                  'state': 'wrong-state',
+                },
+              )
+              .toString(),
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrConflict,
+          ),
+        ),
+      );
+      final Map<String, Object?> frontendCompleted = j(
+        await client.peer.call('mcp.oauth.complete', <String, Object?>{
+          'id': profileId,
+          'flowId': frontendFlow['flowId'],
+          'callbackUri': frontendRedirect
+              .replace(
+                queryParameters: <String, String>{
+                  'code': 'forwarded-code',
+                  'state': frontendFlow['flowId']! as String,
+                },
+              )
+              .toString(),
+        }),
+      );
+      expect(
+        (frontendCompleted['server']! as Map)['oauthStatus'],
+        'authorized',
+      );
+      expect(registrationCount, 2);
+      expect(registrationBody!['redirect_uris'], <String>[
+        frontendRedirect.toString(),
+      ]);
+      expect(tokenForms.last['code'], 'forwarded-code');
+      expect(tokenForms.last['redirect_uri'], frontendRedirect.toString());
       await client.close();
     });
 

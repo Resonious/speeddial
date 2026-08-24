@@ -328,11 +328,7 @@ void main() {
     });
 
     test('FileDownload', () {
-      const model = FileDownload(
-        name: 'report.pdf',
-        size: 4,
-        data: 'AAECAw==',
-      );
+      const model = FileDownload(name: 'report.pdf', size: 4, data: 'AAECAw==');
       final decoded = FileDownload.fromJson(model.toJson());
       expect(decoded.name, 'report.pdf');
       expect(decoded.size, 4);
@@ -806,6 +802,15 @@ void main() {
         authorizationUrl: 'https://auth.example/authorize?state=flow-1',
       );
       expect(McpOAuthFlow.fromJson(flow.toJson()).toJson(), flow.toJson());
+    });
+
+    test('McpAuthType supports frontend localhost OAuth', () {
+      expect(McpAuthType.oauthLocalhost.wire, 'oauth_localhost');
+      expect(McpAuthType.parse('oauth_localhost'), McpAuthType.oauthLocalhost);
+      expect(McpAuthType.oauthLocalhost.isOAuth, isTrue);
+      expect(McpAuthType.oauthLocalhost.usesLocalhostRedirect, isTrue);
+      expect(McpAuthType.oauth.isOAuth, isTrue);
+      expect(McpAuthType.none.isOAuth, isFalse);
     });
   });
 

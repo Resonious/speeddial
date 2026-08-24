@@ -147,11 +147,36 @@ class McpStore extends StoreBase {
     }
   }
 
-  Future<McpOAuthFlow> beginOAuth(String daemonId, String id) async {
+  Future<McpOAuthFlow> beginOAuth(
+    String daemonId,
+    String id, {
+    Uri? redirectUri,
+  }) async {
     try {
-      final McpOAuthFlow flow = await _clientFor(daemonId).beginMcpOAuth(id);
+      final McpOAuthFlow flow = await _clientFor(daemonId)
+          .beginMcpOAuth(id, redirectUri: redirectUri);
       _lastError = null;
       return flow;
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<McpServerProfile> completeOAuth(
+    String daemonId,
+    String id,
+    String flowId,
+    Uri callbackUri,
+  ) async {
+    try {
+      final McpServerProfile profile = await _clientFor(daemonId)
+          .completeMcpOAuth(id, flowId, callbackUri);
+      _replaceProfile(daemonId, profile);
+      _lastError = null;
+      notifyListeners();
+      return profile;
     } catch (error) {
       _lastError = error;
       notifyListeners();

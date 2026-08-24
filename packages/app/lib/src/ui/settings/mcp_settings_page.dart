@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../scope.dart';
+import '../../oauth/localhost_oauth_callback.dart';
 import '../../state/mcp_store.dart';
 
 Future<bool> _launchExternal(Uri uri) =>
@@ -17,12 +18,14 @@ class McpSettingsPage extends StatefulWidget {
     required this.daemonId,
     required this.daemonName,
     this.launchExternal = _launchExternal,
+    this.startLocalhostCallback = startLocalhostOAuthCallback,
   });
 
   final String daemonId;
   final String daemonName;
 
   final Future<bool> Function(Uri uri) launchExternal;
+  final Future<LocalhostOAuthCallback> Function() startLocalhostCallback;
   @override
   State<McpSettingsPage> createState() => _McpSettingsPageState();
 }
@@ -127,12 +130,25 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
   }
 
   Future<void> _authorize(McpServerProfile profile) async {
+    LocalhostOAuthCallback? callback;
     try {
       final McpStore store = AppScope.of(context).mcp;
+      if (profile.authType.usesLocalhostRedirect) {
+        callback = await widget.startLocalhostCallback();
+      }
       final McpOAuthFlow flow = await store.beginOAuth(
         widget.daemonId,
         profile.id,
+        redirectUri: callback?.redirectUri,
       );
+      final Future<void>? callbackCompletion = callback == null
+          ? null
+          : _forwardLocalhostCallback(callback, store, profile.id, flow.flowId);
+      if (callbackCompletion != null) {
+        // The dialog also observes this future. Attach an error handler now so
+        // a very fast redirect cannot surface as an unhandled async error.
+        unawaited(callbackCompletion.catchError((Object _) {}));
+      }
       final bool launched = await widget.launchExternal(
         Uri.parse(flow.authorizationUrl),
       );
@@ -149,10 +165,38 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
           serverName: profile.name,
           flowId: flow.flowId,
           store: store,
+          callbackCompletion: callbackCompletion,
         ),
       );
     } on Object catch (error) {
       if (mounted) _showError(error);
+    } finally {
+      await callback?.close();
+    }
+  }
+
+  Future<void> _forwardLocalhostCallback(
+    LocalhostOAuthCallback callback,
+    McpStore store,
+    String serverId,
+    String flowId,
+  ) async {
+    try {
+      final Uri callbackUri = await callback.waitForCallback(flowId);
+      await store.completeOAuth(widget.daemonId, serverId, flowId, callbackUri);
+      try {
+        await callback.respondSuccess();
+      } on Object {
+        // The OAuth exchange succeeded even if the browser tab closed before
+        // its acknowledgement page could be written.
+      }
+    } on Object catch (error) {
+      try {
+        await callback.respondError(_oauthErrorMessage(error));
+      } on Object {
+        // The listener may already be closed because the dialog was cancelled.
+      }
+      rethrow;
     }
   }
 
@@ -306,7 +350,7 @@ class _McpServerTile extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        if (profile.authType == McpAuthType.oauth)
+        if (profile.authType.isOAuth)
           Text(
             _oauthStatusLabel(profile),
             key: ValueKey<String>('mcp-oauth-status-${profile.id}'),
@@ -331,7 +375,7 @@ class _McpServerTile extends StatelessWidget {
             _ => null,
           },
           itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-            if (profile.authType == McpAuthType.oauth)
+            if (profile.authType.isOAuth)
               PopupMenuItem<String>(
                 key: const Key('mcp-oauth-authorize'),
                 value: 'authorize',
@@ -341,7 +385,7 @@ class _McpServerTile extends StatelessWidget {
                       : 'Connect account',
                 ),
               ),
-            if (profile.authType == McpAuthType.oauth &&
+            if (profile.authType.isOAuth &&
                 profile.oauthStatus != McpOAuthStatus.notConnected)
               const PopupMenuItem<String>(
                 value: 'disconnect',
@@ -383,6 +427,7 @@ class _OAuthProgressDialog extends StatefulWidget {
     required this.serverName,
     required this.flowId,
     required this.store,
+    this.callbackCompletion,
   });
 
   final String daemonId;
@@ -390,6 +435,7 @@ class _OAuthProgressDialog extends StatefulWidget {
   final String serverName;
   final String flowId;
   final McpStore store;
+  final Future<void>? callbackCompletion;
 
   @override
   State<_OAuthProgressDialog> createState() => _OAuthProgressDialogState();
@@ -401,11 +447,25 @@ class _OAuthProgressDialogState extends State<_OAuthProgressDialog> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((Duration _) => _poll());
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      _watchCallback();
+      _poll();
+    });
+  }
+
+  Future<void> _watchCallback() async {
+    final Future<void>? completion = widget.callbackCompletion;
+    if (completion == null) return;
+    try {
+      await completion;
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _error = _oauthErrorMessage(error));
+    }
   }
 
   Future<void> _poll() async {
-    while (mounted) {
+    while (mounted && _error == null) {
       try {
         final McpServerProfile profile = await widget.store.oauthStatus(
           widget.daemonId,
@@ -601,13 +661,12 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           authType: _transport == McpTransport.http
               ? _authType
               : McpAuthType.none,
-          oauthClientId:
-              _transport == McpTransport.http && _authType == McpAuthType.oauth
+          oauthClientId: _transport == McpTransport.http && _authType.isOAuth
               ? _oauthClientId.text.trim()
               : null,
           oauthClientSecret:
               _transport == McpTransport.http &&
-                  _authType == McpAuthType.oauth &&
+                  _authType.isOAuth &&
                   _oauthClientSecret.text.isNotEmpty
               ? _oauthClientSecret.text
               : null,
@@ -629,13 +688,12 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           authType: _transport == McpTransport.http
               ? _authType
               : McpAuthType.none,
-          oauthClientId:
-              _transport == McpTransport.http && _authType == McpAuthType.oauth
+          oauthClientId: _transport == McpTransport.http && _authType.isOAuth
               ? _oauthClientId.text.trim()
               : null,
           oauthClientSecret:
               _transport == McpTransport.http &&
-                  _authType == McpAuthType.oauth &&
+                  _authType.isOAuth &&
                   _oauthClientSecret.text.isNotEmpty
               ? _oauthClientSecret.text
               : null,
@@ -753,21 +811,38 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                     decoration: const InputDecoration(
                       labelText: 'Authentication',
                     ),
-                    items: const <DropdownMenuItem<McpAuthType>>[
-                      DropdownMenuItem(
+                    items: <DropdownMenuItem<McpAuthType>>[
+                      const DropdownMenuItem(
                         value: McpAuthType.none,
                         child: Text('None or static headers'),
                       ),
-                      DropdownMenuItem(
+                      const DropdownMenuItem(
                         value: McpAuthType.oauth,
                         child: Text('OAuth 2.1'),
+                      ),
+                      DropdownMenuItem(
+                        value: McpAuthType.oauthLocalhost,
+                        enabled: localhostOAuthCallbackSupported,
+                        child: Text(
+                          localhostOAuthCallbackSupported
+                              ? 'OAuth 2.1 (localhost)'
+                              : 'OAuth 2.1 (localhost; native app only)',
+                        ),
                       ),
                     ],
                     onChanged: (McpAuthType? value) {
                       if (value != null) setState(() => _authType = value);
                     },
                   ),
-                  if (_authType == McpAuthType.oauth) ...<Widget>[
+                  if (_authType.isOAuth) ...<Widget>[
+                    if (_authType.usesLocalhostRedirect) ...<Widget>[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'The native app temporarily listens on localhost for '
+                        'the browser redirect, then securely hands it to the '
+                        'daemon.',
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     TextFormField(
                       key: const Key('mcp-oauth-client-id'),
@@ -804,7 +879,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                 Text(
                   stdio
                       ? 'Environment variables'
-                      : _authType == McpAuthType.oauth
+                      : _authType.isOAuth
                       ? 'Additional HTTP headers'
                       : 'HTTP headers',
                 ),
@@ -902,3 +977,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
     );
   }
 }
+
+String _oauthErrorMessage(Object error) => switch (error) {
+  final DaemonError value => value.message,
+  _ => error.toString(),
+};

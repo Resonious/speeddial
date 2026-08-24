@@ -354,7 +354,7 @@ class DaemonStore {
     for (final Row row in rows) {
       final McpServerProfile profile = _mcpProfileFromRow(row);
       final Map<String, String> secrets = _mcpSecrets(profile.id);
-      if (profile.authType == McpAuthType.oauth) {
+      if (profile.authType.isOAuth) {
         final StoredMcpOAuth? oauth = getMcpOAuth(profile.id);
         if (profile.oauthStatus != McpOAuthStatus.authorized ||
             oauth?.accessToken == null) {
@@ -470,9 +470,7 @@ class DaemonStore {
     final String id = row['id'] as String;
     final List<String> secretNames = _mcpSecrets(id).keys.toList()..sort();
     final McpAuthType authType = McpAuthType.parse(row['auth_type'] as String);
-    final StoredMcpOAuth? oauth = authType == McpAuthType.oauth
-        ? getMcpOAuth(id)
-        : null;
+    final StoredMcpOAuth? oauth = authType.isOAuth ? getMcpOAuth(id) : null;
     McpOAuthStatus status = oauth?.status ?? McpOAuthStatus.notConnected;
     final DateTime? expiresAt = oauth?.expiresAt;
     if (status == McpOAuthStatus.authorized &&
