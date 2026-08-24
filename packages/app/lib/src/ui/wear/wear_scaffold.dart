@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 /// A constraint-driven page frame for watch-sized square and round windows.
 ///
@@ -147,12 +148,10 @@ class WearEmptyState extends StatelessWidget {
 }
 
 String wearErrorText(Object error) {
+  if (error is DaemonError) return error.message;
   if (error is PlatformException) {
     final String? message = error.message?.trim();
     return message == null || message.isEmpty ? error.code : message;
   }
-  final String text = error.toString();
-  return text.startsWith('DaemonError: ')
-      ? text.substring('DaemonError: '.length)
-      : text;
+  return error.toString();
 }

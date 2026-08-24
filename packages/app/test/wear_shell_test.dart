@@ -136,6 +136,10 @@ void main() {
       ),
       'TLS handshake failed',
     );
+    expect(
+      wearErrorText(const DaemonConnectionError('phone proxy channel closed')),
+      'phone proxy channel closed',
+    );
   });
 
   testWidgets('fits a round watch flow and sends to an existing session', (

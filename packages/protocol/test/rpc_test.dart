@@ -246,6 +246,38 @@ void main() {
       await p.bToA.close();
     });
 
+    test('close preserves a transport-specific reason', () async {
+      final p = pair();
+      p.b.registerHandler('hang', (_) => Completer<Object?>().future);
+      final pending = p.a.call('hang');
+      const error = DaemonConnectionError('phone proxy channel closed');
+      final done = expectLater(
+        pending,
+        throwsA(
+          isA<DaemonConnectionError>().having(
+            (e) => e.message,
+            'message',
+            error.message,
+          ),
+        ),
+      );
+      await p.a.close(error);
+      await done;
+      await expectLater(
+        p.a.call('anything'),
+        throwsA(
+          isA<DaemonConnectionError>().having(
+            (e) => e.message,
+            'message',
+            error.message,
+          ),
+        ),
+      );
+      await p.b.close();
+      await p.aToB.close();
+      await p.bToA.close();
+    });
+
     test('call after close fails immediately with peer-closed', () async {
       final p = pair();
       await p.a.close();

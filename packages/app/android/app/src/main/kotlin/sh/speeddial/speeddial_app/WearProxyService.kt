@@ -34,6 +34,8 @@ class WearProxyService : WearableListenerService() {
     private val sessions = ConcurrentHashMap<ChannelClient.Channel, ProxySession>()
     private lateinit var channelClient: ChannelClient
     private lateinit var webSocketClient: OkHttpClient
+    @Volatile
+    private var foregroundFailure: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -72,6 +74,7 @@ class WearProxyService : WearableListenerService() {
             // Android-version-specific foreground restriction cannot crash
             // the phone process and tear down that channel.
             Log.w(LOG_TAG, "Could not promote watch proxy service", error)
+            foregroundFailure = error.message ?: error.javaClass.simpleName
             stopSelf(startId)
         }
         return START_NOT_STICKY
@@ -86,7 +89,10 @@ class WearProxyService : WearableListenerService() {
     }
 
     override fun onDestroy() {
-        for (session in sessions.values) session.finish(sendTerminal = false)
+        val error = foregroundFailure?.let {
+            "Phone could not keep the watch proxy running: $it"
+        } ?: "Phone watch proxy service stopped"
+        for (session in sessions.values) session.finish(error)
         sessions.clear()
         executor.shutdownNow()
         webSocketClient.dispatcher.executorService.shutdown()
@@ -107,6 +113,7 @@ class WearProxyService : WearableListenerService() {
             // phone app is in the background. The Data Layer listener remains
             // bound for the active channel, so continue without promotion.
             Log.w(LOG_TAG, "Could not start watch proxy foreground service", error)
+            foregroundFailure = error.message ?: error.javaClass.simpleName
         }
     }
 
@@ -208,11 +215,14 @@ class WearProxyService : WearableListenerService() {
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            finish(error = null, terminalType = TYPE_CLOSED)
+            val detail = reason.ifBlank { "no reason" }
+            finish("Daemon WebSocket closed ($code: $detail)")
         }
 
-        override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
-            finish(error.message ?: "Daemon WebSocket failed")
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            val detail = t.message ?: t.javaClass.simpleName
+            val http = response?.let { "HTTP ${it.code} ${it.message}; " } ?: ""
+            finish("Daemon WebSocket failed: $http$detail")
         }
 
         private fun writeRecord(type: Int, payload: String) {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -294,13 +295,16 @@ class WsDaemonClient implements DaemonClient {
           }
         }
       },
-      onError: (Object _) {
+      onError: (Object error) {
+        _handleSocketClosed(
+          channel,
+          error: DaemonConnectionError(_transportErrorText(error)),
+        );
         unawaited(incoming.close());
-        _handleSocketClosed();
       },
       onDone: () {
+        _handleSocketClosed(channel);
         unawaited(incoming.close());
-        _handleSocketClosed();
       },
     );
   }
@@ -308,15 +312,27 @@ class WsDaemonClient implements DaemonClient {
   /// The socket ended or errored: unblock pending calls and schedule a
   /// reconnect. During an in-flight [connect]/[reconnect] the establish flow
   /// itself disposes of the failure, so it does nothing here.
-  void _handleSocketClosed() {
-    if (_disposed) return;
+  void _handleSocketClosed(
+    DaemonFrameChannel source, {
+    DaemonConnectionError error = const DaemonConnectionError('peer closed'),
+  }) {
+    if (_disposed || !identical(_channel, source)) return;
     _channel = null;
     _socketReady = false;
-    unawaited(_peer?.close());
+    unawaited(_peer?.close(error));
     if (_establishing) return;
     _resyncNeeded = true;
     connState.value = DaemonConnectionState.reconnecting;
     _scheduleReconnect();
+  }
+
+  static String _transportErrorText(Object error) {
+    if (error is PlatformException) {
+      final String? message = error.message?.trim();
+      return message == null || message.isEmpty ? error.code : message;
+    }
+    if (error is DaemonError) return error.message;
+    return error.toString();
   }
 
   /// Arms the exponential-backoff retry timer. base * 2^n, capped at 15s.

@@ -1,6 +1,8 @@
 import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/ws_daemon_client.dart';
 import 'package:speeddial_app/src/companion/phone_proxy_channel.dart';
@@ -114,5 +116,50 @@ void main() {
       'error': 'Tailscale is unavailable',
     });
     await errorExpectation;
+  });
+
+  test('preserves a phone close reason through a pending RPC call', () async {
+    String? connectionId;
+    messenger.setMockMethodCallHandler(platformChannel, (
+      MethodCall call,
+    ) async {
+      final Map<Object?, Object?> args =
+          call.arguments! as Map<Object?, Object?>;
+      switch (call.method) {
+        case 'openProxy':
+          connectionId = args['id']! as String;
+        case 'sendProxyFrame':
+          Future<void>.microtask(() async {
+            await sendNativeMethod('proxyClosed', <String, Object?>{
+              'id': connectionId,
+              'error': 'Daemon WebSocket closed (1001: going away)',
+            });
+          });
+        case 'closeProxy':
+          break;
+      }
+      return null;
+    });
+    final PhoneProxyChannelFactory proxy = PhoneProxyChannelFactory(
+      channel: platformChannel,
+    );
+    final WsDaemonClient client = WsDaemonClient(
+      url: 'wss://daemon.example/ws',
+      token: 'secret',
+      channelFactory: proxy.connect,
+    );
+
+    await expectLater(
+      client.connect(),
+      throwsA(
+        isA<DaemonConnectionError>().having(
+          (DaemonConnectionError error) => error.message,
+          'message',
+          'Daemon WebSocket closed (1001: going away)',
+        ),
+      ),
+    );
+    await client.dispose();
+    await proxy.dispose();
   });
 }

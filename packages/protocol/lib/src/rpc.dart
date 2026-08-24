@@ -51,6 +51,9 @@ class RpcPeer {
   late final StreamSubscription<Object?> _incomingSub;
   int _nextId = 1;
   bool _closed = false;
+  DaemonConnectionError _closeError = const DaemonConnectionError(
+    'peer closed',
+  );
   Future<void>? _closedResult;
 
   /// Inbound notifications that have no registered handler. Emits done after
@@ -63,7 +66,7 @@ class RpcPeer {
   /// Ids are incrementing ints starting at 1.
   Future<Object?> call(String method, [Map<String, Object?> params = const {}]) {
     if (_closed) {
-      return Future<Object?>.error(const DaemonConnectionError('peer closed'));
+      return Future<Object?>.error(_closeError);
     }
     final id = _nextId++;
     final completer = Completer<Object?>();
@@ -100,20 +103,23 @@ class RpcPeer {
     _handlers[method] = handler;
   }
 
-  /// Completes all pending calls with
-  /// `DaemonConnectionError(-32603, 'peer closed')` and closes the
-  /// notifications stream. Idempotent.
+  /// Completes all pending calls with [error] and closes the notifications
+  /// stream. The default remains
+  /// `DaemonConnectionError(-32603, 'peer closed')`. Idempotent.
   ///
   /// Returns immediately: it never awaits the incoming stream (whose source
   /// may stay open indefinitely) or any other external event. The same
   /// completed future is returned on every subsequent call.
-  Future<void> close() {
+  Future<void> close([
+    DaemonConnectionError error = const DaemonConnectionError('peer closed'),
+  ]) {
     if (_closed) return _closedResult!;
     _closed = true;
+    _closeError = error;
     final pending = _pending.values.toList(growable: false);
     _pending.clear();
     for (final completer in pending) {
-      completer.completeError(const DaemonConnectionError('peer closed'));
+      completer.completeError(error);
     }
     // Fire-and-forget teardown: do not await cancellation or closing, which
     // could never complete if the source stream stays open. `done` is still
