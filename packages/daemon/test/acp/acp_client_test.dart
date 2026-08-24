@@ -289,7 +289,7 @@ void main() {
   );
 
   test('authenticate and setMode round-trip', () async {
-    final client = spawnClient(targetPath: targetPath);
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
     addTearDown(client.dispose);
 
     await client.initialized;
@@ -297,6 +297,29 @@ void main() {
     final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
     expect(sessionId, 's1');
     await client.setMode(sessionId, 'plan');
+    expect(File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(), 'plan');
+
+    // OMP calls its writable ACP mode `default`, while SpeedDial's public
+    // protocol calls it `build`.
+    await client.setMode(sessionId, 'build');
+    expect(
+      File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(),
+      'default',
+    );
+  });
+
+  test('setMode preserves an agent-advertised build mode id', () async {
+    File(p.join(tempDir.path, 'agent.build_mode')).createSync();
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    await client.initialized;
+    final sessionId = (await client.newSession(cwd: tempDir.path)).sessionId;
+    await client.setMode(sessionId, 'build');
+    expect(
+      File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(),
+      'build',
+    );
   });
 
   test('loadSession resumes a previously created session', () async {

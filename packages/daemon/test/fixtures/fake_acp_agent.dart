@@ -249,13 +249,7 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
       _captureMcpServers(params(message));
       await _sendResponse(id!, <String, Object?>{
         'sessionId': sessionId,
-        'modes': <String, Object?>{
-          'currentModeId': 'build',
-          'availableModes': <Object?>[
-            <String, Object?>{'id': 'build', 'name': 'Build'},
-            <String, Object?>{'id': 'plan', 'name': 'Plan'},
-          ],
-        },
+        'modes': _modes(),
         'configOptions': _configOptions(),
       });
     case 'session/load':
@@ -267,6 +261,7 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
         await _sendError(id!, -32000, 'Unknown session');
       } else {
         await _sendResponse(id!, <String, Object?>{
+          'modes': _modes(),
           'configOptions': _configOptions(),
         });
       }
@@ -311,7 +306,21 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
         await _sendError(id!, -32602, 'Unknown config option or value');
       }
     case 'session/set_mode':
-      await _sendResponse(id!, const <String, Object?>{});
+      final modeId = params(message)['modeId'];
+      final availableModeIds = _modes()['availableModes'] as List<Object?>;
+      if (modeId is String &&
+          availableModeIds.any(
+            (rawMode) => rawMode is Map && rawMode['id'] == modeId,
+          )) {
+        final cwd = Directory.current.path;
+        if (!Directory(p.join(cwd, '.git')).existsSync() &&
+            !File(p.join(cwd, '.git')).existsSync()) {
+          File(p.join(cwd, 'agent.mode')).writeAsStringSync(modeId);
+        }
+        await _sendResponse(id!, const <String, Object?>{});
+      } else {
+        await _sendError(id!, -32603, 'Unsupported ACP mode: $modeId');
+      }
     case 'session/prompt':
       final promptParams = params(message);
       final cwd = Directory.current.path;
@@ -341,6 +350,22 @@ void _captureMcpServers(Map<String, Object?> requestParams) {
   if (!File(p.join(cwd, 'agent.capture_mcp')).existsSync()) return;
   File(p.join(cwd, 'agent.mcp_servers'))
       .writeAsStringSync(jsonEncode(requestParams['mcpServers']));
+}
+
+/// ACP mode ids are agent-defined. OMP advertises `default` for its writable
+/// mode; a marker lets tests also cover agents that use SpeedDial's `build`.
+Map<String, Object?> _modes() {
+  final writableModeId =
+      File('${Directory.current.path}/agent.build_mode').existsSync()
+      ? 'build'
+      : 'default';
+  return <String, Object?>{
+    'currentModeId': writableModeId,
+    'availableModes': <Object?>[
+      <String, Object?>{'id': writableModeId, 'name': 'Build'},
+      <String, Object?>{'id': 'plan', 'name': 'Plan'},
+    ],
+  };
 }
 
 /// The config options advertised by `session/new`, `session/load`, and

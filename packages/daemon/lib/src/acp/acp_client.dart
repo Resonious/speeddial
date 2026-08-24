@@ -111,6 +111,7 @@ class AcpClient implements AgentClient {
       <Object, _PendingPermission>{};
   final Map<String, StreamController<AcpSessionUpdate>> _sessionStreams =
       <String, StreamController<AcpSessionUpdate>>{};
+  final Map<String, Set<String>> _sessionModeIds = <String, Set<String>>{};
   final StreamController<String> _stderrController =
       StreamController<String>.broadcast();
 
@@ -179,6 +180,7 @@ class AcpClient implements AgentClient {
     }
     _pendingRequests.clear();
     _pendingPermissions.clear();
+    _sessionModeIds.clear();
     for (final controller in _sessionStreams.values) {
       if (!controller.isClosed) controller.close();
     }
@@ -454,6 +456,7 @@ class AcpClient implements AgentClient {
     if (sessionId is! String || sessionId.isEmpty) {
       throw const FormatException('session/new response missing sessionId');
     }
+    _rememberSessionModeIds(sessionId, result);
     return (
       sessionId: sessionId,
       configOptions: AcpConfigOption.listFrom(result['configOptions']),
@@ -480,6 +483,7 @@ class AcpClient implements AgentClient {
       'cwd': cwd,
       'mcpServers': mcpServers,
     });
+    _rememberSessionModeIds(sessionId, result);
     return AcpConfigOption.listFrom(result['configOptions']);
   }
 
@@ -559,10 +563,58 @@ class AcpClient implements AgentClient {
   /// Switches the session to the given mode id.
   @override
   Future<void> setMode(String sessionId, String modeId) async {
+    final Set<String>? advertisedModeIds = _sessionModeIds[sessionId];
+    final String agentModeId =
+        modeId == 'build' &&
+            advertisedModeIds != null &&
+            !advertisedModeIds.contains('build') &&
+            advertisedModeIds.contains('default')
+        ? 'default'
+        : modeId;
     await _request('session/set_mode', <String, Object?>{
       'sessionId': sessionId,
-      'modeId': modeId,
+      'modeId': agentModeId,
     });
+  }
+
+  /// Records the agent-defined mode ids advertised by `session/new` or
+  /// `session/load`. SpeedDial calls its writable mode `build`, while agents
+  /// such as OMP call the same mode `default`; [setMode] translates only when
+  /// the agent explicitly advertises that vocabulary.
+  void _rememberSessionModeIds(String sessionId, Map<String, Object?> result) {
+    final modeIds = <String>{};
+    final rawModes = result['modes'];
+    if (rawModes is Map) {
+      final rawAvailableModes = rawModes['availableModes'];
+      if (rawAvailableModes is List) {
+        for (final rawMode in rawAvailableModes) {
+          if (rawMode is! Map) continue;
+          final id = rawMode['id'];
+          if (id is String && id.isNotEmpty) modeIds.add(id);
+        }
+      }
+    }
+
+    // Some ACP agents expose modes only as a generic config option. Accept
+    // that equivalent shape so resumed sessions receive the same mapping.
+    final rawConfigOptions = result['configOptions'];
+    if (rawConfigOptions is List) {
+      for (final rawOption in rawConfigOptions) {
+        if (rawOption is! Map ||
+            (rawOption['category'] != 'mode' && rawOption['id'] != 'mode')) {
+          continue;
+        }
+        final rawOptions = rawOption['options'];
+        if (rawOptions is! List) continue;
+        for (final rawValue in rawOptions) {
+          if (rawValue is! Map) continue;
+          final value = rawValue['value'];
+          if (value is String && value.isNotEmpty) modeIds.add(value);
+        }
+      }
+    }
+
+    if (modeIds.isNotEmpty) _sessionModeIds[sessionId] = modeIds;
   }
 
   /// Sends a request and awaits its response.
@@ -671,6 +723,7 @@ class AcpClient implements AgentClient {
     }
     _pendingRequests.clear();
     _pendingPermissions.clear();
+    _sessionModeIds.clear();
     for (final controller in _sessionStreams.values) {
       if (!controller.isClosed) controller.close();
     }
