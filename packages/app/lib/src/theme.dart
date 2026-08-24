@@ -142,8 +142,8 @@ const TextStyle _monoBase = TextStyle(
 /// Dark-first Material 3 theme: near-black GitHub-style surfaces, subtle
 /// hairline borders, round-8 cards, compact density, blue accent.
 ThemeData buildSpeedDialTheme() {
-  const Color surface = Color(0xFF0D1117);
-  const Color panel = Color(0xFF161B22);
+  const Color surface = Color(0xFF000000);
+  const Color panel = Color(0xFF0D1117);
   const Color card = Color(0xFF21262D);
   const Color raised = Color(0xFF2D333B);
   const Color border = Color(0xFF30363D);
@@ -156,7 +156,7 @@ ThemeData buildSpeedDialTheme() {
     surface: surface,
     onSurface: fg,
     onSurfaceVariant: fgMuted,
-    surfaceContainerLowest: const Color(0xFF0A0D12),
+    surfaceContainerLowest: const Color(0xFF000000),
     surfaceContainerLow: surface,
     surfaceContainer: panel,
     surfaceContainerHigh: card,
