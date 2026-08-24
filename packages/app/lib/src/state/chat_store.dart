@@ -504,61 +504,86 @@ class ChatStore extends StoreBase {
     final DaemonClient client = _clientFor(daemonId);
     final List<_SessionBuffer> buffers = <_SessionBuffer>[
       for (final _SessionBuffer buffer in _buffers.values)
-        if (buffer.daemonId == daemonId && buffer.historyLoaded) buffer,
+        if (buffer.daemonId == daemonId &&
+            buffer.historyLoaded &&
+            !buffer.resyncing)
+          buffer,
     ];
     if (buffers.isEmpty) return;
     for (final _SessionBuffer buffer in buffers) {
       buffer.resyncing = true;
     }
-    // The timeline is stale for the duration of the refetch; notify so the
-    // catch-up surface shows immediately, not only when the backfill lands.
     _scheduleNotify();
+    for (final _SessionBuffer buffer in buffers) {
+      await _resyncBuffer(client, buffer, alreadyMarked: true);
+    }
+  }
+
+  Future<void> _resyncBuffer(
+    DaemonClient client,
+    _SessionBuffer buffer, {
+    bool alreadyMarked = false,
+  }) async {
+    if (!alreadyMarked) {
+      if (buffer.resyncing) return;
+      buffer.resyncing = true;
+      _scheduleNotify();
+    }
+    final int knownMaxSeq = buffer.maxSeq;
     try {
-      for (final _SessionBuffer buffer in buffers) {
-        try {
-          final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
-          int? beforeSeq;
-          while (true) {
-            final page = await client.history(
-              buffer.sessionId,
-              limit: _historyPageSize,
-              beforeSeq: beforeSeq,
-            );
-            pages.add(page.events);
-            if (page.events.isEmpty ||
-                page.events.first.seq == null ||
-                page.events.first.seq! <= buffer.maxSeq + 1 ||
-                !page.hasMore) {
-              break;
-            }
-            beforeSeq = page.events.first.seq;
-          }
-          for (final List<SessionEvent> page in pages.reversed) {
-            for (final SessionEvent event in page) {
-              _applyLive(buffer, event);
-            }
-          }
-          buffer.historyError = null;
-        } on Object {
-          // Live events still flow; the next resync (or reconnect) retries.
+      final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
+      int? beforeSeq;
+      while (true) {
+        final page = await client.history(
+          buffer.sessionId,
+          limit: _historyPageSize,
+          beforeSeq: beforeSeq,
+        );
+        pages.add(page.events);
+        if (page.events.isEmpty ||
+            page.events.first.seq == null ||
+            page.events.first.seq! <= knownMaxSeq + 1 ||
+            !page.hasMore) {
+          break;
         }
+        beforeSeq = page.events.first.seq;
       }
-    } finally {
-      for (final _SessionBuffer buffer in buffers) {
-        buffer.resyncing = false;
-        for (final SessionEvent event in buffer.pending) {
+      for (final List<SessionEvent> page in pages.reversed) {
+        for (final SessionEvent event in page) {
           _applyLive(buffer, event);
         }
-        buffer.pending.clear();
       }
+      buffer.historyError = null;
+    } on Object {
+      // Live events remain pending; the next reconnect or gap retries.
+    } finally {
+      buffer.resyncing = false;
+      final List<SessionEvent> pending = List<SessionEvent>.of(buffer.pending)
+        ..sort(
+          (SessionEvent a, SessionEvent b) =>
+              (a.seq ?? 0).compareTo(b.seq ?? 0),
+        );
+      buffer.pending.clear();
+      for (final SessionEvent event in pending) {
+        _onLiveEvent(buffer, event);
+      }
+      _scheduleNotify();
     }
-    _scheduleNotify();
   }
 
   void _onLiveEvent(_SessionBuffer buffer, SessionEvent event) {
+    final int? seq = event.seq;
     if (!buffer.historyLoaded || buffer.resyncing) {
-      // History is still in flight; keep the event and reconcile later.
       buffer.pending.add(event);
+      return;
+    }
+    if (seq != null && seq > buffer.maxSeq + 1) {
+      buffer.pending.add(event);
+      buffer.resyncing = true;
+      _scheduleNotify();
+      unawaited(
+        _resyncBuffer(_clientFor(buffer.daemonId), buffer, alreadyMarked: true),
+      );
       return;
     }
     _applyLive(buffer, event);

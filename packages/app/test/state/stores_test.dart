@@ -892,6 +892,49 @@ void main() {
       expect(app.chat.historyErrorFor('sess-1'), isNull);
     });
 
+    test(
+      'a live sequence gap backfills missed events before applying the tail',
+      () async {
+        final FakeDaemonClient waking = FakeDaemonClient(
+          eventDelay: const Duration(milliseconds: 1),
+        );
+        app.registerClient('waking', waking);
+        waking.seedHistory('sess-1', <SessionEvent>[
+          UserMessageEvent(text: 'before sleep 1'),
+          AgentMessageChunkEvent(text: 'before sleep 2'),
+        ]);
+        app.chat.watchSession('waking', 'sess-1');
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
+        expect(
+          app.chat.eventsFor('sess-1').map((SessionEvent e) => e.seq),
+          <int>[1, 2],
+        );
+
+        waking.seedHistory('sess-1', <SessionEvent>[
+          UserMessageEvent(text: 'missed 3'),
+          AgentMessageChunkEvent(text: 'missed 4'),
+        ]);
+        await waking.sendMessage('sess-1', 'live after wake');
+
+        await _waitUntil(
+          () => app.chat
+              .eventsFor('sess-1')
+              .any(
+                (SessionEvent event) =>
+                    event is UserMessageEvent && event.text == 'missed 3',
+              ),
+        );
+        final List<int> seqs = <int>[
+          for (final SessionEvent event in app.chat.eventsFor('sess-1'))
+            event.seq!,
+        ];
+        expect(seqs, orderedEquals(seqs.toSet().toList()..sort()));
+        expect(seqs, containsAllInOrder(<int>[1, 2, 3, 4, 5]));
+      },
+    );
+
     test('a resync refetches sessions, projects and watched history', () async {
       final _InstrumentedFake instrumented = _InstrumentedFake();
       app.registerClient('inst', instrumented);
