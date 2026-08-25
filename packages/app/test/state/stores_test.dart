@@ -334,6 +334,33 @@ void main() {
       );
     });
 
+    test(
+      'projects recent active sessions with daemon and done state',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.sessions.refresh('fake', projectId: projectId);
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        final Session newest = await app.sessions.create(
+          'fake',
+          projectId: projectId,
+          providerId: 'omp',
+          title: 'Newest',
+        );
+
+        final recent = app.sessions.recentSessions(limit: 2);
+        expect(recent, hasLength(2));
+        expect(recent.first.daemonId, 'fake');
+        expect(recent.first.session.id, newest.id);
+        expect(recent.first.done, isFalse);
+
+        await app.sessions.archive('fake', newest.id, true);
+        expect(
+          app.sessions.recentSessions().map((item) => item.session.id),
+          isNot(contains(newest.id)),
+        );
+      },
+    );
+
     test('activity moves a session to the top through completion', () async {
       final String projectId = (await fake.listProjects()).single.id;
       await app.sessions.refresh('fake', projectId: projectId);
@@ -379,6 +406,13 @@ void main() {
       await _waitUntil(() => app.sessions.isDone('fake', 'sess-1'));
       expect(app.sessions.byId('sess-1')?.status, SessionStatus.idle);
       expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
+      expect(
+        app.sessions
+            .recentSessions()
+            .singleWhere((item) => item.session.id == 'sess-1')
+            .done,
+        isTrue,
+      );
 
       app.selection.selectedSessionId = 'sess-1';
       expect(app.sessions.isDone('fake', 'sess-1'), isFalse);

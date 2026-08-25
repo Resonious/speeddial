@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/companion/companion_endpoint_sync.dart';
 import 'package:speeddial_app/src/scope.dart';
 
@@ -42,10 +43,16 @@ void main() {
           return payload;
         });
 
+    final FakeDaemonClient fake = FakeDaemonClient();
     final CompanionEndpointSync sync = CompanionEndpointSync(channel: channel);
+    final AppData data = AppData(
+      connections: connections,
+      clientFor: (String _) => fake,
+    );
     addTearDown(sync.dispose);
-    addTearDown(connections.dispose);
-    await sync.startWatch(connections);
+    addTearDown(data.dispose);
+    addTearDown(fake.dispose);
+    await sync.startWatch(connections, data.sessions);
 
     expect(connections.endpoints, hasLength(1));
     expect(connections.endpoints.single.id, 'phone');
@@ -59,12 +66,18 @@ void main() {
           calls.add(call);
           return null;
         });
+    final FakeDaemonClient fake = FakeDaemonClient();
     final ConnectionsStore connections = ConnectionsStore();
+    final AppData data = AppData(
+      connections: connections,
+      clientFor: (String _) => fake,
+    );
     final CompanionEndpointSync sync = CompanionEndpointSync(channel: channel);
     addTearDown(sync.dispose);
-    addTearDown(connections.dispose);
+    addTearDown(data.dispose);
+    addTearDown(fake.dispose);
 
-    await sync.startPhone(connections);
+    await sync.startPhone(connections, data.sessions);
     await connections.addEndpoint(
       id: 'embedded',
       name: 'This computer',
@@ -79,13 +92,33 @@ void main() {
       url: 'daemon.example:7331',
       token: 'token',
     );
+    await data.sessions.refresh('remote');
     await Future<void>.delayed(Duration.zero);
 
+    final MethodCall endpointCall = calls.lastWhere(
+      (MethodCall call) => call.method == 'publishEndpoints',
+    );
     final Map<Object?, Object?> arguments =
-        calls.last.arguments! as Map<Object?, Object?>;
+        endpointCall.arguments! as Map<Object?, Object?>;
     final List<Object?> payload =
         jsonDecode(arguments['payload']! as String) as List<Object?>;
     expect(payload, hasLength(1));
     expect((payload.single! as Map<String, Object?>)['id'], 'remote');
+
+    final MethodCall sessionCall = calls.lastWhere(
+      (MethodCall call) => call.method == 'publishSessions',
+    );
+    final Map<Object?, Object?> sessionArguments =
+        sessionCall.arguments! as Map<Object?, Object?>;
+    final Map<String, Object?> sessionPayload = jsonDecode(
+      sessionArguments['payload']! as String,
+    ) as Map<String, Object?>;
+    expect(sessionPayload['version'], 1);
+    final List<Object?> sessions = sessionPayload['sessions']! as List<Object?>;
+    expect(sessions, hasLength(2));
+    expect(
+      (sessions.first! as Map<String, Object?>).keys,
+      containsAll(<String>['daemonId', 'sessionId', 'status', 'done']),
+    );
   });
 }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="recent_sessions_tile_label">Recent SpeedDial sessions</string>
+    <string name="recent_sessions_tile_description">Shows the three most recently active sessions</string>
+    <string name="session_counts_complication_label">SpeedDial session counts</string>
+    <string name="session_counts_complication_description">Shows in-progress and newly completed session counts</string>
+</resources>

@@ -32,6 +32,15 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
         companionChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "getEndpoints" -> readEndpoints(result)
+                "cacheSessions" -> {
+                    val payload = call.arguments as? String
+                    if (payload == null) {
+                        result.error("invalid_arguments", "Missing session payload", null)
+                    } else {
+                        SessionSnapshotStore.mergeFromWatch(this, payload)
+                        result.success(null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

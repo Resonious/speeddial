@@ -23,10 +23,6 @@ Future<void> main(List<String> args) async {
   } else {
     final ConnectionsStore connections = ConnectionsStore();
     await connections.init();
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      companionSync = CompanionEndpointSync();
-      await companionSync.startPhone(connections);
-    }
     final EmbeddedDaemonStore embedded = EmbeddedDaemonStore();
     await embedded.init();
     data = AppData(
@@ -34,6 +30,10 @@ Future<void> main(List<String> args) async {
       selection: SelectionStore(),
       embeddedDaemon: embedded,
     );
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      companionSync = CompanionEndpointSync();
+      await companionSync.startPhone(connections, data.sessions);
+    }
     // Desktop builds start an in-process daemon for an out-of-the-box
     // experience; web/mobile skip this (unsupported) and rely on the user
     // adding a remote daemon. The embedded endpoint is non-persistent: its
@@ -68,10 +68,25 @@ Future<void> main(List<String> args) async {
     }
     // Connect every saved endpoint; failures land in their connection
     // statuses instead of blocking startup.
-    unawaited(data.connectAll());
+    unawaited(
+      companionSync == null
+          ? data.connectAll()
+          : _connectAndRefreshSessions(data),
+    );
   }
   await data.settings.init();
   runApp(SpeedDialApp(data: data, companionSync: companionSync));
+}
+
+Future<void> _connectAndRefreshSessions(AppData data) async {
+  await data.connectAll();
+  for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    try {
+      await data.sessions.refresh(endpoint.id);
+    } on Object catch (error) {
+      debugPrint('Initial session refresh failed for ${endpoint.id}: $error');
+    }
+  }
 }
 
 class SpeedDialApp extends StatefulWidget {

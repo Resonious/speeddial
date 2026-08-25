@@ -6,6 +6,8 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../api/daemon_client.dart';
 import 'store_base.dart';
 
+typedef RecentSession = ({String daemonId, Session session, bool done});
+
 /// Caches sessions bucketed by project and keyed by id.
 ///
 /// Mutating methods ([create], [fork], [rename], [archive], [delete],
@@ -113,6 +115,34 @@ class SessionsStore extends StoreBase {
 
   bool isDone(String daemonId, String sessionId) =>
       _unseenCompleted.contains(_scopedKey(daemonId, sessionId));
+
+  /// Active sessions across every daemon, newest activity first.
+  ///
+  /// This is the compact global projection used by Wear OS surfaces. It
+  /// deliberately carries the daemon id because protocol ids are only unique
+  /// within one daemon, and [done] matches the unread-completion badge shown by
+  /// the regular session list.
+  List<RecentSession> recentSessions({int? limit, Set<String>? daemonIds}) {
+    assert(limit == null || limit >= 0);
+    final List<RecentSession> sessions =
+        <RecentSession>[
+          for (final MapEntry<String, Session> entry in _sessionsById.entries)
+            if (!entry.value.archived &&
+                (daemonIds == null || daemonIds.contains(_daemonOf(entry.key))))
+              (
+                daemonId: _daemonOf(entry.key),
+                session: entry.value,
+                done: _unseenCompleted.contains(entry.key),
+              ),
+        ]..sort((RecentSession a, RecentSession b) {
+          final int activity = _compareActivity(a.session, b.session);
+          return activity != 0 ? activity : a.daemonId.compareTo(b.daemonId);
+        });
+    if (limit == null || sessions.length <= limit) {
+      return List<RecentSession>.unmodifiable(sessions);
+    }
+    return List<RecentSession>.unmodifiable(sessions.take(limit));
+  }
 
   /// Refetches sessions (including archived ones so the store stays the
   /// complete picture; panes filter what they show).

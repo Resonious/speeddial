@@ -8,7 +8,6 @@ Future<void> main() async {
   final ConnectionsStore connections = ConnectionsStore();
   await connections.init();
   final CompanionEndpointSync companionSync = CompanionEndpointSync();
-  await companionSync.startWatch(connections);
   final PhoneProxyChannelFactory phoneProxy = PhoneProxyChannelFactory();
 
   final AppData data = AppData(
@@ -19,6 +18,7 @@ Future<void> main() async {
     chatHistoryPageSize: kWearHistoryPageSize,
     chatRetainedSessionLimit: kWearRetainedSessionLimit,
   );
+  await companionSync.startWatch(connections, data.sessions);
   await data.settings.init();
   if (connections.endpoints.length == 1) {
     data.selection.selectedDaemonId = connections.endpoints.single.id;

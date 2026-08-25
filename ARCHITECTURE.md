@@ -265,6 +265,16 @@ persistent daemon endpoint snapshot at `/speeddial/endpoints`; the watch consume
 persists it locally, and removes stale watch endpoints when the phone removes them. Embedded desktop
 endpoints are never synchronized.
 
+The phone also publishes a compact, activity-sorted session snapshot at `/speeddial/sessions`.
+Native watch storage keeps that snapshot available when Flutter is not running and merges live
+session changes observed by the open watch app. `RecentSessionsTileService` renders the three newest
+active sessions in a circular-safe Tile. `SessionCountsComplicationService` exposes short- and
+long-text count fallbacks plus weighted elements for running/waiting-for-approval sessions and
+unseen completed turns. The weighted elements use blue for in-progress and green for done; each
+watch face controls whether that split appears as a bar, arc, or another supported layout. Tile
+updates are requested whenever the snapshot changes; complication push updates are limited to once
+per five minutes and backed by the platform's five-minute periodic refresh.
+
 The watch opens a bidirectional Wear Data Layer channel at `/speeddial/proxy/v1` for each daemon
 connection. A foreground `WearableListenerService` on the paired phone opens the actual WebSocket
 and forwards its text frames over that channel. Consequently daemon traffic follows the phone's

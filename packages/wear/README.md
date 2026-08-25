@@ -38,3 +38,17 @@ Phone/watch proxy peers negotiate gzip without breaking staggered app updates;
 large frames stay in the original format until both sides advertise support.
 The watch requests compact 100-event history pages and keeps the three most
 recent chat buffers in memory so reopening a conversation is immediate.
+
+The watch also provides two optional system surfaces:
+
+- **Recent SpeedDial sessions** Tile — the three sessions with the newest
+  activity, with status color and a tap target that opens SpeedDial.
+- **SpeedDial session counts** complication — the number of sessions currently
+  running or waiting for approval, plus the number of unseen completed turns.
+  Compatible watch faces can render these as blue and green weighted elements;
+  short- and long-text formats remain available as fallbacks.
+
+Add the Tile from the watch's Tile carousel and select the complication from a
+compatible watch-face slot. Their last phone-synchronized snapshot remains
+available while the Flutter app is closed; the complication refresh cadence is
+limited to five minutes by Wear OS battery rules.

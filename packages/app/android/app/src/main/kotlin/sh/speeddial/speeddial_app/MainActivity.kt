@@ -14,14 +14,19 @@ class MainActivity : FlutterActivity() {
             CHANNEL_NAME,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "publishEndpoints" -> {
+                "publishEndpoints", "publishSessions" -> {
                     val payload = call.argument<String>("payload")
                     val revision = call.argument<Number>("revision")?.toLong()
                     if (payload == null || revision == null) {
-                        result.error("invalid_arguments", "Missing endpoint payload", null)
+                        result.error("invalid_arguments", "Missing companion payload", null)
                         return@setMethodCallHandler
                     }
-                    val request = PutDataMapRequest.create(ENDPOINTS_PATH).apply {
+                    val path = if (call.method == "publishEndpoints") {
+                        ENDPOINTS_PATH
+                    } else {
+                        SESSIONS_PATH
+                    }
+                    val request = PutDataMapRequest.create(path).apply {
                         dataMap.putString(PAYLOAD_KEY, payload)
                         dataMap.putLong(REVISION_KEY, revision)
                     }.asPutDataRequest().setUrgent()
@@ -39,6 +44,7 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL_NAME = "sh.speeddial/companion"
         private const val ENDPOINTS_PATH = "/speeddial/endpoints"
+        private const val SESSIONS_PATH = "/speeddial/sessions"
         private const val PAYLOAD_KEY = "payload"
         private const val REVISION_KEY = "revision"
     }
