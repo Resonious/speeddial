@@ -704,6 +704,34 @@ void main() {
     ]);
   });
 
+  test('listTranscriptEvents pages messages and errors only', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 'a'));
+    store.appendEvent('a', 1, UserMessageEvent(text: 'oldest question'));
+    store.appendEvent('a', 2, AgentThoughtChunkEvent(text: 'hidden thought'));
+    store.appendEvent('a', 3, AgentMessageChunkEvent(text: 'answer'));
+    store.appendEvent('a', 4, TurnCompleteEvent(stopReason: 'end_turn'));
+    store.appendEvent('a', 5, SessionErrorEvent(message: 'visible error'));
+
+    final first = store.listTranscriptEvents('a', limit: 2);
+    expect(first.hasMore, isTrue);
+    expect(first.events.map((SessionEvent event) => event.seq), <int>[3, 5]);
+    expect(first.events.first, isA<AgentMessageChunkEvent>());
+    expect(first.events.last, isA<SessionErrorEvent>());
+
+    final older = store.listTranscriptEvents('a', limit: 2, beforeSeq: 3);
+    expect(older.hasMore, isFalse);
+    expect(older.events, hasLength(1));
+    expect(
+      older.events.single,
+      isA<UserMessageEvent>().having(
+        (UserMessageEvent event) => event.text,
+        'text',
+        'oldest question',
+      ),
+    );
+  });
+
   test('listEvents replaces oversized rows with bounded placeholders', () {
     store.insertProject(project());
     store.insertSession(session(id: 'a'));

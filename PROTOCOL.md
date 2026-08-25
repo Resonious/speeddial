@@ -514,6 +514,12 @@ home described above. It exposes:
   Archived sessions are omitted by default; `includeArchived: true` includes them and every result
   carries its `archived` state. Results contain session/project metadata and a matching excerpt.
   Default limit 20, maximum 100; an empty query returns recent sessions.
+- `read_session_transcript {sessionId: string, limit?: int, beforeSeq?: int}` — browses a
+  session's transcript as chronological `userMessage`, `agentMessageChunk`, and `sessionError`
+  events. Thoughts, tool calls, plans, usage, and lifecycle events are omitted. The newest page is
+  returned by default; pass `nextBeforeSeq` from a response as `beforeSeq` to read the previous
+  page. Default limit 50, maximum 200. The response also identifies the session and its archive
+  state. Archived sessions remain readable.
 - `archive_session {sessionId: string}` — archives another session so it is hidden from default
   session lists and `search_sessions`. The target can be restored through the regular SpeedDial
   API or CLI; the calling session cannot archive itself.
@@ -531,6 +537,7 @@ receives that session-bound secret. It may then call
 `internal.mcpListTools {}` → `{tools: Tool[], warnings: string[]}`,
 `internal.mcpCallTool {name: string, arguments: object}` → the upstream MCP call result,
 `internal.mcpSearchProjects`, `internal.mcpSearchSessions`,
+`internal.mcpReadSessionTranscript {sessionId: string, limit?: int, beforeSeq?: int}`,
 `internal.mcpArchiveSession {sessionId: string, archived: boolean}`, and
 `internal.mcpDisplayImage`. It cannot call the public daemon API and receives no broadcasts. Public
 clients cannot use the internal methods without the MCP secret.

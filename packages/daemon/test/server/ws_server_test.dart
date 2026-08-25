@@ -1641,6 +1641,26 @@ void main() {
                 as Map)
             .cast<String, Object?>(),
       );
+      store.appendEvent(
+        other.id,
+        1,
+        UserMessageEvent(text: 'Original transcript question'),
+      );
+      store.appendEvent(
+        other.id,
+        2,
+        AgentThoughtChunkEvent(text: 'Private reasoning'),
+      );
+      store.appendEvent(
+        other.id,
+        3,
+        AgentMessageChunkEvent(text: 'Transcript answer'),
+      );
+      store.appendEvent(
+        other.id,
+        4,
+        SessionErrorEvent(message: 'Transcript warning'),
+      );
       final List<Object?> otherConfigs = jsonDecode(
         File(p.join(dir.path, 'agent.mcp_servers')).readAsStringSync(),
       ) as List<Object?>;
@@ -1701,6 +1721,37 @@ void main() {
       expect(matches, hasLength(1));
       expect((matches.single! as Map)['title'], 'Searchable release notes');
 
+      final Map<String, Object?> transcript = j(
+        await mcp.peer.call(
+          'internal.mcpReadSessionTranscript',
+          <String, Object?>{'sessionId': other.id, 'limit': 2},
+        ),
+      );
+      expect((transcript['session']! as Map)['title'], other.title);
+      expect(transcript['hasMore'], isTrue);
+      expect(transcript['nextBeforeSeq'], 3);
+      final List<Object?> transcriptEvents =
+          transcript['events']! as List<Object?>;
+      expect(
+        transcriptEvents.map((Object? event) => (event! as Map)['type']),
+        <String>['agentMessageChunk', 'sessionError'],
+      );
+      final Map<String, Object?> olderTranscript = j(
+        await mcp.peer.call(
+          'internal.mcpReadSessionTranscript',
+          <String, Object?>{
+            'sessionId': other.id,
+            'limit': 2,
+            'beforeSeq': transcript['nextBeforeSeq'],
+          },
+        ),
+      );
+      expect(olderTranscript['hasMore'], isFalse);
+      final List<Object?> olderEvents =
+          olderTranscript['events']! as List<Object?>;
+      expect(olderEvents, hasLength(1));
+      expect((olderEvents.single! as Map)['type'], 'userMessage');
+
       final Map<String, Object?> archiveResult = j(
         await mcp.peer.call('internal.mcpArchiveSession', <String, Object?>{
           'sessionId': other.id,
@@ -1729,6 +1780,14 @@ void main() {
           archivedSearch['sessions']! as List<Object?>;
       expect(archivedMatches, hasLength(1));
       expect((archivedMatches.single! as Map)['archived'], isTrue);
+      final Map<String, Object?> archivedTranscript = j(
+        await mcp.peer.call(
+          'internal.mcpReadSessionTranscript',
+          <String, Object?>{'sessionId': other.id, 'limit': 2},
+        ),
+      );
+      expect((archivedTranscript['session']! as Map)['archived'], isTrue);
+      expect(archivedTranscript['events'], hasLength(2));
 
       final Map<String, Object?> unarchiveResult = j(
         await mcp.peer.call('internal.mcpArchiveSession', <String, Object?>{
@@ -1870,7 +1929,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(5));
+        expect((listed['result']! as Map)['tools'], hasLength(6));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

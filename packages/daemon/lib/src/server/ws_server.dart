@@ -95,6 +95,7 @@ const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpCallTool',
   'internal.mcpSearchProjects',
   'internal.mcpSearchSessions',
+  'internal.mcpReadSessionTranscript',
   'internal.mcpArchiveSession',
   'internal.mcpDisplayImage',
 ];
@@ -465,6 +466,10 @@ class SpeedDialServer {
         'internal.mcpCallTool' => _mcpCallTool(client, params),
         'internal.mcpSearchProjects' => _mcpSearchProjects(client, params),
         'internal.mcpSearchSessions' => _mcpSearchSessions(client, params),
+        'internal.mcpReadSessionTranscript' => _mcpReadSessionTranscript(
+          client,
+          params,
+        ),
         'internal.mcpArchiveSession' => _mcpArchiveSession(client, params),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
         _ => throw DaemonError(
@@ -625,6 +630,53 @@ class SpeedDialServer {
         includeArchived: rawIncludeArchived as bool? ?? false,
         limit: limit,
       ),
+    };
+  }
+
+  Object? _mcpReadSessionTranscript(
+    _Client client,
+    Map<String, Object?> params,
+  ) {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final Session? session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final Object? rawLimit = params['limit'];
+    final int limit = rawLimit is int ? rawLimit : 50;
+    if (limit < 1 || limit > 200) {
+      throw DaemonError(_kErrInvalidParams, 'limit must be between 1 and 200');
+    }
+    final Object? rawBeforeSeq = params['beforeSeq'];
+    if (rawBeforeSeq != null && (rawBeforeSeq is! int || rawBeforeSeq < 1)) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'beforeSeq must be a positive integer',
+      );
+    }
+    final page = _store.listTranscriptEvents(
+      sessionId,
+      limit: limit,
+      beforeSeq: rawBeforeSeq as int?,
+    );
+    return <String, Object?>{
+      'session': <String, Object?>{
+        'id': session.id,
+        'projectId': session.projectId,
+        'providerId': session.providerId,
+        'title': session.title,
+        'status': session.status.wire,
+        'mode': session.mode.wire,
+        'archived': session.archived,
+        'updatedAt': session.updatedAt.toIso8601String(),
+      },
+      'events': page.events
+          .map((SessionEvent event) => event.toJson())
+          .toList(growable: false),
+      'hasMore': page.hasMore,
+      'nextBeforeSeq': page.hasMore && page.events.isNotEmpty
+          ? page.events.first.seq
+          : null,
     };
   }
 

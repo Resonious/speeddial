@@ -36,6 +36,22 @@ void main() {
               },
             ],
           },
+          'internal.mcpReadSessionTranscript' => <String, Object?>{
+            'session': <String, Object?>{
+              'id': params['sessionId'],
+              'title': 'Useful',
+              'archived': false,
+            },
+            'events': <Object?>[
+              <String, Object?>{
+                'type': 'userMessage',
+                'text': 'Earlier context',
+                'seq': 12,
+              },
+            ],
+            'hasMore': true,
+            'nextBeforeSeq': 12,
+          },
           'internal.mcpArchiveSession' => <String, Object?>{
             'session': <String, Object?>{
               'id': params['sessionId'],
@@ -104,6 +120,7 @@ void main() {
     expect(tools.map((Map<String, Object?> tool) => tool['name']), <String>[
       'search_projects',
       'search_sessions',
+      'read_session_transcript',
       'archive_session',
       'unarchive_session',
       'display_image',
@@ -156,6 +173,32 @@ void main() {
       'projectId': 'p1',
       'includeArchived': true,
       'limit': 7,
+    });
+  });
+
+  test('read_session_transcript forwards its pagination cursor', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'read_session_transcript',
+        'arguments': <String, Object?>{
+          'sessionId': 'other-session',
+          'limit': 25,
+          'beforeSeq': 40,
+        },
+      },
+    );
+    final Map<String, Object?> result = (response['result']! as Map)
+        .cast<String, Object?>();
+    expect(result['isError'], isFalse);
+    final List<Object?> content = result['content']! as List<Object?>;
+    expect((content.single! as Map)['text'], contains('Earlier context'));
+    expect(calls.single.method, 'internal.mcpReadSessionTranscript');
+    expect(calls.single.params, <String, Object?>{
+      'sessionId': 'other-session',
+      'limit': 25,
+      'beforeSeq': 40,
     });
   });
 

@@ -1092,6 +1092,49 @@ class DaemonStore {
     return (events: events, hasMore: hasMore);
   }
 
+  /// Message-oriented events of [sessionId] in ascending `seq` order.
+  ///
+  /// Uses the same newest-page / [beforeSeq] cursor semantics as [listEvents],
+  /// but omits thoughts, tool calls, plans, usage, and lifecycle events. This
+  /// keeps MCP transcript browsing bounded without exposing hidden reasoning
+  /// or verbose tool payloads.
+  ({List<SessionEvent> events, bool hasMore}) listTranscriptEvents(
+    String sessionId, {
+    int limit = 50,
+    int? beforeSeq,
+  }) {
+    final rows = _db.select(
+      'SELECT seq, timestamp, '
+      'CASE WHEN length(CAST(json AS BLOB)) > ? THEN NULL ELSE json END AS json, '
+      'length(CAST(json AS BLOB)) AS json_bytes FROM session_events '
+      'WHERE session_id = ? AND (? IS NULL OR seq < ?) '
+      r"AND json_extract(json, '$.type') IN "
+      "('userMessage', 'agentMessageChunk', 'sessionError') "
+      'ORDER BY seq DESC LIMIT ?',
+      [_maxHistoryEventBytes, sessionId, beforeSeq, beforeSeq, limit + 1],
+    );
+    final bool hasMore = rows.length > limit;
+    final kept = hasMore ? rows.sublist(0, limit) : rows;
+    final List<SessionEvent> events = kept.reversed
+        .map((row) {
+          final String? encoded = row['json'] as String?;
+          if (encoded != null) {
+            return SessionEvent.fromJson(
+              jsonDecode(encoded) as Map<String, Object?>,
+            );
+          }
+          final int bytes = row['json_bytes'] as int;
+          return SessionErrorEvent(
+            message:
+                'Oversized transcript event omitted (${_formatByteCount(bytes)}).',
+            seq: row['seq'] as int,
+            timestamp: _fromTs(row['timestamp'] as int),
+          );
+        })
+        .toList(growable: false);
+    return (events: events, hasMore: hasMore);
+  }
+
   void dispose() => _db.close();
 
   // -------------------------------------------------------------------------

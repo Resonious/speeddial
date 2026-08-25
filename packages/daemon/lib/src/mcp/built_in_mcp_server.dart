@@ -118,7 +118,7 @@ class BuiltInMcpServer {
         'title': 'SpeedDial',
         'version': '0.1.0',
       },
-      'instructions': 'Search other SpeedDial projects and sessions, archive or revive other sessions, or display an image in the user timeline.',
+      'instructions': 'Search other SpeedDial projects and sessions, browse session transcripts, archive or revive other sessions, or display an image in the user timeline.',
     };
   }
 
@@ -184,6 +184,7 @@ class BuiltInMcpServer {
       return switch (rawName) {
         'search_projects' => await _searchProjects(arguments),
         'search_sessions' => await _searchSessions(arguments),
+        'read_session_transcript' => await _readSessionTranscript(arguments),
         'archive_session' => await _setSessionArchived(arguments, true),
         'unarchive_session' => await _setSessionArchived(arguments, false),
         'display_image' => await _displayImage(arguments),
@@ -246,6 +247,34 @@ class BuiltInMcpServer {
         'projectId': ?projectId,
         'includeArchived': includeArchived,
         'limit': limit,
+      },
+    );
+    return _textResult(_pretty(result));
+  }
+
+  Future<Map<String, Object?>> _readSessionTranscript(
+    Map<String, Object?> arguments,
+  ) async {
+    final String? sessionId = _optionalString(arguments, 'sessionId');
+    if (sessionId == null) {
+      throw ArgumentError('sessionId is required');
+    }
+    final int limit = switch (arguments['limit']) {
+      final int value when value >= 1 && value <= 200 => value,
+      null => 50,
+      _ => throw ArgumentError('limit must be between 1 and 200'),
+    };
+    final int? beforeSeq = switch (arguments['beforeSeq']) {
+      final int value when value >= 1 => value,
+      null => null,
+      _ => throw ArgumentError('beforeSeq must be a positive integer'),
+    };
+    final Object? result = await _daemonCall(
+      'internal.mcpReadSessionTranscript',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'limit': limit,
+        'beforeSeq': ?beforeSeq,
       },
     );
     return _textResult(_pretty(result));
@@ -424,6 +453,38 @@ class BuiltInMcpServer {
         'additionalProperties': false,
       },
       'annotations': <String, Object?>{'readOnlyHint': true},
+    },
+    <String, Object?>{
+      'name': 'read_session_transcript',
+      'title': 'Read a SpeedDial session transcript',
+      'description': 'Browse a session transcript in chronological pages. Returns user messages, streamed assistant message chunks, and session errors; thoughts and tool payloads are omitted. Use nextBeforeSeq as beforeSeq to read the previous page.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'sessionId': <String, Object?>{
+            'type': 'string',
+            'description': 'The session id returned by search_sessions.',
+          },
+          'limit': <String, Object?>{
+            'type': 'integer',
+            'minimum': 1,
+            'maximum': 200,
+            'default': 50,
+            'description': 'Maximum transcript events to return.',
+          },
+          'beforeSeq': <String, Object?>{
+            'type': 'integer',
+            'minimum': 1,
+            'description': 'Return the page before this sequence number.',
+          },
+        },
+        'required': <String>['sessionId'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': true,
+        'openWorldHint': false,
+      },
     },
     <String, Object?>{
       'name': 'archive_session',
