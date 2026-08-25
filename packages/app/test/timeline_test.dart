@@ -142,6 +142,69 @@ void main() {
     });
   });
 
+  group('deriveTimelineItems tool calls', () {
+    testWidgets('keeps later calls when a provider reuses a tool id', (
+      WidgetTester tester,
+    ) async {
+      final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+        const AgentMessageChunkEvent(text: 'First check:'),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'reused-id',
+            title: 'First grep',
+            kind: 'search',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'reused-id',
+            title: 'First grep',
+            kind: 'search',
+            status: ToolCallStatus.completed,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+        const AgentMessageChunkEvent(text: 'Second check:'),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'reused-id',
+            title: 'Second grep',
+            kind: 'search',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'reused-id',
+            title: 'Second grep',
+            kind: 'search',
+            status: ToolCallStatus.completed,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+      ]);
+
+      expect(items.whereType<ToolCallTimelineItem>(), hasLength(2));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(body: Timeline(items: items)),
+        ),
+      );
+
+      expect(find.byType(ToolCallCard), findsNWidgets(2));
+      expect(find.text('First grep'), findsOneWidget);
+      expect(find.text('Second grep'), findsOneWidget);
+    });
+  });
+
   group('active action pulse', () {
     testWidgets('running tool call pulses and completed call is static', (
       WidgetTester tester,

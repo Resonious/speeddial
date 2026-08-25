@@ -106,7 +106,9 @@ class SessionErrorItem extends TimelineItem {
 /// Maps a session's raw event list to display items.
 ///
 /// Consecutive same-type chunk events merge into one item (their final merged
-/// text). Tool-call events replace the previous snapshot with the same id.
+/// text). Tool-call events replace the previous snapshot with the same id
+/// while that call is active. Some providers reuse an id for a later call;
+/// an active snapshot after a terminal one starts a new timeline item.
 /// Usage events are skipped here — usage is surfaced in the composer footer.
 ///
 /// When [running] is true (session mid-turn) and the last event is a thought
@@ -163,7 +165,13 @@ List<TimelineItem> deriveTimelineItems(
         flushMessage();
         flushThought();
         final int? existing = toolIndexes[e.toolCall.id];
-        if (existing != null) {
+        final bool reused =
+            existing != null &&
+            _isTerminalToolStatus(
+              (items[existing] as ToolCallTimelineItem).toolCall.status,
+            ) &&
+            _isActiveToolStatus(e.toolCall.status);
+        if (existing != null && !reused) {
           items[existing] = ToolCallTimelineItem(toolCall: e.toolCall);
         } else {
           toolIndexes[e.toolCall.id] = items.length;
@@ -213,6 +221,16 @@ List<TimelineItem> deriveTimelineItems(
   );
   return items;
 }
+
+bool _isActiveToolStatus(ToolCallStatus status) => switch (status) {
+  ToolCallStatus.pending || ToolCallStatus.running => true,
+  ToolCallStatus.completed || ToolCallStatus.failed => false,
+};
+
+bool _isTerminalToolStatus(ToolCallStatus status) => switch (status) {
+  ToolCallStatus.pending || ToolCallStatus.running => false,
+  ToolCallStatus.completed || ToolCallStatus.failed => true,
+};
 
 /// Virtualized, bottom-anchored timeline of a session's derived items.
 ///
