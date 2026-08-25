@@ -22,11 +22,15 @@ class WearSpeedDialApp extends StatefulWidget {
     required this.data,
     this.companionSync,
     this.phoneProxy,
+    this.initialLaunchTarget,
+    this.launchTargets,
   });
 
   final AppData data;
   final CompanionEndpointSync? companionSync;
   final PhoneProxyChannelFactory? phoneProxy;
+  final WearLaunchTarget? initialLaunchTarget;
+  final Stream<WearLaunchTarget>? launchTargets;
 
   @override
   State<WearSpeedDialApp> createState() => _WearSpeedDialAppState();
@@ -34,10 +38,47 @@ class WearSpeedDialApp extends StatefulWidget {
 
 class _WearSpeedDialAppState extends State<WearSpeedDialApp>
     with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<WearLaunchTarget>? _launchSubscription;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _launchSubscription = widget.launchTargets?.listen(_queueLaunchTarget);
+    final WearLaunchTarget? initialTarget = widget.initialLaunchTarget;
+    if (initialTarget != null) {
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+        _openLaunchTarget(initialTarget);
+      });
+    }
+  }
+
+  void _queueLaunchTarget(WearLaunchTarget target) {
+    if (!mounted) return;
+    if (_navigatorKey.currentState == null) {
+      WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+        _openLaunchTarget(target);
+      });
+      return;
+    }
+    _openLaunchTarget(target);
+  }
+
+  void _openLaunchTarget(WearLaunchTarget target) {
+    if (!mounted) return;
+    final NavigatorState? navigator = _navigatorKey.currentState;
+    if (navigator == null) return;
+    final Widget page = switch (target.destination) {
+      WearLaunchDestination.attention => WearAttentionPage(data: widget.data),
+      WearLaunchDestination.session => WearSessionLaunchPage(
+        data: widget.data,
+        target: target,
+      ),
+    };
+    navigator.push<void>(
+      MaterialPageRoute<void>(builder: (BuildContext context) => page),
+    );
   }
 
   @override
@@ -69,6 +110,7 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_launchSubscription?.cancel());
     widget.companionSync?.dispose();
     unawaited(widget.phoneProxy?.dispose());
     widget.data.dispose();
@@ -84,6 +126,7 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
         listenable: widget.data.settings,
         builder: (BuildContext context, Widget? _) {
           return MaterialApp(
+            navigatorKey: _navigatorKey,
             title: 'SpeedDial Wear',
             debugShowCheckedModeBanner: false,
             theme: _wearTheme(buildSpeedDialLightTheme()),

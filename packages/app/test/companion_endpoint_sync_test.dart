@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -57,6 +58,72 @@ void main() {
     expect(connections.endpoints, hasLength(1));
     expect(connections.endpoints.single.id, 'phone');
     expect(connections.endpoints.single.token, 'secret');
+  });
+
+  test('watch reads a cold-start Tile session target', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async {
+          return switch (call.method) {
+            'getEndpoints' => null,
+            'takeLaunchTarget' => <String, Object?>{
+              'wearDestination': 'session',
+              'daemonId': 'daemon-a',
+              'projectId': 'project-a',
+              'sessionId': 'session-a',
+            },
+            _ => null,
+          };
+        });
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData data = AppData(clientFor: (String _) => fake);
+    final CompanionEndpointSync sync = CompanionEndpointSync(channel: channel);
+    addTearDown(sync.dispose);
+    addTearDown(data.dispose);
+    addTearDown(fake.dispose);
+
+    await sync.startWatch(data.connections, data.sessions);
+    final WearLaunchTarget? target = await sync.takeLaunchTarget();
+
+    expect(target?.destination, WearLaunchDestination.session);
+    expect(target?.daemonId, 'daemon-a');
+    expect(target?.projectId, 'project-a');
+    expect(target?.sessionId, 'session-a');
+  });
+
+  test('watch forwards a warm complication target', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async => null);
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData data = AppData(clientFor: (String _) => fake);
+    final CompanionEndpointSync sync = CompanionEndpointSync(channel: channel);
+    addTearDown(sync.dispose);
+    addTearDown(data.dispose);
+    addTearDown(fake.dispose);
+    await sync.startWatch(data.connections, data.sessions);
+    final Future<WearLaunchTarget> received = sync.launchTargets.first;
+
+    const StandardMethodCodec codec = StandardMethodCodec();
+    final ByteData message = codec.encodeMethodCall(
+      const MethodCall('launchTarget', <String, Object?>{
+        'wearDestination': 'attention',
+      }),
+    );
+    final Completer<ByteData?> reply = Completer<ByteData?>();
+    await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .handlePlatformMessage(channel.name, message, reply.complete);
+    codec.decodeEnvelope((await reply.future)!);
+
+    expect((await received).destination, WearLaunchDestination.attention);
+  });
+
+  test('rejects incomplete native session targets', () {
+    expect(
+      WearLaunchTarget.tryParse(<String, Object?>{
+        'wearDestination': 'session',
+        'daemonId': 'daemon-a',
+      }),
+      isNull,
+    );
   });
 
   test('phone publishes changes and omits embedded endpoints', () async {

@@ -19,6 +19,8 @@ Future<void> main() async {
     chatRetainedSessionLimit: kWearRetainedSessionLimit,
   );
   await companionSync.startWatch(connections, data.sessions);
+  final WearLaunchTarget? initialLaunchTarget = await companionSync
+      .takeLaunchTarget();
   await data.settings.init();
   await data.drafts.init();
   if (connections.endpoints.length == 1) {
@@ -30,6 +32,8 @@ Future<void> main() async {
       data: data,
       companionSync: companionSync,
       phoneProxy: phoneProxy,
+      initialLaunchTarget: initialLaunchTarget,
+      launchTargets: companionSync.launchTargets,
     ),
   );
 }

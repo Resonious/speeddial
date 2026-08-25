@@ -1,6 +1,8 @@
 package sh.speeddial.speeddial_wear
 
+import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -22,6 +24,12 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
     private lateinit var rotaryChannel: MethodChannel
     private lateinit var phoneProxy: PhoneProxyBridge
     private var scrollFeedbackProvider: Any? = null
+    private var pendingLaunchTarget: Map<String, String>? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        pendingLaunchTarget = launchTarget(intent)
+        super.onCreate(savedInstanceState)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -41,6 +49,10 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
                         result.success(null)
                     }
                 }
+                "takeLaunchTarget" -> {
+                    result.success(pendingLaunchTarget)
+                    pendingLaunchTarget = null
+                }
                 else -> result.notImplemented()
             }
         }
@@ -49,6 +61,32 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
             ROTARY_CHANNEL_NAME,
         )
         phoneProxy = PhoneProxyBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val target = launchTarget(intent) ?: return
+        pendingLaunchTarget = target
+        if (::companionChannel.isInitialized) {
+            companionChannel.invokeMethod(
+                "launchTarget",
+                target,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        if (pendingLaunchTarget == target) pendingLaunchTarget = null
+                    }
+
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?,
+                    ) = Unit
+
+                    override fun notImplemented() = Unit
+                },
+            )
+        }
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
@@ -184,7 +222,38 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener {
             }
     }
 
+    private fun launchTarget(intent: Intent?): Map<String, String>? {
+        return when (intent?.getStringExtra(EXTRA_DESTINATION)) {
+            DESTINATION_ATTENTION -> mapOf(EXTRA_DESTINATION to DESTINATION_ATTENTION)
+            DESTINATION_SESSION -> {
+                val daemonId = intent.getStringExtra(EXTRA_DAEMON_ID)
+                val projectId = intent.getStringExtra(EXTRA_PROJECT_ID)
+                val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                if (daemonId.isNullOrBlank() ||
+                    projectId.isNullOrBlank() ||
+                    sessionId.isNullOrBlank()
+                ) {
+                    null
+                } else {
+                    mapOf(
+                        EXTRA_DESTINATION to DESTINATION_SESSION,
+                        EXTRA_DAEMON_ID to daemonId,
+                        EXTRA_PROJECT_ID to projectId,
+                        EXTRA_SESSION_ID to sessionId,
+                    )
+                }
+            }
+            else -> null
+        }
+    }
+
     companion object {
+        const val EXTRA_DESTINATION = "wearDestination"
+        const val EXTRA_DAEMON_ID = "daemonId"
+        const val EXTRA_PROJECT_ID = "projectId"
+        const val EXTRA_SESSION_ID = "sessionId"
+        const val DESTINATION_ATTENTION = "attention"
+        const val DESTINATION_SESSION = "session"
         private const val COMPANION_CHANNEL_NAME = "sh.speeddial/companion"
         private const val ROTARY_CHANNEL_NAME = "sh.speeddial/rotary"
         private const val ENDPOINTS_PATH = "/speeddial/endpoints"

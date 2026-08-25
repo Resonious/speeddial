@@ -29,7 +29,12 @@ class SessionCountsComplicationService : SuspendingComplicationDataSourceService
         val tapAction = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            Intent(this, MainActivity::class.java)
+                .setAction(ACTION_OPEN_ATTENTION)
+                .putExtra(
+                    MainActivity.EXTRA_DESTINATION,
+                    MainActivity.DESTINATION_ATTENTION,
+                ),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         return when (type) {
@@ -83,5 +88,6 @@ class SessionCountsComplicationService : SuspendingComplicationDataSourceService
         const val DONE_COLOR = 0xFF34D399.toInt()
         const val IN_PROGRESS_COLOR = 0xFF58A6FF.toInt()
         const val EMPTY_COLOR = 0xFF374151.toInt()
+        const val ACTION_OPEN_ATTENTION = "sh.speeddial.action.OPEN_ATTENTION"
     }
 }

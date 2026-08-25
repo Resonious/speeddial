@@ -42,10 +42,11 @@ recent chat buffers in memory so reopening a conversation is immediate.
 The watch also provides two optional system surfaces:
 
 - **Recent SpeedDial sessions** Tile — the three sessions with the newest
-  activity, with status color and a tap target that opens SpeedDial.
+  activity, with status color. Tapping a row opens that session directly.
 - **SpeedDial session counts** complication — the number of sessions currently
   running or waiting for approval, plus the number of daemon-persisted
-  unacknowledged completed turns.
+  unacknowledged completed turns. Tapping it opens that combined list across
+  every configured daemon, with no daemon or project picker first.
   Compatible watch faces can render these as blue and green weighted elements;
   short- and long-text formats remain available as fallbacks.
 

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
+import 'package:speeddial_app/src/companion/companion_endpoint_sync.dart';
 import 'package:speeddial_app/src/scope.dart' show AppData, ConnectionStatus;
 import 'package:speeddial_app/src/state/settings_store.dart';
 import 'package:speeddial_app/src/theme.dart';
@@ -53,6 +54,8 @@ Future<(AppData, FakeDaemonClient)> pumpWear(
   WidgetTester tester, {
   bool withDaemon = true,
   Size size = const Size(220, 220),
+  WearLaunchTarget? initialLaunchTarget,
+  Stream<WearLaunchTarget>? launchTargets,
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final FakeDaemonClient fake = FakeDaemonClient(
@@ -80,7 +83,13 @@ Future<(AppData, FakeDaemonClient)> pumpWear(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(WearSpeedDialApp(data: data));
+  await tester.pumpWidget(
+    WearSpeedDialApp(
+      data: data,
+      initialLaunchTarget: initialLaunchTarget,
+      launchTargets: launchTargets,
+    ),
+  );
   await tester.pump();
   return (data, fake);
 }
@@ -184,6 +193,69 @@ void main() {
 
     expect(find.text('Reply from my watch'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('tile session target opens its chat without picker screens', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient _) = await pumpWear(
+      tester,
+      initialLaunchTarget: const WearLaunchTarget.session(
+        daemonId: 'fake',
+        projectId: 'proj-demo',
+        sessionId: 'sess-1',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(data.selection.selectedDaemonId, 'fake');
+    expect(data.selection.selectedProjectId, 'proj-demo');
+    expect(data.selection.selectedSessionId, 'sess-1');
+    expect(find.byKey(const Key('wear-message-field')), findsOneWidget);
+    expect(find.byKey(const Key('wear-daemon-list')), findsNothing);
+    expect(find.byKey(const Key('wear-project-list')), findsNothing);
+    expect(find.byKey(const Key('wear-session-list')), findsNothing);
+  });
+
+  testWidgets('complication target lists sessions needing attention globally', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient fake) = await pumpWear(
+      tester,
+      initialLaunchTarget: const WearLaunchTarget.attention(),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Needs attention'), findsOneWidget);
+    expect(find.text('Everything is quiet'), findsOneWidget);
+
+    await fake.sendMessage('sess-2', 'finish in the background');
+    await tester.pump(const Duration(milliseconds: 100));
+    await data.sessions.refresh('fake');
+    await tester.pump();
+
+    expect(find.byKey(const Key('wear-attention-list')), findsOneWidget);
+    expect(find.text('Plan the refactor'), findsOneWidget);
+    expect(find.text('Watch daemon · Done'), findsOneWidget);
+
+    await tester.tap(find.text('Plan the refactor'));
+    await tester.pumpAndSettle();
+    expect(data.selection.selectedSessionId, 'sess-2');
+    expect(find.byKey(const Key('wear-message-field')), findsOneWidget);
+  });
+
+  testWidgets('running app responds to a new complication tap', (
+    WidgetTester tester,
+  ) async {
+    final StreamController<WearLaunchTarget> targets =
+        StreamController<WearLaunchTarget>();
+    addTearDown(targets.close);
+    await pumpWear(tester, launchTargets: targets.stream);
+    expect(find.byKey(const Key('wear-daemon-list')), findsOneWidget);
+
+    targets.add(const WearLaunchTarget.attention());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Needs attention'), findsOneWidget);
   });
 
   testWidgets('scrolls the current list from native rotary input', (

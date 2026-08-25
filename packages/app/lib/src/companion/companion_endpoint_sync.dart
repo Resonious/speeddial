@@ -7,6 +7,53 @@ import 'package:flutter/services.dart';
 import '../scope.dart';
 import '../state/sessions_store.dart';
 
+enum WearLaunchDestination { attention, session }
+
+@immutable
+class WearLaunchTarget {
+  const WearLaunchTarget.attention()
+    : destination = WearLaunchDestination.attention,
+      daemonId = null,
+      projectId = null,
+      sessionId = null;
+
+  const WearLaunchTarget.session({
+    required this.daemonId,
+    required this.projectId,
+    required this.sessionId,
+  }) : destination = WearLaunchDestination.session;
+
+  final WearLaunchDestination destination;
+  final String? daemonId;
+  final String? projectId;
+  final String? sessionId;
+
+  static WearLaunchTarget? tryParse(Object? value) {
+    if (value is! Map<Object?, Object?>) return null;
+    final Object? destination = value['wearDestination'];
+    if (destination == 'attention') {
+      return const WearLaunchTarget.attention();
+    }
+    if (destination != 'session') return null;
+    final Object? daemonId = value['daemonId'];
+    final Object? projectId = value['projectId'];
+    final Object? sessionId = value['sessionId'];
+    if (daemonId is! String ||
+        daemonId.isEmpty ||
+        projectId is! String ||
+        projectId.isEmpty ||
+        sessionId is! String ||
+        sessionId.isEmpty) {
+      return null;
+    }
+    return WearLaunchTarget.session(
+      daemonId: daemonId,
+      projectId: projectId,
+      sessionId: sessionId,
+    );
+  }
+}
+
 String buildCompanionSessionPayload(
   SessionsStore sessions, {
   Set<String>? daemonIds,
@@ -46,6 +93,10 @@ class CompanionEndpointSync {
   bool _sessionSyncPending = false;
   bool _sessionSyncInFlight = false;
   Set<String> _authoritativeWatchDaemonIds = <String>{};
+  final StreamController<WearLaunchTarget> _launchTargets =
+      StreamController<WearLaunchTarget>.broadcast(sync: true);
+
+  Stream<WearLaunchTarget> get launchTargets => _launchTargets.stream;
 
   Future<void> startPhone(
     ConnectionsStore connections,
@@ -93,10 +144,32 @@ class CompanionEndpointSync {
     _sessionListener = sessionListener;
     sessions.addListener(sessionListener);
     _channel.setMethodCallHandler((MethodCall call) async {
-      if (call.method != 'endpointsChanged') return;
-      await _applyPayload(connections, call.arguments);
+      if (call.method == 'endpointsChanged') {
+        await _applyPayload(connections, call.arguments);
+        return;
+      }
+      if (call.method == 'launchTarget') {
+        final WearLaunchTarget? target = WearLaunchTarget.tryParse(
+          call.arguments,
+        );
+        if (target != null) _launchTargets.add(target);
+      }
     });
     await refreshWatch(connections);
+  }
+
+  Future<WearLaunchTarget?> takeLaunchTarget() async {
+    try {
+      final Object? value = await _channel.invokeMethod<Object?>(
+        'takeLaunchTarget',
+      );
+      return WearLaunchTarget.tryParse(value);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException catch (error) {
+      debugPrint('Wear launch target read failed: $error');
+      return null;
+    }
   }
 
   /// Loads the complete all-project session listing for every reachable watch
@@ -259,5 +332,6 @@ class CompanionEndpointSync {
     _sessionSyncPending = false;
     _authoritativeWatchDaemonIds = <String>{};
     _channel.setMethodCallHandler(null);
+    unawaited(_launchTargets.close());
   }
 }

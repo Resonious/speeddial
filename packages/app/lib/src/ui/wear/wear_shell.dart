@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../api/ws_daemon_client.dart';
+import '../../companion/companion_endpoint_sync.dart';
 import '../../scope.dart';
 import '../../state/projects_store.dart';
+import '../../state/sessions_store.dart';
 import 'wear_chat.dart';
 import 'wear_scaffold.dart';
 
@@ -36,6 +38,272 @@ class WearSpeedDialShell extends StatelessWidget {
       },
     );
   }
+}
+
+/// Global landing page for the sessions represented by the complication.
+class WearAttentionPage extends StatefulWidget {
+  const WearAttentionPage({super.key, required this.data});
+
+  final AppData data;
+
+  @override
+  State<WearAttentionPage> createState() => _WearAttentionPageState();
+}
+
+class _WearAttentionPageState extends State<WearAttentionPage> {
+  bool _loading = true;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // This global inbox is not itself observing the previously selected
+    // session. Clear it before refreshing so a completed turn cannot be
+    // acknowledged merely because its old chat remains underneath this route.
+    widget.data.selection.selectedSessionId = null;
+    unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    Object? firstError;
+    await Future.wait<void>(<Future<void>>[
+      for (final DaemonEndpoint endpoint in widget.data.connections.endpoints)
+        () async {
+          try {
+            await _connectIfNeeded(widget.data, endpoint.id);
+            await widget.data.sessions.refresh(endpoint.id);
+          } on Object catch (error) {
+            firstError ??= error;
+          }
+        }(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _error = firstError;
+    });
+  }
+
+  void _openSession(RecentSession recent) {
+    final Session session = recent.session;
+    widget.data.selection
+      ..selectedDaemonId = recent.daemonId
+      ..selectedProjectId = session.projectId
+      ..selectedSessionId = session.id;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => WearChatPage(
+          data: widget.data,
+          daemonId: recent.daemonId,
+          sessionId: session.id,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WearScaffold(
+      title: 'Needs attention',
+      showBack: true,
+      action: IconButton(
+        tooltip: 'Refresh sessions',
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.refresh, size: 19),
+        onPressed: _loading ? null : _refresh,
+      ),
+      child: ListenableBuilder(
+        listenable: Listenable.merge(<Listenable>[
+          widget.data.sessions,
+          widget.data.connections,
+        ]),
+        builder: (BuildContext context, Widget? _) {
+          final List<RecentSession> sessions = <RecentSession>[
+            for (final RecentSession recent
+                in widget.data.sessions.recentSessions())
+              if (recent.done ||
+                  recent.session.status == SessionStatus.running ||
+                  recent.session.status == SessionStatus.waitingPermission)
+                recent,
+          ];
+          if (_loading && sessions.isEmpty) {
+            return const Center(
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          }
+          if (_error != null && sessions.isEmpty) {
+            return WearEmptyState(
+              message: 'Could not load active sessions',
+              details: wearErrorText(_error!),
+              icon: Icons.cloud_off,
+              action: FilledButton(
+                onPressed: _refresh,
+                child: const Text('Retry'),
+              ),
+            );
+          }
+          if (sessions.isEmpty) {
+            return const WearEmptyState(
+              message: 'Everything is quiet',
+              icon: Icons.check_circle_outline,
+            );
+          }
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.builder(
+              key: const Key('wear-attention-list'),
+              padding: wearListPadding,
+              itemCount: sessions.length,
+              itemBuilder: (BuildContext context, int index) {
+                final RecentSession recent = sessions[index];
+                final Session session = recent.session;
+                return _WearListTile(
+                  key: ValueKey<String>(
+                    'wear-attention-${recent.daemonId}-${session.id}',
+                  ),
+                  title: session.title,
+                  subtitle:
+                      '${_daemonName(widget.data, recent.daemonId)} · '
+                      '${_attentionLabel(recent)}',
+                  leading: recent.done
+                      ? const Icon(Icons.check_circle_outline, size: 19)
+                      : _SessionStatusIcon(status: session.status),
+                  onTap: () => _openSession(recent),
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Resolves a Tile row target and opens that session without picker screens.
+class WearSessionLaunchPage extends StatefulWidget {
+  const WearSessionLaunchPage({
+    super.key,
+    required this.data,
+    required this.target,
+  });
+
+  final AppData data;
+  final WearLaunchTarget target;
+
+  @override
+  State<WearSessionLaunchPage> createState() => _WearSessionLaunchPageState();
+}
+
+class _WearSessionLaunchPageState extends State<WearSessionLaunchPage> {
+  bool _loading = true;
+  Object? _error;
+  Session? _session;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_open());
+  }
+
+  Future<void> _open() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    final String daemonId = widget.target.daemonId!;
+    final String projectId = widget.target.projectId!;
+    final String sessionId = widget.target.sessionId!;
+    Object? loadError;
+    try {
+      if (!widget.data.connections.endpoints.any(
+        (DaemonEndpoint endpoint) => endpoint.id == daemonId,
+      )) {
+        throw StateError('This daemon is no longer configured');
+      }
+      await _connectIfNeeded(widget.data, daemonId);
+      await widget.data.sessions.refresh(daemonId, projectId: projectId);
+    } on Object catch (error) {
+      loadError = error;
+    }
+    RecentSession? match;
+    for (final RecentSession recent in widget.data.sessions.recentSessions()) {
+      if (recent.daemonId == daemonId &&
+          recent.session.projectId == projectId &&
+          recent.session.id == sessionId) {
+        match = recent;
+        break;
+      }
+    }
+    if (match == null && loadError == null) {
+      loadError = StateError('This session is no longer available');
+    }
+    if (!mounted) return;
+    if (match != null) {
+      widget.data.selection
+        ..selectedDaemonId = daemonId
+        ..selectedProjectId = projectId
+        ..selectedSessionId = sessionId;
+    }
+    setState(() {
+      _loading = false;
+      _error = match == null ? loadError : null;
+      _session = match?.session;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Session? session = _session;
+    if (session != null) {
+      return WearChatPage(
+        data: widget.data,
+        daemonId: widget.target.daemonId!,
+        sessionId: session.id,
+      );
+    }
+    return WearScaffold(
+      title: 'Opening session',
+      showBack: true,
+      child: _loading
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : WearEmptyState(
+              message: 'Could not open session',
+              details: wearErrorText(_error!),
+              icon: Icons.cloud_off,
+              action: FilledButton(
+                onPressed: _open,
+                child: const Text('Retry'),
+              ),
+            ),
+    );
+  }
+}
+
+Future<void> _connectIfNeeded(AppData data, String daemonId) async {
+  final client = data.clientFor(daemonId);
+  if (client is WsDaemonClient && !client.isConnected) {
+    await client.connect();
+  }
+}
+
+String _daemonName(AppData data, String daemonId) {
+  for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    if (endpoint.id == daemonId) return endpoint.name;
+  }
+  return daemonId;
+}
+
+String _attentionLabel(RecentSession recent) {
+  if (recent.done) return 'Done';
+  return _statusLabel(recent.session.status);
 }
 
 class _WearDaemonListPage extends StatelessWidget {

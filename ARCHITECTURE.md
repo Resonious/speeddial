@@ -285,12 +285,14 @@ Native watch storage keeps that snapshot available when Flutter is not running a
 session changes observed by the open watch app. On launch and resume, the watch fetches a complete
 all-project listing from every reachable daemon; those daemon slices replace, rather than append to,
 their native cache so deleted sessions and old statuses cannot linger. Unreachable daemons retain
-their last phone snapshot. `RecentSessionsTileService` renders the three newest active sessions in a
-circular-safe Tile. `SessionCountsComplicationService` exposes short- and
+their last phone snapshot. `RecentSessionsTileService` renders the three newest sessions in a
+circular-safe Tile; each row carries its daemon/project/session identity and opens that chat
+directly. `SessionCountsComplicationService` exposes short- and
 long-text count fallbacks plus weighted elements for running/waiting-for-approval sessions and
 daemon-persisted unacknowledged completed turns. The weighted elements use blue for in-progress
-and green for done; each
-watch face controls whether that split appears as a bar, arc, or another supported layout. Tile
+and green for done; tapping the complication opens an activity-sorted list of those sessions across
+all configured daemons. Each watch face controls whether that split appears as a bar, arc, or
+another supported layout. Tile
 updates are requested whenever the snapshot changes; complication push updates are limited to once
 per five minutes and backed by the platform's five-minute periodic refresh.
 

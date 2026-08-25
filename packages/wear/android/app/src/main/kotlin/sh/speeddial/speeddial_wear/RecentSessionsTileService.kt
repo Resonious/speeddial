@@ -1,8 +1,8 @@
 package sh.speeddial.speeddial_wear
 
-import android.app.PendingIntent
-import android.content.Intent
+import android.content.ComponentName
 import androidx.concurrent.futures.CallbackToFutureAdapter
+import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.ColorBuilders.argb
 import androidx.wear.protolayout.DimensionBuilders.dp
 import androidx.wear.protolayout.DimensionBuilders.expand
@@ -57,8 +57,8 @@ class RecentSessionsTileService : TileService() {
                         Padding.Builder()
                             .setStart(dp(22f))
                             .setEnd(dp(22f))
-                            .setTop(dp(14f))
-                            .setBottom(dp(14f))
+                            .setTop(dp(8f))
+                            .setBottom(dp(8f))
                             .build(),
                     )
                     .build(),
@@ -95,18 +95,31 @@ class RecentSessionsTileService : TileService() {
             .addContent(Spacer.Builder().setHeight(dp(8f)).build())
         if (snapshot.recentSessions.isEmpty()) {
             column.addContent(
-                text(
-                    value = "Open SpeedDial to sync sessions",
-                    size = 14f,
-                    color = SECONDARY_TEXT,
-                    maxLines = 2,
-                    alignment = LayoutElementBuilders.TEXT_ALIGN_CENTER,
-                ),
+                Box.Builder()
+                    .setWidth(expand())
+                    .setHeight(dp(48f))
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                    .setModifiers(
+                        Modifiers.Builder()
+                            .setClickable(clickable("open-attention", attentionAction()))
+                            .build(),
+                    )
+                    .addContent(
+                        text(
+                            value = "Open SpeedDial to sync sessions",
+                            size = 14f,
+                            color = SECONDARY_TEXT,
+                            maxLines = 2,
+                            alignment = LayoutElementBuilders.TEXT_ALIGN_CENTER,
+                        ),
+                    )
+                    .build(),
             )
             return column.build()
         }
         snapshot.recentSessions.forEachIndexed { index, session ->
-            if (index > 0) column.addContent(Spacer.Builder().setHeight(dp(5f)).build())
+            if (index > 0) column.addContent(Spacer.Builder().setHeight(dp(6f)).build())
             column.addContent(sessionRow(session))
         }
         return column.build()
@@ -121,15 +134,9 @@ class RecentSessionsTileService : TileService() {
             else -> IDLE
         }
         val statusMark = if (session.done) "✓" else "●"
-        val openApp = PendingIntent.getActivity(
-            this,
-            session.key.hashCode(),
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
         return Row.Builder()
             .setWidth(expand())
-            .setHeight(dp(37f))
+            .setHeight(dp(42f))
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
             .setModifiers(
                 Modifiers.Builder()
@@ -143,10 +150,7 @@ class RecentSessionsTileService : TileService() {
                         Padding.Builder().setStart(dp(10f)).setEnd(dp(10f)).build(),
                     )
                     .setClickable(
-                        Clickable.Builder()
-                            .setId("session-${session.key}")
-                            .setOnClick(openApp)
-                            .build(),
+                        clickable("session-${session.key}", sessionAction(session)),
                     )
                     .build(),
             )
@@ -169,6 +173,40 @@ class RecentSessionsTileService : TileService() {
             )
             .build()
     }
+
+    private fun clickable(id: String, action: ActionBuilders.Action): Clickable =
+        Clickable.Builder()
+            .setId(id)
+            .setOnClick(action)
+            .build()
+
+    private fun attentionAction(): ActionBuilders.LaunchAction =
+        launchAction(
+            mapOf(
+                MainActivity.EXTRA_DESTINATION to ActionBuilders.stringExtra(
+                    MainActivity.DESTINATION_ATTENTION,
+                ),
+            ),
+        )
+
+    private fun sessionAction(session: SurfaceSession): ActionBuilders.LaunchAction =
+        launchAction(
+            mapOf(
+                MainActivity.EXTRA_DESTINATION to ActionBuilders.stringExtra(
+                    MainActivity.DESTINATION_SESSION,
+                ),
+                MainActivity.EXTRA_DAEMON_ID to ActionBuilders.stringExtra(session.daemonId),
+                MainActivity.EXTRA_PROJECT_ID to ActionBuilders.stringExtra(session.projectId),
+                MainActivity.EXTRA_SESSION_ID to ActionBuilders.stringExtra(session.sessionId),
+            ),
+        )
+
+    private fun launchAction(
+        extras: Map<String, ActionBuilders.AndroidExtra>,
+    ): ActionBuilders.LaunchAction = ActionBuilders.launchAction(
+        ComponentName(this, MainActivity::class.java),
+        extras,
+    )
 
     private fun text(
         value: String,
