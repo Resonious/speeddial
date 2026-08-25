@@ -263,6 +263,30 @@ void main() {
     expect(find.text('message 140'), findsOneWidget);
   });
 
+  testWidgets('merges agent chunks across watch history page boundaries', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient fake) = await pumpWear(tester);
+    final List<String> chunks = List<String>.generate(
+      kWearHistoryPageSize + 2,
+      (int index) => switch (index) {
+        0 => 'Cutover: ',
+        1 => 'deployment ',
+        _ => '${index % 10}',
+      },
+    );
+    fake.seedHistory('sess-1', <SessionEvent>[
+      for (final String chunk in chunks) AgentMessageChunkEvent(text: chunk),
+    ]);
+
+    await openFirstSession(tester);
+
+    expect(data.chat.hasOlderHistory('sess-1'), isFalse);
+    expect(data.chat.eventsFor('sess-1'), hasLength(3));
+    expect(find.text(chunks.join()), findsOneWidget);
+    expect(find.text('Cutover: '), findsNothing);
+  });
+
   testWidgets('theme button applies and persists dark mode', (
     WidgetTester tester,
   ) async {

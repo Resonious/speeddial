@@ -192,9 +192,18 @@ class _WearErrorItem extends _WearTimelineItem {
 
 List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
   final List<_WearTimelineItem> result = <_WearTimelineItem>[];
+  final StringBuffer message = StringBuffer();
+
+  void flushMessage() {
+    if (message.isEmpty) return;
+    result.add(_WearMessageItem(text: message.toString(), user: false));
+    message.clear();
+  }
+
   for (final SessionEvent event in events) {
     switch (event) {
       case UserMessageEvent(:final text, :final attachments):
+        flushMessage();
         final String display = text.isNotEmpty
             ? text
             : attachments.length == 1
@@ -202,10 +211,9 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
             : 'Sent ${attachments.length} attachments';
         result.add(_WearMessageItem(text: display, user: true));
       case AgentMessageChunkEvent(:final text):
-        if (text.isNotEmpty) {
-          result.add(_WearMessageItem(text: text, user: false));
-        }
+        message.write(text);
       case AgentThoughtChunkEvent():
+        flushMessage();
         if (result.isEmpty ||
             result.last is! _WearActivityItem ||
             (result.last as _WearActivityItem).text != 'Thinking…') {
@@ -217,6 +225,7 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
           );
         }
       case ToolCallEvent(:final toolCall):
+        flushMessage();
         result.add(
           _WearActivityItem(
             text: '${toolCall.title} · ${toolCall.status.wire}',
@@ -224,6 +233,7 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
           ),
         );
       case PlanEvent(:final entries):
+        flushMessage();
         result.add(
           _WearActivityItem(
             text: 'Plan updated · ${entries.length} steps',
@@ -231,6 +241,7 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
           ),
         );
       case ImageEvent():
+        flushMessage();
         result.add(
           const _WearActivityItem(
             text: 'Image available in the full app',
@@ -238,16 +249,20 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
           ),
         );
       case SessionErrorEvent(:final message):
+        flushMessage();
         result.add(_WearErrorItem(message));
       case AgentActivityEvent(:final activity):
+        flushMessage();
         result.add(_WearActivityItem(text: activity.title, icon: Icons.sync));
       case PermissionRequestEvent() ||
           PermissionResolvedEvent() ||
-          UsageEvent() ||
           TurnCompleteEvent():
+        flushMessage();
+      case UsageEvent():
         break;
     }
   }
+  flushMessage();
   return result;
 }
 
