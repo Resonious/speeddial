@@ -79,6 +79,8 @@ class Composer extends StatefulWidget {
     this.thinkingLevel,
     this.thinkingLevels = const <String>[],
     this.onThinkingChanged,
+    this.draft = '',
+    this.onDraftChanged,
     this.attachmentPicker,
     this.clipboardImageReader,
     required this.onSend,
@@ -117,6 +119,14 @@ class Composer extends StatefulWidget {
 
   /// Fires with the newly selected thinking level.
   final ValueChanged<String>? onThinkingChanged;
+
+  /// Exact text saved for this session, restored when the composer mounts.
+  final String draft;
+
+  /// Persists exact composer text. During a send the previous draft remains
+  /// saved until [onSend] succeeds, so closing the app while the request is
+  /// in flight cannot discard it.
+  final Future<void> Function(String text)? onDraftChanged;
 
   /// Injectable file picker for tests; defaults to [FilePicker.platform]
   /// with `withData: true` when null. Files whose bytes come back null are
@@ -179,9 +189,10 @@ class _PasteImageAction extends Action<PasteTextIntent> {
 }
 
 class _ComposerState extends State<Composer> {
-  final TextEditingController _controller = TextEditingController();
+  late final TextEditingController _controller;
   late final _PasteImageAction _pasteImageAction;
   bool _hasText = false;
+  bool _suppressDraftSave = false;
   int _pastedImageCount = 0;
 
   /// Files picked but not yet sent; cleared on send, restored on failure.
@@ -196,6 +207,8 @@ class _ComposerState extends State<Composer> {
   @override
   void initState() {
     super.initState();
+    _controller = TextEditingController(text: widget.draft);
+    _hasText = widget.draft.trim().isNotEmpty;
     _pasteImageAction = _PasteImageAction(_pasteImage);
     _controller.addListener(_onTextChanged);
   }
@@ -212,6 +225,11 @@ class _ComposerState extends State<Composer> {
     final bool hasText = _controller.text.trim().isNotEmpty;
     if (hasText != _hasText) {
       setState(() => _hasText = hasText);
+    }
+    final Future<void> Function(String text)? onDraftChanged =
+        widget.onDraftChanged;
+    if (!_suppressDraftSave && onDraftChanged != null) {
+      unawaited(onDraftChanged(_controller.text));
     }
   }
 
@@ -349,7 +367,9 @@ class _ComposerState extends State<Composer> {
     if ((text.isEmpty && attachments.isEmpty) || _running || !mounted) {
       return;
     }
+    _suppressDraftSave = true;
     _controller.clear();
+    _suppressDraftSave = false;
     setState(() {
       _hasText = false;
       _attachments.clear();
@@ -374,6 +394,14 @@ class _ComposerState extends State<Composer> {
         selection: TextSelection.collapsed(offset: text.length),
       );
       setState(() => _attachments.addAll(attachments));
+      return;
+    }
+    final Future<void> Function(String text)? onDraftChanged =
+        widget.onDraftChanged;
+    if (onDraftChanged != null) {
+      // Usually empty. If the user already started a following message while
+      // the send was being accepted, preserve that newer text.
+      await onDraftChanged(mounted ? _controller.text : '');
     }
   }
 

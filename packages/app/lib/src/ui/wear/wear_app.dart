@@ -48,6 +48,16 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
         unawaited(sync.refreshWatch(widget.data.connections));
       }
       widget.data.reconnectAll();
+    } else if (state == AppLifecycleState.detached) {
+      unawaited(_flushDrafts());
+    }
+  }
+
+  Future<void> _flushDrafts() async {
+    try {
+      await widget.data.drafts.flush();
+    } on Object catch (error) {
+      debugPrint('Draft flush failed during shutdown: $error');
     }
   }
 

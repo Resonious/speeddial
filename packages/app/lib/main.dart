@@ -75,6 +75,7 @@ Future<void> main(List<String> args) async {
     );
   }
   await data.settings.init();
+  await data.drafts.init();
   runApp(SpeedDialApp(data: data, companionSync: companionSync));
 }
 
@@ -127,7 +128,18 @@ class _SpeedDialAppState extends State<SpeedDialApp>
     if (state == AppLifecycleState.resumed) {
       widget.data.reconnectAll();
     } else if (state == AppLifecycleState.detached) {
+      unawaited(_flushDrafts());
       unawaited(widget.data.stopLocalDaemon());
+    }
+  }
+
+  Future<void> _flushDrafts() async {
+    try {
+      await widget.data.drafts.flush();
+    } on Object catch (error) {
+      // DraftsStore already records the error for diagnostics; shutdown must
+      // still continue so the embedded daemon is not left running.
+      debugPrint('Draft flush failed during shutdown: $error');
     }
   }
 

@@ -152,6 +152,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   List<TimelineItem> _items = const <TimelineItem>[];
   PermissionRequest? _pending;
   bool _forking = false;
+  bool _draftErrorShown = false;
 
   @override
   Widget build(BuildContext context) {
@@ -254,6 +255,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 onThinkingChanged: (String level) {
                   unawaited(_setThinkingLevel(level));
                 },
+                draft: data.drafts.textFor(daemonId, sessionId),
+                onDraftChanged: _saveDraft,
                 onSend: (String text, List<OutgoingAttachment> attachments) {
                   if (status == SessionStatus.running) {
                     return Future<void>.value();
@@ -323,6 +326,17 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       // Delegate the text+attachments restore to the composer, which knows
       // the draft.
       rethrow;
+    }
+  }
+
+  Future<void> _saveDraft(String text) async {
+    try {
+      await widget.data.drafts.setText(widget.daemonId, widget.sessionId, text);
+      _draftErrorShown = false;
+    } on Object {
+      if (!mounted || _draftErrorShown) return;
+      _draftErrorShown = true;
+      await _showMessage('Could not save this draft');
     }
   }
 

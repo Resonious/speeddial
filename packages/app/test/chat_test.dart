@@ -203,6 +203,91 @@ void main() {
     },
   );
 
+  testWidgets('keeps a separate composer draft for each session', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(tester);
+    final Finder composer = find.byType(TextField);
+
+    await tester.enterText(composer, 'first session draft');
+    await app.drafts.flush();
+
+    app.selection.selectedSessionId = 'sess-2';
+    await tester.pump();
+    expect(tester.widget<TextField>(composer).controller!.text, isEmpty);
+
+    await tester.enterText(composer, 'second session draft');
+    await app.drafts.flush();
+
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(composer).controller!.text,
+      'first session draft',
+    );
+
+    app.selection.selectedSessionId = 'sess-2';
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(composer).controller!.text,
+      'second session draft',
+    );
+  });
+
+  testWidgets('restores a persisted composer draft after app recreation', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    addTearDown(fake.dispose);
+    final (AppData firstApp, _) = await pumpChat(tester, fake: fake);
+
+    await tester.enterText(find.byType(TextField), 'survives app close');
+    await firstApp.drafts.flush();
+    await tester.pumpWidget(const SizedBox.shrink());
+    firstApp.dispose();
+
+    final AppData restoredApp = AppData()..registerClient('fake', fake);
+    addTearDown(restoredApp.dispose);
+    await restoredApp.drafts.init();
+    await restoredApp.sessions.refresh('fake');
+    final Project project = (await fake.listProjects()).first;
+    final Session session = (await fake.listSessions()).first;
+    restoredApp.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = project.id
+      ..selectedSessionId = session.id;
+
+    await tester.pumpWidget(
+      AppScope(
+        data: restoredApp,
+        child: MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(body: ChatPane()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'survives app close',
+    );
+
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => restoredApp.drafts.textFor('fake', session.id).isEmpty,
+    );
+    await restoredApp.drafts.flush();
+    expect(restoredApp.drafts.textFor('fake', session.id), isEmpty);
+
+    // Drain the fake daemon's scripted response timers.
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('fork action creates and selects history through that message', (
     WidgetTester tester,
   ) async {

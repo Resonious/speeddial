@@ -210,8 +210,10 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental chunk append),
                              FilesStore, GitStore, McpStore, DaemonConfigStore (installed
-                             harnesses + write-only environment names), SettingsStore (theme
-                             mode persisted locally), EmbeddedDaemonStore (persisted
+                             harnesses + write-only environment names), DraftsStore
+                             (per-daemon/session composer text persisted locally),
+                             SettingsStore (theme mode persisted locally),
+                             EmbeddedDaemonStore (persisted
                              interface/port/token of the built-in daemon; restart
                              errors surfaced for its settings page). Stores NEVER hold
                              BuildContext.

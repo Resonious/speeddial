@@ -25,7 +25,7 @@ class WearChatPage extends StatefulWidget {
 }
 
 class _WearChatPageState extends State<WearChatPage> {
-  final TextEditingController _composer = TextEditingController();
+  late final TextEditingController _composer;
   final FocusNode _composerFocus = FocusNode();
   int _revision = -1;
   List<_WearTimelineItem> _items = const <_WearTimelineItem>[];
@@ -35,13 +35,18 @@ class _WearChatPageState extends State<WearChatPage> {
   @override
   void initState() {
     super.initState();
+    _composer = TextEditingController(
+      text: widget.data.drafts.textFor(widget.daemonId, widget.sessionId),
+    )..addListener(_saveDraft);
     widget.data.chat.watchSession(widget.daemonId, widget.sessionId);
   }
 
   @override
   void dispose() {
     widget.data.chat.unwatch(widget.sessionId);
-    _composer.dispose();
+    _composer
+      ..removeListener(_saveDraft)
+      ..dispose();
     _composerFocus.dispose();
     super.dispose();
   }
@@ -58,6 +63,18 @@ class _WearChatPageState extends State<WearChatPage> {
       _showError(error);
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _saveDraft() {
+    unawaited(_persistDraft(_composer.text));
+  }
+
+  Future<void> _persistDraft(String text) async {
+    try {
+      await widget.data.drafts.setText(widget.daemonId, widget.sessionId, text);
+    } on Object catch (error) {
+      _showError(error);
     }
   }
 

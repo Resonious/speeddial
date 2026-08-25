@@ -11,6 +11,7 @@ import 'api/ws_daemon_client.dart';
 import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
 import 'state/daemon_config_store.dart';
+import 'state/drafts_store.dart';
 import 'state/embedded_daemon_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
@@ -296,7 +297,7 @@ class SelectionStore extends ChangeNotifier {
 /// constructor resolver, or — for plain [DaemonEndpoint]s — a lazily created
 /// [WsDaemonClient] connecting to the endpoint's own URL/token.
 class AppData {
-  /// [connections], [selection] and [embeddedDaemon] default to fresh
+  /// [connections], [selection], [drafts] and [embeddedDaemon] default to fresh
   /// instances; they exist so the pre-Phase-3 callers (main.dart) can keep
   /// injecting. [clientFor], if given, is consulted for ids that were never
   /// [registerClient]ed and takes precedence over the lazy WebSocket wiring
@@ -306,6 +307,7 @@ class AppData {
     ConnectionsStore? connections,
     SelectionStore? selection,
     SettingsStore? settings,
+    DraftsStore? drafts,
     EmbeddedDaemonStore? embeddedDaemon,
     DaemonClient Function(String daemonId)? clientFor,
     this.daemonChannelFactory,
@@ -315,6 +317,7 @@ class AppData {
   }) : connections = connections ?? ConnectionsStore(),
        selection = selection ?? SelectionStore(),
        settings = settings ?? SettingsStore(),
+       drafts = drafts ?? DraftsStore(),
        embeddedDaemon = embeddedDaemon ?? EmbeddedDaemonStore(),
        _fallbackClientFor = clientFor {
     projects = ProjectsStore(clientFor: this.clientFor);
@@ -341,6 +344,7 @@ class AppData {
   final ConnectionsStore connections;
   final SelectionStore selection;
   final SettingsStore settings;
+  final DraftsStore drafts;
   final EmbeddedDaemonStore embeddedDaemon;
 
   late final ProjectsStore projects;
@@ -654,6 +658,7 @@ class AppData {
     git.dispose();
     mcp.dispose();
     daemonConfig.dispose();
+    drafts.dispose();
     settings.dispose();
     embeddedDaemon.dispose();
   }

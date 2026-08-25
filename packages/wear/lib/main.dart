@@ -20,6 +20,7 @@ Future<void> main() async {
   );
   await companionSync.startWatch(connections, data.sessions);
   await data.settings.init();
+  await data.drafts.init();
   if (connections.endpoints.length == 1) {
     data.selection.selectedDaemonId = connections.endpoints.single.id;
   }
