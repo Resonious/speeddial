@@ -622,6 +622,24 @@ void main() {
     );
     expect(historyMatch['projectName'], 'Project p2');
     expect(historyMatch['excerpt'], 'Investigate the release blocker');
+    expect(historyMatch['archived'], isFalse);
+
+    final List<Map<String, Object?>> withArchived = store.searchSessions(
+      query: 'release',
+      excludeSessionId: 'current',
+      includeArchived: true,
+    );
+    expect(withArchived.map((Map<String, Object?> row) => row['id']), {
+      'by-title',
+      'by-history',
+      'archived',
+    });
+    expect(
+      withArchived.singleWhere(
+        (Map<String, Object?> row) => row['id'] == 'archived',
+      )['archived'],
+      isTrue,
+    );
 
     final List<Map<String, Object?>> filtered = store.searchSessions(
       query: '',

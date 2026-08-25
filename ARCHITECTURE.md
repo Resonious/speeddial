@@ -74,11 +74,13 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
-                    Search tools bridge over an authenticated, session-bound loopback
-                    WebSocket to query projects/session history; display_image persists
-                    an attachment and emits an image event. McpProxySession owns the matching
-                    managed upstreams for that bridge connection, starts stdio servers in the
-                    session cwd, drives Streamable HTTP JSON/SSE sessions, qualifies, sanitizes,
+                    Built-in tools bridge over an authenticated, session-bound loopback
+                    WebSocket to query projects/session history (including archived
+                    sessions), archive or restore other sessions, or persist an attachment
+                    and emit an image event. McpProxySession owns
+                    the matching managed upstreams for that bridge connection, starts stdio
+                    servers in the session cwd, drives Streamable HTTP JSON/SSE sessions,
+                    qualifies, sanitizes,
                     aggregates tool descriptors (stripping regex-lookaround `pattern` constraints
                     model providers reject), routes calls, and closes every upstream
                     with the bridge. Managed commands, URLs, environment values, headers,

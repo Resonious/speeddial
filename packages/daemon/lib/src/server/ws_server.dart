@@ -95,6 +95,7 @@ const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpCallTool',
   'internal.mcpSearchProjects',
   'internal.mcpSearchSessions',
+  'internal.mcpArchiveSession',
   'internal.mcpDisplayImage',
 ];
 
@@ -464,6 +465,7 @@ class SpeedDialServer {
         'internal.mcpCallTool' => _mcpCallTool(client, params),
         'internal.mcpSearchProjects' => _mcpSearchProjects(client, params),
         'internal.mcpSearchSessions' => _mcpSearchSessions(client, params),
+        'internal.mcpArchiveSession' => _mcpArchiveSession(client, params),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
         _ => throw DaemonError(
           kErrUnauthenticated,
@@ -608,14 +610,47 @@ class SpeedDialServer {
     if (rawQuery != null && rawQuery is! String) {
       throw DaemonError(_kErrInvalidParams, 'query must be a string');
     }
+    final Object? rawIncludeArchived = params['includeArchived'];
+    if (rawIncludeArchived != null && rawIncludeArchived is! bool) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'includeArchived must be a boolean',
+      );
+    }
     return <String, Object?>{
       'sessions': _store.searchSessions(
         query: rawQuery as String? ?? '',
         excludeSessionId: sessionId,
         projectId: rawProjectId as String?,
+        includeArchived: rawIncludeArchived as bool? ?? false,
         limit: limit,
       ),
     };
+  }
+
+  Future<Object?> _mcpArchiveSession(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final Object? rawArchived = params['archived'];
+    if (rawArchived is! bool) {
+      throw DaemonError(_kErrInvalidParams, 'archived must be a boolean');
+    }
+    if (sessionId == client.mcpSessionId) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'The current session cannot change its own archive state',
+      );
+    }
+    final Session? existing = _store.getSession(sessionId);
+    if (existing == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final Session session = existing.archived == rawArchived
+        ? existing
+        : await _engine.archive(sessionId, rawArchived);
+    return <String, Object?>{'session': session.toJson()};
   }
 
   Future<Object?> _mcpDisplayImage(

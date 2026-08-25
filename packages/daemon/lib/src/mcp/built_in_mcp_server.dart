@@ -2,8 +2,8 @@
 ///
 /// The agent launches this process from the ACP `mcpServers` configuration.
 /// It speaks newline-delimited MCP JSON-RPC on stdio and uses a private,
-/// authenticated WebSocket bridge back to the owning daemon for searches and
-/// user-visible image events.
+/// authenticated WebSocket bridge back to the owning daemon for searches,
+/// session archiving, and user-visible image events.
 library;
 
 import 'dart:async';
@@ -118,7 +118,7 @@ class BuiltInMcpServer {
         'title': 'SpeedDial',
         'version': '0.1.0',
       },
-      'instructions': 'Search other SpeedDial projects and sessions, or display an image in the user timeline.',
+      'instructions': 'Search other SpeedDial projects and sessions, archive or revive other sessions, or display an image in the user timeline.',
     };
   }
 
@@ -184,6 +184,8 @@ class BuiltInMcpServer {
       return switch (rawName) {
         'search_projects' => await _searchProjects(arguments),
         'search_sessions' => await _searchSessions(arguments),
+        'archive_session' => await _setSessionArchived(arguments, true),
+        'unarchive_session' => await _setSessionArchived(arguments, false),
         'display_image' => await _displayImage(arguments),
         _ => await _callManagedTool(rawName, arguments),
       };
@@ -227,6 +229,11 @@ class BuiltInMcpServer {
   ) async {
     final String query = _optionalString(arguments, 'query') ?? '';
     final String? projectId = _optionalString(arguments, 'projectId');
+    final bool includeArchived = switch (arguments['includeArchived']) {
+      final bool value => value,
+      null => false,
+      _ => throw ArgumentError('includeArchived must be a boolean'),
+    };
     final int limit = switch (arguments['limit']) {
       final int value when value >= 1 && value <= 100 => value,
       null => 20,
@@ -237,8 +244,24 @@ class BuiltInMcpServer {
       <String, Object?>{
         'query': query,
         'projectId': ?projectId,
+        'includeArchived': includeArchived,
         'limit': limit,
       },
+    );
+    return _textResult(_pretty(result));
+  }
+
+  Future<Map<String, Object?>> _setSessionArchived(
+    Map<String, Object?> arguments,
+    bool archived,
+  ) async {
+    final String? sessionId = _optionalString(arguments, 'sessionId');
+    if (sessionId == null) {
+      throw ArgumentError('sessionId is required');
+    }
+    final Object? result = await _daemonCall(
+      'internal.mcpArchiveSession',
+      <String, Object?>{'sessionId': sessionId, 'archived': archived},
     );
     return _textResult(_pretty(result));
   }
@@ -386,6 +409,11 @@ class BuiltInMcpServer {
             'type': 'string',
             'description': 'Optional project id filter.',
           },
+          'includeArchived': <String, Object?>{
+            'type': 'boolean',
+            'default': false,
+            'description': 'Include archived sessions. Results identify them with archived: true.',
+          },
           'limit': <String, Object?>{
             'type': 'integer',
             'minimum': 1,
@@ -396,6 +424,51 @@ class BuiltInMcpServer {
         'additionalProperties': false,
       },
       'annotations': <String, Object?>{'readOnlyHint': true},
+    },
+    <String, Object?>{
+      'name': 'archive_session',
+      'title': 'Archive a SpeedDial session',
+      'description': 'Archive another SpeedDial session so it is hidden from default session lists and searches. Archiving is reversible in SpeedDial.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'sessionId': <String, Object?>{
+            'type': 'string',
+            'description': 'The session id returned by search_sessions.',
+          },
+        },
+        'required': <String>['sessionId'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': true,
+        'idempotentHint': true,
+        'openWorldHint': false,
+      },
+    },
+    <String, Object?>{
+      'name': 'unarchive_session',
+      'title': 'Revive a SpeedDial session',
+      'description': 'Unarchive another SpeedDial session so it returns to default session lists and searches.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'sessionId': <String, Object?>{
+            'type': 'string',
+            'description':
+                'The archived session id returned by search_sessions.',
+          },
+        },
+        'required': <String>['sessionId'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': false,
+        'idempotentHint': true,
+        'openWorldHint': false,
+      },
     },
     <String, Object?>{
       'name': 'display_image',

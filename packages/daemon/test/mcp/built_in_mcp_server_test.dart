@@ -29,8 +29,19 @@ void main() {
           },
           'internal.mcpSearchSessions' => <String, Object?>{
             'sessions': <Object?>[
-              <String, Object?>{'id': 'other-session', 'title': 'Useful'},
+              <String, Object?>{
+                'id': 'other-session',
+                'title': 'Useful',
+                'archived': true,
+              },
             ],
+          },
+          'internal.mcpArchiveSession' => <String, Object?>{
+            'session': <String, Object?>{
+              'id': params['sessionId'],
+              'title': 'Useful',
+              'archived': params['archived'],
+            },
           },
           'internal.mcpListTools' => <String, Object?>{
             'tools': <Object?>[
@@ -93,9 +104,16 @@ void main() {
     expect(tools.map((Map<String, Object?> tool) => tool['name']), <String>[
       'search_projects',
       'search_sessions',
+      'archive_session',
+      'unarchive_session',
       'display_image',
       'workspace__read',
     ]);
+    final Map<String, Object?> archiveTool = tools.singleWhere(
+      (Map<String, Object?> tool) => tool['name'] == 'archive_session',
+    );
+    expect(archiveTool['annotations'], containsPair('destructiveHint', true));
+    expect(archiveTool['annotations'], containsPair('idempotentHint', true));
     expect(
       ((listedResult['_meta']! as Map)['speeddial/warnings']! as List).single,
       'offline: connection refused',
@@ -122,6 +140,7 @@ void main() {
         'arguments': <String, Object?>{
           'query': 'use',
           'projectId': 'p1',
+          'includeArchived': true,
           'limit': 7,
         },
       },
@@ -135,9 +154,53 @@ void main() {
     expect(calls.last.params, <String, Object?>{
       'query': 'use',
       'projectId': 'p1',
+      'includeArchived': true,
       'limit': 7,
     });
   });
+
+  test('archive_session forwards the selected session id', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'archive_session',
+        'arguments': <String, Object?>{'sessionId': 'other-session'},
+      },
+    );
+    final Map<String, Object?> result = (response['result']! as Map)
+        .cast<String, Object?>();
+    expect(result['isError'], isFalse);
+    final List<Object?> content = result['content']! as List<Object?>;
+    expect((content.single! as Map)['text'], contains('"archived": true'));
+    expect(calls.single.method, 'internal.mcpArchiveSession');
+    expect(calls.single.params, <String, Object?>{
+      'sessionId': 'other-session',
+      'archived': true,
+    });
+  });
+
+  test('unarchive_session forwards the selected session id', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'unarchive_session',
+        'arguments': <String, Object?>{'sessionId': 'other-session'},
+      },
+    );
+    final Map<String, Object?> result = (response['result']! as Map)
+        .cast<String, Object?>();
+    expect(result['isError'], isFalse);
+    final List<Object?> content = result['content']! as List<Object?>;
+    expect((content.single! as Map)['text'], contains('"archived": false'));
+    expect(calls.single.method, 'internal.mcpArchiveSession');
+    expect(calls.single.params, <String, Object?>{
+      'sessionId': 'other-session',
+      'archived': false,
+    });
+  });
+
   test('managed tool calls route through the daemon bridge', () async {
     final Map<String, Object?> response = await request(
       1,

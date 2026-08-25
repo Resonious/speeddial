@@ -916,21 +916,23 @@ class DaemonStore {
     }
   }
 
-  /// Searches non-archived sessions by title and persisted event JSON.
-  /// Results exclude the caller's own session and include a short matching
-  /// conversation excerpt so an MCP caller can decide what to inspect.
+  /// Searches sessions by title and persisted event JSON. Archived sessions
+  /// are omitted unless [includeArchived] is true. Results exclude the
+  /// caller's own session and include a short matching conversation excerpt
+  /// so an MCP caller can decide what to inspect.
   List<Map<String, Object?>> searchSessions({
     required String query,
     required String excludeSessionId,
     String? projectId,
+    bool includeArchived = false,
     int limit = 20,
   }) {
     final String needle = query.toLowerCase();
     final rows = _db.select(
       'SELECT s.id, s.project_id, p.name AS project_name, s.provider_id, '
-      's.title, s.status, s.mode, s.updated_at '
+      's.title, s.status, s.mode, s.archived, s.updated_at '
       'FROM sessions s JOIN projects p ON p.id = s.project_id '
-      'WHERE s.id != ? AND s.archived = 0 '
+      'WHERE s.id != ? AND (? = 1 OR s.archived = 0) '
       'AND (? IS NULL OR s.project_id = ?) '
       "AND (? = '' OR instr(lower(s.title), ?) > 0 OR EXISTS ("
       'SELECT 1 FROM session_events e WHERE e.session_id = s.id '
@@ -938,6 +940,7 @@ class DaemonStore {
       'ORDER BY s.updated_at DESC LIMIT ?',
       <Object?>[
         excludeSessionId,
+        includeArchived ? 1 : 0,
         projectId,
         projectId,
         needle,
@@ -957,6 +960,7 @@ class DaemonStore {
             'title': row['title'] as String,
             'status': row['status'] as String,
             'mode': row['mode'] as String,
+            'archived': (row['archived'] as int) != 0,
             'updatedAt': _fromTs(row['updated_at'] as int).toIso8601String(),
             'excerpt': _sessionSearchExcerpt(id, needle),
           };

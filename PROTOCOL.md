@@ -509,10 +509,16 @@ home described above. It exposes:
 
 - `search_projects {query?: string}` — lists projects whose name/path contains the
   case-insensitive query; an empty query lists all known projects.
-- `search_sessions {query?: string, projectId?: string, limit?: int}` — searches non-archived
-  session titles and persisted history across the daemon, excluding the calling session. Results
-  contain session/project metadata and a matching excerpt. Default limit 20, maximum 100; an empty
-  query returns recent sessions.
+- `search_sessions {query?: string, projectId?: string, includeArchived?: boolean, limit?: int}` —
+  searches session titles and persisted history across the daemon, excluding the calling session.
+  Archived sessions are omitted by default; `includeArchived: true` includes them and every result
+  carries its `archived` state. Results contain session/project metadata and a matching excerpt.
+  Default limit 20, maximum 100; an empty query returns recent sessions.
+- `archive_session {sessionId: string}` — archives another session so it is hidden from default
+  session lists and `search_sessions`. The target can be restored through the regular SpeedDial
+  API or CLI; the calling session cannot archive itself.
+- `unarchive_session {sessionId: string}` — revives an archived session so it returns to default
+  session lists and `search_sessions`; the calling session cannot unarchive itself.
 - `display_image {path?: string, data?: string, mimeType?: string, name?: string}` — requires
   exactly one of a path confined to the session cwd or a base64 payload. The decoded image is capped
   at 8 MiB, persisted as an attachment, and emitted as an `image` event; clients fetch it through
@@ -524,9 +530,10 @@ session's project/cwd proxy context are registered before provider startup; only
 receives that session-bound secret. It may then call
 `internal.mcpListTools {}` → `{tools: Tool[], warnings: string[]}`,
 `internal.mcpCallTool {name: string, arguments: object}` → the upstream MCP call result,
-`internal.mcpSearchProjects`, `internal.mcpSearchSessions`, and `internal.mcpDisplayImage`. It
-cannot call the public daemon API and receives no broadcasts. Public clients cannot use the
-internal methods without the MCP secret.
+`internal.mcpSearchProjects`, `internal.mcpSearchSessions`,
+`internal.mcpArchiveSession {sessionId: string, archived: boolean}`, and
+`internal.mcpDisplayImage`. It cannot call the public daemon API and receives no broadcasts. Public
+clients cannot use the internal methods without the MCP secret.
 
 ### Files
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending

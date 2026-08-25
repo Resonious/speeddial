@@ -1701,6 +1701,62 @@ void main() {
       expect(matches, hasLength(1));
       expect((matches.single! as Map)['title'], 'Searchable release notes');
 
+      final Map<String, Object?> archiveResult = j(
+        await mcp.peer.call('internal.mcpArchiveSession', <String, Object?>{
+          'sessionId': other.id,
+          'archived': true,
+        }),
+      );
+      expect((archiveResult['session']! as Map)['archived'], isTrue);
+      await untilRecorded(client, 'session.updated', 1);
+      expect(
+        (client.of('session.updated').single.params['session']! as Map)['id'],
+        other.id,
+      );
+      final Map<String, Object?> afterArchive = j(
+        await mcp.peer.call('internal.mcpSearchSessions', <String, Object?>{
+          'query': 'release',
+        }),
+      );
+      expect(afterArchive['sessions'], isEmpty);
+      final Map<String, Object?> archivedSearch = j(
+        await mcp.peer.call('internal.mcpSearchSessions', <String, Object?>{
+          'query': 'release',
+          'includeArchived': true,
+        }),
+      );
+      final List<Object?> archivedMatches =
+          archivedSearch['sessions']! as List<Object?>;
+      expect(archivedMatches, hasLength(1));
+      expect((archivedMatches.single! as Map)['archived'], isTrue);
+
+      final Map<String, Object?> unarchiveResult = j(
+        await mcp.peer.call('internal.mcpArchiveSession', <String, Object?>{
+          'sessionId': other.id,
+          'archived': false,
+        }),
+      );
+      expect((unarchiveResult['session']! as Map)['archived'], isFalse);
+      final Map<String, Object?> afterUnarchive = j(
+        await mcp.peer.call('internal.mcpSearchSessions', <String, Object?>{
+          'query': 'release',
+        }),
+      );
+      expect(afterUnarchive['sessions'], hasLength(1));
+      await expectLater(
+        mcp.peer.call('internal.mcpArchiveSession', <String, Object?>{
+          'sessionId': owner.id,
+          'archived': true,
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            -32602,
+          ),
+        ),
+      );
+
       const String imageData =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
       await mcp.peer.call('internal.mcpDisplayImage', <String, Object?>{
@@ -1814,7 +1870,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(3));
+        expect((listed['result']! as Map)['tools'], hasLength(5));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',
