@@ -24,7 +24,7 @@ Future<void> main() async {
   if (connections.endpoints.length == 1) {
     data.selection.selectedDaemonId = connections.endpoints.single.id;
   }
-  unawaited(data.connectAll());
+  unawaited(companionSync.refreshWatchSessions(data));
   runApp(
     WearSpeedDialApp(
       data: data,

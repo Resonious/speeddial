@@ -114,11 +114,67 @@ void main() {
       sessionArguments['payload']! as String,
     ) as Map<String, Object?>;
     expect(sessionPayload['version'], 1);
+    expect(sessionPayload['daemonIds'], <Object?>['remote']);
     final List<Object?> sessions = sessionPayload['sessions']! as List<Object?>;
     expect(sessions, hasLength(2));
     expect(
       (sessions.first! as Map<String, Object?>).keys,
       containsAll(<String>['daemonId', 'sessionId', 'status', 'done']),
+    );
+  });
+
+  test('watch caches complete daemon snapshots as authoritative', () async {
+    final List<MethodCall> calls = <MethodCall>[];
+    final ConnectionsStore connections = ConnectionsStore();
+    await connections.addEndpoint(
+      id: 'alpha',
+      name: 'Alpha',
+      url: 'alpha.example:7331',
+      token: '',
+    );
+    await connections.addEndpoint(
+      id: 'beta',
+      name: 'Beta',
+      url: 'beta.example:7331',
+      token: '',
+    );
+    final String endpointPayload = jsonEncode(<Object?>[
+      for (final DaemonEndpoint endpoint in connections.endpoints)
+        endpoint.toJson(),
+    ]);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (MethodCall call) async {
+          calls.add(call);
+          return call.method == 'getEndpoints' ? endpointPayload : null;
+        });
+
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final AppData data = AppData(
+      connections: connections,
+      clientFor: (String _) => fake,
+    );
+    final CompanionEndpointSync sync = CompanionEndpointSync(channel: channel);
+    addTearDown(sync.dispose);
+    addTearDown(data.dispose);
+    addTearDown(fake.dispose);
+
+    await sync.startWatch(connections, data.sessions);
+    await sync.refreshWatchSessions(data);
+
+    final MethodCall cacheCall = calls.lastWhere(
+      (MethodCall call) => call.method == 'cacheSessions',
+    );
+    final Map<String, Object?> payload =
+        jsonDecode(cacheCall.arguments! as String) as Map<String, Object?>;
+    expect(payload['daemonIds'], <Object?>['alpha', 'beta']);
+    final List<Object?> sessions = payload['sessions']! as List<Object?>;
+    expect(sessions, hasLength(4));
+    expect(
+      sessions
+          .cast<Map<String, Object?>>()
+          .map((Map<String, Object?> item) => item['daemonId'])
+          .toSet(),
+      <Object?>{'alpha', 'beta'},
     );
   });
 }

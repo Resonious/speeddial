@@ -12,6 +12,7 @@ String buildCompanionSessionPayload(
   Set<String>? daemonIds,
 }) => jsonEncode(<String, Object?>{
   'version': 1,
+  if (daemonIds != null) 'daemonIds': daemonIds.toList()..sort(),
   'sessions': <Object?>[
     for (final RecentSession recent in sessions.recentSessions(
       daemonIds: daemonIds,
@@ -44,6 +45,7 @@ class CompanionEndpointSync {
   Future<void> Function()? _sessionSyncAction;
   bool _sessionSyncPending = false;
   bool _sessionSyncInFlight = false;
+  Set<String> _authoritativeWatchDaemonIds = <String>{};
 
   Future<void> startPhone(
     ConnectionsStore connections,
@@ -82,7 +84,8 @@ class CompanionEndpointSync {
     SessionsStore sessions,
   ) async {
     _publishedSessions = sessions;
-    _sessionSyncAction = () => _cacheWatchSessions(sessions);
+    _sessionSyncAction = () =>
+        _cacheWatchSessions(sessions, daemonIds: _authoritativeWatchDaemonIds);
     void sessionListener() {
       _queueSessionSync();
     }
@@ -94,6 +97,30 @@ class CompanionEndpointSync {
       await _applyPayload(connections, call.arguments);
     });
     await refreshWatch(connections);
+  }
+
+  /// Loads the complete all-project session listing for every reachable watch
+  /// endpoint, then marks those daemon slices as authoritative for the native
+  /// Tile/complication cache. A failed daemon is deliberately omitted from the
+  /// authoritative set so its last phone snapshot remains available offline.
+  Future<void> refreshWatchSessions(AppData data) async {
+    await data.connectAll();
+    final Set<String> refreshedDaemonIds = <String>{};
+    for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+      try {
+        await data.sessions.refresh(endpoint.id);
+        refreshedDaemonIds.add(endpoint.id);
+      } on Object catch (error) {
+        debugPrint(
+          'Wear all-project session refresh failed for ${endpoint.id}: $error',
+        );
+      }
+    }
+    _authoritativeWatchDaemonIds = refreshedDaemonIds;
+    await _cacheWatchSessions(
+      data.sessions,
+      daemonIds: _authoritativeWatchDaemonIds,
+    );
   }
 
   Future<void> refreshWatch(ConnectionsStore connections) async {
@@ -160,8 +187,14 @@ class CompanionEndpointSync {
     }
   }
 
-  Future<void> _cacheWatchSessions(SessionsStore sessions) async {
-    final String payload = buildCompanionSessionPayload(sessions);
+  Future<void> _cacheWatchSessions(
+    SessionsStore sessions, {
+    required Set<String> daemonIds,
+  }) async {
+    final String payload = buildCompanionSessionPayload(
+      sessions,
+      daemonIds: daemonIds,
+    );
     if (payload == _lastSessionPayload) return;
     try {
       await _channel.invokeMethod<void>('cacheSessions', payload);
@@ -224,6 +257,7 @@ class CompanionEndpointSync {
     _sessionListener = null;
     _sessionSyncAction = null;
     _sessionSyncPending = false;
+    _authoritativeWatchDaemonIds = <String>{};
     _channel.setMethodCallHandler(null);
   }
 }

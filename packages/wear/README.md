@@ -51,4 +51,6 @@ The watch also provides two optional system surfaces:
 Add the Tile from the watch's Tile carousel and select the complication from a
 compatible watch-face slot. Their last phone-synchronized snapshot remains
 available while the Flutter app is closed; the complication refresh cadence is
-limited to five minutes by Wear OS battery rules.
+limited to five minutes by Wear OS battery rules. The watch refreshes every
+reachable daemon across all projects when SpeedDial launches or resumes; stale
+data is retained only for daemons that are currently unreachable.

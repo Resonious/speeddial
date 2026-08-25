@@ -21,8 +21,10 @@ import androidx.wear.protolayout.ModifiersBuilders.Clickable
 import androidx.wear.protolayout.ModifiersBuilders.Corner
 import androidx.wear.protolayout.ModifiersBuilders.Modifiers
 import androidx.wear.protolayout.ModifiersBuilders.Padding
+import androidx.wear.protolayout.ResourceBuilders.Resources
 import androidx.wear.protolayout.TimelineBuilders.Timeline
 import androidx.wear.protolayout.TimelineBuilders.TimelineEntry
+import androidx.wear.tiles.RequestBuilders.ResourcesRequest
 import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
@@ -33,6 +35,12 @@ class RecentSessionsTileService : TileService() {
         CallbackToFutureAdapter.getFuture { completer ->
             completer.set(buildTile())
             "SpeedDial recent sessions tile"
+        }
+
+    override fun onTileResourcesRequest(requestParams: ResourcesRequest): ListenableFuture<Resources> =
+        CallbackToFutureAdapter.getFuture { completer ->
+            completer.set(Resources.Builder().setVersion(RESOURCES_VERSION).build())
+            "SpeedDial recent sessions tile resources"
         }
 
     private fun buildTile(): Tile {
@@ -65,7 +73,7 @@ class RecentSessionsTileService : TileService() {
             )
             .build()
         return Tile.Builder()
-            .setResourcesVersion("1")
+            .setResourcesVersion(RESOURCES_VERSION)
             .setTileTimeline(timeline)
             .setFreshnessIntervalMillis(5 * 60 * 1000L)
             .build()
@@ -184,6 +192,7 @@ class RecentSessionsTileService : TileService() {
         .build()
 
     companion object {
+        private const val RESOURCES_VERSION = "1"
         private const val BACKGROUND = 0xFF000000.toInt()
         private const val ROW_BACKGROUND = 0xFF1F2937.toInt()
         private const val PRIMARY_TEXT = 0xFFF9FAFB.toInt()

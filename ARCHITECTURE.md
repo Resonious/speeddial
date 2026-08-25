@@ -275,8 +275,11 @@ endpoints are never synchronized.
 
 The phone also publishes a compact, activity-sorted session snapshot at `/speeddial/sessions`.
 Native watch storage keeps that snapshot available when Flutter is not running and merges live
-session changes observed by the open watch app. `RecentSessionsTileService` renders the three newest
-active sessions in a circular-safe Tile. `SessionCountsComplicationService` exposes short- and
+session changes observed by the open watch app. On launch and resume, the watch fetches a complete
+all-project listing from every reachable daemon; those daemon slices replace, rather than append to,
+their native cache so deleted sessions and old statuses cannot linger. Unreachable daemons retain
+their last phone snapshot. `RecentSessionsTileService` renders the three newest active sessions in a
+circular-safe Tile. `SessionCountsComplicationService` exposes short- and
 long-text count fallbacks plus weighted elements for running/waiting-for-approval sessions and
 unseen completed turns. The weighted elements use blue for in-progress and green for done; each
 watch face controls whether that split appears as a bar, arc, or another supported layout. Tile

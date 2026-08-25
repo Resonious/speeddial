@@ -43,14 +43,19 @@ class _WearSpeedDialAppState extends State<WearSpeedDialApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      widget.data.reconnectAll();
       final CompanionEndpointSync? sync = widget.companionSync;
       if (sync != null) {
-        unawaited(sync.refreshWatch(widget.data.connections));
+        unawaited(_refreshCompanion(sync));
       }
-      widget.data.reconnectAll();
     } else if (state == AppLifecycleState.detached) {
       unawaited(_flushDrafts());
     }
+  }
+
+  Future<void> _refreshCompanion(CompanionEndpointSync sync) async {
+    await sync.refreshWatch(widget.data.connections);
+    await sync.refreshWatchSessions(widget.data);
   }
 
   Future<void> _flushDrafts() async {

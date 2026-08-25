@@ -23,7 +23,10 @@ internal data class SurfaceSession(
         get() = "$daemonId/$sessionId"
 }
 
-internal data class SessionSnapshot(val sessions: List<SurfaceSession>) {
+internal data class SessionSnapshot(
+    val sessions: List<SurfaceSession>,
+    val authoritativeDaemonIds: Set<String> = emptySet(),
+) {
     val inProgressCount: Int
         get() = sessions.count { it.status == "running" || it.status == "waitingPermission" }
 
@@ -63,9 +66,16 @@ internal object SessionSnapshotStore {
     fun mergeFromWatch(context: Context, payload: String) {
         val incoming = parseOrNull(payload) ?: return
         val byKey = linkedMapOf<String, SurfaceSession>()
-        for (session in read(context).sessions) byKey[session.key] = session
+        for (session in read(context).sessions) {
+            if (session.daemonId !in incoming.authoritativeDaemonIds) {
+                byKey[session.key] = session
+            }
+        }
         for (session in incoming.sessions) byKey[session.key] = session
-        val merged = SessionSnapshot(sort(byKey.values))
+        val merged = SessionSnapshot(
+            sessions = sort(byKey.values),
+            authoritativeDaemonIds = incoming.authoritativeDaemonIds,
+        )
         val encoded = encode(merged)
         val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
         if (preferences.getString(PAYLOAD_KEY, null) == encoded) return
@@ -81,6 +91,13 @@ internal object SessionSnapshotStore {
         return try {
             val root = JSONObject(payload)
             if (root.optInt("version", 0) != 1) return null
+            val daemonItems = root.optJSONArray("daemonIds") ?: JSONArray()
+            val authoritativeDaemonIds = buildSet {
+                for (index in 0 until daemonItems.length()) {
+                    val daemonId = daemonItems.optString(index)
+                    if (daemonId.isNotBlank()) add(daemonId)
+                }
+            }
             val items = root.optJSONArray("sessions") ?: JSONArray()
             val sessions = ArrayList<SurfaceSession>(items.length())
             for (index in 0 until items.length()) {
@@ -100,7 +117,10 @@ internal object SessionSnapshotStore {
                     ),
                 )
             }
-            SessionSnapshot(sort(sessions))
+            SessionSnapshot(
+                sessions = sort(sessions),
+                authoritativeDaemonIds = authoritativeDaemonIds,
+            )
         } catch (error: Exception) {
             Log.w(TAG, "Ignoring malformed companion session snapshot", error)
             null
@@ -128,7 +148,15 @@ internal object SessionSnapshotStore {
                     .put("done", session.done),
             )
         }
-        return JSONObject().put("version", 1).put("sessions", items).toString()
+        val daemonIds = JSONArray()
+        for (daemonId in snapshot.authoritativeDaemonIds.sorted()) {
+            daemonIds.put(daemonId)
+        }
+        return JSONObject()
+            .put("version", 1)
+            .put("daemonIds", daemonIds)
+            .put("sessions", items)
+            .toString()
     }
 
     private const val TAG = "SpeedDialSessions"
