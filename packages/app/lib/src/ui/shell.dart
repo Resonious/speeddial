@@ -57,6 +57,7 @@ class _ShellState extends State<_Shell> {
   bool _leftOpen = true;
   bool _rightOpen = true;
   final GlobalKey<ScaffoldState> _narrowScaffoldKey = GlobalKey<ScaffoldState>();
+  final FocusNode _composerFocusNode = FocusNode();
 
   /// Keeps the chat pane's element (and therefore its session watch, cache
   /// and composer draft) alive across wide↔narrow layout switches. Without
@@ -64,6 +65,20 @@ class _ShellState extends State<_Shell> {
   /// be unwound by the old pane's `dispose` running later in the same
   /// frame, leaving the timeline empty.
   final GlobalKey _chatPaneKey = GlobalKey();
+
+  @override
+  void dispose() {
+    _composerFocusNode.dispose();
+    super.dispose();
+  }
+
+  void _onSessionCreated() {
+    final ScaffoldState? scaffold = _narrowScaffoldKey.currentState;
+    if (scaffold != null && scaffold.isDrawerOpen) {
+      scaffold.closeDrawer();
+    }
+    _composerFocusNode.requestFocus();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -89,9 +104,20 @@ class _ShellState extends State<_Shell> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        if (_leftOpen) const SizedBox(width: 280, child: LeftRail()),
+                        if (_leftOpen)
+                          SizedBox(
+                            width: 280,
+                            child: LeftRail(
+                              onSessionCreated: _onSessionCreated,
+                            ),
+                          ),
                         if (_leftOpen) const VerticalDivider(width: 1, thickness: 1),
-                        Expanded(child: ChatPane(key: _chatPaneKey)),
+                        Expanded(
+                          child: ChatPane(
+                            key: _chatPaneKey,
+                            composerFocusNode: _composerFocusNode,
+                          ),
+                        ),
                         if (_rightOpen) const VerticalDivider(width: 1, thickness: 1),
                         if (_rightOpen) const SizedBox(width: 360, child: RightPanel()),
                       ],
@@ -124,15 +150,18 @@ class _ShellState extends State<_Shell> {
           ),
           // The drawer surface extends under the status bar; only its
           // content is padded down.
-          drawer: const Drawer(
+          drawer: Drawer(
             child: SafeArea(
               bottom: false,
               left: false,
               right: false,
-              child: LeftRail(),
+              child: LeftRail(onSessionCreated: _onSessionCreated),
             ),
           ),
-          body: ChatPane(key: _chatPaneKey),
+          body: ChatPane(
+            key: _chatPaneKey,
+            composerFocusNode: _composerFocusNode,
+          ),
         );
       },
     );

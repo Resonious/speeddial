@@ -16,7 +16,9 @@ import '../settings/mcp_settings_page.dart';
 /// selected daemon, plus an "Add daemon" action. Rendered inside the
 /// wide-layout rail slot or a drawer on narrow screens.
 class LeftRail extends StatelessWidget {
-  const LeftRail({super.key});
+  const LeftRail({super.key, this.onSessionCreated});
+
+  final VoidCallback? onSessionCreated;
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +97,7 @@ class LeftRail extends StatelessWidget {
                   ),
                 ),
               const Divider(height: 1),
-              const Expanded(child: _ProjectTree()),
+              Expanded(child: _ProjectTree(onSessionCreated: onSessionCreated)),
               Padding(
                 // Keep the button above the system navigation area on
                 // edge-to-edge Android; the rail surface extends behind it.
@@ -260,7 +262,9 @@ class LeftRail extends StatelessWidget {
 /// Subscribes to selection, projects and sessions itself so it stays live
 /// even though the rail constructs it `const`.
 class _ProjectTree extends StatelessWidget {
-  const _ProjectTree();
+  const _ProjectTree({this.onSessionCreated});
+
+  final VoidCallback? onSessionCreated;
 
   @override
   Widget build(BuildContext context) {
@@ -370,6 +374,7 @@ class _ProjectTree extends StatelessWidget {
                           key: ValueKey<String>('project-${project.id}'),
                           project: project,
                           daemonId: daemonId,
+                          onSessionCreated: onSessionCreated,
                         )
                     else
                       SessionList(
@@ -430,10 +435,12 @@ class _ProjectTile extends StatefulWidget {
     super.key,
     required this.project,
     required this.daemonId,
+    this.onSessionCreated,
   });
 
   final Project project;
   final String daemonId;
+  final VoidCallback? onSessionCreated;
 
   @override
   State<_ProjectTile> createState() => _ProjectTileState();
@@ -491,6 +498,7 @@ class _ProjectTileState extends State<_ProjectTile> {
     // Resolve the store graph on the rail's context; the sheet route's own
     // context sits above [AppScope], so AppScope.of must not run in it.
     final AppData data = AppScope.of(context);
+    bool created = false;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -503,9 +511,11 @@ class _ProjectTileState extends State<_ProjectTile> {
           data: data,
           daemonId: daemonId,
           projectId: project.id,
+          onCreated: () => created = true,
         ),
       ),
     );
+    if (mounted && created) widget.onSessionCreated?.call();
   }
 
   Future<void> _removeProject(BuildContext context) async {

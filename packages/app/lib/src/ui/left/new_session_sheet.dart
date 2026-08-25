@@ -17,18 +17,21 @@ import '../../scope.dart';
 /// Provider options come from the daemon's `DaemonInfo`; the created session
 /// is selected in the rail as soon as it exists. [data] is resolved by the
 /// caller on the originating context — the sheet route's own context sits
-/// above [AppScope], so AppScope.of must not run inside it.
+/// above [AppScope], so AppScope.of must not run inside it. [onCreated] runs
+/// after selection changes and immediately before the sheet closes.
 class NewSessionSheet extends StatefulWidget {
   const NewSessionSheet({
     super.key,
     required this.data,
     required this.daemonId,
     required this.projectId,
+    this.onCreated,
   });
 
   final AppData data;
   final String daemonId;
   final String projectId;
+  final VoidCallback? onCreated;
 
   @override
   State<NewSessionSheet> createState() => _NewSessionSheetState();
@@ -146,6 +149,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       );
       data.selection.selectedProjectId = session.projectId;
       data.selection.selectedSessionId = session.id;
+      widget.onCreated?.call();
       if (mounted) Navigator.of(context).pop();
     } on DaemonError catch (e) {
       if (!mounted) return;

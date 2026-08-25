@@ -15,7 +15,9 @@ import 'timeline.dart';
 /// composer. Tracks `selection.selectedSessionId` via [AppScope]; watching a
 /// session subscribes the [ChatStore] to its live event stream.
 class ChatPane extends StatefulWidget {
-  const ChatPane({super.key});
+  const ChatPane({super.key, this.composerFocusNode});
+
+  final FocusNode? composerFocusNode;
 
   @override
   State<ChatPane> createState() => _ChatPaneState();
@@ -114,6 +116,7 @@ class _ChatPaneState extends State<ChatPane> {
           data: data,
           daemonId: daemonId,
           sessionId: sessionId,
+          composerFocusNode: widget.composerFocusNode,
         );
       },
     );
@@ -130,11 +133,13 @@ class _SessionSurface extends StatefulWidget {
     required this.data,
     required this.daemonId,
     required this.sessionId,
+    this.composerFocusNode,
   });
 
   final AppData data;
   final String daemonId;
   final String sessionId;
+  final FocusNode? composerFocusNode;
 
   @override
   State<_SessionSurface> createState() => _SessionSurfaceState();
@@ -242,6 +247,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 bottom: MediaQuery.viewPaddingOf(context).bottom,
               ),
               child: Composer(
+                focusNode: widget.composerFocusNode,
                 status: status,
                 mode: mode,
                 usage: usage,

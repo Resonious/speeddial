@@ -70,6 +70,7 @@ typedef ClipboardImageReader = Future<Uint8List?> Function();
 class Composer extends StatefulWidget {
   const Composer({
     super.key,
+    this.focusNode,
     required this.status,
     required this.mode,
     this.usage,
@@ -87,6 +88,10 @@ class Composer extends StatefulWidget {
     required this.onStop,
     required this.onModeChanged,
   });
+
+  /// Optional focus node owned by the shell so session creation can move
+  /// keyboard focus into the newly mounted composer.
+  final FocusNode? focusNode;
 
   /// Current session status; drives the send/stop switch.
   final SessionStatus status;
@@ -480,6 +485,7 @@ class _ComposerState extends State<Composer> {
                           ),
                     },
                     child: TextField(
+                      focusNode: widget.focusNode,
                       controller: _controller,
                       minLines: 1,
                       maxLines: 8,

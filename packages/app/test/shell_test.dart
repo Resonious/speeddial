@@ -25,6 +25,43 @@ void main() {
     return data;
   }
 
+  Future<AppData> pumpFakeShell(
+    WidgetTester tester, {
+    required Size size,
+  }) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final FakeDaemonClient fake =
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final AppData data = AppData()..registerClient('fake', fake);
+    await data.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    await data.projects.refresh('fake');
+    await data.sessions.refresh('fake');
+    data.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = 'proj-demo';
+    addTearDown(data.dispose);
+
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pump();
+    await tester.pump();
+    return data;
+  }
+
+  Finder messageInput() => find.byWidgetPredicate(
+    (Widget widget) =>
+        widget is TextField &&
+        widget.decoration?.hintText == 'Message the agent…',
+  );
+
   testWidgets('desktop: all three panes visible at 1440x900', (WidgetTester tester) async {
     await pumpApp(tester);
 
@@ -92,6 +129,58 @@ void main() {
     expect(find.text('Daemons'), findsOneWidget);
     expect(find.text('Add daemon'), findsOneWidget);
   });
+
+  testWidgets(
+    'mobile: creating a session closes the drawer and focuses the message input',
+    (WidgetTester tester) async {
+      final AppData data = await pumpFakeShell(
+        tester,
+        size: const Size(390, 844),
+      );
+
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('new-session-proj-demo')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-session-submit')));
+      await tester.pumpAndSettle();
+
+      expect(data.selection.selectedSessionId, isNotNull);
+      expect(
+        data.selection.selectedSessionId,
+        isNot(anyOf('sess-1', 'sess-2')),
+      );
+      expect(find.text('Daemons'), findsNothing);
+      expect(messageInput(), findsOneWidget);
+      expect(
+        tester.widget<TextField>(messageInput()).focusNode?.hasFocus,
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'desktop: creating a session keeps the rail open and focuses the message input',
+    (WidgetTester tester) async {
+      await pumpFakeShell(tester, size: const Size(1440, 900));
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('new-session-proj-demo')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('new-session-submit')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Daemons'), findsOneWidget);
+      expect(messageInput(), findsOneWidget);
+      expect(
+        tester.widget<TextField>(messageInput()).focusNode?.hasFocus,
+        isTrue,
+      );
+    },
+  );
 
   testWidgets('add daemon dialog adds an endpoint visible in the rail', (WidgetTester tester) async {
     final AppData data = await pumpApp(tester);
