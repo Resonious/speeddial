@@ -7,6 +7,7 @@ import '../../theme.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
 import '../settings/environment_page.dart';
+import '../settings/embedded_daemon_page.dart';
 import '../settings/harnesses_page.dart';
 import '../settings/mcp_settings_page.dart';
 
@@ -34,11 +35,27 @@ class LeftRail extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  'Daemons',
-                  style: Theme.of(context).textTheme.labelMedium
-                      ?.copyWith(color: scheme.onSurfaceVariant),
+                padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        'Daemons',
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                    ),
+                    // Embedded in-process daemon settings (desktop). Lives
+                    // here, not on the endpoint tile, so it stays reachable
+                    // even when the daemon failed to start at boot.
+                    if (data.localDaemon != null)
+                      IconButton(
+                        key: const Key('embedded-daemon-settings'),
+                        tooltip: 'Built-in daemon settings',
+                        icon: const Icon(Icons.settings_outlined, size: 18),
+                        onPressed: () => _showEmbeddedSettings(context),
+                      ),
+                  ],
                 ),
               ),
               if (endpoints.isEmpty)
@@ -222,6 +239,18 @@ class LeftRail extends StatelessWidget {
       data.selection.selectedDaemonId = null;
     }
     await data.connections.removeEndpoint(endpoint.id);
+  }
+
+  Future<void> _showEmbeddedSettings(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AppScope(
+          data: data,
+          child: EmbeddedDaemonPage(initial: data.embeddedDaemon.config),
+        ),
+      ),
+    );
   }
 }
 

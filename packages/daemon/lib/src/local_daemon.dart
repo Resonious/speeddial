@@ -2,8 +2,10 @@
 /// as `speeddial serve`, but without the CLI arg parsing, discovery file, or
 /// signal handling. The embedding app owns the lifecycle via [start]/[stop].
 ///
-/// Binds to `127.0.0.1` with no auth token (loopback per PROTOCOL.md) on an
-/// OS-chosen free port ([port] / [url] are available after [start]). Shares
+/// Defaults to loopback (`127.0.0.1`) with no auth token (per PROTOCOL.md)
+/// on an OS-chosen free port; [start] also accepts a fixed port, a custom
+/// bind interface, and a token. A non-loopback bind requires a non-empty
+/// token. [port]/[url] are available after [start]. Shares
 /// `~/.speeddial/speeddial.db` with the standalone CLI daemon so projects and
 /// sessions are visible from both surfaces.
 library;
@@ -24,24 +26,59 @@ import 'store/daemon_store.dart';
 /// A SpeedDial daemon running in the current process, driven directly by the
 /// embedding app instead of the CLI.
 class LocalDaemon {
-  LocalDaemon._(this._server, this._engine, this._store);
+  LocalDaemon._(this._server, this._engine, this._store, this._bindHost);
 
   final SpeedDialServer _server;
   final SessionEngine _engine;
   final DaemonStore _store;
+  final String _bindHost;
 
   /// The bound port (meaningful after [start]).
   int get port => _server.port;
 
-  /// `ws://127.0.0.1:<port>/ws` — the endpoint URL for a WebSocket client.
-  String get url => 'ws://127.0.0.1:${_server.port}$kWsPath';
+  /// The interface the server is bound to, exactly as requested from
+  /// [start] (meaningful after [start]).
+  String get host => _bindHost;
 
-  /// Starts the daemon: opens the store, restores sessions, binds the
-  /// WebSocket server on `127.0.0.1` (loopback, no auth).
+  /// `ws://<host>:<port>/ws` — the endpoint URL for a WebSocket client.
   ///
-  /// [port] defaults to 0 (OS-assigned free port). [dbPath] defaults to
+  /// Any-interface binds report a loopback address (`0.0.0.0` → `127.0.0.1`,
+  /// `::` → `[::1]`), and IPv6 literals get URL brackets; every other host is
+  /// used verbatim.
+  String get url => 'ws://${_clientHost(_bindHost)}:${_server.port}$kWsPath';
+
+  static String _clientHost(String bindHost) {
+    if (bindHost == '0.0.0.0') return '127.0.0.1';
+    if (bindHost == '::') return '[::1]';
+    if (bindHost.contains(':')) return '[$bindHost]'; // IPv6 literal
+    return bindHost;
+  }
+
+  static bool _isLoopback(String host) =>
+      host == '127.0.0.1' || host == '::1' || host == 'localhost';
+
+  /// Starts the daemon: opens the store, restores sessions, and binds the
+  /// WebSocket server.
+  ///
+  /// [host] defaults to `127.0.0.1` (loopback, no auth required); any other
+  /// interface requires a non-empty [authToken] (matching `speeddial serve`
+  /// policy) and throws [ArgumentError] otherwise. [port] defaults to 0
+  /// (OS-assigned free port). [dbPath] defaults to
   /// `~/.speeddial/speeddial.db`.
-  static Future<LocalDaemon> start({int port = 0, String? dbPath}) async {
+  static Future<LocalDaemon> start({
+    String host = '127.0.0.1',
+    int port = 0,
+    String? authToken,
+    String? dbPath,
+  }) async {
+    final String token = (authToken ?? '').trim();
+    if (!_isLoopback(host) && token.isEmpty) {
+      throw ArgumentError.value(
+        host,
+        'host',
+        'binding a non-loopback interface requires a non-empty authToken',
+      );
+    }
     final String resolvedDb =
         dbPath ??
         p.join(
@@ -63,12 +100,12 @@ class LocalDaemon {
     final SpeedDialServer server;
     try {
       server = await SpeedDialServer.bind(
-        host: '127.0.0.1',
+        host: host,
         port: port,
         engine: engine,
         store: store,
         providers: providers,
-        authToken: null,
+        authToken: token.isEmpty ? null : token,
         git: git,
         pr: pr,
       );
@@ -78,7 +115,7 @@ class LocalDaemon {
       rethrow;
     }
 
-    return LocalDaemon._(server, engine, store);
+    return LocalDaemon._(server, engine, store, host);
   }
 
   /// Shuts the daemon down: disposes the engine (kills agent processes),
@@ -89,3 +126,4 @@ class LocalDaemon {
     _store.dispose();
   }
 }
+

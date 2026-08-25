@@ -11,6 +11,7 @@ import 'api/ws_daemon_client.dart';
 import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
 import 'state/daemon_config_store.dart';
+import 'state/embedded_daemon_store.dart';
 import 'state/files_store.dart';
 import 'state/git_store.dart';
 import 'state/mcp_store.dart';
@@ -191,8 +192,9 @@ class ConnectionsStore extends ChangeNotifier {
   }
 
   /// Replaces the endpoint [id] in place (same id, normalized [url]).
-  /// Unknown ids are a no-op. Listeners diff url/token to decide whether a
-  /// live client must be reconnected.
+  /// Unknown ids are a no-op. The endpoint's `embedded` flag is preserved:
+  /// embedded endpoints stay non-persistent. Listeners diff url/token to
+  /// decide whether a live client must be reconnected.
   Future<void> updateEndpoint({
     required String id,
     required String name,
@@ -201,11 +203,13 @@ class ConnectionsStore extends ChangeNotifier {
   }) async {
     final int index = _endpoints.indexWhere((DaemonEndpoint e) => e.id == id);
     if (index < 0) return;
+    final DaemonEndpoint existing = _endpoints[index];
     _endpoints[index] = DaemonEndpoint(
       id: id,
       name: name,
       url: normalizeEndpointUrl(url),
       token: token,
+      embedded: existing.embedded,
     );
     notifyListeners();
     await _persist();
@@ -286,21 +290,23 @@ class SelectionStore extends ChangeNotifier {
   }
 }
 
-/// Store graph handed to [AppScope]. The five domain stores are constructed
+/// Store graph handed to [AppScope]. The domain stores are constructed
 /// internally and resolve their [DaemonClient] through [clientFor], which
 /// serves ids registered via [registerClient] (tests/demo), the optional
 /// constructor resolver, or — for plain [DaemonEndpoint]s — a lazily created
-/// and cached [WsDaemonClient] connecting to the endpoint's own URL/token.
+/// [WsDaemonClient] connecting to the endpoint's own URL/token.
 class AppData {
-  /// [connections] and [selection] default to fresh instances; they exist so
-  /// the pre-Phase-3 callers (main.dart) can keep injecting. [clientFor], if
-  /// given, is consulted for ids that were never [registerClient]ed and takes
-  /// precedence over the lazy WebSocket wiring (legacy override). The
-  /// canonical construction is `AppData()..registerClient('id', client)`.
+  /// [connections], [selection] and [embeddedDaemon] default to fresh
+  /// instances; they exist so the pre-Phase-3 callers (main.dart) can keep
+  /// injecting. [clientFor], if given, is consulted for ids that were never
+  /// [registerClient]ed and takes precedence over the lazy WebSocket wiring
+  /// (legacy override). The canonical construction is
+  /// `AppData()..registerClient('id', client)`.
   AppData({
     ConnectionsStore? connections,
     SelectionStore? selection,
     SettingsStore? settings,
+    EmbeddedDaemonStore? embeddedDaemon,
     DaemonClient Function(String daemonId)? clientFor,
     this.daemonChannelFactory,
     this.daemonHistoryDetail = SessionHistoryDetail.full,
@@ -309,6 +315,7 @@ class AppData {
   }) : connections = connections ?? ConnectionsStore(),
        selection = selection ?? SelectionStore(),
        settings = settings ?? SettingsStore(),
+       embeddedDaemon = embeddedDaemon ?? EmbeddedDaemonStore(),
        _fallbackClientFor = clientFor {
     projects = ProjectsStore(clientFor: this.clientFor);
     sessions = SessionsStore(
@@ -334,6 +341,7 @@ class AppData {
   final ConnectionsStore connections;
   final SelectionStore selection;
   final SettingsStore settings;
+  final EmbeddedDaemonStore embeddedDaemon;
 
   late final ProjectsStore projects;
   late final SessionsStore sessions;
@@ -349,6 +357,9 @@ class AppData {
   /// not persisted across launches, since yolo auto-approves every
   /// permission request.
   bool newSessionYolo = false;
+
+  /// Endpoint id of the in-process daemon's non-persistent connection.
+  static const String embeddedDaemonId = 'embedded';
 
   /// The in-process daemon controller set by [main] on desktop builds; null
   /// on web/mobile or in demo mode. Stopped via [stopLocalDaemon] on
@@ -552,6 +563,68 @@ class AppData {
     if (daemon != null) await daemon.stop();
   }
 
+  /// Applies new embedded-daemon settings: persists them, restarts the
+  /// in-process daemon (its agent processes are killed; sessions survive and
+  /// respawn on their next turn), and repoints the embedded endpoint so the
+  /// live client reconnects with the new URL/token.
+  ///
+  /// Throws (recording the failure in [EmbeddedDaemonStore.lastError]) when
+  /// the daemon fails to restart — e.g. a fixed port already in use; the
+  /// saved settings still apply to the next launch. With no controller
+  /// (web/mobile/demo) it only persists.
+  Future<void> applyEmbeddedDaemonConfig(EmbeddedDaemonConfig config) async {
+    final EmbeddedDaemonStore embedded = embeddedDaemon;
+    await embedded.save(config);
+    final LocalDaemonController? controller = localDaemon;
+    if (controller == null || _disposed) return;
+    embedded.setRestarting(true);
+    try {
+      await controller.stop();
+      final String? url = await controller.start(
+        host: config.host,
+        port: config.port,
+        token: config.token,
+      );
+      if (url == null) {
+        throw StateError(
+          'the embedded daemon failed to start: ${controller.lastError}',
+        );
+      }
+      await _upsertEmbeddedEndpoint(url, config.token);
+    } on Object catch (error) {
+      embedded.setLastError(error);
+      rethrow;
+    } finally {
+      embedded.setRestarting(false);
+    }
+  }
+
+  /// Points the embedded endpoint at [url]/[token], adding it when missing
+  /// (e.g. the initial start failed at boot), never persisting it.
+  Future<void> _upsertEmbeddedEndpoint(String url, String token) async {
+    final bool exists = connections.endpoints.any(
+      (DaemonEndpoint e) => e.id == embeddedDaemonId,
+    );
+    if (exists) {
+      await connections.updateEndpoint(
+        id: embeddedDaemonId,
+        name: 'This computer',
+        url: url,
+        token: token,
+      );
+    } else {
+      await connections.addEndpoint(
+        id: embeddedDaemonId,
+        name: 'This computer',
+        url: url,
+        token: token,
+        persist: false,
+        embedded: true,
+      );
+      selection.selectedDaemonId ??= embeddedDaemonId;
+    }
+  }
+
   /// True after [dispose]; async startup work must check this between awaits.
   bool get isDisposed => _disposed;
   bool _disposed = false;
@@ -582,6 +655,7 @@ class AppData {
     mcp.dispose();
     daemonConfig.dispose();
     settings.dispose();
+    embeddedDaemon.dispose();
   }
 }
 

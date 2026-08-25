@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'src/companion/companion_endpoint_sync.dart';
 import 'src/local_daemon/local_daemon.dart';
 import 'src/local_daemon/mcp_entry.dart';
+import 'src/state/embedded_daemon_store.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
 import 'src/ui/shell.dart';
@@ -26,25 +27,43 @@ Future<void> main(List<String> args) async {
       companionSync = CompanionEndpointSync();
       await companionSync.startPhone(connections);
     }
-    data = AppData(connections: connections, selection: SelectionStore());
+    final EmbeddedDaemonStore embedded = EmbeddedDaemonStore();
+    await embedded.init();
+    data = AppData(
+      connections: connections,
+      selection: SelectionStore(),
+      embeddedDaemon: embedded,
+    );
     // Desktop builds start an in-process daemon for an out-of-the-box
     // experience; web/mobile skip this (unsupported) and rely on the user
     // adding a remote daemon. The embedded endpoint is non-persistent: its
-    // URL carries an ephemeral port, so it is never written to prefs.
+    // URL carries an ephemeral port unless a fixed one is configured, so it
+    // is never written to prefs.
     if (embeddedDaemonSupported) {
       final LocalDaemonController localDaemon = createLocalDaemonController();
       data.localDaemon = localDaemon;
-      final String? url = await localDaemon.start();
+      final EmbeddedDaemonConfig config = embedded.config;
+      final String? url = await localDaemon.start(
+        host: config.host,
+        port: config.port,
+        token: config.token,
+      );
       if (url != null && !data.isDisposed) {
         await data.connections.addEndpoint(
-          id: 'embedded',
+          id: AppData.embeddedDaemonId,
           name: 'This computer',
           url: url,
-          token: '',
+          token: config.token,
           persist: false,
           embedded: true,
         );
-        data.selection.selectedDaemonId = 'embedded';
+        data.selection.selectedDaemonId = AppData.embeddedDaemonId;
+      } else if (url == null && !data.isDisposed) {
+        // Bind failure (e.g. configured port in use): surface it through the
+        // store so the embedded-daemon settings page can show it.
+        embedded.setLastError(
+          localDaemon.lastError ?? StateError('unknown start failure'),
+        );
       }
     }
     // Connect every saved endpoint; failures land in their connection

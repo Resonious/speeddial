@@ -16,21 +16,35 @@ class LocalDaemonControllerNative implements LocalDaemonController {
   LocalDaemon? _daemon;
   String? _url;
   bool _starting = false;
+  Object? _lastError;
 
   @override
   bool get isRunning => _daemon != null;
 
   @override
-  Future<String?> start() async {
+  Object? get lastError => _lastError;
+
+  @override
+  Future<String?> start({
+    String host = '127.0.0.1',
+    int port = 0,
+    String token = '',
+  }) async {
     if (_daemon != null) return _url;
     if (_starting) return null;
     _starting = true;
     try {
-      final daemon = await LocalDaemon.start();
+      final daemon = await LocalDaemon.start(
+        host: host,
+        port: port,
+        authToken: token.isEmpty ? null : token,
+      );
       _daemon = daemon;
       _url = daemon.url;
+      _lastError = null;
       return _url;
     } on Object catch (error) {
+      _lastError = error;
       if (kDebugMode) {
         debugPrint('embedded daemon failed to start: $error');
       }
@@ -56,6 +70,5 @@ class LocalDaemonControllerNative implements LocalDaemonController {
   }
 }
 
-/// Factory selected by the conditional import in `local_daemon.dart`.
 LocalDaemonController platformControllerImpl() =>
     LocalDaemonControllerNative();

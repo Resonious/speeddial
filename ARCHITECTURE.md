@@ -155,9 +155,14 @@ lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer)
 lib/src/client.dart DaemonClient: Dart client for the same protocol (used by the CLI
                     subcommands to talk to a running daemon).
 lib/src/local_daemon.dart  LocalDaemon: in-process daemon (same engine/store/server as
-                    `serve`) without CLI arg parsing, discovery file, or signal handling.
-                    Binds 127.0.0.1 on an OS-chosen port with no auth. Started/stopped
-                    by the embedding app; exported via the public library.
+                    `serve`) without CLI arg parsing, discovery file, or
+                    signal handling. Configurable bind interface, port
+                    (default loopback + OS-chosen), and auth token; a
+                    non-loopback bind requires a token (ArgumentError
+                    otherwise, mirroring `serve` policy). `url` reports a
+                    connectable host (`0.0.0.0` → `127.0.0.1`, `::` →
+                    `[::1]`, IPv6 literals bracketed). Started/stopped by the
+                    embedding app; exported via the public library.
 ```
 
 CLI (`speeddial <command>`), all bookkeeping commands talk to the running daemon over
@@ -180,10 +185,11 @@ stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context
 
 ```
 lib/main.dart                hidden native MCP subprocess dispatch, then runApp; desktop builds start an embedded in-process daemon
-                             (lib/src/local_daemon/) and auto-add a non-persistent
-                             "This computer" endpoint; web/mobile skip embedding.
-                             SpeedDialApp is a WidgetsBindingObserver that stops the
-                             embedded daemon on app shutdown.
+                             (lib/src/local_daemon/) from the persisted
+                             EmbeddedDaemonStore config and auto-add a
+                             non-persistent "This computer" endpoint; web/mobile
+                             skip embedding. SpeedDialApp is a WidgetsBindingObserver
+                             that stops the embedded daemon on app shutdown.
 lib/src/scope.dart           AppScope inherited widget + store graph
 lib/src/theme.dart           light + dark Material 3 themes (GitHub palettes), monospace accents, dense
 lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PROTOCOL.md
@@ -205,7 +211,10 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              (per-session event buffers, incremental chunk append),
                              FilesStore, GitStore, McpStore, DaemonConfigStore (installed
                              harnesses + write-only environment names), SettingsStore (theme
-                             mode persisted locally). Stores NEVER hold BuildContext.
+                             mode persisted locally), EmbeddedDaemonStore (persisted
+                             interface/port/token of the built-in daemon; restart
+                             errors surfaced for its settings page). Stores NEVER hold
+                             BuildContext.
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
                              chat flexible, right 360, both collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
@@ -215,9 +224,11 @@ lib/src/ui/left/             daemon/project/session rail: connection status dot,
                              model/thinking are picked in the
                              composer on the live session), rename/archive/delete menus
 lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
-                             harness/version list with update actions, and
-                             write-only daemon environment editor; stored secret
-                             values are never read back into Flutter.
+                             harness/version list with update actions, write-only
+                             daemon environment editor, and the built-in daemon's
+                             interface/port/token settings (apply restarts the
+                             embedded daemon and repoints its endpoint); stored
+                             secret values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that

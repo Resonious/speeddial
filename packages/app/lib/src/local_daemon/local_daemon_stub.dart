@@ -11,13 +11,20 @@ class LocalDaemonControllerStub implements LocalDaemonController {
   const LocalDaemonControllerStub();
 
   @override
-  Future<String?> start() async => null;
+  Future<String?> start({
+    String host = '127.0.0.1',
+    int port = 0,
+    String token = '',
+  }) async => null;
 
   @override
   Future<void> stop() async {}
 
   @override
   bool get isRunning => false;
+
+  @override
+  Object? get lastError => null;
 }
 
 
