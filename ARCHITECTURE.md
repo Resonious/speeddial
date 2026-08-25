@@ -60,7 +60,9 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     sends `UserInput`, handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
                     info blocks, shell output, compaction, and errors into the shared agent
-                    update stream. Native `TodoWrite` calls become shared plan updates so
+                    update stream. Native `Agent` tool progress is flattened into tagged
+                    top-level subagent activities instead of one growing output block.
+                    Native `TodoWrite` calls become shared plan updates so
                     every provider uses the same checklist UI. Catalog data comes from
                     `ante catalog`. Only the
                     daemon-owned `speeddial` MCP descriptor is merged into the selected

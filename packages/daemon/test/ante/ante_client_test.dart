@@ -342,6 +342,63 @@ void main() {
     );
   });
 
+  test('surfaces subagent progress as separate tagged activities', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+    final StreamSubscription<AcpSessionUpdate> subscription = client
+        .sessionUpdates(created.sessionId)
+        .listen(updates.add);
+    addTearDown(subscription.cancel);
+
+    final PromptResult result = await client.prompt(
+      created.sessionId,
+      textBlocks('run subagent'),
+    );
+
+    expect(result.stopReason, 'end_turn');
+    expect(updates.whereType<AcpToolCall>(), isEmpty);
+    expect(updates.whereType<AcpToolCallUpdate>(), isEmpty);
+    final List<AcpAgentActivityUpdate> activities = updates
+        .whereType<AcpAgentActivityUpdate>()
+        .where((AcpAgentActivityUpdate update) => update.kind == 'subagent')
+        .toList();
+    expect(activities, hasLength(5));
+
+    final List<AcpAgentActivityUpdate> lifecycle = activities
+        .where(
+          (AcpAgentActivityUpdate update) =>
+              update.id == 'ante-subagent-agent-1',
+        )
+        .toList();
+    expect(lifecycle.map((AcpAgentActivityUpdate update) => update.status), [
+      'running',
+      'completed',
+    ]);
+    expect(lifecycle.last.title, 'Trace the deployment graph');
+    expect(lifecycle.last.details, <String>[
+      'explore',
+      'The workflow has three deployment entry points.',
+    ]);
+
+    expect(
+      activities.map((AcpAgentActivityUpdate update) => update.title),
+      containsAll(<String>[
+        'I’ll map the workflow and its scripts.',
+        'Glob',
+        'Read',
+      ]),
+    );
+    final AcpAgentActivityUpdate read = activities.singleWhere(
+      (AcpAgentActivityUpdate update) => update.title == 'Read',
+    );
+    expect(
+      read.details.single,
+      'file_path="/workspace/.github/workflows/deploy.yml"',
+    );
+  });
+
   test('normalizes TodoWrite calls into shared plan updates', () async {
     final AnteClient client = spawnAnte();
     addTearDown(client.dispose);

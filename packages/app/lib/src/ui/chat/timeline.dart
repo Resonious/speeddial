@@ -68,6 +68,35 @@ class AgentActivityItem extends TimelineItem {
   final AgentActivity activity;
 }
 
+class _LegacySubagentState {
+  _LegacySubagentState({
+    required this.activityId,
+    required this.headerIndex,
+    required this.title,
+    required this.type,
+    required this.startedWithoutMetadata,
+  });
+
+  final String activityId;
+  final int headerIndex;
+  final String title;
+  final String type;
+  final bool startedWithoutMetadata;
+  String progressText = '';
+  int step = 0;
+  bool terminal = false;
+}
+
+class _SubagentPresentation {
+  const _SubagentPresentation({
+    required this.title,
+    this.details = const <String>[],
+  });
+
+  final String title;
+  final List<String> details;
+}
+
 /// A full-replacement plan view.
 class PlanTimelineItem extends TimelineItem {
   const PlanTimelineItem({required this.entries});
@@ -121,6 +150,9 @@ List<TimelineItem> deriveTimelineItems(
   final List<TimelineItem> items = <TimelineItem>[];
   final Map<String, int> toolIndexes = <String, int>{};
   final Map<String, int> activityIndexes = <String, int>{};
+  final Map<String, _LegacySubagentState> legacySubagents =
+      <String, _LegacySubagentState>{};
+  final Map<String, int> legacySubagentGenerations = <String, int>{};
   final StringBuffer message = StringBuffer();
   final StringBuffer thought = StringBuffer();
   int? messageForkSeq;
@@ -138,6 +170,97 @@ List<TimelineItem> deriveTimelineItems(
     if (thought.isEmpty) return;
     items.add(AgentThoughtItem(text: thought.toString(), active: active));
     thought.clear();
+  }
+
+  void foldLegacySubagent(ToolCall toolCall) {
+    _LegacySubagentState? state = legacySubagents[toolCall.id];
+    if (state == null ||
+        (state.terminal && _isActiveToolStatus(toolCall.status))) {
+      final int generation = (legacySubagentGenerations[toolCall.id] ?? -1) + 1;
+      legacySubagentGenerations[toolCall.id] = generation;
+      final Map<Object?, Object?>? input = toolCall.rawInput is Map
+          ? toolCall.rawInput! as Map<Object?, Object?>
+          : null;
+      final String type = input?['subagent_type'] as String? ?? '';
+      final String description = input?['description'] as String? ?? '';
+      final String title = description.isNotEmpty
+          ? description
+          : type.isNotEmpty
+          ? '${_humanizeActivity(type)} subagent'
+          : 'Subagent';
+      final String activityId = 'legacy-subagent-${toolCall.id}-$generation';
+      state = _LegacySubagentState(
+        activityId: activityId,
+        headerIndex: items.length,
+        title: title,
+        type: type,
+        startedWithoutMetadata: input == null,
+      );
+      legacySubagents[toolCall.id] = state;
+      items.add(
+        AgentActivityItem(
+          activity: AgentActivity(
+            id: activityId,
+            kind: 'subagent',
+            title: title,
+            status: _activityStatusFor(toolCall.status),
+            details: <String>[if (type.isNotEmpty) type],
+          ),
+        ),
+      );
+    }
+
+    if (_isActiveToolStatus(toolCall.status)) {
+      final String progressText = _toolCallText(toolCall);
+      if (progressText == state.progressText) return;
+      String appended;
+      if (progressText.length >= state.progressText.length) {
+        appended = progressText.substring(state.progressText.length);
+        if (appended.startsWith('\n')) appended = appended.substring(1);
+      } else {
+        appended = progressText;
+      }
+      final List<String> updates =
+          state.progressText.isEmpty &&
+              state.startedWithoutMetadata &&
+              appended.contains('\n')
+          ? appended.split('\n')
+          : <String>[appended];
+      state.progressText = progressText;
+      for (final String update in updates) {
+        if (update.trim().isEmpty) continue;
+        final _SubagentPresentation presentation = _subagentPresentation(
+          update,
+        );
+        items.add(
+          AgentActivityItem(
+            activity: AgentActivity(
+              id: '${state.activityId}-step-${state.step++}',
+              kind: 'subagent',
+              title: presentation.title,
+              status: AgentActivityStatus.completed,
+              details: presentation.details,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final String? report = _legacySubagentReport(toolCall);
+    items[state.headerIndex] = AgentActivityItem(
+      activity: AgentActivity(
+        id: state.activityId,
+        kind: 'subagent',
+        title: state.title,
+        status: _activityStatusFor(toolCall.status),
+        details: <String>[
+          if (state.type.isNotEmpty) state.type,
+          if (report != null && report.isNotEmpty) report,
+        ],
+      ),
+    );
+    state.terminal = true;
   }
 
   for (final SessionEvent event in events) {
@@ -164,18 +287,22 @@ List<TimelineItem> deriveTimelineItems(
       case ToolCallEvent e:
         flushMessage();
         flushThought();
-        final int? existing = toolIndexes[e.toolCall.id];
-        final bool reused =
-            existing != null &&
-            _isTerminalToolStatus(
-              (items[existing] as ToolCallTimelineItem).toolCall.status,
-            ) &&
-            _isActiveToolStatus(e.toolCall.status);
-        if (existing != null && !reused) {
-          items[existing] = ToolCallTimelineItem(toolCall: e.toolCall);
+        if (_isLegacySubagentTool(e.toolCall)) {
+          foldLegacySubagent(e.toolCall);
         } else {
-          toolIndexes[e.toolCall.id] = items.length;
-          items.add(ToolCallTimelineItem(toolCall: e.toolCall));
+          final int? existing = toolIndexes[e.toolCall.id];
+          final bool reused =
+              existing != null &&
+              _isTerminalToolStatus(
+                (items[existing] as ToolCallTimelineItem).toolCall.status,
+              ) &&
+              _isActiveToolStatus(e.toolCall.status);
+          if (existing != null && !reused) {
+            items[existing] = ToolCallTimelineItem(toolCall: e.toolCall);
+          } else {
+            toolIndexes[e.toolCall.id] = items.length;
+            items.add(ToolCallTimelineItem(toolCall: e.toolCall));
+          }
         }
       case AgentActivityEvent e:
         flushMessage();
@@ -231,6 +358,61 @@ bool _isTerminalToolStatus(ToolCallStatus status) => switch (status) {
   ToolCallStatus.pending || ToolCallStatus.running => false,
   ToolCallStatus.completed || ToolCallStatus.failed => true,
 };
+
+bool _isLegacySubagentTool(ToolCall toolCall) =>
+    toolCall.title.toLowerCase() == 'agent';
+
+AgentActivityStatus _activityStatusFor(ToolCallStatus status) =>
+    switch (status) {
+      ToolCallStatus.pending ||
+      ToolCallStatus.running => AgentActivityStatus.running,
+      ToolCallStatus.completed => AgentActivityStatus.completed,
+      ToolCallStatus.failed => AgentActivityStatus.failed,
+    };
+
+String _toolCallText(ToolCall toolCall) => toolCall.content
+    .whereType<ToolCallText>()
+    .map((ToolCallText content) => content.text)
+    .join('\n');
+
+String? _legacySubagentReport(ToolCall toolCall) {
+  final Object? output = toolCall.rawOutput;
+  if (output is Map<Object?, Object?> && output['report'] is String) {
+    return output['report']! as String;
+  }
+  final String text = _toolCallText(toolCall);
+  return text.isEmpty ? null : text;
+}
+
+_SubagentPresentation _subagentPresentation(String message) {
+  final String trimmed = message.trim();
+  final RegExpMatch? invocation = _subagentInvocation.firstMatch(trimmed);
+  if (invocation != null) {
+    final String arguments = invocation.group(2)!.trim();
+    return _SubagentPresentation(
+      title: invocation.group(1)!,
+      details: <String>[if (arguments.isNotEmpty) arguments],
+    );
+  }
+  if (trimmed.contains('\n') || trimmed.length > 160) {
+    final String firstLine = trimmed.split('\n').first;
+    final String title = firstLine.length <= 160
+        ? firstLine
+        : '${firstLine.substring(0, 159)}…';
+    return _SubagentPresentation(title: title, details: <String>[trimmed]);
+  }
+  return _SubagentPresentation(title: trimmed);
+}
+
+String _humanizeActivity(String value) {
+  if (value.isEmpty) return value;
+  final String spaced = value.replaceAll('_', ' ');
+  return '${spaced[0].toUpperCase()}${spaced.substring(1)}';
+}
+
+final RegExp _subagentInvocation = RegExp(
+  r'^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$',
+);
 
 /// Virtualized, bottom-anchored timeline of a session's derived items.
 ///
@@ -590,6 +772,7 @@ class _ActivityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final SpeedDialColors colors = context.speedDialColors;
+    final bool isSubagent = activity.kind == 'subagent';
     final Color accent = switch (activity.status) {
       AgentActivityStatus.running => colors.running,
       AgentActivityStatus.completed => theme.colorScheme.primary,
@@ -630,18 +813,41 @@ class _ActivityCard extends StatelessWidget {
           tilePadding: const EdgeInsets.symmetric(horizontal: 12),
           childrenPadding: const EdgeInsets.fromLTRB(40, 0, 12, 10),
           dense: true,
+          showTrailingIcon: activity.details.isNotEmpty,
           initiallyExpanded: activity.status == AgentActivityStatus.failed,
           title: ActivePulse(
             active: activity.status == AgentActivityStatus.running,
             pulseKey: ValueKey<String>('activity-pulse-${activity.id}'),
-            child: Text(activity.title, style: theme.textTheme.bodySmall),
+            child: isSubagent
+                ? Row(
+                    children: <Widget>[
+                      _ActivityTag(
+                        key: ValueKey<String>('activity-tag-${activity.id}'),
+                        label: 'SUBAGENT',
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          activity.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
+                  )
+                : Text(activity.title, style: theme.textTheme.bodySmall),
           ),
-          subtitle: Text(
-            activity.kind,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+          subtitle: isSubagent && activity.details.isEmpty
+              ? null
+              : Text(
+                  isSubagent ? activity.details.first : activity.kind,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
           children: <Widget>[
             for (final String detail in activity.details)
               Align(
@@ -657,6 +863,34 @@ class _ActivityCard extends StatelessWidget {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityTag extends StatelessWidget {
+  const _ActivityTag({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent = context.speedDialColors.purple;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: accent,
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
         ),
       ),
     );

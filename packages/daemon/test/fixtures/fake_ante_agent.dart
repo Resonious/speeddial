@@ -330,6 +330,59 @@ Future<void> _runTurn(String parent, String text) async {
     }, parent);
     return;
   }
+  if (text == 'run subagent') {
+    await _event(<String, Object?>{
+      'ToolStart': <String, Object?>{
+        'id': 'agent-1',
+        'name': 'Agent',
+        'args': <String, Object?>{
+          'description': 'Trace the deployment graph',
+          'prompt': 'Inspect the deployment workflow without editing it.',
+          'subagent_type': 'explore',
+        },
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolUpdate': <String, Object?>{
+        'tool_use_id': 'agent-1',
+        'seq': 0,
+        'message': 'I’ll map the workflow and its scripts.',
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolUpdate': <String, Object?>{
+        'tool_use_id': 'agent-1',
+        'seq': 1,
+        'message': 'Glob(path="/workspace", pattern=".github/workflows/*")',
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolUpdate': <String, Object?>{
+        'tool_use_id': 'agent-1',
+        'seq': 2,
+        'message': 'Read(file_path="/workspace/.github/workflows/deploy.yml")',
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'ToolEnd': <String, Object?>{
+        'tool_use_id': 'agent-1',
+        'status': 'Completed',
+        'result_json': <String, Object?>{
+          'report': 'The workflow has three deployment entry points.',
+          'tool_use_count': 2,
+        },
+        'is_error': false,
+      },
+    }, parent);
+    await _event(<String, Object?>{
+      'TurnEnd': <String, Object?>{
+        'turn_id': parent,
+        'status': 'Completed',
+        'steps': 1,
+      },
+    }, parent);
+    return;
+  }
   await _event(<String, Object?>{'ThinkingDelta': 'Considering'}, parent);
   await _event(<String, Object?>{'Thinking': 'Considering'}, parent);
   await _event(<String, Object?>{'MessageDelta': 'Hello '}, parent);

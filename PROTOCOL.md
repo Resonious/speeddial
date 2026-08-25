@@ -246,7 +246,7 @@ PermissionOption = { optionId: string, name: string, kind: "allow_once" | "allow
 
 AgentActivity = {
   id: string,
-  kind: string,               // provider-defined category, e.g. "session" | "extensions" | "info"
+  kind: string,               // provider-defined category, e.g. "session" | "extensions" | "info" | "subagent"
   title: string,
   status: "running" | "completed" | "failed",
   details: string[],          // human-readable detail lines, may be []

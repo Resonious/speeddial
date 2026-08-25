@@ -79,6 +79,8 @@ class AnteClient implements AgentClient {
   final Map<String, SplayTreeMap<int, String>> _toolProgress =
       <String, SplayTreeMap<int, String>>{};
   final Set<String> _planToolIds = <String>{};
+  final Map<String, _AnteSubagentCall> _subagentCalls =
+      <String, _AnteSubagentCall>{};
   final Map<String, AcpAgentActivityUpdate> _activities =
       <String, AcpAgentActivityUpdate>{};
 
@@ -274,6 +276,7 @@ class AnteClient implements AgentClient {
     _sawThinkingDelta = false;
     _toolProgress.clear();
     _planToolIds.clear();
+    _subagentCalls.clear();
     try {
       await _sendOp(<String, Object?>{'UserInput': text}, opId);
     } on Object {
@@ -892,6 +895,28 @@ class AnteClient implements AgentClient {
       _publish(AcpPlan(entries: plan));
       return;
     }
+    final String subagentType = input['subagent_type'] as String? ?? '';
+    if (name.toLowerCase() == 'agent' && subagentType.isNotEmpty) {
+      final String description = input['description'] as String? ?? '';
+      final _AnteSubagentCall call = _AnteSubagentCall(
+        id: id,
+        type: subagentType,
+        title: description.isEmpty
+            ? '${_humanize(subagentType)} subagent'
+            : description,
+      );
+      _subagentCalls[id] = call;
+      _publishActivity(
+        AcpAgentActivityUpdate(
+          id: call.activityId,
+          kind: 'subagent',
+          title: call.title,
+          status: 'running',
+          details: <String>[call.type],
+        ),
+      );
+      return;
+    }
     _toolProgress[id] = SplayTreeMap<int, String>();
     _publish(
       AcpToolCall(
@@ -915,6 +940,21 @@ class AnteClient implements AgentClient {
     if (_planToolIds.contains(id)) return;
     final int seq = (value['seq'] as num?)?.toInt() ?? 0;
     final String message = value['message'] as String? ?? '';
+    final _AnteSubagentCall? subagent = _subagentCalls[id];
+    if (subagent != null) {
+      if (message.trim().isEmpty) return;
+      final _SubagentProgress progress = _subagentProgress(message);
+      _publishActivity(
+        AcpAgentActivityUpdate(
+          id: '${subagent.activityId}-step-$seq',
+          kind: 'subagent',
+          title: progress.title,
+          status: 'completed',
+          details: progress.details,
+        ),
+      );
+      return;
+    }
     final SplayTreeMap<int, String> progress = _toolProgress.putIfAbsent(
       id,
       SplayTreeMap<int, String>.new,
@@ -947,6 +987,23 @@ class AnteClient implements AgentClient {
     final String status = value['status'] as String? ?? 'Failed';
     final bool isError = value['is_error'] as bool? ?? false;
     final Object? rawResult = value['result_json'];
+    final _AnteSubagentCall? subagent = _subagentCalls.remove(id);
+    if (subagent != null) {
+      final String? report = _subagentReport(rawResult);
+      _publishActivity(
+        AcpAgentActivityUpdate(
+          id: subagent.activityId,
+          kind: 'subagent',
+          title: subagent.title,
+          status: status == 'Completed' && !isError ? 'completed' : 'failed',
+          details: <String>[
+            subagent.type,
+            if (report != null && report.isNotEmpty) report,
+          ],
+        ),
+      );
+      return;
+    }
     final Map<String, Object?> output = rawResult is Map
         ? Map<String, Object?>.from(rawResult)
         : rawResult == null
@@ -1489,6 +1546,38 @@ class AnteClient implements AgentClient {
     return null;
   }
 
+  static String? _subagentReport(Object? value) {
+    if (value is Map) {
+      final Object? report = value['report'];
+      if (report is String) return report;
+    }
+    return _toolResultText(value);
+  }
+
+  static _SubagentProgress _subagentProgress(String message) {
+    final String trimmed = message.trim();
+    final RegExpMatch? invocation = _subagentInvocation.firstMatch(trimmed);
+    if (invocation != null) {
+      final String arguments = invocation.group(2)!.trim();
+      return _SubagentProgress(
+        title: invocation.group(1)!,
+        details: <String>[if (arguments.isNotEmpty) arguments],
+      );
+    }
+    if (trimmed.contains('\n') || trimmed.length > 160) {
+      final String firstLine = trimmed.split('\n').first;
+      final String title = firstLine.length <= 160
+          ? firstLine
+          : '${firstLine.substring(0, 159)}…';
+      return _SubagentProgress(title: title, details: <String>[trimmed]);
+    }
+    return _SubagentProgress(title: trimmed);
+  }
+
+  static final RegExp _subagentInvocation = RegExp(
+    r'^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$',
+  );
+
   static String _toolKind(String name) {
     final String lower = name.toLowerCase();
     if (lower.contains('read') ||
@@ -1622,6 +1711,30 @@ class _SessionChannel {
 
   Future<void> close() =>
       controller.isClosed ? Future<void>.value() : controller.close();
+}
+
+class _AnteSubagentCall {
+  const _AnteSubagentCall({
+    required this.id,
+    required this.type,
+    required this.title,
+  });
+
+  final String id;
+  final String type;
+  final String title;
+
+  String get activityId => 'ante-subagent-$id';
+}
+
+class _SubagentProgress {
+  const _SubagentProgress({
+    required this.title,
+    this.details = const <String>[],
+  });
+
+  final String title;
+  final List<String> details;
 }
 
 class _AnteSessionState {
