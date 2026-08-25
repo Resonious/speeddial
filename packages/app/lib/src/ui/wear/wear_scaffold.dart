@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -26,16 +28,25 @@ class WearScaffold extends StatefulWidget {
 }
 
 class _WearScaffoldState extends State<WearScaffold> {
+  static const Duration _rotaryEndDelay = Duration(milliseconds: 100);
+  static const Duration _rotaryVelocityWindow = Duration(milliseconds: 120);
+  static const double _newVelocityWeight = 0.65;
   static const MethodChannel _rotaryChannel = MethodChannel(
     'sh.speeddial/rotary',
   );
   static final Set<_WearScaffoldState> _rotaryTargets = <_WearScaffoldState>{};
 
   final ScrollController _scrollController = ScrollController();
+  final Stopwatch _rotaryClock = Stopwatch();
+  Timer? _rotaryEndTimer;
+  Duration? _lastRotaryEventTime;
+  ScrollPosition? _lastRotaryPosition;
+  double _rotaryVelocity = 0;
 
   @override
   void initState() {
     super.initState();
+    _rotaryClock.start();
     _rotaryTargets.add(this);
     if (_rotaryTargets.length == 1) {
       _rotaryChannel.setMethodCallHandler(_handleRotaryMethodCall);
@@ -44,6 +55,7 @@ class _WearScaffoldState extends State<WearScaffold> {
 
   @override
   void dispose() {
+    _rotaryEndTimer?.cancel();
     _rotaryTargets.remove(this);
     if (_rotaryTargets.isEmpty) {
       _rotaryChannel.setMethodCallHandler(null);
@@ -87,12 +99,73 @@ class _WearScaffoldState extends State<WearScaffold> {
     final double before = position.pixels;
     position.pointerScroll(directionalDelta);
     final double moved = position.pixels - before;
+    _trackRotaryVelocity(position, moved);
     // Report movement in screen coordinates. Reverse lists move their scroll
     // position in the opposite direction for the same crown rotation.
     return switch (position.axisDirection) {
       AxisDirection.down || AxisDirection.right => moved,
       AxisDirection.up || AxisDirection.left => -moved,
     };
+  }
+
+  void _trackRotaryVelocity(ScrollPosition position, double moved) {
+    _rotaryEndTimer?.cancel();
+    _rotaryEndTimer = null;
+
+    if (moved == 0) {
+      _resetRotaryVelocity();
+      return;
+    }
+
+    final Duration now = _rotaryClock.elapsed;
+    final Duration? previousTime = _lastRotaryEventTime;
+    final int elapsedMicros = previousTime == null
+        ? 0
+        : (now - previousTime).inMicroseconds;
+    if (identical(position, _lastRotaryPosition) &&
+        elapsedMicros > 0 &&
+        elapsedMicros <= _rotaryVelocityWindow.inMicroseconds) {
+      final double instantaneousVelocity =
+          moved * Duration.microsecondsPerSecond / elapsedMicros;
+      _rotaryVelocity = _rotaryVelocity == 0
+          ? instantaneousVelocity
+          : (_rotaryVelocity * (1 - _newVelocityWeight)) +
+                (instantaneousVelocity * _newVelocityWeight);
+      _rotaryEndTimer = Timer(_rotaryEndDelay, _startRotaryFling);
+    } else {
+      _rotaryVelocity = 0;
+    }
+    _lastRotaryEventTime = now;
+    _lastRotaryPosition = position;
+  }
+
+  void _startRotaryFling() {
+    _rotaryEndTimer = null;
+    final ScrollPosition? position = _lastRotaryPosition;
+    final double velocity = _rotaryVelocity;
+    _resetRotaryVelocity();
+    if (!mounted ||
+        !_isCurrentRoute ||
+        position == null ||
+        position is! ScrollPositionWithSingleContext ||
+        !_scrollController.hasClients ||
+        _scrollController.positions.length != 1 ||
+        !identical(_scrollController.position, position)) {
+      return;
+    }
+
+    final double maximum = position.physics.maxFlingVelocity;
+    final double clampedVelocity = velocity.clamp(-maximum, maximum);
+    if (clampedVelocity.abs() < position.physics.minFlingVelocity) return;
+    position.goBallistic(clampedVelocity);
+  }
+
+  void _resetRotaryVelocity() {
+    _rotaryEndTimer?.cancel();
+    _rotaryEndTimer = null;
+    _lastRotaryEventTime = null;
+    _lastRotaryPosition = null;
+    _rotaryVelocity = 0;
   }
 
   @override

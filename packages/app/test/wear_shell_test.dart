@@ -217,6 +217,39 @@ void main() {
     expect(await sendRotaryScroll(60), 0);
   });
 
+  testWidgets('keeps scrolling with crown momentum after input stops', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient _) = await pumpWear(tester);
+    for (int index = 1; index <= 12; index++) {
+      await data.connections.addEndpoint(
+        id: 'momentum-$index',
+        name: 'Momentum daemon $index',
+        url: 'fake://momentum-$index',
+        token: '',
+      );
+    }
+    await tester.pump();
+
+    final Finder scrollableFinder = find.descendant(
+      of: find.byKey(const Key('wear-daemon-list')),
+      matching: find.byType(Scrollable),
+    );
+    final ScrollableState scrollable = tester.state(scrollableFinder);
+
+    expect(await sendRotaryScroll(20), 20);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(await sendRotaryScroll(20), 20);
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(await sendRotaryScroll(20), 20);
+    final double positionAtRelease = scrollable.position.pixels;
+
+    await tester.pump(const Duration(milliseconds: 110));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(scrollable.position.pixels, greaterThan(positionAtRelease));
+  });
+
   testWidgets('keeps crown direction natural in reversed chat history', (
     WidgetTester tester,
   ) async {
