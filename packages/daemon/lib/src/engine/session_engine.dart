@@ -815,13 +815,15 @@ class SessionEngine {
     }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
     final ProviderSpec provider = _providers.byId(live.session.providerId)!;
-    if (provider.protocol == ProviderProtocol.ante ||
-        provider.protocol == ProviderProtocol.codex) {
-      final bool codex = provider.protocol == ProviderProtocol.codex;
+    // Ante accepts every attachment type: text is inlined into its text-only
+    // `UserInput`, while images and other binary files are materialized to a
+    // transient directory and referenced by path. Codex has native
+    // text/image/audio input items and rejects everything else.
+    if (provider.protocol == ProviderProtocol.codex) {
       bool supports(String mimeType) =>
           isTextMimeType(mimeType) ||
           isImageMimeType(mimeType) ||
-          (codex && mimeType.startsWith('audio/'));
+          mimeType.startsWith('audio/');
       String? unsupportedName;
       String? unsupportedMimeType;
       for (final OutgoingAttachment attachment in attachments) {
@@ -844,8 +846,7 @@ class SessionEngine {
       if (unsupportedMimeType != null) {
         throw DaemonError(
           _kErrInvalidParams,
-          '${codex ? 'Codex app-server' : 'Ante serve'} accepts only '
-          '${codex ? 'text, image, or audio' : 'text or image'} attachments; '
+          'Codex app-server accepts only text, image, or audio attachments; '
           '"$unsupportedName" has MIME type $unsupportedMimeType',
         );
       }
@@ -1463,8 +1464,9 @@ class SessionEngine {
   /// The structured provider prompt blocks for a turn. A fork's inherited
   /// transcript and copied attachments lead the first new prompt; the user's
   /// current text and attachments follow. ACP transports accept `image` and
-  /// embedded `resource` attachment blocks. Ante converts text resources into
-  /// its text-only `UserInput` operation.
+  /// embedded `resource` attachment blocks. Ante flattens blocks into its
+  /// text-only `UserInput` operation: text resources inline, images and other
+  /// binary resources materialized to files referenced by path.
   static List<Map<String, Object?>> _promptBlocks(
     String text,
     List<_PreparedAttachment> attachments, {

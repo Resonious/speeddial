@@ -57,15 +57,15 @@ class AnteClient implements AgentClient {
   Future<InitializeResult>? _initializedFuture;
   Future<void>? _closeStreamsFuture;
   Future<void>? _mcpHomeRemovalFuture;
-  Future<void>? _imageDirectoryRemovalFuture;
+  Future<void>? _attachmentDirectoryRemovalFuture;
   Directory? _mcpHome;
   // Ante settings defaults (read while preparing the MCP home). `ante serve`
   // ignores these when StartSession omits a model, falling back to the
   // subscription, so newSession reseeds them explicitly.
   String? _settingsModel;
   String? _settingsProvider;
-  Directory? _imageDirectory;
-  int _imageFileIndex = 0;
+  Directory? _attachmentDirectory;
+  int _attachmentFileIndex = 0;
   final StreamController<String> _stderrController =
       StreamController<String>.broadcast();
   final Map<String, _SessionChannel> _sessionChannels =
@@ -331,7 +331,7 @@ class AnteClient implements AgentClient {
     try {
       await Future.wait(<Future<void>>[
         _removeMcpHome(),
-        _removeImageDirectory(),
+        _removeAttachmentDirectory(),
       ]);
     } finally {
       await _closeStreams();
@@ -521,11 +521,11 @@ class AnteClient implements AgentClient {
     _mcpHome = null;
   }
 
-  Future<Directory> _ensureImageDirectory() async {
-    final Directory? existing = _imageDirectory;
+  Future<Directory> _ensureAttachmentDirectory() async {
+    final Directory? existing = _attachmentDirectory;
     if (existing != null) return existing;
     final Directory directory = await Directory.systemTemp.createTemp(
-      'speeddial_ante_images_',
+      'speeddial_ante_attachments_',
     );
     try {
       if (!Platform.isWindows) {
@@ -535,7 +535,7 @@ class AnteClient implements AgentClient {
         ]);
         if (chmod.exitCode != 0) {
           throw FileSystemException(
-            'Could not restrict Ante image directory permissions',
+            'Could not restrict Ante attachment directory permissions',
             directory.path,
           );
         }
@@ -543,7 +543,7 @@ class AnteClient implements AgentClient {
       if (_disposed || _exited) {
         throw StateError('AnteClient is not running.');
       }
-      _imageDirectory = directory;
+      _attachmentDirectory = directory;
       return directory;
     } on Object {
       if (await directory.exists()) await directory.delete(recursive: true);
@@ -551,14 +551,14 @@ class AnteClient implements AgentClient {
     }
   }
 
-  Future<void> _removeImageDirectory() =>
-      _imageDirectoryRemovalFuture ??= _removeImageDirectoryOnce();
+  Future<void> _removeAttachmentDirectory() =>
+      _attachmentDirectoryRemovalFuture ??= _removeAttachmentDirectoryOnce();
 
-  Future<void> _removeImageDirectoryOnce() async {
-    final Directory? directory = _imageDirectory;
+  Future<void> _removeAttachmentDirectoryOnce() async {
+    final Directory? directory = _attachmentDirectory;
     if (directory == null) return;
     if (await directory.exists()) await directory.delete(recursive: true);
-    _imageDirectory = null;
+    _attachmentDirectory = null;
   }
 
   Future<Process> _start(Map<String, String> environment) async {
@@ -1280,10 +1280,12 @@ class AnteClient implements AgentClient {
       }
     }
     try {
-      await _removeImageDirectory();
+      await _removeAttachmentDirectory();
     } on Object catch (error) {
       if (!_stderrController.isClosed) {
-        _stderrController.add('Failed to remove transient Ante images: $error');
+        _stderrController.add(
+          'Failed to remove transient Ante attachments: $error',
+        );
       }
     }
     await _closeStreams();
@@ -1440,9 +1442,15 @@ class AnteClient implements AgentClient {
             );
             text.write(value);
           } else {
-            throw UnsupportedError(
-              'Ante serve does not accept binary resource attachments.',
-            );
+            // `UserInput` is text-only: binary resources are written to the
+            // transient directory and referenced by path so the model can
+            // inspect them with its own tools (Read handles PDFs, etc.).
+            if (text.isNotEmpty) text.writeln('\n');
+            final ({String path, String name, String mimeType}) file =
+                await _materializeFile(resource);
+            text
+              ..writeln('[Attached file: ${file.name} (${file.mimeType})]')
+              ..write('Saved to: ${file.path}');
           }
         case 'image':
           if (text.isNotEmpty) text.writeln('\n');
@@ -1471,13 +1479,53 @@ class AnteClient implements AgentClient {
         'Ante image attachment carries malformed base64 data.',
       );
     }
-    final Directory directory = await _ensureImageDirectory();
+    final Directory directory = await _ensureAttachmentDirectory();
     final String extension = _imageExtension(rawMimeType);
     final File file = File(
-      p.join(directory.path, 'image-${++_imageFileIndex}.$extension'),
+      p.join(directory.path, 'image-${++_attachmentFileIndex}.$extension'),
     );
     await file.writeAsBytes(bytes, flush: true);
     return file.absolute.path;
+  }
+
+  Future<({String path, String name, String mimeType})> _materializeFile(
+    Map<String, Object?> resource,
+  ) async {
+    final Object? rawBlob = resource['blob'];
+    final Object? rawMimeType = resource['mimeType'];
+    if (rawBlob is! String) {
+      throw const FormatException('Invalid Ante file attachment block.');
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(rawBlob);
+    } on FormatException {
+      throw const FormatException(
+        'Ante file attachment carries malformed base64 data.',
+      );
+    }
+    final String name = _attachmentName(resource['uri']);
+    final Directory directory = await _ensureAttachmentDirectory();
+    final File file = File(
+      p.join(directory.path, 'file-${++_attachmentFileIndex}-$name'),
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return (
+      path: file.absolute.path,
+      name: name,
+      mimeType: rawMimeType is String ? rawMimeType : 'application/octet-stream',
+    );
+  }
+
+  static String _attachmentName(Object? rawUri) {
+    String name = 'attachment';
+    if (rawUri is String) {
+      final List<String> segments = Uri.parse(rawUri).pathSegments;
+      if (segments.isNotEmpty && segments.last.isNotEmpty) {
+        name = segments.last;
+      }
+    }
+    return name.replaceAll(RegExp(r'[/\\]'), '_');
   }
 
   static String _imageExtension(String mimeType) =>

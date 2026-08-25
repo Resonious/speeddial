@@ -435,7 +435,8 @@ void main() {
   });
 
   test(
-    'flattens text resources and materializes images into Ante UserInput',
+    'flattens text resources and materializes images and files into Ante '
+    'UserInput',
     () async {
       final Directory tempDir = await Directory.systemTemp.createTemp(
         'ante_attachment_test',
@@ -473,6 +474,14 @@ void main() {
             'mimeType': 'image/png',
             'data': 'aQ==',
           },
+          <String, Object?>{
+            'type': 'resource',
+            'resource': <String, Object?>{
+              'uri': 'speeddial-attachment:///att-2/report.pdf',
+              'mimeType': 'application/pdf',
+              'blob': 'aQ==',
+            },
+          },
         ],
       );
 
@@ -487,7 +496,7 @@ void main() {
           '[Attached image]\n@',
         ),
       );
-      final RegExpMatch? pathMatch = RegExp(r'\[Attached image\]\n@([^\r\n]+)$')
+      final RegExpMatch? pathMatch = RegExp(r'\[Attached image\]\n@([^\r\n]+)')
           .firstMatch(input);
       expect(pathMatch, isNotNull);
       final File image = File(pathMatch!.group(1)!);
@@ -495,6 +504,16 @@ void main() {
       expect(await image.readAsBytes(), <int>[105]);
       final Directory imageDirectory = image.parent;
       expect(await imageDirectory.exists(), isTrue);
+
+      final RegExpMatch? fileMatch = RegExp(
+        r'\[Attached file: report\.pdf \(application/pdf\)\]\n'
+        r'Saved to: ([^\r\n]+)$',
+      ).firstMatch(input);
+      expect(fileMatch, isNotNull);
+      final File attachedFile = File(fileMatch!.group(1)!);
+      expect(attachedFile.path, endsWith('report.pdf'));
+      expect(attachedFile.parent.path, imageDirectory.path);
+      expect(await attachedFile.readAsBytes(), <int>[105]);
 
       await client.dispose();
       expect(await imageDirectory.exists(), isFalse);

@@ -618,28 +618,48 @@ void main() {
     expect(imageMetadata.size, 1);
     expect(store.getAttachment(session.id, imageMetadata.id)?.data, 'aQ==');
 
-    await expectLater(
-      engine.sendMessage(
-        session.id,
-        'binary attachment',
-        attachments: const <OutgoingAttachment>[
-          OutgoingAttachment(
-            name: 'archive.zip',
-            mimeType: 'application/zip',
-            data: 'aQ==',
-          ),
-        ],
-      ),
-      throwsA(
-        isA<DaemonError>()
-            .having((DaemonError error) => error.code, 'code', -32602)
-            .having(
-              (DaemonError error) => error.message,
-              'message',
-              contains('text or image attachments'),
-            ),
-      ),
+    final Future<PermissionRequestEvent> binaryPermissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(
+      session.id,
+      'binary attachment',
+      attachments: const <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'archive.zip',
+          mimeType: 'application/zip',
+          data: 'aQ==',
+        ),
+      ],
     );
+    final PermissionRequestEvent binaryPermission = await binaryPermissionFuture
+        .timeout(const Duration(seconds: 5));
+    await engine.respondPermission(
+      session.id,
+      binaryPermission.request.requestId,
+      'AcceptForSession',
+    );
+    await waitFor(
+      () =>
+          events
+              .where(
+                (tuple) =>
+                    tuple.sessionId == session.id &&
+                    tuple.event is TurnCompleteEvent,
+              )
+              .length ==
+          4,
+    );
+    final UserMessageEvent binaryMessage = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(binaryMessage.text, 'binary attachment');
+    final Attachment binaryMetadata = binaryMessage.attachments.single;
+    expect(binaryMetadata.name, 'archive.zip');
+    expect(binaryMetadata.mimeType, 'application/zip');
+    expect(binaryMetadata.size, 1);
+    expect(store.getAttachment(session.id, binaryMetadata.id)?.data, 'aQ==');
 
     await engine.sendMessage(session.id, 'error');
     await waitFor(

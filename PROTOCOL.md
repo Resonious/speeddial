@@ -454,8 +454,9 @@ tokens before session creation/resume, and checks them periodically while runnin
   Ante's `UserInput` operation. For non-text `image/*`, the daemon writes the decoded image to a
   private transient directory and adds an `@` file mention to `UserInput`, invoking Ante's native
   image-context path; whether the model can inspect pixels depends on its Ante catalog
-  `support_vision` capability. Ante rejects other binary attachments with `-32602` before
-  persisting the turn.
+  `support_vision` capability. Ante accepts other binary attachments too: the daemon writes the
+  decoded payload to the same transient directory and adds the file's label and saved path to
+  `UserInput`, so the model can inspect it with its own tools.
   General caps: at most 8 attachments, 8 MiB decoded per attachment, 16 MiB decoded total;
   violations are `-32602`, as are malformed base64 payloads and text-like payloads that are not valid
   UTF-8. For an accepted turn, the daemon persists each payload (fetchable later via
