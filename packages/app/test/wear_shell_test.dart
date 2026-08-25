@@ -320,6 +320,44 @@ void main() {
     expect(find.text('Cutover: '), findsNothing);
   });
 
+  testWidgets('folds identified messages and tool snapshots on watch', (
+    WidgetTester tester,
+  ) async {
+    final (AppData _, FakeDaemonClient fake) = await pumpWear(tester);
+    fake.seedHistory('sess-1', const <SessionEvent>[
+      AgentMessageChunkEvent(text: 'One ', messageId: 'message-1'),
+      ToolCallEvent(
+        toolCall: ToolCall(
+          id: 'tool-1',
+          title: 'Inspect',
+          kind: 'read',
+          status: ToolCallStatus.running,
+          content: <ToolCallContent>[],
+          locations: <String>[],
+        ),
+      ),
+      AgentMessageChunkEvent(text: 'logical ', messageId: 'message-1'),
+      ToolCallEvent(
+        toolCall: ToolCall(
+          id: 'tool-1',
+          title: 'Inspect',
+          kind: 'read',
+          status: ToolCallStatus.completed,
+          content: <ToolCallContent>[],
+          locations: <String>[],
+        ),
+      ),
+      AgentMessageChunkEvent(text: 'message.', messageId: 'message-1'),
+    ]);
+
+    await openFirstSession(tester);
+
+    expect(find.text('One logical message.'), findsOneWidget);
+    expect(find.text('One '), findsNothing);
+    expect(find.text('Inspect · completed'), findsOneWidget);
+    expect(find.text('Inspect · running'), findsNothing);
+  });
+
   testWidgets('theme button applies and persists dark mode', (
     WidgetTester tester,
   ) async {

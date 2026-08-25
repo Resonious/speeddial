@@ -86,12 +86,18 @@ void main() {
       type: 'image',
     ),
     (
-      event: AgentMessageChunkEvent(text: 'Hi', seq: 2, timestamp: timestamp),
+      event: AgentMessageChunkEvent(
+        text: 'Hi',
+        messageId: 'message-1',
+        seq: 2,
+        timestamp: timestamp,
+      ),
       type: 'agentMessageChunk',
     ),
     (
       event: AgentThoughtChunkEvent(
         text: 'considering',
+        messageId: 'thought-1',
         seq: 3,
         timestamp: timestamp,
       ),
@@ -197,6 +203,20 @@ void main() {
     }
   });
 
+  test('legacy chunks without messageId remain backward compatible', () {
+    final AgentMessageChunkEvent message = SessionEvent.fromJson(
+      <String, Object?>{'type': 'agentMessageChunk', 'text': 'legacy message'},
+    ) as AgentMessageChunkEvent;
+    final AgentThoughtChunkEvent thought = SessionEvent.fromJson(
+      <String, Object?>{'type': 'agentThoughtChunk', 'text': 'legacy thought'},
+    ) as AgentThoughtChunkEvent;
+
+    expect(message.messageId, isNull);
+    expect(thought.messageId, isNull);
+    expect(message.toJson().containsKey('messageId'), isFalse);
+    expect(thought.toJson().containsKey('messageId'), isFalse);
+  });
+
   test('summary history preserves semantics while dropping verbose fields', () {
     expect(SessionHistoryDetail.parse('summary'), SessionHistoryDetail.summary);
     expect(SessionHistoryDetail.summary.wire, 'summary');
@@ -204,6 +224,7 @@ void main() {
     final thought = summarizeSessionEvent(allEvents[3].event);
     expect(thought, isA<AgentThoughtChunkEvent>());
     expect((thought as AgentThoughtChunkEvent).text, isEmpty);
+    expect(thought.messageId, 'thought-1');
     expect(thought.seq, 3);
     expect(thought.timestamp, timestamp);
 

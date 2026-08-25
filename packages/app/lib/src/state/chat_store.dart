@@ -77,6 +77,7 @@ class _ChunkRun {
   _ChunkRun({
     required this.isMessage,
     required String text,
+    required this.messageId,
     this.seq,
     this.timestamp,
   }) : buffer = StringBuffer(text);
@@ -86,6 +87,7 @@ class _ChunkRun {
   /// other.
   final bool isMessage;
   final StringBuffer buffer;
+  final String? messageId;
 
   /// Seq/timestamp of the newest delta in the run; the merged event carries
   /// them (matching the pre-StringBuffer merge semantics).
@@ -725,6 +727,7 @@ class ChatStore extends StoreBase {
     switch (event) {
       case AgentMessageChunkEvent(
         :final String text,
+        :final String? messageId,
         :final int? seq,
         :final DateTime? timestamp,
       ):
@@ -732,12 +735,14 @@ class ChatStore extends StoreBase {
           buffer,
           isMessage: true,
           text: text,
+          messageId: messageId,
           seq: seq,
           timestamp: timestamp,
           event: event,
         );
       case AgentThoughtChunkEvent(
         :final String text,
+        :final String? messageId,
         :final int? seq,
         :final DateTime? timestamp,
       ):
@@ -745,6 +750,7 @@ class ChatStore extends StoreBase {
           buffer,
           isMessage: false,
           text: text,
+          messageId: messageId,
           seq: seq,
           timestamp: timestamp,
           event: event,
@@ -763,12 +769,15 @@ class ChatStore extends StoreBase {
     _SessionBuffer buffer, {
     required bool isMessage,
     required String text,
+    required String? messageId,
     required int? seq,
     required DateTime? timestamp,
     required SessionEvent event,
   }) {
     final _ChunkRun? run = buffer.chunkRun;
-    if (run != null && run.isMessage == isMessage) {
+    if (run != null &&
+        run.isMessage == isMessage &&
+        run.messageId == messageId) {
       // Same-kind run continues: accumulate in the scratch buffer only.
       run.buffer.write(text);
       run.seq = seq;
@@ -781,6 +790,7 @@ class ChatStore extends StoreBase {
     buffer.chunkRun = _ChunkRun(
       isMessage: isMessage,
       text: text,
+      messageId: messageId,
       seq: seq,
       timestamp: timestamp,
     );
@@ -802,11 +812,13 @@ class ChatStore extends StoreBase {
     events[events.length - 1] = run.isMessage
         ? AgentMessageChunkEvent(
             text: run.buffer.toString(),
+            messageId: run.messageId,
             seq: run.seq,
             timestamp: run.timestamp,
           )
         : AgentThoughtChunkEvent(
             text: run.buffer.toString(),
+            messageId: run.messageId,
             seq: run.seq,
             timestamp: run.timestamp,
           );

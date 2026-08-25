@@ -84,6 +84,16 @@ class _LiveSession {
   /// Parked permission requests: requestId → completer of the chosen option.
   final Map<String, Completer<String>> pendingPermissions = {};
 
+  /// Fallback logical-content identities for providers (currently Ante, and
+  /// legacy ACP agents) that do not identify message/thought chunks.
+  String? syntheticMessageId;
+  String? syntheticThoughtId;
+
+  /// Provider activity ids already inserted in this session's timeline.
+  /// Later snapshots update those rows in place and are not content
+  /// boundaries; the first snapshot is.
+  final Set<String> activityIds = <String>{};
+
   /// Set before the client is torn down so a dying turn suppresses its
   /// error events.
   bool closed = false;
@@ -741,6 +751,8 @@ class SessionEngine {
       data: data,
     );
     _store.insertAttachment(sessionId, attachment);
+    final _LiveSession? live = _live[sessionId];
+    if (live != null) _breakSyntheticContent(live);
     _emitForSession(
       sessionId,
       ImageEvent(
@@ -1377,6 +1389,8 @@ class SessionEngine {
     final sessionId = live.sessionId;
     _toolCalls[sessionId] = <String, ToolCall>{};
     _toolCallImages[sessionId] = <String, Attachment>{};
+    live.activityIds.clear();
+    _breakSyntheticContent(live);
     _emit(
       live,
       UserMessageEvent(
@@ -1682,12 +1696,19 @@ class SessionEngine {
     final sessionId = live.sessionId;
     switch (update) {
       case final AcpAgentMessageChunk chunk:
-        return AgentMessageChunkEvent(text: chunk.text);
+        return AgentMessageChunkEvent(
+          text: chunk.text,
+          messageId: _contentId(live, chunk.messageId, thought: false),
+        );
       case final AcpAgentThoughtChunk chunk:
-        return AgentThoughtChunkEvent(text: chunk.text);
+        return AgentThoughtChunkEvent(
+          text: chunk.text,
+          messageId: _contentId(live, chunk.messageId, thought: true),
+        );
       case AcpUserMessageChunk():
         return null; // Echo of the user's own text; not persisted.
       case final AcpToolCall toolCall:
+        _breakSyntheticContent(live);
         final AcpToolCallData data = toolCall.toolCall;
         final String? pathHint = _toolImagePath(
           data.rawInput,
@@ -1707,6 +1728,7 @@ class SessionEngine {
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
         final prior = _toolCalls[sessionId]?[toolCallId];
+        if (prior == null) _breakSyntheticContent(live);
         final Map<String, Object?> fields = toolCallUpdate.fields;
         final Object? rawInput = fields.containsKey('rawInput')
             ? fields['rawInput']
@@ -1741,10 +1763,14 @@ class SessionEngine {
         // update — and the terminal event — carry everything.
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
       case final AcpPlan plan:
+        _breakSyntheticContent(live);
         return planEventFromAcp(plan);
       case final AcpUsageUpdate usage:
         return usageEventFromAcp(usage);
       case final AcpAgentActivityUpdate activity:
+        if (live.activityIds.add(activity.id)) {
+          _breakSyntheticContent(live);
+        }
         return AgentActivityEvent(
           activity: AgentActivity(
             id: activity.id,
@@ -1760,6 +1786,28 @@ class SessionEngine {
     }
   }
 
+  String _contentId(
+    _LiveSession live,
+    String? providerId, {
+    required bool thought,
+  }) {
+    if (thought) {
+      live.syntheticMessageId = null;
+    } else {
+      live.syntheticThoughtId = null;
+    }
+    if (providerId != null && providerId.isNotEmpty) return providerId;
+    if (thought) {
+      return live.syntheticThoughtId ??= 'thought-${_uuid.v4()}';
+    }
+    return live.syntheticMessageId ??= 'message-${_uuid.v4()}';
+  }
+
+  static void _breakSyntheticContent(_LiveSession live) {
+    live.syntheticMessageId = null;
+    live.syntheticThoughtId = null;
+  }
+
   Future<String> _onPermissionRequest(
     String sessionId,
     String? toolCallId,
@@ -1772,6 +1820,7 @@ class SessionEngine {
     }
     final requestId = _uuid.v4();
     final mapped = permissionOptionsFromAcp(options);
+    _breakSyntheticContent(live);
     // Yolo sessions resolve the request themselves: the first allow_always
     // option wins, then the first allow_once. The request/resolved events are
     // still emitted (back-to-back, without the waitingPermission status) so

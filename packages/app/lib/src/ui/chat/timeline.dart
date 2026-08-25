@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'message_view.dart';
@@ -37,7 +38,7 @@ class DisplayedImageItem extends TimelineItem {
   final Attachment attachment;
 }
 
-/// A merged run of agent message chunks with no visible row between them.
+/// One logical agent message assembled from its identified chunks.
 class AgentMessageItem extends TimelineItem {
   const AgentMessageItem({required this.text, this.forkSeq});
   final String text;
@@ -46,7 +47,7 @@ class AgentMessageItem extends TimelineItem {
   final int? forkSeq;
 }
 
-/// A merged run of consecutive agent thought chunks.
+/// One logical agent thought assembled from its identified chunks.
 class AgentThoughtItem extends TimelineItem {
   const AgentThoughtItem({required this.text, this.active = false});
   final String text;
@@ -132,46 +133,15 @@ class SessionErrorItem extends TimelineItem {
   final String message;
 }
 
-/// Maps a session's raw event list to display items.
-///
-/// Same-type chunk events merge into one item while no new visible row is
-/// inserted between them. Tool-call and activity snapshots that update an
-/// existing row in place do not split the message around them. Some providers
-/// reuse a tool id for a later call; an active snapshot after a terminal one
-/// starts a new timeline item and therefore a new message boundary.
-/// Usage events are skipped here — usage is surfaced in the composer footer.
-///
-/// When [running] is true (session mid-turn) and the last event is a thought
-/// chunk, the trailing thought item is marked active; any later event kind
-/// (message chunk, tool call, turn complete, …) closes the thought run.
+/// Maps the shared, presentation-neutral session fold to full-client rows.
 List<TimelineItem> deriveTimelineItems(
   List<SessionEvent> events, {
   bool running = false,
 }) {
   final List<TimelineItem> items = <TimelineItem>[];
-  final Map<String, int> toolIndexes = <String, int>{};
-  final Map<String, int> activityIndexes = <String, int>{};
   final Map<String, _LegacySubagentState> legacySubagents =
       <String, _LegacySubagentState>{};
   final Map<String, int> legacySubagentGenerations = <String, int>{};
-  final StringBuffer message = StringBuffer();
-  final StringBuffer thought = StringBuffer();
-  int? messageForkSeq;
-
-  void flushMessage() {
-    if (message.isEmpty) return;
-    items.add(
-      AgentMessageItem(text: message.toString(), forkSeq: messageForkSeq),
-    );
-    message.clear();
-    messageForkSeq = null;
-  }
-
-  void flushThought({bool active = false}) {
-    if (thought.isEmpty) return;
-    items.add(AgentThoughtItem(text: thought.toString(), active: active));
-    thought.clear();
-  }
 
   void foldLegacySubagent(ToolCall toolCall) {
     _LegacySubagentState? state = legacySubagents[toolCall.id];
@@ -264,102 +234,72 @@ List<TimelineItem> deriveTimelineItems(
     state.terminal = true;
   }
 
-  for (final SessionEvent event in events) {
-    switch (event) {
-      case UserMessageEvent e:
-        flushMessage();
-        flushThought();
+  final List<FoldedSessionEntry> folded = foldSessionEvents(events);
+  for (int index = 0; index < folded.length; index++) {
+    final FoldedSessionEntry entry = folded[index];
+    switch (entry) {
+      case FoldedAgentMessage e:
+        items.add(AgentMessageItem(text: e.text, forkSeq: e.seq));
+      case FoldedAgentThought e:
         items.add(
-          UserMessageItem(
+          AgentThoughtItem(
             text: e.text,
-            attachments: e.attachments,
-            forkSeq: e.seq,
+            active: running && index == folded.length - 1,
           ),
         );
-      case ImageEvent e:
-        flushMessage();
-        flushThought();
-        items.add(DisplayedImageItem(attachment: e.attachment));
-      case AgentMessageChunkEvent e:
-        message.write(e.text);
-        messageForkSeq = e.seq;
-      case AgentThoughtChunkEvent e:
-        thought.write(e.text);
-      case ToolCallEvent e:
-        if (_isLegacySubagentTool(e.toolCall)) {
-          flushMessage();
-          flushThought();
-          foldLegacySubagent(e.toolCall);
-        } else {
-          final int? existing = toolIndexes[e.toolCall.id];
-          final bool reused =
-              existing != null &&
-              _isTerminalToolStatus(
-                (items[existing] as ToolCallTimelineItem).toolCall.status,
-              ) &&
-              _isActiveToolStatus(e.toolCall.status);
-          if (existing != null && !reused) {
-            items[existing] = ToolCallTimelineItem(toolCall: e.toolCall);
-          } else {
-            flushMessage();
-            flushThought();
-            toolIndexes[e.toolCall.id] = items.length;
-            items.add(ToolCallTimelineItem(toolCall: e.toolCall));
+      case FoldedToolCall e:
+        if (_isLegacySubagentTool(e.latest)) {
+          for (final ToolCall snapshot in e.snapshots) {
+            foldLegacySubagent(snapshot);
           }
-        }
-      case AgentActivityEvent e:
-        final int? existing = activityIndexes[e.activity.id];
-        if (existing != null) {
-          items[existing] = AgentActivityItem(activity: e.activity);
         } else {
-          flushMessage();
-          flushThought();
-          activityIndexes[e.activity.id] = items.length;
-          items.add(AgentActivityItem(activity: e.activity));
+          items.add(ToolCallTimelineItem(toolCall: e.latest));
         }
-      case PlanEvent e:
-        flushMessage();
-        flushThought();
-        items.add(PlanTimelineItem(entries: e.entries));
-      case PermissionRequestEvent e:
-        flushMessage();
-        flushThought();
-        items.add(PermissionRequestItem(request: e.request));
-      case PermissionResolvedEvent e:
-        flushMessage();
-        flushThought();
-        items.add(
-          PermissionResolvedItem(requestId: e.requestId, optionId: e.optionId),
-        );
-      case UsageEvent _:
-        // Surfaced in the composer footer, not the timeline.
-        break;
-      case TurnCompleteEvent e:
-        flushMessage();
-        flushThought();
-        items.add(TurnCompleteItem(stopReason: e.stopReason));
-      case SessionErrorEvent e:
-        flushMessage();
-        flushThought();
-        items.add(SessionErrorItem(message: e.message));
+      case FoldedAgentActivity e:
+        items.add(AgentActivityItem(activity: e.activity));
+      case FoldedSessionEvent(:final event):
+        switch (event) {
+          case UserMessageEvent e:
+            items.add(
+              UserMessageItem(
+                text: e.text,
+                attachments: e.attachments,
+                forkSeq: e.seq,
+              ),
+            );
+          case ImageEvent e:
+            items.add(DisplayedImageItem(attachment: e.attachment));
+          case PlanEvent e:
+            items.add(PlanTimelineItem(entries: e.entries));
+          case PermissionRequestEvent e:
+            items.add(PermissionRequestItem(request: e.request));
+          case PermissionResolvedEvent e:
+            items.add(
+              PermissionResolvedItem(
+                requestId: e.requestId,
+                optionId: e.optionId,
+              ),
+            );
+          case TurnCompleteEvent e:
+            items.add(TurnCompleteItem(stopReason: e.stopReason));
+          case SessionErrorEvent e:
+            items.add(SessionErrorItem(message: e.message));
+          case UsageEvent _:
+            break;
+          case AgentMessageChunkEvent _ ||
+              AgentThoughtChunkEvent _ ||
+              ToolCallEvent _ ||
+              AgentActivityEvent _:
+            throw StateError('Logical event was not folded: $event');
+        }
     }
   }
-  flushMessage();
-  flushThought(
-    active:
-        running && events.isNotEmpty && events.last is AgentThoughtChunkEvent,
-  );
   return items;
 }
 
 bool _isActiveToolStatus(ToolCallStatus status) => switch (status) {
   ToolCallStatus.pending || ToolCallStatus.running => true,
   ToolCallStatus.completed || ToolCallStatus.failed => false,
-};
-
-bool _isTerminalToolStatus(ToolCallStatus status) => switch (status) {
-  ToolCallStatus.pending || ToolCallStatus.running => false,
-  ToolCallStatus.completed || ToolCallStatus.failed => true,
 };
 
 bool _isLegacySubagentTool(ToolCall toolCall) =>

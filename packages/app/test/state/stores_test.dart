@@ -533,6 +533,28 @@ void main() {
   });
 
   group('chat', () {
+    test('does not merge adjacent chunks with different message ids', () async {
+      fake.seedHistory('sess-1', const <SessionEvent>[
+        AgentMessageChunkEvent(text: 'First', messageId: 'message-1'),
+        AgentMessageChunkEvent(text: 'Second', messageId: 'message-2'),
+      ]);
+
+      app.chat.watchSession('fake', 'sess-1');
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+
+      final List<AgentMessageChunkEvent> chunks = app.chat
+          .eventsFor('sess-1')
+          .whereType<AgentMessageChunkEvent>()
+          .toList();
+      expect(chunks, hasLength(2));
+      expect(chunks.map((AgentMessageChunkEvent event) => event.text), <String>[
+        'First',
+        'Second',
+      ]);
+    });
+
     test(
       'watch buffers events, merges chunks, derives status and usage',
       () async {
@@ -552,6 +574,7 @@ void main() {
             .whereType<AgentMessageChunkEvent>()
             .toList();
         expect(chunks, hasLength(1));
+        expect(chunks.single.messageId, startsWith('fake-message-'));
         expect(
           chunks.single.text,
           'Working on it…\n\n```dart\nvoid main() {}\n```\n\nDone.',

@@ -21,6 +21,7 @@ class FakeDaemonClient implements DaemonClient {
   int _projectCounter = 1;
   int _sessionCounter = 3;
   int _mcpServerCounter = 1;
+  int _turnCounter = 0;
 
   final List<Project> _projects = <Project>[];
   final Map<String, Session> _sessions = <String, Session>{};
@@ -1594,6 +1595,9 @@ class FakeDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   Future<void> _runScript(String sessionId, String text) async {
+    final int turn = ++_turnCounter;
+    final String thoughtId = 'fake-thought-$turn';
+    final String messageId = 'fake-message-$turn';
     const List<String> thoughts = <String>[
       'The user asked a question. ',
       'I should answer with a short demo response.',
@@ -1602,7 +1606,10 @@ class FakeDaemonClient implements DaemonClient {
       if (_isCancelled(sessionId)) return;
       await _delay();
       if (_isCancelled(sessionId)) return;
-      _emit(sessionId, AgentThoughtChunkEvent(text: chunk));
+      _emit(
+        sessionId,
+        AgentThoughtChunkEvent(text: chunk, messageId: thoughtId),
+      );
     }
 
     const List<String> chunks = <String>[
@@ -1614,7 +1621,10 @@ class FakeDaemonClient implements DaemonClient {
       if (_isCancelled(sessionId)) return;
       await _delay();
       if (_isCancelled(sessionId)) return;
-      _emit(sessionId, AgentMessageChunkEvent(text: chunk));
+      _emit(
+        sessionId,
+        AgentMessageChunkEvent(text: chunk, messageId: messageId),
+      );
     }
 
     await _delay();
@@ -1901,11 +1911,13 @@ class FakeDaemonClient implements DaemonClient {
         ),
         AgentMessageChunkEvent e => AgentMessageChunkEvent(
           text: e.text,
+          messageId: e.messageId,
           seq: seq,
           timestamp: timestamp,
         ),
         AgentThoughtChunkEvent e => AgentThoughtChunkEvent(
           text: e.text,
+          messageId: e.messageId,
           seq: seq,
           timestamp: timestamp,
         ),

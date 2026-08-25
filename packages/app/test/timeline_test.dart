@@ -237,6 +237,67 @@ void main() {
   });
 
   group('deriveTimelineItems tool calls', () {
+    testWidgets('message identity survives interleaved tool snapshots', (
+      WidgetTester tester,
+    ) async {
+      final List<TimelineItem> items = deriveTimelineItems(const <SessionEvent>[
+        AgentMessageChunkEvent(text: 'Stable ', messageId: 'message-1'),
+        ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'shell-1',
+            title: 'Running tests',
+            kind: 'execute',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+        AgentMessageChunkEvent(text: 'across ', messageId: 'message-1'),
+        ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'shell-1',
+            title: 'Running tests',
+            kind: 'execute',
+            status: ToolCallStatus.completed,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+          ),
+        ),
+        AgentMessageChunkEvent(text: 'snapshots.', messageId: 'message-1'),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(body: Timeline(items: items)),
+        ),
+      );
+
+      expect(find.byType(AgentMessageView), findsOneWidget);
+      expect(find.text('Stable across snapshots.'), findsOneWidget);
+      expect(find.byType(ToolCallCard), findsOneWidget);
+    });
+
+    testWidgets('adjacent distinct message identities render separately', (
+      WidgetTester tester,
+    ) async {
+      final List<TimelineItem> items = deriveTimelineItems(const <SessionEvent>[
+        AgentMessageChunkEvent(text: 'First item', messageId: 'message-1'),
+        AgentMessageChunkEvent(text: 'Second item', messageId: 'message-2'),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(body: Timeline(items: items)),
+        ),
+      );
+
+      expect(find.byType(AgentMessageView), findsNWidgets(2));
+      expect(find.text('First item'), findsOneWidget);
+      expect(find.text('Second item'), findsOneWidget);
+    });
+
     testWidgets('tool progress snapshots do not split one assistant message', (
       WidgetTester tester,
     ) async {

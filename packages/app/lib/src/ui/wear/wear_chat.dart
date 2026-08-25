@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/chat_store.dart';
+import '../../state/session_timeline.dart';
 import 'wear_scaffold.dart';
 
 /// Compact live conversation for one session.
@@ -192,77 +193,64 @@ class _WearErrorItem extends _WearTimelineItem {
 
 List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
   final List<_WearTimelineItem> result = <_WearTimelineItem>[];
-  final StringBuffer message = StringBuffer();
-
-  void flushMessage() {
-    if (message.isEmpty) return;
-    result.add(_WearMessageItem(text: message.toString(), user: false));
-    message.clear();
-  }
-
-  for (final SessionEvent event in events) {
-    switch (event) {
-      case UserMessageEvent(:final text, :final attachments):
-        flushMessage();
-        final String display = text.isNotEmpty
-            ? text
-            : attachments.length == 1
-            ? 'Sent an attachment'
-            : 'Sent ${attachments.length} attachments';
-        result.add(_WearMessageItem(text: display, user: true));
-      case AgentMessageChunkEvent(:final text):
-        message.write(text);
-      case AgentThoughtChunkEvent():
-        flushMessage();
-        if (result.isEmpty ||
-            result.last is! _WearActivityItem ||
-            (result.last as _WearActivityItem).text != 'Thinking…') {
-          result.add(
-            const _WearActivityItem(
-              text: 'Thinking…',
-              icon: Icons.psychology_outlined,
-            ),
-          );
-        }
-      case ToolCallEvent(:final toolCall):
-        flushMessage();
+  for (final FoldedSessionEntry entry in foldSessionEvents(events)) {
+    switch (entry) {
+      case FoldedAgentMessage(:final text):
+        result.add(_WearMessageItem(text: text, user: false));
+      case FoldedAgentThought():
+        result.add(
+          const _WearActivityItem(
+            text: 'Thinking…',
+            icon: Icons.psychology_outlined,
+          ),
+        );
+      case FoldedToolCall(:final latest):
         result.add(
           _WearActivityItem(
-            text: '${toolCall.title} · ${toolCall.status.wire}',
+            text: '${latest.title} · ${latest.status.wire}',
             icon: Icons.build_outlined,
           ),
         );
-      case PlanEvent(:final entries):
-        flushMessage();
-        result.add(
-          _WearActivityItem(
-            text: 'Plan updated · ${entries.length} steps',
-            icon: Icons.checklist,
-          ),
-        );
-      case ImageEvent():
-        flushMessage();
-        result.add(
-          const _WearActivityItem(
-            text: 'Image available in the full app',
-            icon: Icons.image_outlined,
-          ),
-        );
-      case SessionErrorEvent(:final message):
-        flushMessage();
-        result.add(_WearErrorItem(message));
-      case AgentActivityEvent(:final activity):
-        flushMessage();
+      case FoldedAgentActivity(:final activity):
         result.add(_WearActivityItem(text: activity.title, icon: Icons.sync));
-      case PermissionRequestEvent() ||
-          PermissionResolvedEvent() ||
-          TurnCompleteEvent():
-        flushMessage();
-      case UsageEvent():
-        break;
+      case FoldedSessionEvent(:final event):
+        switch (event) {
+          case UserMessageEvent(:final text, :final attachments):
+            final String display = text.isNotEmpty
+                ? text
+                : attachments.length == 1
+                ? 'Sent an attachment'
+                : 'Sent ${attachments.length} attachments';
+            result.add(_WearMessageItem(text: display, user: true));
+          case PlanEvent(:final entries):
+            result.add(
+              _WearActivityItem(
+                text: 'Plan updated · ${entries.length} steps',
+                icon: Icons.checklist,
+              ),
+            );
+          case ImageEvent():
+            result.add(
+              const _WearActivityItem(
+                text: 'Image available in the full app',
+                icon: Icons.image_outlined,
+              ),
+            );
+          case SessionErrorEvent(:final message):
+            result.add(_WearErrorItem(message));
+          case PermissionRequestEvent() ||
+              PermissionResolvedEvent() ||
+              TurnCompleteEvent() ||
+              UsageEvent():
+            break;
+          case AgentMessageChunkEvent _ ||
+              AgentThoughtChunkEvent _ ||
+              ToolCallEvent _ ||
+              AgentActivityEvent _:
+            throw StateError('Logical event was not folded: $event');
+        }
     }
   }
-  flushMessage();
   return result;
 }
 

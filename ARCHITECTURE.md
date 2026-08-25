@@ -119,7 +119,10 @@ lib/src/harnesses/  HarnessService detects the four supported installed CLIs
                     agent processes.
 lib/src/engine/     SessionEngine owns live AgentClient processes per session, maps
                     transport updates to protocol SessionEvents, assigns seq, persists
-                    via SessionStore, and broadcasts to listeners. Handles permission
+                    via SessionStore, and broadcasts to listeners. It preserves provider
+                    message/thought ids and assigns turn-scoped synthetic ids when a
+                    provider omits them, making logical streamed content daemon-owned.
+                    Handles permission
                     requests (parked until respondPermission), cancel, process exit, and
                     turn lifecycle. Inline tool-result images and provider-reported image
                     file reads are deduplicated into attachment-backed tool content. MCP
@@ -213,7 +216,10 @@ lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditi
                              unsupported. embeddedDaemonSupported gates startup.
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
-                             (per-session event buffers, incremental chunk append),
+                             (per-session event buffers, incremental adjacent chunk
+                             append), and the shared presentation-neutral session timeline
+                             fold used by both the full client and Wear (logical content
+                             identity plus tool/activity snapshot replacement),
                              FilesStore, GitStore, McpStore, DaemonConfigStore (installed
                              harnesses + write-only environment names), DraftsStore
                              (per-daemon/session composer text persisted locally),
@@ -256,9 +262,10 @@ lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with
 ```
 
 Performance rules for the app:
-- Timeline: `ListView.builder(reverse: true)`, streaming chunks append to the LAST
-  event's `StringBuffer`; notify once per animation frame at most (batch via
-  `scheduleMicrotask` coalescing in ChatStore).
+- Timeline: `ListView.builder(reverse: true)`; adjacent deltas with the same identity
+  append through a `StringBuffer`, while the shared timeline fold joins identified
+  content across interleaved replacement snapshots. Notify once per animation frame at
+  most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`.
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to

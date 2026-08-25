@@ -209,8 +209,10 @@ receive them. `sessions.history` returns events ordered by `seq` ascending.
 SessionEvent =
   | { type: "userMessage", text: string, attachments?: Attachment[] }  // attachments omitted when empty
   | { type: "image", attachment: Attachment }          // agent-requested image displayed in the UI
-  | { type: "agentMessageChunk", text: string }        // streaming delta
-  | { type: "agentThoughtChunk", text: string }        // streaming delta, collapsible in UI
+  | { type: "agentMessageChunk", text: string, messageId?: string } // streaming delta;
+                                                        // messageId is stable within the turn
+  | { type: "agentThoughtChunk", text: string, messageId?: string } // streaming delta,
+                                                        // collapsible; same identity rule
   | { type: "toolCall", toolCall: ToolCall }           // created or updated; match by toolCall.id
   | { type: "plan", entries: PlanEntry[] }             // full replacement
   | { type: "permissionRequest", request: PermissionRequest }
@@ -265,6 +267,14 @@ UsageInfo = {
   contextLimitTokens?: int,
 }
 ```
+
+The daemon assigns `messageId` to every newly emitted agent message and thought
+chunk. Chunks with the same type and `messageId` belong to one logical timeline
+item even when tool/activity snapshot updates are interleaved. IDs are scoped to
+one turn and clients must not merge them across `userMessage`/`turnComplete`
+boundaries. The field remains optional only so history persisted by older daemon
+versions continues to decode; clients use adjacency-based grouping for those
+legacy events.
 
 ## Methods
 

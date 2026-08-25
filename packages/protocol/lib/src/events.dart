@@ -76,6 +76,7 @@ sealed class SessionEvent {
 SessionEvent summarizeSessionEvent(SessionEvent event) => switch (event) {
   AgentThoughtChunkEvent e => AgentThoughtChunkEvent(
     text: '',
+    messageId: e.messageId,
     seq: e.seq,
     timestamp: e.timestamp,
   ),
@@ -188,15 +189,23 @@ class ImageEvent extends SessionEvent {
 class AgentMessageChunkEvent extends SessionEvent {
   const AgentMessageChunkEvent({
     required this.text,
+    this.messageId,
     super.seq,
     super.timestamp,
   });
 
   final String text;
 
+  /// Stable identity of the logical message within its turn.
+  ///
+  /// Null only for events persisted by daemon versions that predate message
+  /// identity. New daemon events always carry a non-empty value.
+  final String? messageId;
+
   factory AgentMessageChunkEvent.fromJson(Map<String, Object?> json) =>
       AgentMessageChunkEvent(
         text: json['text']! as String,
+        messageId: json['messageId'] as String?,
         seq: json['seq'] as int?,
         timestamp: _parseTimestamp(json['timestamp']),
       );
@@ -208,6 +217,7 @@ class AgentMessageChunkEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'agentMessageChunk',
       'text': text,
+      if (messageId case final String value) 'messageId': value,
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };
@@ -218,15 +228,23 @@ class AgentMessageChunkEvent extends SessionEvent {
 class AgentThoughtChunkEvent extends SessionEvent {
   const AgentThoughtChunkEvent({
     required this.text,
+    this.messageId,
     super.seq,
     super.timestamp,
   });
 
   final String text;
 
+  /// Stable identity of the logical thought item within its turn.
+  ///
+  /// Null only for events persisted by daemon versions that predate message
+  /// identity. New daemon events always carry a non-empty value.
+  final String? messageId;
+
   factory AgentThoughtChunkEvent.fromJson(Map<String, Object?> json) =>
       AgentThoughtChunkEvent(
         text: json['text']! as String,
+        messageId: json['messageId'] as String?,
         seq: json['seq'] as int?,
         timestamp: _parseTimestamp(json['timestamp']),
       );
@@ -238,6 +256,7 @@ class AgentThoughtChunkEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'agentThoughtChunk',
       'text': text,
+      if (messageId case final String value) 'messageId': value,
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

@@ -297,10 +297,24 @@ void main() {
     );
     expect(
       turnEvents
+          .whereType<AgentMessageChunkEvent>()
+          .map((AgentMessageChunkEvent event) => event.messageId)
+          .toSet(),
+      <String?>{'message-1'},
+    );
+    expect(
+      turnEvents
           .whereType<AgentThoughtChunkEvent>()
           .map((AgentThoughtChunkEvent event) => event.text)
           .join(),
       'Thinking',
+    );
+    expect(
+      turnEvents
+          .whereType<AgentThoughtChunkEvent>()
+          .map((AgentThoughtChunkEvent event) => event.messageId)
+          .toSet(),
+      <String?>{'reason-1'},
     );
     expect(turnEvents.whereType<PlanEvent>().single.entries, hasLength(2));
     final ToolCall patch = turnEvents
@@ -490,12 +504,26 @@ void main() {
       ),
       containsAll(<String>['session', 'extensions', 'info']),
     );
+    final List<AgentMessageChunkEvent> messageChunks = turnEvents
+        .whereType<AgentMessageChunkEvent>()
+        .toList();
     expect(
-      turnEvents
-          .whereType<AgentMessageChunkEvent>()
-          .map((AgentMessageChunkEvent event) => event.text)
-          .join(),
+      messageChunks.map((AgentMessageChunkEvent event) => event.text).join(),
       'Hello world',
+    );
+    expect(
+      messageChunks.every(
+        (AgentMessageChunkEvent event) =>
+            event.messageId != null && event.messageId!.isNotEmpty,
+      ),
+      isTrue,
+    );
+    expect(
+      messageChunks
+          .map((AgentMessageChunkEvent event) => event.messageId)
+          .toSet(),
+      hasLength(2),
+      reason: 'A real tool/permission boundary starts a new synthetic message',
     );
     final UsageInfo usage = turnEvents.whereType<UsageEvent>().single.usage;
     expect(usage.inputTokens, 120);
@@ -1189,6 +1217,13 @@ void main() {
     expect(
       (events[2].event as AgentMessageChunkEvent).text,
       'Reading its contents first.',
+    );
+    expect(
+      <String?>{
+        (events[1].event as AgentMessageChunkEvent).messageId,
+        (events[2].event as AgentMessageChunkEvent).messageId,
+      },
+      <String?>{'m1'},
     );
 
     final created = events[3].event as ToolCallEvent;
