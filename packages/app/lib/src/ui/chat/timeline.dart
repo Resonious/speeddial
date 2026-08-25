@@ -37,7 +37,7 @@ class DisplayedImageItem extends TimelineItem {
   final Attachment attachment;
 }
 
-/// A merged run of consecutive agent message chunks.
+/// A merged run of agent message chunks with no visible row between them.
 class AgentMessageItem extends TimelineItem {
   const AgentMessageItem({required this.text, this.forkSeq});
   final String text;
@@ -134,10 +134,11 @@ class SessionErrorItem extends TimelineItem {
 
 /// Maps a session's raw event list to display items.
 ///
-/// Consecutive same-type chunk events merge into one item (their final merged
-/// text). Tool-call events replace the previous snapshot with the same id
-/// while that call is active. Some providers reuse an id for a later call;
-/// an active snapshot after a terminal one starts a new timeline item.
+/// Same-type chunk events merge into one item while no new visible row is
+/// inserted between them. Tool-call and activity snapshots that update an
+/// existing row in place do not split the message around them. Some providers
+/// reuse a tool id for a later call; an active snapshot after a terminal one
+/// starts a new timeline item and therefore a new message boundary.
 /// Usage events are skipped here — usage is surfaced in the composer footer.
 ///
 /// When [running] is true (session mid-turn) and the last event is a thought
@@ -285,9 +286,9 @@ List<TimelineItem> deriveTimelineItems(
       case AgentThoughtChunkEvent e:
         thought.write(e.text);
       case ToolCallEvent e:
-        flushMessage();
-        flushThought();
         if (_isLegacySubagentTool(e.toolCall)) {
+          flushMessage();
+          flushThought();
           foldLegacySubagent(e.toolCall);
         } else {
           final int? existing = toolIndexes[e.toolCall.id];
@@ -300,17 +301,19 @@ List<TimelineItem> deriveTimelineItems(
           if (existing != null && !reused) {
             items[existing] = ToolCallTimelineItem(toolCall: e.toolCall);
           } else {
+            flushMessage();
+            flushThought();
             toolIndexes[e.toolCall.id] = items.length;
             items.add(ToolCallTimelineItem(toolCall: e.toolCall));
           }
         }
       case AgentActivityEvent e:
-        flushMessage();
-        flushThought();
         final int? existing = activityIndexes[e.activity.id];
         if (existing != null) {
           items[existing] = AgentActivityItem(activity: e.activity);
         } else {
+          flushMessage();
+          flushThought();
           activityIndexes[e.activity.id] = items.length;
           items.add(AgentActivityItem(activity: e.activity));
         }

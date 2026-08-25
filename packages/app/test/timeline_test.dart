@@ -119,7 +119,7 @@ void main() {
             status: AgentActivityStatus.running,
           ),
         ),
-        const AgentMessageChunkEvent(text: 'answer'),
+        const AgentMessageChunkEvent(text: 'answer '),
         const AgentActivityEvent(
           activity: AgentActivity(
             id: 'warmup',
@@ -129,6 +129,7 @@ void main() {
             details: <String>['4 tools registered'],
           ),
         ),
+        const AgentMessageChunkEvent(text: 'continues'),
       ]);
 
       expect(items.whereType<AgentActivityItem>(), hasLength(1));
@@ -139,6 +140,10 @@ void main() {
       expect(activity.title, 'Extensions ready');
       expect(activity.status, AgentActivityStatus.completed);
       expect(activity.details, ['4 tools registered']);
+      final AgentMessageItem message = items
+          .whereType<AgentMessageItem>()
+          .single;
+      expect(message.text, 'answer continues');
     });
 
     testWidgets(
@@ -232,6 +237,51 @@ void main() {
   });
 
   group('deriveTimelineItems tool calls', () {
+    testWidgets('tool progress snapshots do not split one assistant message', (
+      WidgetTester tester,
+    ) async {
+      const ToolCall running = ToolCall(
+        id: 'shell-1',
+        title: 'Running tests',
+        kind: 'execute',
+        status: ToolCallStatus.running,
+        content: <ToolCallContent>[],
+        locations: <String>[],
+      );
+      const ToolCall completed = ToolCall(
+        id: 'shell-1',
+        title: 'Running tests',
+        kind: 'execute',
+        status: ToolCallStatus.completed,
+        content: <ToolCallContent>[],
+        locations: <String>[],
+      );
+      final List<TimelineItem> items = deriveTimelineItems(const <SessionEvent>[
+        ToolCallEvent(toolCall: running),
+        AgentMessageChunkEvent(text: 'One response '),
+        ToolCallEvent(toolCall: running),
+        AgentMessageChunkEvent(text: 'across progress '),
+        ToolCallEvent(toolCall: completed),
+        AgentMessageChunkEvent(text: 'updates.'),
+        TurnCompleteEvent(stopReason: 'end_turn'),
+      ]);
+
+      expect(items.whereType<ToolCallTimelineItem>(), hasLength(1));
+      final AgentMessageItem message = items
+          .whereType<AgentMessageItem>()
+          .single;
+      expect(message.text, 'One response across progress updates.');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(body: Timeline(items: items)),
+        ),
+      );
+
+      expect(find.byType(AgentMessageView), findsOneWidget);
+    });
+
     testWidgets('keeps later calls when a provider reuses a tool id', (
       WidgetTester tester,
     ) async {
