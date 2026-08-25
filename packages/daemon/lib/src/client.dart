@@ -339,6 +339,25 @@ class DaemonClient {
     return Session.fromJson(_asMap(map['session'], 'sessions.archive'));
   }
 
+  /// `sessions.acknowledgeCompletion` — clears an observed completed turn if
+  /// [completionRevision] still identifies the latest completion.
+  Future<Session> acknowledgeCompletion(
+    String sessionId,
+    int completionRevision,
+  ) async {
+    final result = await _peer.call(
+      'sessions.acknowledgeCompletion',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'completionRevision': completionRevision,
+      },
+    );
+    final map = _asMap(result, 'sessions.acknowledgeCompletion');
+    return Session.fromJson(
+      _asMap(map['session'], 'sessions.acknowledgeCompletion'),
+    );
+  }
+
   /// `sessions.delete` — kills the agent process, if alive, and removes the
   /// session and its events.
   Future<void> deleteSession(String sessionId) async {

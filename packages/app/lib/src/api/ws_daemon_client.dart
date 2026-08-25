@@ -867,6 +867,21 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<Session> acknowledgeCompletion(
+    String sessionId,
+    int completionRevision,
+  ) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.acknowledgeCompletion',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'completionRevision': completionRevision,
+      },
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
   Future<void> deleteSession(String sessionId) async {
     await _requirePeer().call('sessions.delete', <String, Object?>{
       'sessionId': sessionId,

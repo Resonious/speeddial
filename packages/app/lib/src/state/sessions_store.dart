@@ -72,8 +72,15 @@ class SessionsStore extends StoreBase {
   final Map<String, String> _lastDaemonBySession = <String, String>{};
   final Map<String, String> _lastDaemonByProject = <String, String>{};
 
-  /// Scoped session ids whose latest observed turn completed while unselected.
-  final Set<String> _unseenCompleted = <String>{};
+  /// Completion revisions currently being acknowledged for selected sessions.
+  /// Suppressing only the matching revision keeps the UI responsive without
+  /// hiding a newer completion that races an older acknowledgement.
+  final Map<String, int> _pendingCompletionAcks = <String, int>{};
+
+  Object? _lastError;
+
+  /// Most recent background completion-acknowledgement failure.
+  Object? get lastError => _lastError;
 
   /// One `sessionUpdates`/`sessionRemovals` subscription per daemon, alive
   /// from first use until [dispose].
@@ -114,7 +121,7 @@ class SessionsStore extends StoreBase {
   }
 
   bool isDone(String daemonId, String sessionId) =>
-      _unseenCompleted.contains(_scopedKey(daemonId, sessionId));
+      _isDone(_scopedKey(daemonId, sessionId));
 
   /// Active sessions across every daemon, newest activity first.
   ///
@@ -132,7 +139,7 @@ class SessionsStore extends StoreBase {
               (
                 daemonId: _daemonOf(entry.key),
                 session: entry.value,
-                done: _unseenCompleted.contains(entry.key),
+                done: _isDone(entry.key),
               ),
         ]..sort((RecentSession a, RecentSession b) {
           final int activity = _compareActivity(a.session, b.session);
@@ -296,7 +303,7 @@ class SessionsStore extends StoreBase {
     await _clientFor(daemonId).deleteSession(sessionId);
     _sessionsById.remove(key);
     _touch(key);
-    _unseenCompleted.remove(key);
+    _pendingCompletionAcks.remove(key);
     if (before != null) {
       _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
         (Session s) => s.id == sessionId,
@@ -381,7 +388,7 @@ class SessionsStore extends StoreBase {
     final String key = _scopedKey(daemonId, sessionId);
     final Session? before = _sessionsById.remove(key);
     _touch(key);
-    _unseenCompleted.remove(key);
+    _pendingCompletionAcks.remove(key);
     if (before == null) return;
     _sessionsByProject[_scopedKey(daemonId, before.projectId)]?.removeWhere(
       (Session s) => s.id == sessionId,
@@ -407,16 +414,10 @@ class SessionsStore extends StoreBase {
   /// most recently used daemon for its session and project ids.
   void _note(String daemonId, Session session) {
     final String key = _scopedKey(daemonId, session.id);
-    final Session? previous = _sessionsById[key];
-    if (session.archived || session.status != SessionStatus.idle) {
-      _unseenCompleted.remove(key);
-    } else if (_wasActive(previous?.status) &&
-        !_isSelected(daemonId, session.id)) {
-      _unseenCompleted.add(key);
-    }
     _lastDaemonBySession[session.id] = daemonId;
     _lastDaemonByProject[session.projectId] = daemonId;
     _sessionsById[key] = session;
+    _scheduleCompletionAcknowledgement(daemonId, session);
   }
 
   void _touch(String key) {
@@ -427,17 +428,72 @@ class SessionsStore extends StoreBase {
     final String? daemonId = _selectedDaemonId();
     final String? sessionId = _selectedSessionId();
     if (daemonId == null || sessionId == null) return;
-    if (_unseenCompleted.remove(_scopedKey(daemonId, sessionId))) {
-      notifyListeners();
+    final Session? session = _sessionsById[_scopedKey(daemonId, sessionId)];
+    if (session != null) {
+      _scheduleCompletionAcknowledgement(daemonId, session);
     }
   }
 
   bool _isSelected(String daemonId, String sessionId) =>
       _selectedDaemonId() == daemonId && _selectedSessionId() == sessionId;
 
-  static bool _wasActive(SessionStatus? status) =>
-      status == SessionStatus.running ||
-      status == SessionStatus.waitingPermission;
+  bool _isDone(String key) {
+    final Session? session = _sessionsById[key];
+    return session != null &&
+        session.done &&
+        !session.archived &&
+        _pendingCompletionAcks[key] != session.completionRevision;
+  }
+
+  void _scheduleCompletionAcknowledgement(String daemonId, Session session) {
+    if (!session.done ||
+        session.archived ||
+        !_isSelected(daemonId, session.id)) {
+      return;
+    }
+    final String key = _scopedKey(daemonId, session.id);
+    if (_pendingCompletionAcks.containsKey(key)) return;
+    final int completionRevision = session.completionRevision;
+    _pendingCompletionAcks[key] = completionRevision;
+    notifyListeners();
+    unawaited(
+      _acknowledgeCompletion(
+        daemonId,
+        session.id,
+        completionRevision,
+      ).catchError((Object _) {
+        // The failure is recorded in [lastError] before being rethrown.
+      }),
+    );
+  }
+
+  Future<void> _acknowledgeCompletion(
+    String daemonId,
+    String sessionId,
+    int completionRevision,
+  ) async {
+    final String key = _scopedKey(daemonId, sessionId);
+    try {
+      final Session session = await _clientFor(daemonId)
+          .acknowledgeCompletion(sessionId, completionRevision);
+      _lastError = null;
+      _replace(daemonId, session);
+    } on Object catch (error) {
+      _lastError = error;
+      rethrow;
+    } finally {
+      if (_pendingCompletionAcks[key] == completionRevision) {
+        _pendingCompletionAcks.remove(key);
+      }
+      notifyListeners();
+      final Session? current = _sessionsById[key];
+      if (current != null &&
+          current.done &&
+          current.completionRevision != completionRevision) {
+        _scheduleCompletionAcknowledgement(daemonId, current);
+      }
+    }
+  }
 
   List<Session>? _bucketFor(String projectId) {
     final String? daemonId = _lastDaemonByProject[projectId];
@@ -487,6 +543,7 @@ class SessionsStore extends StoreBase {
       sub.cancel();
     }
     _resyncSubs.clear();
+    _pendingCompletionAcks.clear();
     super.dispose();
   }
 }

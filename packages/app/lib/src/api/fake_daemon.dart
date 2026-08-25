@@ -997,6 +997,8 @@ class FakeDaemonClient implements DaemonClient {
         thinkingLevels: s.thinkingLevels,
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: s.done,
         archived: s.archived,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
@@ -1026,6 +1028,8 @@ class FakeDaemonClient implements DaemonClient {
         thinkingLevels: s.thinkingLevels,
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: archived ? false : s.done,
         archived: archived,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
@@ -1033,6 +1037,44 @@ class FakeDaemonClient implements DaemonClient {
       ),
     );
     return session;
+  }
+
+  @override
+  Future<Session> acknowledgeCompletion(
+    String sessionId,
+    int completionRevision,
+  ) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final Session current = _sessions[sessionId]!;
+    if (!current.done || current.completionRevision != completionRevision) {
+      return current;
+    }
+    return _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: s.mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
+        yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: false,
+        archived: s.archived,
+        createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
+        updatedAt: s.updatedAt,
+      ),
+    );
   }
 
   @override
@@ -1062,6 +1104,8 @@ class FakeDaemonClient implements DaemonClient {
         thinkingLevels: s.thinkingLevels,
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: s.done,
         archived: s.archived,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
@@ -1099,6 +1143,8 @@ class FakeDaemonClient implements DaemonClient {
         thinkingLevels: s.thinkingLevels,
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: s.done,
         archived: s.archived,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
@@ -1137,6 +1183,8 @@ class FakeDaemonClient implements DaemonClient {
         thinkingLevels: s.thinkingLevels,
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: s.done,
         archived: s.archived,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
@@ -1667,7 +1715,7 @@ class FakeDaemonClient implements DaemonClient {
     _emit(sessionId, TurnCompleteEvent(stopReason: reason));
     _pendingPermissions.remove(sessionId);
     _runningScripts.remove(sessionId);
-    _setStatus(sessionId, SessionStatus.idle, activity: true);
+    _setStatus(sessionId, SessionStatus.idle, activity: true, completed: true);
   }
 
   bool _isCancelled(String sessionId) => _cancelRequested.contains(sessionId);
@@ -1742,6 +1790,8 @@ class FakeDaemonClient implements DaemonClient {
       thinkingLevels: current.thinkingLevels,
       sandboxMode: current.sandboxMode,
       yolo: current.yolo,
+      completionRevision: current.completionRevision,
+      done: current.done,
       archived: current.archived,
       createdAt: current.createdAt,
       lastActivityAt: current.lastActivityAt,
@@ -1771,6 +1821,7 @@ class FakeDaemonClient implements DaemonClient {
     String sessionId,
     SessionStatus status, {
     bool activity = false,
+    bool completed = false,
   }) {
     final Session? current = _sessions[sessionId];
     if (current == null || current.status == status) return;
@@ -1790,6 +1841,10 @@ class FakeDaemonClient implements DaemonClient {
       thinkingLevels: current.thinkingLevels,
       sandboxMode: current.sandboxMode,
       yolo: current.yolo,
+      completionRevision: completed
+          ? current.completionRevision + 1
+          : current.completionRevision,
+      done: completed ? true : (status == SessionStatus.idle && current.done),
       archived: current.archived,
       createdAt: current.createdAt,
       lastActivityAt: activity ? now : current.lastActivityAt,

@@ -281,7 +281,8 @@ their native cache so deleted sessions and old statuses cannot linger. Unreachab
 their last phone snapshot. `RecentSessionsTileService` renders the three newest active sessions in a
 circular-safe Tile. `SessionCountsComplicationService` exposes short- and
 long-text count fallbacks plus weighted elements for running/waiting-for-approval sessions and
-unseen completed turns. The weighted elements use blue for in-progress and green for done; each
+daemon-persisted unacknowledged completed turns. The weighted elements use blue for in-progress
+and green for done; each
 watch face controls whether that split appears as a bar, arc, or another supported layout. Tile
 updates are requested whenever the snapshot changes; complication push updates are limited to once
 per five minutes and backed by the platform's five-minute periodic refresh.

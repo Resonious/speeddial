@@ -209,7 +209,7 @@ void main() {
     expect(prefs.getBool(SettingsStore.groupSessionsStorageKey), isFalse);
   });
 
-  testWidgets('completed unviewed session shows Done until selected', (
+  testWidgets('unacknowledged completed session shows Done until selected', (
     WidgetTester tester,
   ) async {
     final AppData app = await pumpRail(tester);

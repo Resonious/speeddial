@@ -1148,6 +1148,24 @@ class SessionEngine {
   Future<Session> archive(String sessionId, bool archived) =>
       _updateSession(sessionId, (session) => _withArchived(session, archived));
 
+  /// Clears an observed completion only when [completionRevision] still
+  /// identifies the daemon's latest completion. A delayed client response for
+  /// an older turn is therefore a harmless no-op rather than hiding a newer
+  /// completed turn.
+  Future<Session> acknowledgeCompletion(
+    String sessionId,
+    int completionRevision,
+  ) async {
+    final Session? session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    if (!session.done || session.completionRevision != completionRevision) {
+      return session;
+    }
+    return _updateSession(sessionId, (current) => _withDone(current, false));
+  }
+
   /// Switches the agent's session mode and persists it. Sessions without a
   /// live agent are persisted locally; [_resume] reapplies the persisted
   /// mode when the agent is respawned.
@@ -1408,7 +1426,7 @@ class SessionEngine {
         _store.setForkContextSeq(live.sessionId, null);
       }
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
-      _setStatus(live, SessionStatus.idle, activity: true);
+      _setStatus(live, SessionStatus.idle, activity: true, completed: true);
     } on Object catch (error) {
       if (!live.closed) {
         final String message = switch (error) {
@@ -1941,8 +1959,14 @@ class SessionEngine {
     _LiveSession live,
     SessionStatus status, {
     bool activity = false,
+    bool completed = false,
   }) {
-    final updated = _withStatus(live.session, status, activity: activity);
+    final updated = _withStatus(
+      live.session,
+      status,
+      activity: activity,
+      completed: completed,
+    );
     live.session = updated;
     _store.updateSession(updated);
     if (!_sessionChangesController.isClosed) {
@@ -1967,6 +1991,7 @@ class SessionEngine {
     Session session,
     SessionStatus status, {
     bool activity = false,
+    bool completed = false,
   }) {
     final DateTime now = DateTime.now().toUtc();
     return Session(
@@ -1984,6 +2009,10 @@ class SessionEngine {
       thinkingLevels: session.thinkingLevels,
       sandboxMode: session.sandboxMode,
       yolo: session.yolo,
+      completionRevision: completed
+          ? session.completionRevision + 1
+          : session.completionRevision,
+      done: completed ? true : (status == SessionStatus.idle && session.done),
       archived: session.archived,
       createdAt: session.createdAt,
       lastActivityAt: activity ? now : session.lastActivityAt,
@@ -2006,6 +2035,8 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: session.done,
     archived: session.archived,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
@@ -2027,6 +2058,8 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: archived ? false : session.done,
     archived: archived,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
@@ -2048,6 +2081,8 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: session.done,
     archived: session.archived,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
@@ -2069,6 +2104,8 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: session.done,
     archived: session.archived,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
@@ -2091,6 +2128,8 @@ class SessionEngine {
         thinkingLevels: levels,
         sandboxMode: session.sandboxMode,
         yolo: session.yolo,
+        completionRevision: session.completionRevision,
+        done: session.done,
         archived: session.archived,
         createdAt: session.createdAt,
         lastActivityAt: session.lastActivityAt,
@@ -2116,11 +2155,36 @@ class SessionEngine {
         thinkingLevels: snapshot.thinkingLevels,
         sandboxMode: session.sandboxMode,
         yolo: session.yolo,
+        completionRevision: session.completionRevision,
+        done: session.done,
         archived: session.archived,
         createdAt: session.createdAt,
         lastActivityAt: session.lastActivityAt,
         updatedAt: DateTime.now().toUtc(),
       );
+
+  Session _withDone(Session session, bool done) => Session(
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    mode: session.mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
+    yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: done,
+    archived: session.archived,
+    createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   /// The thinking-level config option among [options], per the protocol
   /// contract: the first select-type option whose category is

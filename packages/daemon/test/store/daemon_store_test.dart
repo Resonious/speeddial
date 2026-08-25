@@ -34,6 +34,8 @@ Session session({
   List<String> models = const <String>[],
   SessionSandboxMode? sandboxMode,
   bool yolo = false,
+  int completionRevision = 0,
+  bool done = false,
   bool archived = false,
   DateTime? lastActivityAt,
 }) => Session(
@@ -51,6 +53,8 @@ Session session({
   thinkingLevels: thinkingLevels,
   sandboxMode: sandboxMode,
   yolo: yolo,
+  completionRevision: completionRevision,
+  done: done,
   archived: archived,
   createdAt: DateTime.utc(2026, 1, 2),
   lastActivityAt: lastActivityAt ?? DateTime.utc(2026, 1, 2),
@@ -359,6 +363,8 @@ void main() {
       thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
       sandboxMode: SessionSandboxMode.unrestricted,
       yolo: true,
+      completionRevision: 4,
+      done: true,
       archived: true,
       createdAt: store.getSession('s1')!.createdAt,
       lastActivityAt: DateTime.utc(2026, 1, 2, 12),
@@ -382,6 +388,8 @@ void main() {
     ]);
     expect(reloaded.sandboxMode, SessionSandboxMode.unrestricted);
     expect(reloaded.yolo, isTrue);
+    expect(reloaded.completionRevision, 4);
+    expect(reloaded.done, isTrue);
     expect(reloaded.archived, isTrue);
     expect(reloaded.lastActivityAt, DateTime.utc(2026, 1, 2, 12).toUtc());
     expect(reloaded.updatedAt, DateTime.utc(2026, 1, 3).toUtc());
@@ -454,6 +462,16 @@ void main() {
     );
     expect(migrated.yolo, isFalse, reason: 'legacy rows default to yolo off');
     expect(
+      migrated.completionRevision,
+      0,
+      reason: 'legacy rows have no completed turns',
+    );
+    expect(
+      migrated.done,
+      isFalse,
+      reason: 'legacy rows default to no unacknowledged completion',
+    );
+    expect(
       migrated.thinkingLevel,
       isNull,
       reason: 'legacy rows gain a null thinking level',
@@ -487,6 +505,8 @@ void main() {
         baseBranch: 'main',
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
+        completionRevision: 2,
+        done: true,
         thinkingLevel: 'auto',
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
         models: const <String>['fake-fast', 'fake-smart'],
@@ -498,6 +518,8 @@ void main() {
       SessionSandboxMode.unrestricted,
     );
     expect(store.getSession('s2')!.yolo, isTrue);
+    expect(store.getSession('s2')!.completionRevision, 2);
+    expect(store.getSession('s2')!.done, isTrue);
     expect(store.getSession('s2')!.thinkingLevel, 'auto');
     expect(store.getSession('s2')!.thinkingLevels, <String>[
       'off',
@@ -551,7 +573,7 @@ void main() {
   test('removeProject archives its sessions and removes the project', () {
     store.insertProject(project());
     store.insertProject(project(id: 'p2', path: p.join(tempDir.path, 'other')));
-    store.insertSession(session(id: 's1'));
+    store.insertSession(session(id: 's1', completionRevision: 1, done: true));
     store.insertSession(session(id: 's2', projectId: 'p2'));
 
     store.removeProject('p1');
@@ -563,6 +585,7 @@ void main() {
     expect(survivors.map((s) => s.id), <String>['s1', 's2']);
     final archived = survivors.firstWhere((s) => s.id == 's1');
     expect(archived.archived, isTrue);
+    expect(archived.done, isFalse);
     // Hidden from the default listing.
     expect(store.listSessions().map((s) => s.id), <String>['s2']);
   });

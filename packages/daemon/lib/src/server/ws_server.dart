@@ -67,6 +67,7 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.cancel',
   'sessions.rename',
   'sessions.archive',
+  'sessions.acknowledgeCompletion',
   'sessions.delete',
   'sessions.setMode',
   'sessions.setModel',
@@ -516,6 +517,9 @@ class SpeedDialServer {
       'sessions.cancel' => _sessionsCancel(params),
       'sessions.rename' => _sessionsRename(params),
       'sessions.archive' => _sessionsArchive(params),
+      'sessions.acknowledgeCompletion' => _sessionsAcknowledgeCompletion(
+        params,
+      ),
       'sessions.delete' => _sessionsDelete(params),
       'sessions.setMode' => _sessionsSetMode(params),
       'sessions.setModel' => _sessionsSetModel(params),
@@ -1434,6 +1438,24 @@ class SpeedDialServer {
       );
     }
     final session = await _engine.archive(sessionId, archived);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsAcknowledgeCompletion(
+    Map<String, Object?> params,
+  ) async {
+    final sessionId = _requiredString(params, 'sessionId');
+    final completionRevision = params['completionRevision'];
+    if (completionRevision is! int || completionRevision < 0) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: completionRevision',
+      );
+    }
+    final session = await _engine.acknowledgeCompletion(
+      sessionId,
+      completionRevision,
+    );
     return <String, Object?>{'session': session.toJson()};
   }
 

@@ -44,7 +44,8 @@ The watch also provides two optional system surfaces:
 - **Recent SpeedDial sessions** Tile — the three sessions with the newest
   activity, with status color and a tap target that opens SpeedDial.
 - **SpeedDial session counts** complication — the number of sessions currently
-  running or waiting for approval, plus the number of unseen completed turns.
+  running or waiting for approval, plus the number of daemon-persisted
+  unacknowledged completed turns.
   Compatible watch faces can render these as blue and green weighted elements;
   short- and long-text formats remain available as fallbacks.
 

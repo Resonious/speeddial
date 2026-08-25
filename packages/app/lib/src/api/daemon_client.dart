@@ -163,6 +163,13 @@ abstract class DaemonClient {
   Future<Session> renameSession(String sessionId, String title);
   Future<Session> archiveSession(String sessionId, bool archived);
 
+  /// Clears an observed completed turn if [completionRevision] still
+  /// identifies the daemon's latest completion.
+  Future<Session> acknowledgeCompletion(
+    String sessionId,
+    int completionRevision,
+  );
+
   /// Deletes a session and kills its agent process if alive.
   Future<void> deleteSession(String sessionId);
 

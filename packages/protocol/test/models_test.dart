@@ -214,6 +214,12 @@ void main() {
         reason: 'yolo is absent on pre-yolo daemons',
       );
       expect(
+        session.completionRevision,
+        0,
+        reason: 'completionRevision is absent on older daemons',
+      );
+      expect(session.done, isFalse, reason: 'done is absent on older daemons');
+      expect(
         session.sandboxMode,
         isNull,
         reason: 'sandboxMode is absent on older daemons',
@@ -250,6 +256,8 @@ void main() {
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
+        completionRevision: 7,
+        done: true,
         archived: true,
         createdAt: DateTime.utc(2026, 1, 1),
         lastActivityAt: DateTime.utc(2026, 1, 2, 2, 3, 4, 567),
@@ -270,6 +278,8 @@ void main() {
       ]);
       expect(decoded.sandboxMode, SessionSandboxMode.unrestricted);
       expect(decoded.yolo, isTrue);
+      expect(decoded.completionRevision, 7);
+      expect(decoded.done, isTrue);
       expect(decoded.archived, isTrue);
       expect(decoded.lastActivityAt, model.lastActivityAt);
       expect(decoded.toJson(), model.toJson());

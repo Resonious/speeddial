@@ -138,6 +138,8 @@ Session = {
                               // option); empty when the provider has none
   sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
   yolo: boolean,              // daemon auto-approves the agent's permission requests
+  completionRevision: int,    // increments whenever a turn reaches terminal idle successfully
+  done: boolean,              // latest completion has not been acknowledged by a client
   archived: boolean,
   createdAt: string,
   lastActivityAt: string,     // last accepted user message or terminal turn outcome
@@ -468,6 +470,9 @@ tokens before session creation/resume, and checks them periodically while runnin
   A session's `lastActivityAt` advances when the accepted user message starts the turn and again
   when the turn reaches its terminal idle/error outcome, so clients can order sessions by recent
   conversation activity independently of metadata changes.
+  Starting another turn clears `done`. A successful terminal outcome (including cancellation)
+  increments `completionRevision` and sets `done`; agent errors and archiving clear it. Both fields
+  are daemon-persisted and are broadcast through the normal `session.updated` notification.
   A session still titled `New session` is auto-titled from `text`'s first line (whitespace-collapsed,
   capped at 60 characters) right after the `userMessage` event is persisted, and the change is
   broadcast as `session.updated`; explicitly set titles are never overwritten, and an
@@ -475,6 +480,10 @@ tokens before session creation/resume, and checks them periodically while runnin
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
+- `sessions.acknowledgeCompletion {sessionId: string, completionRevision: int}` →
+  `{session: Session}` — clears `done` only when the supplied non-negative revision still matches
+  the session's latest completion. A stale acknowledgement is a successful no-op returning the
+  current session, so it cannot hide a newer completed turn.
 - `sessions.delete {sessionId: string}` → `{}` — kills the agent process if alive
 - `sessions.setMode {sessionId: string, mode: SessionMode}` → `{session: Session}`
 - `sessions.setModel {sessionId: string, model: string}` → `{session: Session}` — when the

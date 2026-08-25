@@ -16,7 +16,8 @@
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
 ///                      sandbox_mode TEXT NULL, yolo INT (auto-approve
-///                      permissions), archived INT, created_at,
+///                      permissions), completion_revision INT, done INT,
+///                      archived INT, created_at,
 ///                      last_activity_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
@@ -119,6 +120,8 @@ class DaemonStore {
         base_branch TEXT,
         sandbox_mode TEXT,
         fork_context_seq INTEGER,
+        completion_revision INTEGER NOT NULL DEFAULT 0,
+        done INTEGER NOT NULL DEFAULT 0,
         archived INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         last_activity_at INTEGER NOT NULL,
@@ -161,6 +164,17 @@ class DaemonStore {
     }
     if (!sessionColumns.contains('fork_context_seq')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN fork_context_seq INTEGER');
+    }
+    if (!sessionColumns.contains('completion_revision')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN completion_revision INTEGER NOT NULL '
+        'DEFAULT 0',
+      );
+    }
+    if (!sessionColumns.contains('done')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN done INTEGER NOT NULL DEFAULT 0',
+      );
     }
     if (!sessionColumns.contains('last_activity_at')) {
       _db.execute(
@@ -741,9 +755,10 @@ class DaemonStore {
     _db.execute('PRAGMA foreign_keys = OFF;');
     try {
       _db.execute('BEGIN;');
-      _db.execute('UPDATE sessions SET archived = 1 WHERE project_id = ?', [
-        id,
-      ]);
+      _db.execute(
+        'UPDATE sessions SET archived = 1, done = 0 WHERE project_id = ?',
+        [id],
+      );
       _db.execute('DELETE FROM projects WHERE id = ?', [id]);
       _db.execute('COMMIT;');
     } on Object {
@@ -773,9 +788,10 @@ class DaemonStore {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
-      'thinking_levels, sandbox_mode, yolo, archived, created_at, '
+      'thinking_levels, sandbox_mode, yolo, completion_revision, done, '
+      'archived, created_at, '
       'last_activity_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -791,6 +807,8 @@ class DaemonStore {
         jsonEncode(session.thinkingLevels),
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
+        session.completionRevision,
+        session.done ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.lastActivityAt),
@@ -808,7 +826,8 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, archived, created_at, last_activity_at, updated_at FROM sessions '
+      'yolo, completion_revision, done, archived, created_at, '
+      'last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
@@ -821,7 +840,8 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, archived, created_at, last_activity_at, updated_at FROM sessions WHERE id = ?',
+      'yolo, completion_revision, done, archived, created_at, '
+      'last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
     if (rows.isEmpty) return null;
@@ -834,8 +854,8 @@ class DaemonStore {
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
       'thinking_level = ?, thinking_levels = ?, sandbox_mode = ?, '
-      'yolo = ?, archived = ?, created_at = ?, last_activity_at = ?, '
-      'updated_at = ? WHERE id = ?',
+      'yolo = ?, completion_revision = ?, done = ?, archived = ?, '
+      'created_at = ?, last_activity_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
         session.providerId,
@@ -850,6 +870,8 @@ class DaemonStore {
         jsonEncode(session.thinkingLevels),
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
+        session.completionRevision,
+        session.done ? 1 : 0,
         session.archived ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.lastActivityAt),
@@ -1208,6 +1230,8 @@ class DaemonStore {
         ? null
         : SessionSandboxMode.parse(row['sandbox_mode']! as String),
     yolo: (row['yolo'] as int? ?? 0) != 0,
+    completionRevision: row['completion_revision'] as int? ?? 0,
+    done: (row['done'] as int? ?? 0) != 0,
     archived: (row['archived'] as int) != 0,
     createdAt: _fromTs(row['created_at'] as int),
     lastActivityAt: _fromTs(

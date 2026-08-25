@@ -714,7 +714,53 @@ void main() {
     await waitFor(() => events.any((t) => t.event is TurnCompleteEvent));
     final Session completed = store.getSession(created.id)!;
     expect(completed.status, SessionStatus.idle);
+    expect(completed.completionRevision, 1);
+    expect(completed.done, isTrue);
     expect(completed.lastActivityAt.isAfter(running.lastActivityAt), isTrue);
+  });
+
+  test('completion acknowledgements are persisted and revision-safe', () async {
+    final Session created = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+
+    await engine.sendMessage(created.id, 'weird');
+    await waitFor(() => store.getSession(created.id)!.done);
+    final Session firstCompletion = store.getSession(created.id)!;
+    expect(firstCompletion.completionRevision, 1);
+
+    final Session stale = await engine.acknowledgeCompletion(created.id, 0);
+    expect(stale.done, isTrue);
+    expect(stale.completionRevision, 1);
+
+    final Session acknowledged = await engine.acknowledgeCompletion(
+      created.id,
+      1,
+    );
+    expect(acknowledged.done, isFalse);
+
+    await engine.sendMessage(created.id, 'weird');
+    final Session running = store.getSession(created.id)!;
+    expect(running.status, SessionStatus.running);
+    expect(running.done, isFalse);
+    await waitFor(
+      () =>
+          store.getSession(created.id)!.completionRevision == 2 &&
+          store.getSession(created.id)!.done,
+    );
+
+    final Session oldAcknowledgement = await engine.acknowledgeCompletion(
+      created.id,
+      1,
+    );
+    expect(oldAcknowledgement.completionRevision, 2);
+    expect(oldAcknowledgement.done, isTrue);
+    final Session latestAcknowledgement = await engine.acknowledgeCompletion(
+      created.id,
+      2,
+    );
+    expect(latestAcknowledgement.done, isFalse);
   });
 
   test('createSession injects the configured built-in MCP server', () async {

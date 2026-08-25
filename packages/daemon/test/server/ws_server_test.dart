@@ -717,6 +717,38 @@ void main() {
           ),
         );
 
+        final completedList = j(
+          await client.peer.call('sessions.list', <String, Object?>{}),
+        );
+        final completedSession = Session.fromJson(
+          ((completedList['sessions']! as List<Object?>).single! as Map)
+              .cast<String, Object?>(),
+        );
+        expect(completedSession.completionRevision, 1);
+        expect(completedSession.done, isTrue);
+        await expectLater(
+          client.peer.call('sessions.acknowledgeCompletion', <String, Object?>{
+            'sessionId': session.id,
+            'completionRevision': -1,
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+        final acknowledged = j(
+          await client.peer.call(
+            'sessions.acknowledgeCompletion',
+            <String, Object?>{
+              'sessionId': session.id,
+              'completionRevision': completedSession.completionRevision,
+            },
+          ),
+        );
+        expect(
+          Session.fromJson(
+            (acknowledged['session']! as Map).cast<String, Object?>(),
+          ).done,
+          isFalse,
+        );
+
         // Metadata changes persist and broadcast session.updated.
         final renamed = j(
           await client.peer.call('sessions.rename', <String, Object?>{

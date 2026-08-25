@@ -394,29 +394,40 @@ void main() {
       expect(app.sessions.sessionsFor(projectId).first.id, 'sess-2');
     });
 
-    test('marks unseen completed turns done until selected', () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      await app.sessions.refresh('fake', projectId: projectId);
-      app.selection
-        ..selectedDaemonId = 'fake'
-        ..selectedProjectId = projectId
-        ..selectedSessionId = 'sess-2';
+    test(
+      'shows daemon-owned completion until selected and acknowledged',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.sessions.refresh('fake', projectId: projectId);
+        app.selection
+          ..selectedDaemonId = 'fake'
+          ..selectedProjectId = projectId
+          ..selectedSessionId = 'sess-2';
 
-      await fake.sendMessage('sess-1', 'finish in the background');
-      await _waitUntil(() => app.sessions.isDone('fake', 'sess-1'));
-      expect(app.sessions.byId('sess-1')?.status, SessionStatus.idle);
-      expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
-      expect(
-        app.sessions
-            .recentSessions()
-            .singleWhere((item) => item.session.id == 'sess-1')
-            .done,
-        isTrue,
-      );
+        await fake.sendMessage('sess-1', 'finish in the background');
+        await _waitUntil(() => app.sessions.isDone('fake', 'sess-1'));
+        expect(app.sessions.byId('sess-1')?.status, SessionStatus.idle);
+        expect(app.sessions.isDone('fake', 'sess-1'), isTrue);
+        expect(
+          app.sessions
+              .recentSessions()
+              .singleWhere((item) => item.session.id == 'sess-1')
+              .done,
+          isTrue,
+        );
 
-      app.selection.selectedSessionId = 'sess-1';
-      expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
-    });
+        app.selection.selectedSessionId = 'sess-1';
+        expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+        await _waitUntil(
+          () async =>
+              !(await fake.listSessions(includeArchived: true))
+                  .singleWhere((Session session) => session.id == 'sess-1')
+                  .done,
+        );
+        expect(app.sessions.byId('sess-1')!.completionRevision, 1);
+        expect(app.sessions.lastError, isNull);
+      },
+    );
 
     test('does not mark a selected completed turn done', () async {
       final String projectId = (await fake.listProjects()).single.id;
@@ -434,6 +445,13 @@ void main() {
         () => app.sessions.byId('sess-1')?.status == SessionStatus.idle,
       );
       expect(app.sessions.isDone('fake', 'sess-1'), isFalse);
+      await _waitUntil(
+        () async =>
+            !(await fake.listSessions(includeArchived: true))
+                .singleWhere((Session session) => session.id == 'sess-1')
+                .done,
+      );
+      expect(app.sessions.byId('sess-1')!.completionRevision, 1);
     });
 
     test(

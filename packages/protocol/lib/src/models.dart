@@ -637,6 +637,8 @@ class Session {
     this.thinkingLevels = const <String>[],
     this.sandboxMode,
     required this.yolo,
+    this.completionRevision = 0,
+    this.done = false,
     required this.archived,
     required this.createdAt,
     DateTime? lastActivityAt,
@@ -680,6 +682,15 @@ class Session {
   /// Yolo mode: the daemon auto-approves the agent's permission requests.
   final bool yolo;
 
+  /// Monotonically increases whenever a turn reaches a successful terminal
+  /// state. Clients include the observed revision when acknowledging [done]
+  /// so a delayed acknowledgement cannot clear a newer completion.
+  final int completionRevision;
+
+  /// Whether the latest completed turn has not yet been acknowledged by a
+  /// client. This state is persisted and owned by the daemon.
+  final bool done;
+
   final bool archived;
   final DateTime createdAt;
   final DateTime lastActivityAt;
@@ -713,6 +724,9 @@ class Session {
         : SessionSandboxMode.parse(json['sandboxMode']! as String),
     // Absent on pre-yolo daemons.
     yolo: json['yolo'] as bool? ?? false,
+    // Absent on pre-daemon-owned-completion daemons.
+    completionRevision: json['completionRevision'] as int? ?? 0,
+    done: json['done'] as bool? ?? false,
     archived: json['archived']! as bool,
     createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
     lastActivityAt: DateTime.parse(
@@ -736,6 +750,8 @@ class Session {
     'thinkingLevels': thinkingLevels,
     'sandboxMode': sandboxMode?.wire,
     'yolo': yolo,
+    'completionRevision': completionRevision,
+    'done': done,
     'archived': archived,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'lastActivityAt': lastActivityAt.toUtc().toIso8601String(),
