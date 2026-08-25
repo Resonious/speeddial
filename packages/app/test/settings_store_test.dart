@@ -47,6 +47,21 @@ void main() {
       expect(prefs.getString(SettingsStore.providerStorageKey), 'omp');
     });
 
+    test('loads and persists the session grouping preference', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        SettingsStore.groupSessionsStorageKey: false,
+      });
+      final SettingsStore store = SettingsStore();
+      addTearDown(store.dispose);
+
+      await store.init();
+      expect(store.groupSessionsByProject, isFalse);
+
+      await store.setGroupSessionsByProject(true);
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool(SettingsStore.groupSessionsStorageKey), isTrue);
+    });
+
     test('persists changes and does not notify for a no-op', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
       final SettingsStore store = SettingsStore();

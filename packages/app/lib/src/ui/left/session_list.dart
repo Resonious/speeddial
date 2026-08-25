@@ -185,12 +185,14 @@ class SessionRow extends StatelessWidget {
     required this.selected,
     required this.daemonId,
     required this.projectId,
+    this.projectName,
   });
 
   final Session session;
   final bool selected;
   final String daemonId;
   final String projectId;
+  final String? projectName;
 
   Future<void> _rename(BuildContext context, AppData data) async {
     final String? title = await showDialog<String>(
@@ -300,6 +302,15 @@ class SessionRow extends StatelessWidget {
         spacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
+          if (projectName != null)
+            Text(
+              projectName!,
+              style: textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+              ),
+            ),
           ProviderBadge(providerId: session.providerId),
           Text(
             session.mode.name,
@@ -412,20 +423,23 @@ class _RenameSessionDialogState extends State<_RenameSessionDialog> {
   }
 }
 
-/// The expanded children of a project tile: the session rows for that
-/// project, or (rare) a "no sessions" hint.
+/// Session rows for one project or the rail's cross-project view. When
+/// [projectId] is omitted, each row selects its session's own project and
+/// [projectNames] can label the rows.
 class SessionList extends StatelessWidget {
   const SessionList({
     super.key,
     required this.sessions,
     required this.daemonId,
-    required this.projectId,
+    this.projectId,
+    this.projectNames = const <String, String>{},
     this.now,
   });
 
   final List<Session> sessions;
   final String daemonId;
-  final String projectId;
+  final String? projectId;
+  final Map<String, String> projectNames;
   final DateTime? now;
 
   @override
@@ -464,7 +478,8 @@ class SessionList extends StatelessWidget {
             session: sessions[index],
             selected: data.selection.selectedSessionId == sessions[index].id,
             daemonId: daemonId,
-            projectId: projectId,
+            projectId: projectId ?? sessions[index].projectId,
+            projectName: projectNames[sessions[index].projectId],
           ),
         ],
       ],

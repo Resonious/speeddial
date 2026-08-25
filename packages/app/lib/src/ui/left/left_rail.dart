@@ -3,6 +3,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/projects_store.dart';
+import '../../state/sessions_store.dart';
 import '../../theme.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
@@ -272,6 +273,7 @@ class _ProjectTree extends StatelessWidget {
         data.selection,
         data.projects,
         data.sessions,
+        data.settings,
       ]),
       builder: (BuildContext context, Widget? _) {
         final String? daemonId = data.selection.selectedDaemonId;
@@ -287,6 +289,7 @@ class _ProjectTree extends StatelessWidget {
         }
 
         final List<Project> projects = data.projects.projectsFor(daemonId);
+        final bool grouped = data.settings.groupSessionsByProject;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -296,11 +299,26 @@ class _ProjectTree extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      'Projects',
+                      grouped ? 'Projects' : 'Sessions',
                       style: textTheme.labelMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
+                  ),
+                  IconButton(
+                    key: const Key('toggle-session-grouping'),
+                    tooltip: grouped
+                        ? 'Show all sessions by activity'
+                        : 'Group sessions by project',
+                    icon: Icon(
+                      grouped
+                          ? Icons.format_list_bulleted
+                          : Icons.account_tree_outlined,
+                      size: 18,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () =>
+                        _setSessionGrouping(context, data, grouped: !grouped),
                   ),
                   IconButton(
                     key: const Key('add-project'),
@@ -346,11 +364,27 @@ class _ProjectTree extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.only(bottom: 8),
                   children: <Widget>[
-                    for (final Project project in projects)
-                      _ProjectTile(
-                        key: ValueKey<String>('project-${project.id}'),
-                        project: project,
+                    if (grouped)
+                      for (final Project project in projects)
+                        _ProjectTile(
+                          key: ValueKey<String>('project-${project.id}'),
+                          project: project,
+                          daemonId: daemonId,
+                        )
+                    else
+                      SessionList(
+                        sessions: <Session>[
+                          for (final RecentSession recent
+                              in data.sessions.recentSessions(
+                                daemonIds: <String>{daemonId},
+                              ))
+                            recent.session,
+                        ],
                         daemonId: daemonId,
+                        projectNames: <String, String>{
+                          for (final Project project in projects)
+                            project.id: project.name,
+                        },
                       ),
                   ],
                 ),
@@ -359,6 +393,23 @@ class _ProjectTree extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _setSessionGrouping(
+    BuildContext context,
+    AppData data, {
+    required bool grouped,
+  }) async {
+    try {
+      await data.settings.setGroupSessionsByProject(grouped);
+    } on Object {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Could not save session view')),
+        );
+    }
   }
 }
 

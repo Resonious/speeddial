@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/state/settings_store.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/session_list.dart';
@@ -161,6 +162,52 @@ void main() {
       expect(app.selection.selectedProjectId, demo.id);
     },
   );
+
+  testWidgets('session grouping toggle shows one cross-project activity list', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    final Project other = await app.projects.add(
+      'fake',
+      '/other',
+      name: 'Other Project',
+    );
+    final Session newest = await app.sessions.create(
+      'fake',
+      projectId: other.id,
+      providerId: 'omp',
+      title: 'Newest other session',
+    );
+    await tester.pumpAndSettle();
+
+    expect(app.settings.groupSessionsByProject, isTrue);
+    expect(find.text('Projects'), findsOneWidget);
+    expect(find.text('Newest other session'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('toggle-session-grouping')));
+    await tester.pumpAndSettle();
+
+    expect(app.settings.groupSessionsByProject, isFalse);
+    expect(find.text('Sessions'), findsOneWidget);
+    expect(find.byType(ExpansionTile), findsNothing);
+    expect(find.text('Newest other session'), findsOneWidget);
+    expect(find.text('Build the feature'), findsOneWidget);
+    expect(find.text('Plan the refactor'), findsOneWidget);
+    expect(find.text('Other Project'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Newest other session')).dy,
+      lessThan(tester.getTopLeft(find.text('Build the feature')).dy),
+    );
+
+    await tester.tap(find.text('Newest other session'));
+    await tester.pump();
+    expect(app.selection.selectedProjectId, other.id);
+    expect(app.selection.selectedSessionId, newest.id);
+
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool(SettingsStore.groupSessionsStorageKey), isFalse);
+  });
 
   testWidgets('completed unviewed session shows Done until selected', (
     WidgetTester tester,
