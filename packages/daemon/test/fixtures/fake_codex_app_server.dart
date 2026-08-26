@@ -407,12 +407,12 @@ Future<void> _finishTurn(Map<String, Object?> approvalResponse) async {
         'totalTokens': 150,
       },
       'total': <String, Object?>{
-        'inputTokens': 120,
-        'cachedInputTokens': 80,
-        'cacheWriteInputTokens': 5,
-        'outputTokens': 30,
-        'reasoningOutputTokens': 10,
-        'totalTokens': 150,
+        'inputTokens': 500,
+        'cachedInputTokens': 400,
+        'cacheWriteInputTokens': 7,
+        'outputTokens': 100,
+        'reasoningOutputTokens': 25,
+        'totalTokens': 600,
       },
     },
   });

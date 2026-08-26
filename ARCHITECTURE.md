@@ -131,7 +131,9 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     and audio inputs; Ante inlines UTF-8 text attachments and
                     materializes images as transient `@` file mentions for Ante's native
                     context resolver. Unsupported binary attachments are rejected before
-                    turn start.
+                    turn start. Tool progress persists lifecycle metadata rather than
+                    repeated accumulated output; terminal tool content/raw payloads are
+                    bounded before they enter history.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
                     dependency) at ~/.speeddial/speeddial.db (override with --db or
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,

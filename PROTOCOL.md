@@ -228,9 +228,9 @@ ToolCall = {
   status: "pending" | "running" | "completed" | "failed",
   content: ToolCallContent[], // may be []
   locations: string[],        // file paths touched, may be []
-  rawInput: any | null,      // structured payloads; update events carry these only when
-  rawOutput: any | null,     // the call is completed/failed — running updates omit them
-                              // (clients fold by id; the terminal event carries the full state)
+  rawInput: any | null,      // structured payloads; active update events carry metadata only
+  rawOutput: any | null,     // completed/failed updates carry bounded content/raw previews
+                              // (clients fold snapshots by id)
 }
 ToolCallContent =
   | { type: "text", text: string }
@@ -487,7 +487,8 @@ tokens before session creation/resume, and checks them periodically while runnin
   A session still titled `New session` is auto-titled from `text`'s first line (whitespace-collapsed,
   capped at 60 characters) right after the `userMessage` event is persisted, and the change is
   broadcast as `session.updated`; explicitly set titles are never overwritten, and an
-  attachment-only turn (empty `text`) skips the auto-title.
+  attachment-only turn (empty `text`) skips the auto-title. A first line that is entirely a
+  JWT-shaped bearer credential also skips auto-title so secrets do not enter navigation chrome.
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
@@ -513,7 +514,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   `-32602` when it is not or when the session's provider advertises no thinking-level option. The
   returned session reflects the agent-reported state, which may differ from the requested level
   when the agent clamps it.
-- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, and activity details for compact clients.
+- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, and activity details for compact clients. Legacy oversized tool snapshots are projected as same-id `history` activities, so clients fold a run of redundant snapshots into one bounded row.
 - `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
 
 ### Attachments

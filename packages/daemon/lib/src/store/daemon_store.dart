@@ -1087,7 +1087,8 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT seq, timestamp, '
       'CASE WHEN length(CAST(json AS BLOB)) > ? THEN NULL ELSE json END AS json, '
-      'length(CAST(json AS BLOB)) AS json_bytes FROM session_events '
+      'length(CAST(json AS BLOB)) AS json_bytes, '
+      'substr(json, 1, 64) AS json_prefix FROM session_events '
       'WHERE session_id = ? AND (? IS NULL OR seq < ?) '
       'ORDER BY seq DESC LIMIT ?',
       [_maxHistoryEventBytes, sessionId, beforeSeq, beforeSeq, limit + 1],
@@ -1103,6 +1104,22 @@ class DaemonStore {
             );
           }
           final int bytes = row['json_bytes'] as int;
+          final String prefix = row['json_prefix'] as String;
+          if (prefix.contains('"type":"toolCall"')) {
+            return AgentActivityEvent(
+              activity: AgentActivity(
+                id: 'speeddial-oversized-tool-history',
+                kind: 'history',
+                title: 'Large tool output omitted from history',
+                status: AgentActivityStatus.completed,
+                details: <String>[
+                  'Original snapshot: ${_formatByteCount(bytes)}',
+                ],
+              ),
+              seq: row['seq'] as int,
+              timestamp: _fromTs(row['timestamp'] as int),
+            );
+          }
           return SessionErrorEvent(
             message:
                 'Oversized history event omitted (${_formatByteCount(bytes)}).',

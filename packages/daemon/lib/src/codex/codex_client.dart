@@ -945,10 +945,7 @@ class CodexClient implements AgentClient {
     state.output.write(delta);
     _emit(
       threadId,
-      AcpToolCallUpdate(
-        toolCallId: itemId,
-        fields: _toolFields(state, completed: false),
-      ),
+      AcpToolCallUpdate(toolCallId: itemId, fields: _toolProgressFields(state)),
     );
   }
 
@@ -962,10 +959,7 @@ class CodexClient implements AgentClient {
     if (rawChanges != null) state.item['changes'] = rawChanges;
     _emit(
       threadId,
-      AcpToolCallUpdate(
-        toolCallId: itemId,
-        fields: _toolFields(state, completed: false),
-      ),
+      AcpToolCallUpdate(toolCallId: itemId, fields: _toolProgressFields(state)),
     );
   }
 
@@ -1214,12 +1208,13 @@ class CodexClient implements AgentClient {
     final String? threadId = _threadIdFor(params);
     if (threadId == null) return;
     final Map<String, Object?> usage = _asMap(params['tokenUsage']);
+    final Map<String, Object?> last = _asMap(usage['last']);
     final Map<String, Object?> total = _asMap(usage['total']);
     _emit(
       threadId,
       AcpUsageUpdate(
         size: (usage['modelContextWindow'] as num?)?.toInt() ?? 0,
-        used: (total['totalTokens'] as num?)?.toInt() ?? 0,
+        used: (last['totalTokens'] as num?)?.toInt() ?? 0,
         inputTokens: (total['inputTokens'] as num?)?.toInt(),
         outputTokens: (total['outputTokens'] as num?)?.toInt(),
         cacheReadTokens: (total['cachedInputTokens'] as num?)?.toInt(),
@@ -1405,6 +1400,19 @@ class CodexClient implements AgentClient {
       ],
       if (completed) 'rawInput': data.rawInput,
       if (completed) 'rawOutput': data.rawOutput,
+    };
+  }
+
+  Map<String, Object?> _toolProgressFields(_CodexToolState state) {
+    final Map<String, Object?> item = state.item;
+    return <String, Object?>{
+      'title': _toolTitle(item),
+      'kind': _toolKind(item),
+      'status': _toolStatus(item, completed: false),
+      'locations': <Map<String, Object?>>[
+        for (final String path in _locationsFor(item))
+          <String, Object?>{'path': path},
+      ],
     };
   }
 

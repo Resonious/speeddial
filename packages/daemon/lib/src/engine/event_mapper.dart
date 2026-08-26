@@ -7,6 +7,8 @@
 /// client's philosophy.
 library;
 
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -120,32 +122,140 @@ ToolCall mergeToolCallUpdate(
   );
 }
 
-/// Copy of a merged tool-call update for persisting/broadcasting, with
-/// `rawInput`/`rawOutput` dropped unless the call reached a terminal
-/// status (completed/failed).
+/// Bounds an initial tool-call snapshot before it is persisted/broadcast.
 ///
-/// Agents stream progress by re-sending their whole accumulated raw
-/// output with every `tool_call_update`. Persisting each snapshot
-/// full-size made update events dominate the database (and every history
-/// page and live broadcast re-copies them), while clients fold updates by
-/// `toolCall.id` and only ever render the final state. The terminal event
-/// always carries the full merged state, so folding is unaffected; a call
-/// that never settles loses only its intermediate raw snapshots.
-/// `content` is untouched — it is the live progress display.
+/// Unlike later progress updates, an initial snapshot is emitted only once,
+/// so its useful input/content can be retained. Text and structured payloads
+/// are still bounded so one provider event cannot exceed history limits.
+ToolCall boundInitialToolCallForEmit(ToolCall toolCall) =>
+    _boundTerminalToolCall(toolCall);
+
+/// Copy of a merged tool-call update safe for persistence/broadcast.
+///
+/// Agents may re-send their entire accumulated output with every progress
+/// tick. Active updates therefore carry metadata only; the in-memory merged
+/// state remains complete and supplies a bounded content preview on the
+/// terminal update. This prevents quadratic event-log growth while retaining
+/// tool lifecycle and final output.
 ToolCall trimToolCallUpdateForEmit(ToolCall merged) {
   final bool terminal =
       merged.status == ToolCallStatus.completed ||
       merged.status == ToolCallStatus.failed;
-  if (terminal) return merged;
-  if (merged.rawInput == null && merged.rawOutput == null) return merged;
+  if (terminal) return _boundTerminalToolCall(merged);
   return ToolCall(
     id: merged.id,
-    title: merged.title,
-    kind: merged.kind,
+    title: _boundedText(merged.title, _maxToolTitleCharacters),
+    kind: _boundedText(merged.kind, _maxToolKindCharacters),
     status: merged.status,
-    content: merged.content,
-    locations: merged.locations,
+    content: const <ToolCallContent>[],
+    locations: _boundedLocations(merged.locations),
   );
+}
+
+const int _maxToolTitleCharacters = 1024;
+const int _maxToolKindCharacters = 64;
+const int _maxToolLocationCharacters = 512;
+const int _maxToolLocations = 20;
+const int _maxToolContentCharacters = 24000;
+const int _maxToolContentFieldCharacters = 12000;
+const int _maxRawJsonCharacters = 24000;
+
+ToolCall _boundTerminalToolCall(ToolCall toolCall) => ToolCall(
+  id: toolCall.id,
+  title: _boundedText(toolCall.title, _maxToolTitleCharacters),
+  kind: _boundedText(toolCall.kind, _maxToolKindCharacters),
+  status: toolCall.status,
+  content: _boundedToolContent(toolCall.content),
+  locations: _boundedLocations(toolCall.locations),
+  rawInput: _boundedRawValue(toolCall.rawInput),
+  rawOutput: _boundedRawValue(toolCall.rawOutput),
+);
+
+List<String> _boundedLocations(List<String> locations) => <String>[
+  for (final String location in locations.take(_maxToolLocations))
+    _boundedText(location, _maxToolLocationCharacters),
+];
+
+List<ToolCallContent> _boundedToolContent(List<ToolCallContent> contents) {
+  int remaining = _maxToolContentCharacters;
+  int omittedBlocks = 0;
+  final List<ToolCallContent> bounded = <ToolCallContent>[];
+
+  String takeText(String value, {int? limit}) {
+    final int fieldLimit = limit ?? _maxToolContentFieldCharacters;
+    final int allowed = remaining < fieldLimit ? remaining : fieldLimit;
+    if (allowed <= 0) return '';
+    final String result = _boundedText(value, allowed);
+    remaining -= result.length;
+    return result;
+  }
+
+  for (final ToolCallContent content in contents) {
+    if (content is! ToolCallImage && remaining <= 0) {
+      omittedBlocks++;
+      continue;
+    }
+    switch (content) {
+      case ToolCallText(:final text):
+        bounded.add(ToolCallText(text: takeText(text)));
+      case ToolCallImage():
+        bounded.add(content);
+      case ToolCallDiff(:final path, :final oldText, :final newText):
+        final int oldLimit = oldText == null
+            ? 0
+            : remaining ~/ 2 < _maxToolContentFieldCharacters
+            ? remaining ~/ 2
+            : _maxToolContentFieldCharacters;
+        bounded.add(
+          ToolCallDiff(
+            path: _boundedText(path, _maxToolLocationCharacters),
+            oldText: oldText == null
+                ? null
+                : takeText(oldText, limit: oldLimit),
+            newText: takeText(newText),
+          ),
+        );
+      case ToolCallPatch(:final path, :final diff):
+        bounded.add(
+          ToolCallPatch(
+            path: _boundedText(path, _maxToolLocationCharacters),
+            diff: takeText(diff),
+          ),
+        );
+      case ToolCallTerminal(:final terminalId, :final output):
+        bounded.add(
+          ToolCallTerminal(
+            terminalId: _boundedText(terminalId, _maxToolLocationCharacters),
+            output: takeText(output),
+          ),
+        );
+    }
+  }
+  if (omittedBlocks > 0) {
+    bounded.add(
+      ToolCallText(text: '… $omittedBlocks additional content blocks omitted'),
+    );
+  }
+  return bounded;
+}
+
+Object? _boundedRawValue(Object? value) {
+  if (value == null) return null;
+  final String encoded = jsonEncode(value);
+  if (encoded.length <= _maxRawJsonCharacters) return value;
+  return '<structured payload omitted: ${encoded.length} JSON characters>';
+}
+
+String _boundedText(String value, int limit) {
+  if (value.length <= limit) return value;
+  if (limit < 32) return value.substring(0, limit);
+  final int omitted = value.length - limit;
+  final String marker = '\n… $omitted characters omitted …\n';
+  final int retained = limit - marker.length;
+  final int head = retained ~/ 2;
+  final int tail = retained - head;
+  return '${value.substring(0, head)}$marker'
+      '${value.substring(value.length - tail)}';
 }
 
 /// Builds a protocol [ToolCall] from an update's fields when no prior state

@@ -313,6 +313,13 @@ void main() {
         ((command.fields['content']! as List<Object?>).single as Map)['output'],
         'All tests passed\n',
       );
+      final AcpToolCallUpdate commandProgress = updates
+          .whereType<AcpToolCallUpdate>()
+          .firstWhere(
+            (AcpToolCallUpdate update) => update.toolCallId == 'command-1',
+          );
+      expect(commandProgress.fields['status'], 'in_progress');
+      expect(commandProgress.fields, isNot(contains('content')));
       final AcpToolCallUpdate patch = updates
           .whereType<AcpToolCallUpdate>()
           .lastWhere(
@@ -353,10 +360,10 @@ void main() {
       final AcpUsageUpdate usage = updates.whereType<AcpUsageUpdate>().single;
       expect(usage.size, 200000);
       expect(usage.used, 150);
-      expect(usage.inputTokens, 120);
-      expect(usage.outputTokens, 30);
-      expect(usage.cacheReadTokens, 80);
-      expect(usage.cacheCreationTokens, 5);
+      expect(usage.inputTokens, 500);
+      expect(usage.outputTokens, 100);
+      expect(usage.cacheReadTokens, 400);
+      expect(usage.cacheCreationTokens, 7);
       final List<AcpAgentActivityUpdate> activities = updates
           .whereType<AcpAgentActivityUpdate>()
           .toList();

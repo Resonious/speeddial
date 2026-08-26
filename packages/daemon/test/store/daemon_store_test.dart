@@ -768,6 +768,44 @@ void main() {
     expect(event.message.length, lessThan(100));
   });
 
+  test('listEvents folds oversized tool snapshots as history activity', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 'a'));
+    for (var seq = 1; seq <= 3; seq++) {
+      store.appendEvent(
+        'a',
+        seq,
+        ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'tool-1',
+            title: 'Noisy command',
+            kind: 'execute',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[
+              ToolCallTerminal(
+                terminalId: 'terminal-1',
+                output: 'x' * (600 * 1024),
+              ),
+            ],
+            locations: const <String>[],
+          ),
+        ),
+      );
+    }
+
+    final List<SessionEvent> events = store.listEvents('a').events;
+    expect(events, hasLength(3));
+    expect(events, everyElement(isA<AgentActivityEvent>()));
+    final List<AgentActivityEvent> activities = events
+        .whereType<AgentActivityEvent>()
+        .toList();
+    expect(
+      activities.map((AgentActivityEvent event) => event.activity.id).toSet(),
+      <String>{'speeddial-oversized-tool-history'},
+    );
+    expect(activities.last.activity.title, contains('omitted'));
+  });
+
   test('all event types round-trip through the store', () {
     store.insertProject(project());
     store.insertSession(session(id: 'a'));

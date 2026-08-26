@@ -325,8 +325,9 @@ void main() {
     expect(patch.content.single, isA<ToolCallPatch>());
     expect((patch.content.single as ToolCallPatch).diff, contains('+new'));
     final UsageInfo usage = turnEvents.whereType<UsageEvent>().single.usage;
-    expect(usage.inputTokens, 120);
-    expect(usage.outputTokens, 30);
+    expect(usage.inputTokens, 500);
+    expect(usage.outputTokens, 100);
+    expect(usage.totalTokens, 600);
     expect(usage.contextUsedTokens, 150);
     expect(usage.contextLimitTokens, 200000);
     expect(
@@ -694,21 +695,26 @@ void main() {
       // The create event keeps its rawInput.
       expect((toolEvents[0].toolCall.rawInput! as Map)['cmd'], 'job');
 
-      // Running snapshots omit both raw fields: agents re-send the whole
-      // accumulated payload per progress tick, and persisting each one
-      // full-size is what bloated the event log.
+      // Running snapshots retain lifecycle metadata only: agents re-send the
+      // whole accumulated payload per progress tick, and persisting content
+      // or raw data on each one causes quadratic event-log growth.
       for (var i = 1; i <= 2; i++) {
         expect(toolEvents[i].toolCall.status, ToolCallStatus.running);
+        expect(toolEvents[i].toolCall.content, isEmpty);
         expect(toolEvents[i].toolCall.rawInput, isNull);
         expect(toolEvents[i].toolCall.rawOutput, isNull);
       }
 
-      // The terminal snapshot carries the full merged state (the last
-      // rawOutput, carried forward even though this update changed none).
+      // The terminal snapshot carries a bounded merged preview plus the last
+      // small rawOutput, carried forward even though this update changed none.
       final ToolCall terminal = toolEvents.last.toolCall;
       expect(terminal.status, ToolCallStatus.completed);
       expect((terminal.rawInput! as Map)['cmd'], 'job');
       expect((terminal.rawOutput! as Map)['progress'], 2);
+      final ToolCallTerminal terminalOutput =
+          terminal.content.single as ToolCallTerminal;
+      expect(terminalOutput.output, contains('characters omitted'));
+      expect(terminalOutput.output.length, lessThanOrEqualTo(12000));
 
       // The store persisted exactly what was broadcast.
       final List<ToolCallEvent> persisted = store
@@ -719,6 +725,12 @@ void main() {
       expect(persisted, hasLength(4));
       expect(persisted[1].toolCall.rawOutput, isNull);
       expect((persisted.last.toolCall.rawOutput! as Map)['progress'], 2);
+      for (final ToolCallEvent event in persisted) {
+        expect(
+          utf8.encode(jsonEncode(event.toJson())).length,
+          lessThan(512 * 1024),
+        );
+      }
     },
   );
 
@@ -1703,6 +1715,18 @@ void main() {
     );
     await engine.sendMessage(truncating.id, 'a' * 61);
     expect(store.getSession(truncating.id)!.title, '${'a' * 60}…');
+
+    // Credential-shaped first messages remain out of navigation chrome.
+    final sensitive = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+      yolo: true,
+    );
+    await engine.sendMessage(
+      sensitive.id,
+      'eyJhbGciOiJSUzI1NiJ9.eyJhdWQiOiJzcGVlZGRpYWwifQ.signature123',
+    );
+    expect(store.getSession(sensitive.id)!.title, kDefaultSessionTitle);
 
     // Explicit titles are never clobbered.
     final explicit = await engine.createSession(

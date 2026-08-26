@@ -1726,7 +1726,7 @@ class SessionEngine {
           ),
         );
         _toolCalls[sessionId]?[mapped.id] = mapped;
-        return ToolCallEvent(toolCall: mapped);
+        return ToolCallEvent(toolCall: boundInitialToolCallForEmit(mapped));
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
         final prior = _toolCalls[sessionId]?[toolCallId];
@@ -1759,10 +1759,8 @@ class SessionEngine {
           _withPriorToolImages(mapped, prior),
         );
         _toolCalls[sessionId]?[toolCallId] = merged;
-        // The persisted/broadcast snapshot drops raw fields while the call
-        // is still running (they are re-sent in full on the terminal
-        // update); the in-memory merged state stays complete so the next
-        // update — and the terminal event — carry everything.
+        // Persisted/broadcast progress is metadata-only. The in-memory state
+        // stays complete so the terminal event can carry a bounded preview.
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
       case final AcpPlan plan:
         _breakSyntheticContent(live);
@@ -1943,10 +1941,16 @@ class SessionEngine {
         .first
         .trim()
         .replaceAll(RegExp(r'\s+'), ' ');
+    if (_jwtTitle.hasMatch(firstLine)) return '';
     return firstLine.length <= 60
         ? firstLine
         : '${firstLine.substring(0, 60)}…';
   }
+
+  static final RegExp _jwtTitle = RegExp(
+    r'^(?:Bearer\s+)?[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$',
+    caseSensitive: false,
+  );
 
   /// Resolves [requested] against the session cwd and rejects anything that
   /// escapes it (the thrown error becomes a JSON-RPC error response to the

@@ -539,16 +539,31 @@ Future<void> _runTurn(
       'content': <Object?>[],
       'rawInput': <String, Object?>{'cmd': 'job'},
     });
+    final String growingOutput = 'a' * (600 * 1024);
     if (_cancelled(promptId)) return;
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'tool_call_update',
       'toolCallId': 'tc1',
+      'content': <Object?>[
+        <String, Object?>{
+          'type': 'terminal',
+          'terminalId': 'term-1',
+          'output': growingOutput,
+        },
+      ],
       'rawOutput': <String, Object?>{'progress': 1},
     });
     if (_cancelled(promptId)) return;
     await _sendUpdate(<String, Object?>{
       'sessionUpdate': 'tool_call_update',
       'toolCallId': 'tc1',
+      'content': <Object?>[
+        <String, Object?>{
+          'type': 'terminal',
+          'terminalId': 'term-1',
+          'output': '$growingOutput-tail',
+        },
+      ],
       'rawOutput': <String, Object?>{'progress': 2},
     });
     if (_cancelled(promptId)) return;
