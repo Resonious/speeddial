@@ -289,9 +289,7 @@ class _WearSessionLaunchPageState extends State<WearSessionLaunchPage> {
 
 Future<void> _connectIfNeeded(AppData data, String daemonId) async {
   final client = data.clientFor(daemonId);
-  if (client is WsDaemonClient && !client.isConnected) {
-    await client.connect();
-  }
+  if (client is WsDaemonClient) await client.connect();
 }
 
 String _daemonName(AppData data, String daemonId) {
@@ -425,13 +423,7 @@ class _WearProjectListPageState extends State<_WearProjectListPage> {
       });
     }
     try {
-      // A newly saved endpoint may still be in its first WebSocket handshake.
-      // Join that attempt before issuing projects.list so first navigation
-      // does not briefly fail with "client is not connected".
-      final client = widget.data.clientFor(widget.endpoint.id);
-      if (client is WsDaemonClient && !client.isConnected) {
-        await client.connect();
-      }
+      await _connectIfNeeded(widget.data, widget.endpoint.id);
       await widget.data.projects.refresh(widget.endpoint.id);
       _error = widget.data.projects.lastError;
     } on Object catch (error) {
@@ -549,6 +541,7 @@ class _WearSessionListPageState extends State<_WearSessionListPage> {
       });
     }
     try {
+      await _connectIfNeeded(widget.data, widget.daemonId);
       await Future.wait<void>(<Future<void>>[
         widget.data.sessions.refresh(
           widget.daemonId,
@@ -690,13 +683,18 @@ class _WearNewSessionPageState extends State<_WearNewSessionPage> {
   @override
   void initState() {
     super.initState();
-    _info = widget.data.clientFor(widget.daemonId).info();
+    _info = _loadInfo();
+  }
+
+  Future<DaemonInfo> _loadInfo() async {
+    await _connectIfNeeded(widget.data, widget.daemonId);
+    return widget.data.clientFor(widget.daemonId).info();
   }
 
   void _retry() {
     setState(() {
       _error = null;
-      _info = widget.data.clientFor(widget.daemonId).info();
+      _info = _loadInfo();
     });
   }
 

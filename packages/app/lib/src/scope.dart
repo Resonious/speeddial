@@ -429,12 +429,14 @@ class AppData {
   /// [ConnectionsStore.init]; endpoints added later are connected
   /// automatically as they arrive. Registered ids and endpoints handled by
   /// the constructor resolver are skipped. Tolerant of unreachable daemons:
-  /// they surface through `ConnectionsStore.statusOf` as `failed`.
+  /// they surface through `ConnectionsStore.statusOf` as `failed`. If a
+  /// connect-on-add attempt is already running, this method joins it before
+  /// returning rather than treating "started" as "ready".
   Future<void> connectAll() async {
     if (_fallbackClientFor != null) return;
     for (final DaemonEndpoint endpoint in connections.endpoints) {
       if (_clients.containsKey(endpoint.id)) continue;
-      if (!_connectedEndpointIds.add(endpoint.id)) continue;
+      _connectedEndpointIds.add(endpoint.id);
       await _connectQuietly(endpoint.id);
     }
   }

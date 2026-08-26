@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
+import 'package:speeddial_app/src/api/ws_daemon_client.dart';
 import 'package:speeddial_app/src/companion/companion_endpoint_sync.dart';
 import 'package:speeddial_app/src/scope.dart' show AppData, ConnectionStatus;
 import 'package:speeddial_app/src/state/settings_store.dart';
@@ -47,6 +49,82 @@ void expectInsideRoundScreen(WidgetTester tester, Finder finder, Size size) {
       lessThanOrEqualTo(radius),
       reason: '$finder at $rect is clipped by the $size round screen',
     );
+  }
+}
+
+class _ScriptedWearChannelFactory {
+  final List<_ScriptedWearChannel> channels = <_ScriptedWearChannel>[];
+
+  DaemonFrameChannel connect(Uri _) {
+    final _ScriptedWearChannel channel = _ScriptedWearChannel();
+    channels.add(channel);
+    return channel;
+  }
+}
+
+class _ScriptedWearChannel implements DaemonFrameChannel {
+  final Completer<void> _ready = Completer<void>();
+  final StreamController<Object?> _incoming = StreamController<Object?>();
+  bool _closed = false;
+
+  static final Session session = Session(
+    id: 'sess-1',
+    projectId: 'proj-demo',
+    providerId: 'codex',
+    title: 'Build the feature',
+    status: SessionStatus.idle,
+    mode: SessionMode.build,
+    model: null,
+    cwd: '/tmp/demo',
+    baseBranch: null,
+    yolo: false,
+    archived: false,
+    createdAt: DateTime.utc(2026),
+    updatedAt: DateTime.utc(2026),
+  );
+
+  void completeReady() => _ready.complete();
+
+  void failReady(Object error) => _ready.completeError(error);
+
+  @override
+  Future<void> get ready => _ready.future;
+
+  @override
+  Stream<Object?> get stream => _incoming.stream;
+
+  @override
+  void add(Object? data) {
+    if (_closed || data is! String) return;
+    final Map<String, Object?> request = Map<String, Object?>.from(
+      jsonDecode(data) as Map,
+    );
+    final Object result = switch (request['method']) {
+      'auth.authenticate' => <String, Object?>{'ok': true},
+      'sessions.list' => <String, Object?>{
+        'sessions': <Object?>[session.toJson()],
+      },
+      'sessions.history' => <String, Object?>{
+        'events': const <Object?>[],
+        'hasMore': false,
+      },
+      null => throw StateError('Missing RPC method'),
+      final Object method => throw StateError('Unexpected method: $method'),
+    };
+    _incoming.add(
+      jsonEncode(<String, Object?>{
+        'jsonrpc': '2.0',
+        'id': request['id'],
+        'result': result,
+      }),
+    );
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _incoming.close();
   }
 }
 
@@ -215,6 +293,66 @@ void main() {
     expect(find.byKey(const Key('wear-daemon-list')), findsNothing);
     expect(find.byKey(const Key('wear-project-list')), findsNothing);
     expect(find.byKey(const Key('wear-session-list')), findsNothing);
+  });
+
+  testWidgets('tile Retry joins an automatic phone-proxy reconnect', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final _ScriptedWearChannelFactory proxy = _ScriptedWearChannelFactory();
+    final AppData data = AppData(
+      daemonChannelFactory: proxy.connect,
+      chatHistoryPageSize: kWearHistoryPageSize,
+      chatRetainedSessionLimit: kWearRetainedSessionLimit,
+    );
+    await data.settings.init();
+    await data.drafts.init();
+    await data.connections.addEndpoint(
+      id: 'watch',
+      name: 'Watch daemon',
+      url: 'wss://daemon.example/ws',
+      token: 'secret',
+    );
+    addTearDown(data.dispose);
+
+    await tester.pumpWidget(
+      WearSpeedDialApp(
+        data: data,
+        initialLaunchTarget: const WearLaunchTarget.session(
+          daemonId: 'watch',
+          projectId: 'proj-demo',
+          sessionId: 'sess-1',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(proxy.channels, hasLength(1));
+
+    proxy.channels.single.failReady(
+      PlatformException(
+        code: 'phone_proxy_failed',
+        message: 'Phone link was still waking up',
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Could not open session'), findsOneWidget);
+    expect(find.text('Phone link was still waking up'), findsOneWidget);
+
+    // The 500 ms backoff starts a second proxy. Retry must join it instead
+    // of opening a third connection that races and replaces its RPC peer.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(proxy.channels, hasLength(2));
+    await tester.tap(find.widgetWithText(FilledButton, 'Retry'));
+    await tester.pump();
+    expect(proxy.channels, hasLength(2));
+
+    proxy.channels.last.completeReady();
+    await tester.pumpAndSettle();
+
+    expect(data.selection.selectedSessionId, 'sess-1');
+    expect(find.byKey(const Key('wear-message-field')), findsOneWidget);
+    expect(find.textContaining('daemon client is not connected'), findsNothing);
   });
 
   testWidgets('complication target lists sessions needing attention globally', (

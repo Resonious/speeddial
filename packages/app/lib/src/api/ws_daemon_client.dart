@@ -147,20 +147,28 @@ class WsDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   /// Opens the socket (authenticating when [token] is set) and switches
-  /// [connState] to connected. Idempotent: a no-op while a connection attempt
-  /// is in flight or the client is already connected. A failed auth (or any
-  /// other initial-connect failure) propagates as a [DaemonError] and leaves
+  /// [connState] to connected. Idempotent: joins any connection attempt
+  /// already in flight (including an automatic reconnect), or is a no-op when
+  /// the client is already connected. A failed auth (or any other
+  /// initial-connect failure) propagates as a [DaemonError] and leaves
   /// [connState] at [DaemonConnectionState.failed], with the backoff retry
   /// armed — the state self-heals to connected once the daemon answers.
-  Future<void> connect() {
+  Future<void> connect() => _startEstablish(initial: true);
+
+  Future<void> _startEstablish({required bool initial}) {
     if (_disposed) return Future<void>.value();
     final Future<void>? inFlight = _inFlightConnect;
     if (inFlight != null) return inFlight;
-    if (connState.value == DaemonConnectionState.connected) {
+    if (connState.value == DaemonConnectionState.connected &&
+        _channel != null &&
+        _socketReady &&
+        _peer != null) {
       return Future<void>.value();
     }
-    final Future<void> attempt = _establish(initial: true)
-        .whenComplete(() => _inFlightConnect = null);
+    late final Future<void> attempt;
+    attempt = _establish(initial: initial).whenComplete(() {
+      if (identical(_inFlightConnect, attempt)) _inFlightConnect = null;
+    });
     _inFlightConnect = attempt;
     return attempt;
   }
@@ -199,19 +207,15 @@ class WsDaemonClient implements DaemonClient {
       _resyncNeeded = true;
       await _tearDownSocket();
       _scheduleReconnect();
-      if (initial) {
-        connState.value = DaemonConnectionState.failed;
-        rethrow;
-      }
+      if (initial) connState.value = DaemonConnectionState.failed;
+      rethrow;
     } on Object {
       if (_disposed) return;
       _resyncNeeded = true;
       await _tearDownSocket();
       _scheduleReconnect();
-      if (initial) {
-        connState.value = DaemonConnectionState.failed;
-        rethrow;
-      }
+      if (initial) connState.value = DaemonConnectionState.failed;
+      rethrow;
     } finally {
       _establishing = false;
     }
@@ -363,7 +367,14 @@ class WsDaemonClient implements DaemonClient {
       if (_disposed || _establishing) return;
       // A manual connect() may have won the race since this was scheduled.
       if (connState.value == DaemonConnectionState.connected) return;
-      unawaited(_establish(initial: false));
+      // Automatic retries are best-effort, but they still occupy the shared
+      // single-flight future so a foreground action can join this exact
+      // attempt instead of opening a competing socket.
+      unawaited(
+        _startEstablish(initial: false).catchError((Object _) {
+          // The failed attempt scheduled the next retry before rethrowing.
+        }),
+      );
     });
   }
 
@@ -378,7 +389,11 @@ class WsDaemonClient implements DaemonClient {
     if (connState.value == DaemonConnectionState.connected) return;
     _reconnectTimer?.cancel();
     _reconnectAttempt = 0;
-    unawaited(connect());
+    unawaited(
+      connect().catchError((Object _) {
+        // The failed attempt scheduled the next retry before rethrowing.
+      }),
+    );
   }
 
   /// Probes a socket that believes itself connected and tears it down when
