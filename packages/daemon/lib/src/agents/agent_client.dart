@@ -36,6 +36,7 @@ abstract interface class AgentClient {
     required String cwd,
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
+    bool yolo = false,
   });
 
   Future<List<AcpConfigOption>> setConfigOption(

@@ -124,8 +124,9 @@ abstract class DaemonClient {
   /// Creates a session and returns it; also surfaces on [sessionUpdates].
   /// When [baseBranch] is given the daemon fetches `origin/<baseBranch>` and
   /// runs the agent in a fresh worktree branched off the remote tip.
-  /// [sandboxMode] selects provider isolation when advertised. With [yolo]
-  /// the daemon auto-approves the agent's permission requests.
+  /// [sandboxMode] selects provider isolation when advertised. [yolo] selects
+  /// native no-prompt behavior where supported, with daemon auto-approval as
+  /// a fallback.
   Future<Session> createSession({
     required String projectId,
     required String providerId,

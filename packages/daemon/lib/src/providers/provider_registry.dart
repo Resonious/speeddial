@@ -70,6 +70,7 @@ class ProviderSpec {
     required this.id,
     required this.name,
     required this.command,
+    this.yoloCommand,
     this.protocol = ProviderProtocol.acp,
     this.models = const <String>[],
     this.modelsCommand,
@@ -84,6 +85,17 @@ class ProviderSpec {
 
   /// Executable plus arguments for the provider subprocess.
   final List<String> command;
+
+  /// Native no-prompt launch command, when this built-in harness exposes one.
+  ///
+  /// Custom providers deliberately leave this null: ACP has no standard way
+  /// to select a permission policy, so the engine's request handler remains
+  /// their provider-neutral yolo fallback.
+  final List<String>? yoloCommand;
+
+  /// The subprocess command for a session with the requested permission mode.
+  List<String> commandFor({required bool yolo}) =>
+      yolo ? yoloCommand ?? command : command;
 
   /// Session protocol spoken over the provider process's stdio.
   final ProviderProtocol protocol;
@@ -132,6 +144,7 @@ class ProviderRegistry {
         id: 'omp',
         name: 'OMP',
         command: <String>['omp', 'acp'],
+        yoloCommand: <String>['omp', '--approval-mode=yolo', 'acp'],
         modelsCommand: <String>['omp', 'models', '--json'],
       ),
       'claude': const ProviderSpec(
@@ -149,6 +162,13 @@ class ProviderRegistry {
         id: 'ante',
         name: 'Ante',
         command: <String>['ante', 'serve', '--stdio'],
+        yoloCommand: <String>[
+          'ante',
+          '--permission-mode',
+          'yolo',
+          'serve',
+          '--stdio',
+        ],
         protocol: ProviderProtocol.ante,
         catalogCommand: <String>['ante', 'catalog'],
       ),

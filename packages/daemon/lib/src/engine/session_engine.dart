@@ -303,8 +303,9 @@ class SessionEngine {
   /// the session cwd; [cwd] and [baseBranch] are mutually exclusive. The
   /// worktree is rolled back if the agent fails to start.
   ///
-  /// With [yolo], the engine resolves the agent's permission requests itself
-  /// (see [_onPermissionRequest]) instead of parking them for a client.
+  /// With [yolo], supported built-in harnesses receive their native no-prompt
+  /// mode. The engine also resolves any permission request that still arrives
+  /// (see [_onPermissionRequest]) instead of parking it for a client.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -696,9 +697,10 @@ class SessionEngine {
       String requestTitle,
       List<PermissionOptionData> options,
     ) => _onPermissionRequest(session.id, toolCallId, requestTitle, options);
+    final List<String> command = spec.commandFor(yolo: session.yolo);
     return switch (spec.protocol) {
       ProviderProtocol.acp => AcpClient.spawn(
-        spec.command,
+        command,
         cwd: session.cwd,
         environment: environment,
         requestPermission: permissionHandler,
@@ -708,13 +710,13 @@ class SessionEngine {
             _writeTextFile(session.id, path, content),
       ),
       ProviderProtocol.codex => CodexClient.spawn(
-        spec.command,
+        command,
         cwd: session.cwd,
         environment: environment,
         requestPermission: permissionHandler,
       ),
       ProviderProtocol.ante => AnteClient.spawn(
-        spec.command,
+        command,
         cwd: session.cwd,
         catalogCommand: spec.catalogCommand,
         environment: environment,
@@ -1039,6 +1041,7 @@ class SessionEngine {
         cwd: session.cwd,
         sandboxMode: session.sandboxMode,
         mcpServers: _mcpServersFor(session, info),
+        yolo: session.yolo,
       );
     } on Object catch (error) {
       await client.dispose();
@@ -1821,11 +1824,11 @@ class SessionEngine {
     final requestId = _uuid.v4();
     final mapped = permissionOptionsFromAcp(options);
     _breakSyntheticContent(live);
-    // Yolo sessions resolve the request themselves: the first allow_always
-    // option wins, then the first allow_once. The request/resolved events are
-    // still emitted (back-to-back, without the waitingPermission status) so
-    // the transcript records what was auto-approved. A request with no allow
-    // option falls through to the normal parked flow.
+    // A native yolo harness should not ask, but keep a provider-neutral
+    // fallback for custom ACP agents and unexpected provider requests. The
+    // first allow_always option wins, then the first allow_once. The
+    // request/resolved events are still emitted back-to-back so the transcript
+    // records fallback approvals. A request with no allow option still parks.
     if (live.session.yolo) {
       PermissionOption? allow;
       for (final option in mapped) {

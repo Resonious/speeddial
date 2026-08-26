@@ -9,6 +9,7 @@ const String _sessionId = 'ses_01M0H000000000000000000000';
 String _model = 'fake-model';
 String _effort = 'medium';
 String _provider = 'fake-provider';
+String _permissionMode = 'strict';
 int _eventCounter = 0;
 Future<void> _writeQueue = Future<void>.value();
 ({String parent, String turnId})? _pendingTurn;
@@ -98,6 +99,7 @@ Future<void> _dispatch(Map<String, Object?> message) async {
     case 'StartSession':
       _model = value['model'] as String? ?? 'fake-model';
       _provider = value['provider'] as String? ?? 'fake-provider';
+      _permissionMode = value['permission_mode'] as String? ?? 'strict';
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await _captureMcpHome();
@@ -188,7 +190,7 @@ Map<String, Object?> _sessionPayload() => <String, Object?>{
   },
   'session_id': _sessionId,
   'cwd': Directory.current.path,
-  'permission_mode': 'strict',
+  'permission_mode': _permissionMode,
 };
 
 Future<void> _extensions(String parent) {
@@ -400,6 +402,10 @@ Future<void> _runTurn(String parent, String text) async {
       'message': 'Reading file',
     },
   }, parent);
+  if (_permissionMode == 'yolo') {
+    await _finishApprovedTurn(parent, parent, emitResume: false);
+    return;
+  }
   _pendingTurn = (parent: parent, turnId: parent);
   await _event(<String, Object?>{
     'TurnPause': <String, Object?>{
@@ -420,10 +426,16 @@ Future<void> _runTurn(String parent, String text) async {
   }, parent);
 }
 
-Future<void> _finishApprovedTurn(String parent, String turnId) async {
-  await _event(<String, Object?>{
-    'TurnResume': <String, Object?>{'turn_id': turnId},
-  }, parent);
+Future<void> _finishApprovedTurn(
+  String parent,
+  String turnId, {
+  bool emitResume = true,
+}) async {
+  if (emitResume) {
+    await _event(<String, Object?>{
+      'TurnResume': <String, Object?>{'turn_id': turnId},
+    }, parent);
+  }
   await _event(<String, Object?>{
     'ToolEnd': <String, Object?>{
       'tool_use_id': 'tool-1',

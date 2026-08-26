@@ -133,9 +133,7 @@ class AnteClient implements AgentClient {
     final List<_AnteCatalogProvider> catalog = await _catalogFuture;
     final Map<String, Object?> config = <String, Object?>{
       'cwd': cwd,
-      // Keep approvals visible to SpeedDial. Its engine performs yolo
-      // auto-resolution while retaining request/resolution history.
-      'permission_mode': 'strict',
+      'permission_mode': yolo ? 'yolo' : 'strict',
     };
     // Seed the Ante settings default when the caller did not pick a model:
     // serve mode otherwise resolves the subscription instead of the
@@ -184,6 +182,7 @@ class AnteClient implements AgentClient {
     required String cwd,
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
+    bool yolo = false,
   }) async {
     await initialized;
     await _ensureStarted(mcpServers);

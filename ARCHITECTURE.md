@@ -48,6 +48,9 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+                    ACP has no standard session permission policy; the built-in OMP provider
+                    selects its native yolo mode through its launch command, while custom ACP
+                    providers retain the engine's auto-resolution fallback.
 lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. Initializes
                     the app server, starts/resumes threads with `danger-full-access`
                     because SpeedDial worktrees and localhost tooling must stay usable,
@@ -70,7 +73,9 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     state links back to the real home, native MCP entries remain direct,
                     and the transient directory is removed on process exit. New sessions
                     are seeded with the settings default model/provider (serve mode
-                    ignores them when StartSession omits a model).
+                    ignores them when StartSession omits a model). Yolo sessions use Ante's
+                    native launch and per-session permission modes so approval pauses are not
+                    generated.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
@@ -99,6 +104,8 @@ lib/src/providers/  Provider registry. Built-ins:
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
                       codex  → ["codex", "app-server", "--stdio"]          (Codex)
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
+                    OMP and Ante also define native yolo launch commands selected per session;
+                    provider overrides do not inherit those harness-specific arguments.
                     `~/.speeddial/config.json` may add/override providers:
                     {"providers":{"<id>":{"name":"...","command":["...",...],
                     "protocol":"acp|codex|ante","catalogCommand":["...",...]}}}
@@ -122,9 +129,9 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     via SessionStore, and broadcasts to listeners. It preserves provider
                     message/thought ids and assigns turn-scoped synthetic ids when a
                     provider omits them, making logical streamed content daemon-owned.
-                    Handles permission
-                    requests (parked until respondPermission), cancel, process exit, and
-                    turn lifecycle. Inline tool-result images and provider-reported image
+                    Handles permission requests (parked until respondPermission, or
+                    auto-resolved as a yolo fallback), cancel, process exit, and turn
+                    lifecycle. Inline tool-result images and provider-reported image
                     file reads are deduplicated into attachment-backed tool content. MCP
                     injection supports ACP, Codex, and Ante. ACP
                     receives structured attachments; Codex receives native text, image,

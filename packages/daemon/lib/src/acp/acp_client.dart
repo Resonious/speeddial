@@ -477,6 +477,7 @@ class AcpClient implements AgentClient {
     required String cwd,
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
+    bool yolo = false,
   }) async {
     final result = await _request('session/load', <String, Object?>{
       'sessionId': sessionId,

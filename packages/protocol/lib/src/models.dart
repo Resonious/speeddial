@@ -679,7 +679,7 @@ class Session {
   /// Provider sandbox selection; null when the provider manages isolation.
   final SessionSandboxMode? sandboxMode;
 
-  /// Yolo mode: the daemon auto-approves the agent's permission requests.
+  /// Yolo mode: native no-prompt policy where supported, with daemon fallback.
   final bool yolo;
 
   /// Monotonically increases whenever a turn reaches a successful terminal

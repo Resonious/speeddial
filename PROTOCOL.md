@@ -137,7 +137,7 @@ Session = {
   thinkingLevels: string[],   // selectable levels advertised by the agent (ACP config
                               // option); empty when the provider has none
   sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
-  yolo: boolean,              // daemon auto-approves the agent's permission requests
+  yolo: boolean,              // native no-prompt mode where supported; daemon fallback otherwise
   completionRevision: int,    // increments whenever a turn reaches terminal idle successfully
   done: boolean,              // latest completion has not been acknowledged by a client
   archived: boolean,
@@ -414,11 +414,16 @@ tokens before session creation/resume, and checks them periodically while runnin
     otherwise (local ahead, equal, or diverged). `baseBranch` and `cwd` are mutually exclusive
     (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
     worktree on disk.
-  — with `yolo: true` (default `false`), the daemon resolves every permission request itself
-    instead of parking it for a client: it picks the first `allow_always` option (falling back
-    to the first `allow_once`), emits the `permissionRequest` and `permissionResolved` events
-    back-to-back (the session never enters `waitingPermission`), and the turn continues
-    uninterrupted. A request offering no allow option still parks for a client response.
+  — with `yolo: true` (default `false`), supported built-in harnesses receive their native
+    no-prompt mode: OMP runs with `--approval-mode=yolo`, Ante runs with
+    `--permission-mode yolo` and receives `permission_mode: "yolo"` for a new session, and
+    Codex receives `approvalPolicy: "never"` for thread creation/resume and every turn. These
+    harnesses normally emit no permission request. If a provider still requests permission
+    (including a custom ACP provider, since ACP has no standard permission-policy field), the
+    daemon falls back to resolving it: it picks the first `allow_always` option (falling back to
+    the first `allow_once`), emits `permissionRequest` and `permissionResolved` back-to-back,
+    never enters `waitingPermission`, and continues the turn. A request offering no allow option
+    still parks for a client response.
   — `sandboxMode` is accepted only when advertised by the selected provider's
     `ProviderInfo.sandboxModes` (`-32602` otherwise). For compatibility, Codex still advertises
     `workspaceWrite` and `unrestricted`, but always uses and reports `unrestricted`; its

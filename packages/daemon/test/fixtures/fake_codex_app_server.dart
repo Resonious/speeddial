@@ -26,6 +26,7 @@ Future<void> _writeReport(String environmentName, Object? value) async {
 }
 
 Future<void> _startTurn(Map<String, Object?> params) async {
+  await _writeReport('FAKE_CODEX_TURN_REPORT', params);
   await _writeReport('FAKE_CODEX_INPUT_REPORT', params['input']);
   final List<Object?> input = params['input']! as List<Object?>;
   final String text = input

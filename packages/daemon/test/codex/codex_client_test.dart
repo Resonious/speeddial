@@ -56,6 +56,7 @@ void main() {
       addTearDown(() => tempDir.delete(recursive: true));
       final File startReport = File(p.join(tempDir.path, 'start.json'));
       final File resumeReport = File(p.join(tempDir.path, 'resume.json'));
+      final File turnReport = File(p.join(tempDir.path, 'turn.json'));
       final CodexClient client = spawnCodex(
         environment: <String, String>{
           'FAKE_CODEX_START_REPORT': startReport.path,
@@ -71,6 +72,7 @@ void main() {
       final created = await client.newSession(
         cwd: Directory.current.path,
         model: 'gpt-test',
+        yolo: true,
         mcpServers: <Map<String, Object?>>[
           <String, Object?>{
             'name': 'speeddial',
@@ -102,6 +104,7 @@ void main() {
 
       final Map<String, Object?> start = await readJsonMap(startReport);
       expect(start['sandbox'], 'danger-full-access');
+      expect(start['approvalPolicy'], 'never');
       final Map<String, Object?> config = Map<String, Object?>.from(
         start['config']! as Map,
       );
@@ -135,12 +138,14 @@ void main() {
       final CodexClient resumed = spawnCodex(
         environment: <String, String>{
           'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
+          'FAKE_CODEX_TURN_REPORT': turnReport.path,
         },
       );
       addTearDown(resumed.dispose);
       final List<AcpConfigOption> resumedOptions = await resumed.loadSession(
         sessionId: created.sessionId,
         cwd: Directory.current.path,
+        yolo: true,
       );
       expect(
         resumedOptions
@@ -150,6 +155,11 @@ void main() {
       );
       final Map<String, Object?> resume = await readJsonMap(resumeReport);
       expect(resume['sandbox'], 'danger-full-access');
+      expect(resume['approvalPolicy'], 'never');
+
+      await resumed.prompt(created.sessionId, textBlocks('resumed yolo turn'));
+      final Map<String, Object?> turn = await readJsonMap(turnReport);
+      expect(turn['approvalPolicy'], 'never');
     },
   );
 

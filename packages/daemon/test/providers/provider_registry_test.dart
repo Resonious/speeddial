@@ -82,6 +82,12 @@ void main() {
     final omp = registry.byId('omp')!;
     expect(omp.name, 'OMP');
     expect(omp.command, <String>['omp', 'acp']);
+    expect(omp.commandFor(yolo: false), <String>['omp', 'acp']);
+    expect(omp.commandFor(yolo: true), <String>[
+      'omp',
+      '--approval-mode=yolo',
+      'acp',
+    ]);
     expect(omp.modelsCommand, <String>['omp', 'models', '--json']);
     final claude = registry.byId('claude')!;
     expect(claude.command, <String>[
@@ -94,6 +100,13 @@ void main() {
     expect(codex.protocol, ProviderProtocol.codex);
     final ante = registry.byId('ante')!;
     expect(ante.command, <String>['ante', 'serve', '--stdio']);
+    expect(ante.commandFor(yolo: true), <String>[
+      'ante',
+      '--permission-mode',
+      'yolo',
+      'serve',
+      '--stdio',
+    ]);
     expect(ante.protocol, ProviderProtocol.ante);
     expect(ante.catalogCommand, <String>['ante', 'catalog']);
 
@@ -190,6 +203,10 @@ void main() {
     final omp = registry.byId('omp')!;
     expect(omp.name, 'My OMP');
     expect(omp.command, <String>[Platform.resolvedExecutable, 'acp']);
+    expect(omp.commandFor(yolo: true), <String>[
+      Platform.resolvedExecutable,
+      'acp',
+    ], reason: 'custom overrides must not inherit OMP-specific CLI flags');
     // An override that omits modelsCommand inherits the previous entry's.
     expect(omp.modelsCommand, <String>['omp', 'models', '--json']);
     final providers = await registry.list();

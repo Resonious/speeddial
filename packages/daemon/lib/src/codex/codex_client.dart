@@ -162,12 +162,14 @@ class CodexClient implements AgentClient {
     required String cwd,
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
+    bool yolo = false,
   }) async {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{
       'threadId': sessionId,
       'cwd': cwd,
       'sandbox': 'danger-full-access',
+      if (yolo) 'approvalPolicy': 'never',
     };
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;
@@ -179,7 +181,7 @@ class CodexClient implements AgentClient {
       result,
       cwd: cwd,
       requestedModel: null,
-      yolo: false,
+      yolo: yolo,
     );
     if (state.threadId != sessionId) {
       throw FormatException(

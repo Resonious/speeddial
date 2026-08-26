@@ -74,6 +74,35 @@ void main() {
     ]);
   });
 
+  test('native yolo mode prevents Ante approval pauses', () async {
+    var permissionRequests = 0;
+    final AnteClient client = spawnAnte(
+      requestPermission:
+          (
+            String sessionId,
+            String? toolCallId,
+            String title,
+            List<PermissionOptionData> options,
+          ) async {
+            permissionRequests++;
+            return 'AcceptAlways';
+          },
+    );
+    addTearDown(client.dispose);
+
+    final created = await client.newSession(
+      cwd: Directory.current.path,
+      yolo: true,
+    );
+    final PromptResult result = await client.prompt(
+      created.sessionId,
+      textBlocks('normal'),
+    );
+
+    expect(result.stopReason, 'end_turn');
+    expect(permissionRequests, 0);
+  });
+
   test('seeds new sessions with the Ante settings default model', () async {
     final Directory tempDir = await Directory.systemTemp.createTemp(
       'ante_defaults_test',
