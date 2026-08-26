@@ -37,6 +37,8 @@ dependencies:
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.3
   flutter_markdown_plus: ^1.0.5
+  # Required by flutter_markdown_plus's public MarkdownElementBuilder API.
+  markdown: ^7.3.1
   syntax_highlight: ^0.4.0
   # The desktop build embeds the daemon in-process (see lib/src/local_daemon).
   # No code generation; the daemon is plain Dart + dart:io.

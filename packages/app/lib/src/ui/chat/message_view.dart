@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:syntax_highlight/syntax_highlight.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme.dart';
 import 'active_pulse.dart';
+import 'external_link_launcher.dart';
 
 /// Grammars bundled with syntax_highlight 0.4.x; requested via
 /// [Highlighter.initialize] and matched by [detectCodeLanguage].
@@ -327,8 +328,7 @@ String _formatSize(int size) {
   return '${value.toStringAsFixed(value >= 10 ? 0 : 1)} MiB';
 }
 
-Future<bool> _launchExternal(Uri uri) =>
-    launchUrl(uri, mode: LaunchMode.externalApplication);
+Future<bool> _launchExternal(Uri uri) => launchExternalLink(uri);
 
 /// Returns the daemon-side path represented by a non-web markdown [href].
 ///
@@ -396,6 +396,7 @@ class AgentMessageView extends StatefulWidget {
 class _AgentMessageViewState extends State<AgentMessageView> {
   final Map<String, TextSpan> _highlightCache = <String, TextSpan>{};
   final Map<String, String?> _languageCache = <String, String?>{};
+  late final Map<String, MarkdownElementBuilder> _elementBuilders;
 
   Timer? _settleTimer;
   bool _settled = false;
@@ -405,6 +406,9 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   @override
   void initState() {
     super.initState();
+    _elementBuilders = <String, MarkdownElementBuilder>{
+      'a': _LinkElementBuilder(onActivate: _activateLink),
+    };
     _restartSettleTimer();
   }
 
@@ -470,16 +474,30 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     }
   }
 
-  void _onTapLink(String _, String? href, String _) {
-    if (href == null) return;
+  void _activateLink(String href) {
     final Uri? uri = Uri.tryParse(href);
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
-      unawaited(widget.launchExternal(uri));
+      unawaited(_openExternal(uri));
       return;
     }
     final String? path = localFilePathFromHref(href);
     final Future<void> Function(String path)? opener = widget.openLocalFile;
     if (path != null && opener != null) unawaited(opener(path));
+  }
+
+  Future<void> _openExternal(Uri uri) async {
+    bool opened = false;
+    try {
+      opened = await widget.launchExternal(uri);
+    } catch (_) {
+      // The failure is reported in the UI below.
+    }
+    if (opened || !mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('Could not open URL. Right-click it to copy the URL.'),
+      ),
+    );
   }
 
   @override
@@ -507,10 +525,107 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           data: widget.text,
           styleSheet: _styleSheetFor(context, bodyStyle),
           syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
-          onTapLink: _onTapLink,
+          builders: _elementBuilders,
         ),
       ),
     );
+  }
+}
+
+class _LinkElementBuilder extends MarkdownElementBuilder {
+  _LinkElementBuilder({required this.onActivate});
+
+  final void Function(String href) onActivate;
+
+  @override
+  Widget visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final String label = element.textContent;
+    final String? href = element.attributes['href'];
+    final TextStyle? style =
+        parentStyle?.merge(preferredStyle) ?? preferredStyle;
+    if (href == null || href.isEmpty) return Text(label, style: style);
+    return _MarkdownLink(
+      label: label,
+      href: href,
+      style: style,
+      onActivate: () => onActivate(href),
+    );
+  }
+}
+
+enum _LinkMenuAction { copyUrl }
+
+class _MarkdownLink extends StatelessWidget {
+  const _MarkdownLink({
+    required this.label,
+    required this.href,
+    required this.style,
+    required this.onActivate,
+  });
+
+  final String label;
+  final String href;
+  final TextStyle? style;
+  final VoidCallback onActivate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      link: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onActivate,
+          onSecondaryTapDown: (TapDownDetails details) {
+            unawaited(_showContextMenu(context, details.globalPosition));
+          },
+          child: Text(label, style: style),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showContextMenu(
+    BuildContext context,
+    Offset globalPosition,
+  ) async {
+    final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(
+      context,
+    );
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final Offset position = overlay.globalToLocal(globalPosition);
+    final _LinkMenuAction? action = await showMenu<_LinkMenuAction>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: const <PopupMenuEntry<_LinkMenuAction>>[
+        PopupMenuItem<_LinkMenuAction>(
+          value: _LinkMenuAction.copyUrl,
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.content_copy, size: 18),
+              SizedBox(width: 8),
+              Text('Copy URL'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (action != _LinkMenuAction.copyUrl) return;
+    await Clipboard.setData(ClipboardData(text: href));
+    if (messenger == null || !messenger.mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('URL copied')));
   }
 }
 
