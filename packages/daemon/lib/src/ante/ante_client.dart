@@ -219,6 +219,7 @@ class AnteClient implements AgentClient {
     String value,
   ) async {
     final _AnteSessionState state = _requireSession(sessionId);
+    final List<_AnteCatalogProvider> catalog = await _catalogFuture;
     final Map<String, Object?> update;
     switch (configId) {
       case 'model':
@@ -226,11 +227,18 @@ class AnteClient implements AgentClient {
           'model': <String, Object?>{'id': value},
         };
       case 'thinking':
-        if (!_effortValues.contains(value)) {
+        final List<String> effortOptions = _effortOptionsFor(state, catalog);
+        if (effortOptions.isEmpty ||
+            (value != _defaultEffortValue && !effortOptions.contains(value))) {
           throw ArgumentError.value(value, 'value', 'unknown Ante effort');
         }
         update = <String, Object?>{
-          'model': <String, Object?>{'id': state.modelId, 'effort': value},
+          'model': <String, Object?>{
+            'id': state.modelId,
+            // Ante represents its normal catalog/model behavior by omitting
+            // effort. Sending null clears a previous override.
+            'effort': value == _defaultEffortValue ? null : value,
+          },
         };
       default:
         throw ArgumentError.value(configId, 'configId', 'unsupported option');
@@ -245,7 +253,7 @@ class AnteClient implements AgentClient {
       final _AnteSessionState updated = await completer.future.timeout(
         initTimeout,
       );
-      return _configOptions(updated, await _catalogFuture);
+      return _configOptions(updated, catalog);
     } finally {
       _updateWaiters.remove(opId);
     }
@@ -1389,6 +1397,7 @@ class AnteClient implements AgentClient {
         ),
       );
     }
+    final List<String> effortOptions = _effortOptionsFor(state, catalog);
     return <AcpConfigOption>[
       AcpConfigOption(
         id: 'model',
@@ -1405,18 +1414,41 @@ class AnteClient implements AgentClient {
             ),
         ],
       ),
-      AcpConfigOption(
-        id: 'thinking',
-        name: 'Effort',
-        category: 'thought_level',
-        type: 'select',
-        currentValue: state.effort ?? '',
-        options: <AcpConfigOptionValue>[
-          for (final String effort in _effortValues)
-            AcpConfigOptionValue(value: effort, name: _humanize(effort)),
-        ],
-      ),
+      if (effortOptions.isNotEmpty)
+        AcpConfigOption(
+          id: 'thinking',
+          name: 'Effort',
+          category: 'thought_level',
+          type: 'select',
+          currentValue: state.effort ?? _defaultEffortValue,
+          options: <AcpConfigOptionValue>[
+            const AcpConfigOptionValue(
+              value: _defaultEffortValue,
+              name: 'Default',
+            ),
+            for (final String effort in effortOptions)
+              if (effort != _defaultEffortValue)
+                AcpConfigOptionValue(value: effort, name: _humanize(effort)),
+          ],
+        ),
     ];
+  }
+
+  /// Ante reports effort choices on the live session in current releases.
+  /// Fall back to the catalog for older serve versions that omitted them.
+  static List<String> _effortOptionsFor(
+    _AnteSessionState state,
+    List<_AnteCatalogProvider> catalog,
+  ) {
+    if (state.effortOptions.isNotEmpty) return state.effortOptions;
+    for (final _AnteCatalogProvider provider in catalog) {
+      if (provider.id != state.providerId) continue;
+      for (final _AnteCatalogModel model in provider.models) {
+        if (model.id == state.modelId) return model.effortOptions;
+      }
+      break;
+    }
+    return const <String>[];
   }
 
   Future<String> _textFromPromptBlocks(
@@ -1512,7 +1544,9 @@ class AnteClient implements AgentClient {
     return (
       path: file.absolute.path,
       name: name,
-      mimeType: rawMimeType is String ? rawMimeType : 'application/octet-stream',
+      mimeType: rawMimeType is String
+          ? rawMimeType
+          : 'application/octet-stream',
     );
   }
 
@@ -1720,14 +1754,7 @@ class AnteClient implements AgentClient {
   }
 }
 
-const List<String> _effortValues = <String>[
-  'min',
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-];
+const String _defaultEffortValue = 'default';
 
 class _SessionChannel {
   _SessionChannel() {
@@ -1790,6 +1817,7 @@ class _AnteSessionState {
     required this.modelId,
     required this.modelDescription,
     required this.effort,
+    required this.effortOptions,
     required this.contextLimit,
     required this.providerId,
     required this.providerName,
@@ -1812,6 +1840,7 @@ class _AnteSessionState {
       modelId: modelId,
       modelDescription: model['description'] as String?,
       effort: model['effort'] as String?,
+      effortOptions: AnteClient._strings(model['effort_options']),
       contextLimit: AnteClient._int(model['context_limit']),
       providerId: providerId,
       providerName: provider['display_name'] as String? ?? providerId,
@@ -1824,6 +1853,7 @@ class _AnteSessionState {
   final String modelId;
   final String? modelDescription;
   final String? effort;
+  final List<String> effortOptions;
   final int? contextLimit;
   final String providerId;
   final String providerName;
@@ -1855,14 +1885,20 @@ class _AnteCatalogProvider {
 }
 
 class _AnteCatalogModel {
-  const _AnteCatalogModel({required this.id, this.description});
+  const _AnteCatalogModel({
+    required this.id,
+    this.description,
+    this.effortOptions = const <String>[],
+  });
 
   factory _AnteCatalogModel.fromJson(Map<String, Object?> json) =>
       _AnteCatalogModel(
         id: json['id'] as String? ?? '',
         description: json['description'] as String?,
+        effortOptions: AnteClient._strings(json['effort_options']),
       );
 
   final String id;
   final String? description;
+  final List<String> effortOptions;
 }

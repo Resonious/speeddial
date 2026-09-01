@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 const String _sessionId = 'ses_01M0H000000000000000000000';
 String _model = 'fake-model';
-String _effort = 'medium';
+String? _effort = 'medium';
 String _provider = 'fake-provider';
 String _permissionMode = 'strict';
 int _eventCounter = 0;
@@ -26,6 +26,8 @@ Future<void> main(List<String> args) async {
               <String, Object?>{
                 'id': 'fake-model',
                 'description': 'Fake model',
+                'effort': 'medium',
+                'effort_options': <String>['min', 'low', 'medium', 'high'],
               },
               <String, Object?>{
                 'id': 'fake-large',
@@ -98,6 +100,7 @@ Future<void> _dispatch(Map<String, Object?> message) async {
   switch (type) {
     case 'StartSession':
       _model = value['model'] as String? ?? 'fake-model';
+      _effort = _model == 'fake-model' ? 'medium' : null;
       _provider = value['provider'] as String? ?? 'fake-provider';
       _permissionMode = value['permission_mode'] as String? ?? 'strict';
       await _sessionStart(parent);
@@ -122,7 +125,23 @@ Future<void> _dispatch(Map<String, Object?> message) async {
           ? Map<String, Object?>.from(value['model'] as Map)
           : <String, Object?>{};
       _model = model['id'] as String? ?? _model;
-      _effort = model['effort'] as String? ?? _effort;
+      if (model.containsKey('effort')) {
+        final Object? effort = model['effort'];
+        if (effort != null &&
+            (effort is! String ||
+                !const <String>[
+                  'min',
+                  'low',
+                  'medium',
+                  'high',
+                ].contains(effort))) {
+          await _event(<String, Object?>{
+            'Error': 'Unsupported fake effort: $effort',
+          }, parent);
+          return;
+        }
+        _effort = effort as String?;
+      }
       await _event(<String, Object?>{
         'SessionUpdated': _sessionPayload(),
       }, parent);
@@ -179,7 +198,9 @@ Map<String, Object?> _sessionPayload() => <String, Object?>{
     'id': _model,
     'description': 'Fake model',
     'context_limit': 200000,
-    'effort': _effort,
+    if (_effort != null) 'effort': _effort,
+    if (_model == 'fake-model')
+      'effort_options': <String>['min', 'low', 'medium', 'high'],
     'support_vision': false,
     'weight_class': 'middle',
   },

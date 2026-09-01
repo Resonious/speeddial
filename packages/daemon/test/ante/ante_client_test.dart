@@ -65,14 +65,74 @@ void main() {
     );
     expect(effort.currentValue, 'medium');
     expect(effort.options.map((AcpConfigOptionValue item) => item.value), [
+      'default',
       'min',
       'low',
       'medium',
       'high',
-      'xhigh',
-      'max',
     ]);
   });
+
+  test('uses model effort options and can clear an effort override', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+
+    final created = await client.newSession(cwd: Directory.current.path);
+    await expectLater(
+      client.setConfigOption(created.sessionId, 'thinking', 'max'),
+      throwsA(
+        isA<ArgumentError>().having(
+          (ArgumentError error) => error.invalidValue,
+          'invalidValue',
+          'max',
+        ),
+      ),
+    );
+
+    final List<AcpConfigOption> high = await client.setConfigOption(
+      created.sessionId,
+      'thinking',
+      'high',
+    );
+    expect(
+      high
+          .firstWhere((AcpConfigOption option) => option.id == 'thinking')
+          .currentValue,
+      'high',
+    );
+
+    final List<AcpConfigOption> reset = await client.setConfigOption(
+      created.sessionId,
+      'thinking',
+      'default',
+    );
+    expect(
+      reset
+          .firstWhere((AcpConfigOption option) => option.id == 'thinking')
+          .currentValue,
+      'default',
+    );
+  });
+
+  test(
+    'omits effort control when the selected model advertises none',
+    () async {
+      final AnteClient client = spawnAnte();
+      addTearDown(client.dispose);
+
+      final created = await client.newSession(
+        cwd: Directory.current.path,
+        model: 'fake-large',
+        provider: 'fake-provider',
+      );
+      expect(
+        created.configOptions.where(
+          (AcpConfigOption option) => option.id == 'thinking',
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test('native yolo mode prevents Ante approval pauses', () async {
     var permissionRequests = 0;

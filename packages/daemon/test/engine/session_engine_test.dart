@@ -517,12 +517,11 @@ void main() {
     expect(session.models, <String>['fake-model', 'fake-large']);
     expect(session.thinkingLevel, 'medium');
     expect(session.thinkingLevels, <String>[
+      'default',
       'min',
       'low',
       'medium',
       'high',
-      'xhigh',
-      'max',
     ]);
 
     final Future<PermissionRequestEvent> permissionFuture =

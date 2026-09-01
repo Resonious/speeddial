@@ -73,9 +73,12 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     state links back to the real home, native MCP entries remain direct,
                     and the transient directory is removed on process exit. New sessions
                     are seeded with the settings default model/provider (serve mode
-                    ignores them when StartSession omits a model). Ante always uses the plain
-                    server launch because that subcommand rejects default-run permission flags;
-                    yolo is selected per session so approval pauses are not generated.
+                    ignores them when StartSession omits a model). Effort controls mirror
+                    the selected catalog model's `effort_options`; `default` clears an
+                    override instead of forcing reasoning onto models that omit one. Ante
+                    always uses the plain server launch because that subcommand rejects
+                    default-run permission flags; yolo is selected per session so approval
+                    pauses are not generated.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.

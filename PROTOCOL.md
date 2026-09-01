@@ -133,9 +133,12 @@ Session = {
   cwd: string,                // working dir of the agent (project path or worktree)
   baseBranch: string | null,  // base branch the session's worktree was created from
   thinkingLevel: string | null,   // current agent thinking level (e.g. omp's "auto");
+                              // Ante uses "default" for no explicit effort override;
                               // null when the provider exposes no thinking-level option
   thinkingLevels: string[],   // selectable levels advertised by the agent (ACP config
-                              // option); empty when the provider has none
+                              // option); empty when the provider has none. Ante mirrors
+                              // the selected catalog model's effort_options and prepends
+                              // "default", which clears an explicit effort override.
   sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
   yolo: boolean,              // native no-prompt mode where supported; daemon fallback otherwise
   completionRevision: int,    // increments whenever a turn reaches terminal idle successfully
@@ -435,7 +438,9 @@ tokens before session creation/resume, and checks them periodically while runnin
     creation: `models`/`thinkingLevels` carry the advertised options and
     `model`/`thinkingLevel` the agent-reported current values. ACP providers use
     `configOptions`; Codex uses `model/list` plus thread settings; Ante uses its
-    catalog plus `SessionStart`/`SessionUpdated`. A `model` argument is applied
+    catalog plus `SessionStart`/`SessionUpdated`, advertises only the selected
+    model's effort options, and represents no explicit effort as `default`. A
+    `model` argument is applied
     best-effort through the provider transport when a model option exists (the
     returned session reflects the provider-reported model, which may differ when
     the provider rejects it); when the provider advertises none, `model` stays a
