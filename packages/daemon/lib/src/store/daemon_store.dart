@@ -1017,6 +1017,12 @@ class DaemonStore {
   // Session events
   // -------------------------------------------------------------------------
 
+  /// Whether [sessionId] has accepted any turn or emitted provider output.
+  bool hasSessionEvents(String sessionId) => _db.select(
+    'SELECT 1 FROM session_events WHERE session_id = ? LIMIT 1',
+    <Object?>[sessionId],
+  ).isNotEmpty;
+
   /// The next sequence number for [sessionId] (`max(seq) + 1`, starting at 1).
   int nextSeq(String sessionId) {
     final rows = _db.select(

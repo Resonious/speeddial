@@ -986,7 +986,9 @@ class SessionEngine {
   }
 
   /// Respawns the provider transport for a session whose process is gone,
-  /// making persisted sessions usable across daemon restarts.
+  /// making persisted sessions usable across daemon restarts. Codex removes
+  /// an empty thread's rollout when app-server exits, so an eventless Codex
+  /// session starts a replacement thread instead of resuming the vanished id.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
   /// `DaemonError(kErrConflict)` when the session is closed, predates resume
@@ -1004,8 +1006,10 @@ class SessionEngine {
         'Session "$sessionId" is closed; create a new session',
       );
     }
-    final String? providerSessionId = _store.providerSessionIdOf(sessionId);
-    if (providerSessionId == null) {
+    final String? storedProviderSessionId = _store.providerSessionIdOf(
+      sessionId,
+    );
+    if (storedProviderSessionId == null) {
       throw DaemonError(
         kErrConflict,
         'Session "$sessionId" predates resume support (its agent process '
@@ -1019,7 +1023,11 @@ class SessionEngine {
         'Provider "${session.providerId}" is not available on this host',
       );
     }
+    final bool replaceEmptyCodexThread =
+        spec.protocol == ProviderProtocol.codex &&
+        !_store.hasSessionEvents(sessionId);
     final AgentClient client = _spawnAgent(session);
+    var providerSessionId = storedProviderSessionId;
     final List<AcpConfigOption> configOptions;
     try {
       final InitializeResult info = await client.initialized;
@@ -1036,13 +1044,26 @@ class SessionEngine {
       if (info.agentCapabilities['mcpServers'] != false) {
         await _prepareMcpServers?.call();
       }
-      configOptions = await client.loadSession(
-        sessionId: providerSessionId,
-        cwd: session.cwd,
-        sandboxMode: session.sandboxMode,
-        mcpServers: _mcpServersFor(session, info),
-        yolo: session.yolo,
-      );
+      if (replaceEmptyCodexThread) {
+        final created = await client.newSession(
+          cwd: session.cwd,
+          mcpServers: _mcpServersFor(session, info),
+          model: session.model,
+          sandboxMode: session.sandboxMode,
+          yolo: session.yolo,
+        );
+        providerSessionId = created.sessionId;
+        configOptions = created.configOptions;
+        _store.setProviderSessionId(sessionId, providerSessionId);
+      } else {
+        configOptions = await client.loadSession(
+          sessionId: providerSessionId,
+          cwd: session.cwd,
+          sandboxMode: session.sandboxMode,
+          mcpServers: _mcpServersFor(session, info),
+          yolo: session.yolo,
+        );
+      }
     } on Object catch (error) {
       await client.dispose();
       if (error is DaemonError) rethrow;

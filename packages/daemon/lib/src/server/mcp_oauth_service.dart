@@ -301,12 +301,11 @@ class McpOAuthService {
       final DateTime? expiresAt = oauth!.expiresAt;
       if (expiresAt == null || expiresAt.isAfter(refreshBefore)) continue;
       if (oauth.refreshToken == null) {
-        _store.setMcpOAuthStatus(
+        await _setRefreshFailure(
           profile.id,
           McpOAuthStatus.expired,
-          error: 'Access token expired; authorize again',
+          'Access token expired; authorize again',
         );
-        await _onChanged(profile.id);
         continue;
       }
       try {
@@ -339,14 +338,24 @@ class McpOAuthService {
         );
         await _onChanged(profile.id);
       } on Object catch (error) {
-        _store.setMcpOAuthStatus(
+        await _setRefreshFailure(
           profile.id,
           McpOAuthStatus.error,
-          error: 'Token refresh failed: ${_errorMessage(error)}',
+          'Token refresh failed: ${_errorMessage(error)}',
         );
-        await _onChanged(profile.id);
       }
     }
+  }
+
+  Future<void> _setRefreshFailure(
+    String serverId,
+    McpOAuthStatus status,
+    String error,
+  ) async {
+    final StoredMcpOAuth? current = _store.getMcpOAuth(serverId);
+    if (current?.status == status && current?.error == error) return;
+    _store.setMcpOAuthStatus(serverId, status, error: error);
+    await _onChanged(serverId);
   }
 
   void close() {

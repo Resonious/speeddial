@@ -231,6 +231,60 @@ void main() {
     },
   );
 
+  test('eventless Codex sessions start a replacement after restart', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    final File startReport = File(p.join(tempDir.path, 'codex-start.json'));
+    final File resumeReport = File(p.join(tempDir.path, 'codex-resume.json'));
+    store.updateDaemonEnvironment(
+      set: <String, String>{
+        'FAKE_CODEX_START_REPORT': startReport.path,
+        'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
+      },
+    );
+    engine = SessionEngine(store: store, providers: fakeCodexProviders());
+    configureTestMcp(engine);
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeCodex',
+      yolo: true,
+    );
+    expect(startReport.existsSync(), isTrue);
+    startReport.deleteSync();
+
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    engine = SessionEngine(store: store, providers: fakeCodexProviders());
+    configureTestMcp(engine);
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    await engine.sendMessage(session.id, 'First turn after restart');
+    await waitFor(
+      () => events.any(
+        (tuple) =>
+            tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+      ),
+    );
+    expect(startReport.existsSync(), isTrue);
+    expect(
+      resumeReport.existsSync(),
+      isFalse,
+      reason: 'an empty Codex rollout cannot be resumed after app-server exits',
+    );
+  });
+
   test('Codex sessions stream native rich events and attachments', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

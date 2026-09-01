@@ -98,7 +98,8 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     executable. Profiles are daemon-wide or project-scoped; a project
                     receives both matching sets. HTTP OAuth 2.1 authorization-code + S256
                     PKCE discovery, registration, callback handling, and refresh live in
-                    server/mcp_oauth_service.dart.
+                    server/mcp_oauth_service.dart. Repeated identical refresh failures remain
+                    retryable without repeatedly parking the project's agent sessions.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]                              (ACP)
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
@@ -132,7 +133,9 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     provider omits them, making logical streamed content daemon-owned.
                     Handles permission requests (parked until respondPermission, or
                     auto-resolved as a yolo fallback), cancel, process exit, and turn
-                    lifecycle. Inline tool-result images and provider-reported image
+                    lifecycle. Eventless Codex sessions whose empty rollout vanished with their
+                    app-server process start a replacement thread before their first turn.
+                    Inline tool-result images and provider-reported image
                     file reads are deduplicated into attachment-backed tool content. MCP
                     injection supports ACP, Codex, and Ante. ACP
                     receives structured attachments; Codex receives native text, image,

@@ -362,7 +362,8 @@ transient home when Ante exits. Ante-native MCP entries remain direct and availa
 profile change reloads every compatible session; a project change reloads only that project's
 sessions. Idle resume-capable agents are parked immediately and running agents before their
 following turn. Agents without resume support retain their current connections; all new sessions
-receive the saved configuration.
+receive the saved configuration. OAuth refresh failures remain retryable, but an unchanged repeated
+failure does not trigger another agent reload.
 
 Because `ante serve` ignores the settings default provider/model when `StartSession` carries no
 model (it resolves the subscription instead), the daemon reseeds new sessions with the Ante
@@ -481,7 +482,10 @@ tokens before session creation/resume, and checks them periodically while runnin
   `session/load`; Codex uses `thread/resume`; Ante starts the persisted Ante session id and
   suppresses replayed history until the next live `TurnStart`. Errors `-32003` when the session is
   closed or its ACP provider cannot resume (no `session/load` support), `-32010` when the provider
-  is unavailable, and `-32011` when the agent failed to resume (its own state is lost). A daemon
+  is unavailable, and `-32011` when the agent failed to resume (its own state is lost). Codex
+  removes an empty thread's rollout when app-server exits before its first turn. If the corresponding
+  SpeedDial session still has no events, the daemon starts a replacement Codex thread and persists
+  its id instead of attempting `thread/resume`. A daemon
   restart that interrupts a turn marks the session `error` and appends a `sessionError` event to
   its history; the session becomes usable again on the next send.
   A session's `lastActivityAt` advances when the accepted user message starts the turn and again
