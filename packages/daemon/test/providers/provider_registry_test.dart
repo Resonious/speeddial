@@ -100,13 +100,13 @@ void main() {
     expect(codex.protocol, ProviderProtocol.codex);
     final ante = registry.byId('ante')!;
     expect(ante.command, <String>['ante', 'serve', '--stdio']);
-    expect(ante.commandFor(yolo: true), <String>[
-      'ante',
-      '--permission-mode',
-      'yolo',
-      'serve',
-      '--stdio',
-    ]);
+    expect(
+      ante.commandFor(yolo: true),
+      <String>['ante', 'serve', '--stdio'],
+      reason:
+          'Ante serve rejects default-run permission flags; yolo is sent in '
+          'StartSession',
+    );
     expect(ante.protocol, ProviderProtocol.ante);
     expect(ante.catalogCommand, <String>['ante', 'catalog']);
 

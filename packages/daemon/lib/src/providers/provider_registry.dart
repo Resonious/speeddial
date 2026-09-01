@@ -162,13 +162,6 @@ class ProviderRegistry {
         id: 'ante',
         name: 'Ante',
         command: <String>['ante', 'serve', '--stdio'],
-        yoloCommand: <String>[
-          'ante',
-          '--permission-mode',
-          'yolo',
-          'serve',
-          '--stdio',
-        ],
         protocol: ProviderProtocol.ante,
         catalogCommand: <String>['ante', 'catalog'],
       ),

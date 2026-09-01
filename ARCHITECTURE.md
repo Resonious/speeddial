@@ -73,9 +73,9 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes ses
                     state links back to the real home, native MCP entries remain direct,
                     and the transient directory is removed on process exit. New sessions
                     are seeded with the settings default model/provider (serve mode
-                    ignores them when StartSession omits a model). Yolo sessions use Ante's
-                    native launch and per-session permission modes so approval pauses are not
-                    generated.
+                    ignores them when StartSession omits a model). Ante always uses the plain
+                    server launch because that subcommand rejects default-run permission flags;
+                    yolo is selected per session so approval pauses are not generated.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
@@ -104,8 +104,9 @@ lib/src/providers/  Provider registry. Built-ins:
                       claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
                       codex  → ["codex", "app-server", "--stdio"]          (Codex)
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
-                    OMP and Ante also define native yolo launch commands selected per session;
-                    provider overrides do not inherit those harness-specific arguments.
+                    OMP also defines a native yolo launch command selected per session; provider
+                    overrides do not inherit those harness-specific arguments. Ante selects yolo
+                    in its StartSession operation instead of its server launch command.
                     `~/.speeddial/config.json` may add/override providers:
                     {"providers":{"<id>":{"name":"...","command":["...",...],
                     "protocol":"acp|codex|ante","catalogCommand":["...",...]}}}

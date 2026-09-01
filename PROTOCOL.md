@@ -415,8 +415,9 @@ tokens before session creation/resume, and checks them periodically while runnin
     (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
     worktree on disk.
   — with `yolo: true` (default `false`), supported built-in harnesses receive their native
-    no-prompt mode: OMP runs with `--approval-mode=yolo`, Ante runs with
-    `--permission-mode yolo` and receives `permission_mode: "yolo"` for a new session, and
+    no-prompt mode: OMP runs with `--approval-mode=yolo`, Ante receives
+    `permission_mode: "yolo"` in its new-session operation (its `serve` command rejects
+    default-run permission flags), and
     Codex receives `approvalPolicy: "never"` for thread creation/resume and every turn. These
     harnesses normally emit no permission request. If a provider still requests permission
     (including a custom ACP provider, since ACP has no standard permission-policy field), the
