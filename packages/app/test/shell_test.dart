@@ -6,6 +6,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/main.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/ui/connection_status_indicator.dart';
 
 void main() {
   /// Pumps the real app with real stores over an empty shared_preferences
@@ -75,6 +76,30 @@ void main() {
     // Right panel.
     expect(find.text('Files'), findsOneWidget);
     expect(find.text('Git'), findsOneWidget);
+  });
+
+  testWidgets('connecting daemon uses spinners instead of connected dots', (
+    WidgetTester tester,
+  ) async {
+    final AppData data = await pumpFakeShell(
+      tester,
+      size: const Size(1440, 900),
+    );
+    final Finder statusIndicators = find.byType(ConnectionStatusIndicator);
+    final Finder statusSpinners = find.descendant(
+      of: statusIndicators,
+      matching: find.byType(CircularProgressIndicator),
+    );
+
+    data.connections.setStatus('fake', ConnectionStatus.connecting);
+    await tester.pump();
+    expect(statusIndicators, findsNWidgets(2));
+    expect(statusSpinners, findsNWidgets(2));
+
+    data.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    expect(statusIndicators, findsNWidgets(2));
+    expect(statusSpinners, findsNothing);
   });
 
   testWidgets('desktop: right panel toggle hides and restores it', (WidgetTester tester) async {

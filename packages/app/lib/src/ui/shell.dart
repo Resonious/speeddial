@@ -5,6 +5,7 @@ import '../scope.dart';
 import '../state/settings_store.dart';
 import '../theme.dart';
 import 'chat/chat_pane.dart';
+import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
 import 'right/right_panel.dart';
 
@@ -353,14 +354,7 @@ class _DaemonStatusChip extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: connectionStatusColor(context, status),
-                  ),
-                ),
+                ConnectionStatusIndicator(status: status),
                 const SizedBox(width: 8),
                 Text(
                   id == null ? 'Not connected' : status.name,

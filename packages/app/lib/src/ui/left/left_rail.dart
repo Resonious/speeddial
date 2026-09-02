@@ -4,7 +4,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/projects_store.dart';
 import '../../state/sessions_store.dart';
-import '../../theme.dart';
+import '../connection_status_indicator.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
 import '../settings/environment_page.dart';
@@ -746,7 +746,7 @@ class _EndpointTile extends StatelessWidget {
       leading: SizedBox(
         width: 24,
         height: 24,
-        child: _StatusDot(color: connectionStatusColor(context, status)),
+        child: Center(child: ConnectionStatusIndicator(status: status)),
       ),
       title: Text(
         endpoint.name,
@@ -810,23 +810,6 @@ class _EndpointTile extends StatelessWidget {
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       onTap: onTap,
-    );
-  }
-}
-
-class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        width: 10,
-        height: 10,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-      ),
     );
   }
 }
