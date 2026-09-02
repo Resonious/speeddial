@@ -316,7 +316,8 @@ resumed sessions; already-running harness processes are not restarted.
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   authType?: McpAuthType, oauthClientId?: string, oauthClientSecret?: string}` →
   `{server: McpServerProfile}`
-- `mcp.update {id: string, name: string, transport: McpTransport, enabled: boolean,
+- `mcp.update {id: string, projectId?: string | null, name: string,
+  transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   removeSecretNames?: string[], authType?: McpAuthType, oauthClientId?: string,
   oauthClientSecret?: string}` → `{server: McpServerProfile}`
@@ -333,11 +334,13 @@ resumed sessions; already-running harness processes are not restarted.
 
 `stdio` requires a command; each entry in `secrets` becomes an environment variable. `http`
 requires an absolute HTTP(S) URL; each secret becomes an HTTP header. Secret values are stored only
-on the daemon and never returned—`secretNames` lets clients replace or remove them. `projectId` is
-immutable: when absent the profile applies daemon-wide; when present it must name an existing
-project and applies only to that project's sessions. Daemon-wide and matching project profiles are
-combined. Names remain unique case-insensitively across the daemon, and `speeddial` is reserved for
-the built-in bridge.
+on the daemon and never returned—`secretNames` lets clients replace or remove them. When creating a
+profile, an absent `projectId` applies it daemon-wide; when present it must name an existing project
+and applies only to that project's sessions. On update, omitting `projectId` preserves the current
+scope for compatibility, an explicit `null` makes the profile daemon-wide, and a project ID moves it
+to that project. Changing scope retains the profile's stored secrets and OAuth credentials.
+Daemon-wide and matching project profiles are combined. Names remain unique case-insensitively
+across the daemon, and `speeddial` is reserved for the built-in bridge.
 
 Enabled matching profiles are not passed to agent processes. Every compatible agent receives only
 the daemon-owned `speeddial` stdio bridge. After that bridge authenticates, the daemon opens the

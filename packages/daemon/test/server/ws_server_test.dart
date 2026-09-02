@@ -1191,6 +1191,115 @@ void main() {
       await client.close();
     });
 
+    test(
+      'changing a global MCP profile reloads every affected session',
+      () async {
+        await startServer();
+        final WsClient client = await connect(server!.port);
+        final Directory firstDir = Directory(
+          p.join(tempDir.path, 'scope-change-first'),
+        )..createSync();
+        final Directory secondDir = Directory(
+          p.join(tempDir.path, 'scope-change-second'),
+        )..createSync();
+        final String firstProjectId =
+            (j(
+                      await client.peer.call('projects.add', <String, Object?>{
+                        'path': firstDir.path,
+                        'name': 'First scope project',
+                      }),
+                    )['project']!
+                    as Map)['id']!
+                as String;
+        final String secondProjectId =
+            (j(
+                      await client.peer.call('projects.add', <String, Object?>{
+                        'path': secondDir.path,
+                        'name': 'Second scope project',
+                      }),
+                    )['project']!
+                    as Map)['id']!
+                as String;
+        final String serverId =
+            (j(
+                      await client.peer.call('mcp.create', <String, Object?>{
+                        'name': 'global-tools',
+                        'transport': 'stdio',
+                        'enabled': true,
+                        'command': '/bin/global-mcp',
+                      }),
+                    )['server']!
+                    as Map)['id']!
+                as String;
+        final Session first = Session.fromJson(
+          (j(
+                    await client.peer.call('sessions.create', <String, Object?>{
+                      'projectId': firstProjectId,
+                      'providerId': 'fake',
+                    }),
+                  )['session']!
+                  as Map)
+              .cast<String, Object?>(),
+        );
+        final Session second = Session.fromJson(
+          (j(
+                    await client.peer.call('sessions.create', <String, Object?>{
+                      'projectId': secondProjectId,
+                      'providerId': 'fake',
+                    }),
+                  )['session']!
+                  as Map)
+              .cast<String, Object?>(),
+        );
+
+        await expectLater(
+          client.peer.call('mcp.update', <String, Object?>{
+            'id': serverId,
+            'name': 'global-tools',
+            'projectId': 'missing-project',
+            'transport': 'stdio',
+            'enabled': true,
+            'command': '/bin/global-mcp',
+          }),
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError error) => error.code,
+              'code',
+              kErrNotFound,
+            ),
+          ),
+        );
+        File(p.join(firstDir.path, 'agent.load_fails')).createSync();
+        File(p.join(secondDir.path, 'agent.load_fails')).createSync();
+        final Map<String, Object?> updated = j(
+          await client.peer.call('mcp.update', <String, Object?>{
+            'id': serverId,
+            'name': 'global-tools',
+            'projectId': firstProjectId,
+            'transport': 'stdio',
+            'enabled': true,
+            'command': '/bin/global-mcp',
+          }),
+        );
+        expect((updated['server']! as Map)['projectId'], firstProjectId);
+
+        for (final Session session in <Session>[first, second]) {
+          await expectLater(
+            engine!.sendMessage(session.id, 'resume after scope change'),
+            throwsA(
+              isA<DaemonError>().having(
+                (DaemonError error) => error.code,
+                'code',
+                kErrAgentProcess,
+              ),
+            ),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await client.close();
+      },
+    );
+
     test('HTTP MCP OAuth authorizes, refreshes, and proxies its token', () async {
       final HttpServer oauthServer = await HttpServer.bind(
         InternetAddress.loopbackIPv4,
@@ -1419,11 +1528,12 @@ void main() {
           'name': 'OAuth MCP',
         }),
       );
+      final String projectId = (project['project']! as Map)['id']! as String;
       await Future<void>.delayed(const Duration(milliseconds: 2100));
       final Session owner = Session.fromJson(
         (j(
                   await client.peer.call('sessions.create', <String, Object?>{
-                    'projectId': (project['project']! as Map)['id'],
+                    'projectId': projectId,
                     'providerId': 'fake',
                   }),
                 )['session']!
@@ -1544,14 +1654,34 @@ void main() {
           'name': 'renamed-confidential-tools',
           'transport': 'http',
           'enabled': true,
+          'projectId': projectId,
           'url': oauthBase.resolve('/mcp').toString(),
           'authType': 'oauth',
           'oauthClientId': 'configured:id',
         }),
       );
+      expect((staticUpdated['server']! as Map)['projectId'], projectId);
       expect((staticUpdated['server']! as Map)['oauthStatus'], 'authorized');
       expect(
         (staticUpdated['server']! as Map)['oauthClientSecretConfigured'],
+        isTrue,
+      );
+      final Map<String, Object?> staticGlobal = j(
+        await client.peer.call('mcp.update', <String, Object?>{
+          'id': staticId,
+          'name': 'renamed-confidential-tools',
+          'transport': 'http',
+          'enabled': true,
+          'projectId': null,
+          'url': oauthBase.resolve('/mcp').toString(),
+          'authType': 'oauth',
+          'oauthClientId': 'configured:id',
+        }),
+      );
+      expect((staticGlobal['server']! as Map)['projectId'], isNull);
+      expect((staticGlobal['server']! as Map)['oauthStatus'], 'authorized');
+      expect(
+        (staticGlobal['server']! as Map)['oauthClientSecretConfigured'],
         isTrue,
       );
 

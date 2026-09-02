@@ -461,6 +461,7 @@ class FakeDaemonClient implements DaemonClient {
     required String name,
     required McpTransport transport,
     required bool enabled,
+    required String? projectId,
     String? command,
     List<String> args = const <String>[],
     String? url,
@@ -474,6 +475,7 @@ class FakeDaemonClient implements DaemonClient {
     if (current == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
+    if (projectId != null) _project(projectId);
     final Map<String, String> stored = _mcpSecrets.putIfAbsent(
       id,
       () => <String, String>{},
@@ -487,7 +489,7 @@ class FakeDaemonClient implements DaemonClient {
         current.url != url ||
         (oauthClientId != null && oauthClientId != current.oauthClientId);
     final McpServerProfile profile = McpServerProfile(
-      projectId: current.projectId,
+      projectId: projectId,
       id: id,
       name: name,
       transport: transport,

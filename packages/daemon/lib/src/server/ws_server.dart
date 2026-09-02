@@ -866,10 +866,13 @@ class SpeedDialServer {
     if (existing == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
+    final String? projectId = params.containsKey('projectId')
+        ? _mcpProjectIdFromParams(params)
+        : existing.projectId;
     final McpServerProfile profile = _mcpProfileFromParams(
       params,
       id: id,
-      projectId: existing.projectId,
+      projectId: projectId,
       createdAt: existing.createdAt,
       updatedAt: DateTime.now().toUtc(),
     );
@@ -898,8 +901,27 @@ class SpeedDialServer {
       removeSecretNames: _stringListParam(params, 'removeSecretNames'),
     );
     _configureMcpOAuth(profile, params, reset: resetOAuth);
-    await _engine.reloadMcpServers(projectId: existing.projectId);
+    await _reloadMcpServersAfterScopeChange(
+      existing.projectId,
+      profile.projectId,
+    );
     return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
+  }
+
+  Future<void> _reloadMcpServersAfterScopeChange(
+    String? previousProjectId,
+    String? projectId,
+  ) async {
+    if (previousProjectId == projectId) {
+      await _engine.reloadMcpServers(projectId: projectId);
+      return;
+    }
+    if (previousProjectId == null || projectId == null) {
+      await _engine.reloadMcpServers();
+      return;
+    }
+    await _engine.reloadMcpServers(projectId: previousProjectId);
+    await _engine.reloadMcpServers(projectId: projectId);
   }
 
   Future<Object?> _mcpDelete(Map<String, Object?> params) async {

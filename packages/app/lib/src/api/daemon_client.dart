@@ -87,6 +87,7 @@ abstract class DaemonClient {
     required String name,
     required McpTransport transport,
     required bool enabled,
+    required String? projectId,
     String? command,
     List<String> args = const <String>[],
     String? url,

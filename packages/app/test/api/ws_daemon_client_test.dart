@@ -55,6 +55,9 @@ class TestDaemonServer {
   /// Every `mcp.create` params object received, in call order.
   final List<Map<String, Object?>> mcpCreates = <Map<String, Object?>>[];
 
+  /// Every `mcp.update` params object received, in call order.
+  final List<Map<String, Object?>> mcpUpdates = <Map<String, Object?>>[];
+
   /// Every `fs.download` params object received, in call order.
   final List<Map<String, Object?>> downloads = <Map<String, Object?>>[];
 
@@ -130,6 +133,28 @@ class TestDaemonServer {
           'enabled': params['enabled'],
           'command': params['command'],
           'args': params['args'],
+          'secretNames': const <String>[],
+          'authType': params['authType'],
+          'oauthStatus': 'not_connected',
+          'oauthClientSecretConfigured': false,
+          'oauthScopes': const <String>[],
+          'createdAt': '2026-01-01T00:00:00.000Z',
+          'updatedAt': '2026-01-01T00:00:00.000Z',
+        },
+      };
+    });
+    peer.registerHandler('mcp.update', (Map<String, Object?> params) {
+      mcpUpdates.add(params);
+      return <String, Object?>{
+        'server': <String, Object?>{
+          'id': params['id'],
+          'projectId': params['projectId'],
+          'name': params['name'],
+          'transport': params['transport'],
+          'enabled': params['enabled'],
+          'command': params['command'],
+          'args': params['args'],
+          'url': params['url'],
           'secretNames': const <String>[],
           'authType': params['authType'],
           'oauthStatus': 'not_connected',
@@ -372,6 +397,18 @@ void main() {
     );
     expect(mcp.projectId, 'proj-1');
     expect(server.mcpCreates.single['projectId'], 'proj-1');
+    final McpServerProfile updatedMcp = await client.updateMcpServer(
+      id: mcp.id,
+      name: mcp.name,
+      projectId: null,
+      transport: mcp.transport,
+      enabled: mcp.enabled,
+      command: mcp.command,
+      args: mcp.args,
+      authType: mcp.authType,
+    );
+    expect(updatedMcp.projectId, isNull);
+    expect(server.mcpUpdates.single, containsPair('projectId', null));
     final Session created = await client.createSession(
       projectId: 'proj-1',
       providerId: 'codex',

@@ -84,6 +84,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
         name: profile.name,
         transport: profile.transport,
         enabled: enabled,
+        projectId: profile.projectId,
         command: profile.command,
         args: profile.args,
         url: profile.url,
@@ -675,6 +676,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           name: _name.text.trim(),
           transport: _transport,
           enabled: _enabled,
+          projectId: _scopeProjectId.isEmpty ? null : _scopeProjectId,
           command: _transport == McpTransport.stdio
               ? _endpoint.text.trim()
               : null,
@@ -747,13 +749,11 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                         child: Text(project.name),
                       ),
                   ],
-                  onChanged: widget.existing == null
-                      ? (String? value) {
-                          if (value != null) {
-                            setState(() => _scopeProjectId = value);
-                          }
-                        }
-                      : null,
+                  onChanged: (String? value) {
+                    if (value != null) {
+                      setState(() => _scopeProjectId = value);
+                    }
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<McpTransport>(

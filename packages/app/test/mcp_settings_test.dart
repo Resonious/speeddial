@@ -63,6 +63,52 @@ void main() {
     expect(profiles.single.toJson().toString(), isNot(contains('top-secret')));
   });
 
+  testWidgets('changes an existing MCP server from global to project scope', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient client = FakeDaemonClient();
+    final McpServerProfile original = await client.createMcpServer(
+      name: 'Global tools',
+      transport: McpTransport.stdio,
+      enabled: true,
+      command: '/usr/local/bin/global-mcp',
+      secrets: const <String, String>{'API_TOKEN': 'top-secret'},
+    );
+    final AppData data = AppData()..registerClient('daemon', client);
+    addTearDown(data.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          data: data,
+          child: const McpSettingsPage(
+            daemonId: 'daemon',
+            daemonName: 'Test daemon',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('MCP server actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mcp-scope')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Demo Project').last);
+    await tester.pumpAndSettle();
+    final Finder save = find.byKey(const Key('mcp-save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    final McpServerProfile updated = (await client.listMcpServers()).single;
+    expect(updated.id, original.id);
+    expect(updated.projectId, 'proj-demo');
+    expect(updated.secretNames, const <String>['API_TOKEN']);
+    expect(find.text('Demo Project'), findsOneWidget);
+  });
+
   testWidgets('authorizes and disconnects an HTTP OAuth server', (
     WidgetTester tester,
   ) async {

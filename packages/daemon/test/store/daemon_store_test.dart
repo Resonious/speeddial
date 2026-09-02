@@ -209,7 +209,7 @@ void main() {
         createdAt: now,
         updatedAt: now,
       ),
-      const <String, String>{},
+      const <String, String>{'GLOBAL_TOKEN': 'global-secret'},
     );
     store.insertMcpServer(
       McpServerProfile(
@@ -231,6 +231,60 @@ void main() {
           .listEnabledMcpServersFor('p1')
           .map((StoredMcpServer server) => server.profile.id),
       <String>['mcp-global', 'mcp-project'],
+    );
+    expect(
+      store
+          .listEnabledMcpServersFor('p2')
+          .map((StoredMcpServer server) => server.profile.id),
+      <String>['mcp-global'],
+    );
+
+    final McpServerProfile global = store.getMcpServer('mcp-global')!;
+    store.updateMcpServer(
+      McpServerProfile(
+        id: global.id,
+        projectId: 'p1',
+        name: global.name,
+        transport: global.transport,
+        enabled: global.enabled,
+        command: global.command,
+        args: global.args,
+        secretNames: global.secretNames,
+        createdAt: global.createdAt,
+        updatedAt: now.add(const Duration(minutes: 1)),
+      ),
+    );
+    expect(store.getMcpServer('mcp-global')!.projectId, 'p1');
+    expect(
+      store.listEnabledMcpServersFor('p1').first.secrets,
+      const <String, String>{'GLOBAL_TOKEN': 'global-secret'},
+    );
+    expect(
+      store
+          .listEnabledMcpServersFor('p1')
+          .map((StoredMcpServer server) => server.profile.id),
+      <String>['mcp-global', 'mcp-project'],
+    );
+    expect(store.listEnabledMcpServersFor('p2'), isEmpty);
+
+    final McpServerProfile scoped = store.getMcpServer('mcp-global')!;
+    store.updateMcpServer(
+      McpServerProfile(
+        id: scoped.id,
+        name: scoped.name,
+        transport: scoped.transport,
+        enabled: scoped.enabled,
+        command: scoped.command,
+        args: scoped.args,
+        secretNames: scoped.secretNames,
+        createdAt: scoped.createdAt,
+        updatedAt: now.add(const Duration(minutes: 2)),
+      ),
+    );
+    expect(store.getMcpServer('mcp-global')!.projectId, isNull);
+    expect(
+      store.listEnabledMcpServersFor('p2').single.secrets,
+      const <String, String>{'GLOBAL_TOKEN': 'global-secret'},
     );
     expect(
       store

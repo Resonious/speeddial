@@ -437,10 +437,11 @@ class DaemonStore {
     _db.execute('BEGIN');
     try {
       _db.execute(
-        'UPDATE mcp_servers SET name = ?, transport = ?, enabled = ?, '
+        'UPDATE mcp_servers SET project_id = ?, name = ?, transport = ?, enabled = ?, '
         'command = ?, args = ?, url = ?, auth_type = ?, updated_at = ? '
         'WHERE id = ?',
         <Object?>[
+          profile.projectId,
           profile.name,
           profile.transport.wire,
           profile.enabled ? 1 : 0,
