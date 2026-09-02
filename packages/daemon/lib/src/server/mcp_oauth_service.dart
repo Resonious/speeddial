@@ -413,25 +413,27 @@ class McpOAuthService {
     _requireSecureEndpoint(authorizationServer, 'Authorization server');
 
     Map<String, Object?>? serverMetadata;
+    Map<String, Object?>? mismatchedMetadata;
     for (final Uri uri in _authorizationMetadataUris(authorizationServer)) {
       try {
-        serverMetadata = await _getJson(uri);
-        break;
+        final Map<String, Object?> metadata = await _getJson(uri);
+        final String? issuer = metadata['issuer'] as String?;
+        if (issuer != null &&
+            _sameIssuer(Uri.parse(issuer), authorizationServer)) {
+          serverMetadata = metadata;
+          break;
+        }
+        // Proxied authorization servers legitimately declare another issuer.
+        mismatchedMetadata ??= metadata;
       } on Object catch (error) {
         lastError = error;
       }
     }
+    serverMetadata ??= mismatchedMetadata;
     if (serverMetadata == null) {
       throw FormatException(
         'Authorization-server metadata discovery failed: '
         '${_errorMessage(lastError ?? 'not found')}',
-      );
-    }
-    final String? issuer = serverMetadata['issuer'] as String?;
-    if (issuer == null ||
-        !_sameIssuer(Uri.parse(issuer), authorizationServer)) {
-      throw const FormatException(
-        'Authorization-server metadata issuer does not match discovery URL',
       );
     }
     final List<String> challengeMethods = _stringList(

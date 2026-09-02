@@ -12,6 +12,125 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('discovers metadata whose issuer is an upstream provider', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'mcp_oauth_issuer_test',
+    );
+    final DaemonStore store = DaemonStore(p.join(tempDir.path, 'speeddial.db'));
+    final HttpServer server = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final Uri base = Uri.parse('http://127.0.0.1:${server.port}');
+    final StreamSubscription<HttpRequest> requests = server.listen((
+      HttpRequest request,
+    ) {
+      unawaited(() async {
+        await request.drain<void>();
+        request.response.headers.contentType = ContentType.json;
+        switch (request.uri.path) {
+          case '/mcp':
+            request.response
+              ..statusCode = HttpStatus.unauthorized
+              ..headers.set(
+                HttpHeaders.wwwAuthenticateHeader,
+                'Bearer resource_metadata="'
+                '${base.resolve('/.well-known/oauth-protected-resource')}"',
+              );
+          case '/.well-known/oauth-protected-resource':
+            request.response.write(
+              jsonEncode(<String, Object?>{
+                'resource': base.resolve('/mcp').toString(),
+                'authorization_servers': <String>[
+                  base.resolve('/auth0-proxy').toString(),
+                ],
+              }),
+            );
+          case '/auth0-proxy/.well-known/openid-configuration':
+            request.response.write(
+              jsonEncode(<String, Object?>{
+                'issuer': base.resolve('/auth0-tenant/').toString(),
+                'authorization_endpoint': base
+                    .resolve('/auth0-proxy/authorize')
+                    .toString(),
+                'token_endpoint': base
+                    .resolve('/auth0-tenant/oauth/token')
+                    .toString(),
+                'registration_endpoint': base
+                    .resolve('/auth0-tenant/oidc/register')
+                    .toString(),
+                'code_challenge_methods_supported': const <String>['S256'],
+              }),
+            );
+          case '/auth0-tenant/oidc/register':
+            request.response.write(
+              jsonEncode(<String, Object?>{
+                'client_id': 'dynamic-client-id',
+                'token_endpoint_auth_method': 'none',
+              }),
+            );
+          default:
+            request.response.statusCode = HttpStatus.notFound;
+        }
+        await request.response.close();
+      }());
+    });
+    final McpOAuthService service = McpOAuthService(
+      store: store,
+      onChanged: (String _) async {},
+    );
+    addTearDown(() async {
+      service.close();
+      await requests.cancel();
+      await server.close(force: true);
+      store.dispose();
+      await tempDir.delete(recursive: true);
+    });
+
+    const String serverId = 'proxied-server';
+    final DateTime now = DateTime.now().toUtc();
+    store.insertMcpServer(
+      McpServerProfile(
+        id: serverId,
+        name: 'Proxied OAuth server',
+        transport: McpTransport.http,
+        enabled: true,
+        url: base.resolve('/mcp').toString(),
+        authType: McpAuthType.oauth,
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{},
+    );
+
+    final McpOAuthFlow flow = await service.begin(
+      serverId,
+      Uri.parse('http://127.0.0.1:7331/oauth/callback'),
+    );
+
+    final Uri authorizationUrl = Uri.parse(flow.authorizationUrl);
+    expect(
+      '${authorizationUrl.scheme}://${authorizationUrl.authority}'
+      '${authorizationUrl.path}',
+      base.resolve('/auth0-proxy/authorize').toString(),
+    );
+    expect(
+      authorizationUrl.queryParameters['client_id'],
+      'dynamic-client-id',
+    );
+    expect(
+      authorizationUrl.queryParameters['resource'],
+      base.resolve('/mcp').toString(),
+    );
+    final StoredMcpOAuth oauth = store.getMcpOAuth(serverId)!;
+    expect(oauth.status, McpOAuthStatus.authorizing);
+    expect(
+      oauth.tokenEndpoint,
+      base.resolve('/auth0-tenant/oauth/token').toString(),
+    );
+  });
+
   test('identical OAuth refresh failures notify only once', () async {
     final Directory tempDir = await Directory.systemTemp.createTemp(
       'mcp_oauth_service_test',
