@@ -2,14 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../scope.dart';
 import '../../oauth/localhost_oauth_callback.dart';
 import '../../state/mcp_store.dart';
-
-Future<bool> _launchExternal(Uri uri) =>
-    launchUrl(uri, mode: LaunchMode.externalApplication);
+import '../chat/external_link_launcher.dart';
 
 /// Daemon-scoped settings for MCP servers injected into ACP sessions.
 class McpSettingsPage extends StatefulWidget {
@@ -17,7 +14,7 @@ class McpSettingsPage extends StatefulWidget {
     super.key,
     required this.daemonId,
     required this.daemonName,
-    this.launchExternal = _launchExternal,
+    this.launchExternal = launchExternalLink,
     this.startLocalhostCallback = startLocalhostOAuthCallback,
   });
 
