@@ -1182,6 +1182,9 @@ class SessionEngine {
   Future<Session> rename(String sessionId, String title) =>
       _updateSession(sessionId, (session) => _withTitle(session, title));
 
+  Future<Session> pin(String sessionId, bool pinned) =>
+      _updateSession(sessionId, (session) => _withPinned(session, pinned));
+
   Future<Session> archive(String sessionId, bool archived) =>
       _updateSession(sessionId, (session) => _withArchived(session, archived));
 
@@ -2093,11 +2096,38 @@ class SessionEngine {
           : session.completionRevision,
       done: completed ? true : (status == SessionStatus.idle && session.done),
       archived: session.archived,
+      pinned: session.pinned,
       createdAt: session.createdAt,
       lastActivityAt: activity ? now : session.lastActivityAt,
       updatedAt: now,
     );
   }
+
+  Session _withPinned(Session session, bool pinned) => Session(
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    mode: session.mode,
+    model: session.model,
+    models: session.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
+    yolo: session.yolo,
+    completionRevision: session.completionRevision,
+    done: session.done,
+    archived: session.archived,
+    pinned: pinned,
+    createdAt: session.createdAt,
+    lastActivityAt: session.pinned && !pinned
+        ? DateTime.now().toUtc()
+        : session.lastActivityAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withTitle(Session session, String title) => Session(
     id: session.id,
@@ -2117,6 +2147,7 @@ class SessionEngine {
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
+    pinned: session.pinned,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
@@ -2140,6 +2171,7 @@ class SessionEngine {
     completionRevision: session.completionRevision,
     done: archived ? false : session.done,
     archived: archived,
+    pinned: session.pinned,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
@@ -2163,6 +2195,7 @@ class SessionEngine {
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
+    pinned: session.pinned,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
@@ -2186,6 +2219,7 @@ class SessionEngine {
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
+    pinned: session.pinned,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
@@ -2210,6 +2244,7 @@ class SessionEngine {
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
+        pinned: session.pinned,
         createdAt: session.createdAt,
         lastActivityAt: session.lastActivityAt,
         updatedAt: DateTime.now().toUtc(),
@@ -2237,6 +2272,7 @@ class SessionEngine {
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
+        pinned: session.pinned,
         createdAt: session.createdAt,
         lastActivityAt: session.lastActivityAt,
         updatedAt: DateTime.now().toUtc(),
@@ -2260,6 +2296,7 @@ class SessionEngine {
     completionRevision: session.completionRevision,
     done: done,
     archived: session.archived,
+    pinned: session.pinned,
     createdAt: session.createdAt,
     lastActivityAt: session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),

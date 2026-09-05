@@ -73,6 +73,37 @@ Session testSession({
 );
 
 void main() {
+  testWidgets('session menu pins and unpins a session', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+    final Finder row = find.byType(SessionRow).last;
+    final String sessionId = tester.widget<SessionRow>(row).session.id;
+    await tester.tap(
+      find.descendant(of: row, matching: find.byTooltip('Session actions')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pin'));
+    await tester.pumpAndSettle();
+    expect(app.sessions.byId(sessionId)!.pinned, isTrue);
+    expect(find.byTooltip('Pinned'), findsOneWidget);
+    final Finder pinnedRow = find.byKey(ValueKey<String>('session-$sessionId'));
+    await tester.tap(
+      find.descendant(
+        of: pinnedRow,
+        matching: find.byTooltip('Session actions'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unpin'));
+    await tester.pumpAndSettle();
+    expect(app.sessions.byId(sessionId)!.pinned, isFalse);
+    expect(find.byTooltip('Pinned'), findsNothing);
+  });
+
   testWidgets('empty state before any daemon is selected', (
     WidgetTester tester,
   ) async {
@@ -280,6 +311,13 @@ void main() {
     addTearDown(app.dispose);
     final DateTime now = DateTime(2026, 8, 21, 12);
     final List<Session> sessions = <Session>[
+      Session.fromJson(
+        testSession(
+          id: 'pinned',
+          title: 'Old pinned session',
+          lastActivityAt: DateTime(2020),
+        ).toJson()..['pinned'] = true,
+      ),
       testSession(
         id: 'today',
         title: 'Today session',
@@ -309,6 +347,11 @@ void main() {
       ),
     );
 
+    expect(find.byTooltip('Pinned'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Old pinned session')).dy,
+      lessThan(tester.getTopLeft(find.text('Today session')).dy),
+    );
     expect(find.text('Previous days'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Today session')).dy,

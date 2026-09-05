@@ -303,6 +303,33 @@ void main() {
       },
     );
 
+    test(
+      'pins sort first and unpin returns an old session to recent activity',
+      () async {
+        final String projectId = (await fake.listProjects()).single.id;
+        await app.sessions.refresh('fake', projectId: projectId);
+        final Session old = app.sessions.sessionsFor(projectId).last;
+        await app.sessions.pin('fake', old.id, true);
+        final Session newest = await app.sessions.create(
+          'fake',
+          projectId: projectId,
+          providerId: 'omp',
+          title: 'Newest',
+        );
+        expect(app.sessions.sessionsFor(projectId).first.id, old.id);
+        expect(app.sessions.recentSessions().first.session.id, old.id);
+        await app.sessions.rename('fake', old.id, 'Still pinned');
+        await app.sessions.refresh('fake');
+        expect(app.sessions.sessionsFor(projectId).first.pinned, isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+        await app.sessions.pin('fake', old.id, false);
+        final Session unpinned = app.sessions.sessionsFor(projectId).first;
+        expect(unpinned.id, old.id);
+        expect(unpinned.pinned, isFalse);
+        expect(unpinned.lastActivityAt.isAfter(newest.lastActivityAt), isTrue);
+      },
+    );
+
     test('orders newly created sessions before older sessions', () async {
       final String projectId = (await fake.listProjects()).single.id;
       await app.sessions.refresh('fake', projectId: projectId);

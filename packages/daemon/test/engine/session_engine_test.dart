@@ -811,6 +811,46 @@ void main() {
     expect(changes.last.status, SessionStatus.idle);
   });
 
+  test(
+    'pin persists across metadata and turns; unpin refreshes activity',
+    () async {
+      final Session created = await engine.createSession(
+        projectId: 'p1',
+        providerId: 'fake',
+      );
+      final Session pinned = await engine.pin(created.id, true);
+      expect(pinned.pinned, isTrue);
+      expect(
+        pinned.lastActivityAt.millisecondsSinceEpoch,
+        created.lastActivityAt.millisecondsSinceEpoch,
+      );
+      expect(store.getSession(created.id)!.pinned, isTrue);
+      await engine.rename(created.id, 'Pinned session');
+      await engine.sendMessage(created.id, 'weird');
+      await waitFor(() => store.getSession(created.id)!.done);
+      final Session completed = store.getSession(created.id)!;
+      expect(completed.pinned, isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      final Session unpinned = await engine.pin(created.id, false);
+      expect(unpinned.pinned, isFalse);
+      expect(unpinned.lastActivityAt.isAfter(completed.lastActivityAt), isTrue);
+      expect(unpinned.done, isTrue);
+      expect(unpinned.completionRevision, completed.completionRevision);
+      expect(store.getSession(created.id)!.pinned, isFalse);
+      final Session repeated = await engine.pin(created.id, false);
+      expect(
+        repeated.lastActivityAt.millisecondsSinceEpoch,
+        unpinned.lastActivityAt.millisecondsSinceEpoch,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(changes.last.pinned, isFalse);
+      await expectLater(
+        engine.pin('missing', true),
+        throwsA(isA<DaemonError>()),
+      );
+    },
+  );
+
   test('turn start and completion advance last activity', () async {
     final Session created = await engine.createSession(
       projectId: 'p1',

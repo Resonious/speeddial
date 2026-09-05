@@ -1003,9 +1003,44 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
+      ),
+    );
+    return session;
+  }
+
+  @override
+  Future<Session> pinSession(String sessionId, bool pinned) async {
+    _ensureSeeded();
+    final Session session = _updateSession(
+      sessionId,
+      (Session s) => Session(
+        id: s.id,
+        projectId: s.projectId,
+        providerId: s.providerId,
+        title: s.title,
+        status: s.status,
+        mode: s.mode,
+        model: s.model,
+        models: s.models,
+        cwd: s.cwd,
+        baseBranch: s.baseBranch,
+        thinkingLevel: s.thinkingLevel,
+        thinkingLevels: s.thinkingLevels,
+        sandboxMode: s.sandboxMode,
+        yolo: s.yolo,
+        completionRevision: s.completionRevision,
+        done: s.done,
+        archived: s.archived,
+        pinned: pinned,
+        createdAt: s.createdAt,
+        lastActivityAt: s.pinned && !pinned
+            ? DateTime.now().toUtc()
+            : s.lastActivityAt,
+        updatedAt: DateTime.now().toUtc(),
       ),
     );
     return session;
@@ -1034,6 +1069,7 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: archived ? false : s.done,
         archived: archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
@@ -1073,6 +1109,7 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: false,
         archived: s.archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
@@ -1110,6 +1147,7 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
@@ -1149,6 +1187,7 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
@@ -1189,6 +1228,7 @@ class FakeDaemonClient implements DaemonClient {
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
+        pinned: s.pinned,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         updatedAt: s.updatedAt,
@@ -1805,6 +1845,7 @@ class FakeDaemonClient implements DaemonClient {
       completionRevision: current.completionRevision,
       done: current.done,
       archived: current.archived,
+      pinned: current.pinned,
       createdAt: current.createdAt,
       lastActivityAt: current.lastActivityAt,
       updatedAt: now,
@@ -1858,6 +1899,7 @@ class FakeDaemonClient implements DaemonClient {
           : current.completionRevision,
       done: completed ? true : (status == SessionStatus.idle && current.done),
       archived: current.archived,
+      pinned: current.pinned,
       createdAt: current.createdAt,
       lastActivityAt: activity ? now : current.lastActivityAt,
       updatedAt: now,

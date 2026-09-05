@@ -79,7 +79,7 @@ class SessionsStore extends StoreBase {
 
   Object? _lastError;
 
-  /// Most recent background completion-acknowledgement failure.
+  /// Most recent pin or background completion-acknowledgement failure.
   Object? get lastError => _lastError;
 
   /// One `sessionUpdates`/`sessionRemovals` subscription per daemon, alive
@@ -286,6 +286,20 @@ class SessionsStore extends StoreBase {
       daemonId,
       await _clientFor(daemonId).renameSession(sessionId, title),
     );
+  }
+
+  Future<void> pin(String daemonId, String sessionId, bool pinned) async {
+    _ensureDaemonSubscriptions(daemonId);
+    try {
+      _replace(
+        daemonId,
+        await _clientFor(daemonId).pinSession(sessionId, pinned),
+      );
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> archive(String daemonId, String sessionId, bool archived) async {
@@ -517,6 +531,7 @@ class SessionsStore extends StoreBase {
   }
 
   static int _compareActivity(Session a, Session b) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
     final int activity = b.lastActivityAt.compareTo(a.lastActivityAt);
     if (activity != 0) return activity;
     final int created = b.createdAt.compareTo(a.createdAt);

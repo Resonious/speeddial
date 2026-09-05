@@ -514,6 +514,7 @@ void main() {
       isNull,
       reason: 'legacy rows gain no provider-managed sandbox mode',
     );
+    expect(migrated.pinned, isFalse);
     expect(migrated.yolo, isFalse, reason: 'legacy rows default to yolo off');
     expect(
       migrated.completionRevision,
@@ -622,6 +623,17 @@ void main() {
     store.dispose();
     store = openStore(tempDir);
     expect(store.providerSessionIdOf('s1'), 'provider-2');
+  });
+
+  test('pin survives database reopen', () {
+    store.insertProject(project());
+    store.insertSession(
+      Session.fromJson(session(id: 's1').toJson()..['pinned'] = true),
+    );
+    store.dispose();
+    store = openStore(tempDir);
+    expect(store.getSession('s1')!.pinned, isTrue);
+    expect(store.listSessions().single.pinned, isTrue);
   });
 
   test('removeProject archives its sessions and removes the project', () {

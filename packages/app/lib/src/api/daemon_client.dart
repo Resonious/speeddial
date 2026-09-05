@@ -163,6 +163,7 @@ abstract class DaemonClient {
   Future<void> cancelSession(String sessionId);
 
   Future<Session> renameSession(String sessionId, String title);
+  Future<Session> pinSession(String sessionId, bool pinned);
   Future<Session> archiveSession(String sessionId, bool archived);
 
   /// Clears an observed completed turn if [completionRevision] still

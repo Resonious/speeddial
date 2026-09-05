@@ -749,6 +749,28 @@ void main() {
           isFalse,
         );
 
+        for (final bool pinned in <bool>[true, false]) {
+          final result = j(
+            await client.peer.call('sessions.pin', <String, Object?>{
+              'sessionId': session.id,
+              'pinned': pinned,
+            }),
+          );
+          expect(
+            Session.fromJson(
+              (result['session']! as Map).cast<String, Object?>(),
+            ).pinned,
+            pinned,
+          );
+        }
+        await expectLater(
+          client.peer.call('sessions.pin', <String, Object?>{
+            'sessionId': session.id,
+            'pinned': 'yes',
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+
         // Metadata changes persist and broadcast session.updated.
         final renamed = j(
           await client.peer.call('sessions.rename', <String, Object?>{

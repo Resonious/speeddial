@@ -875,6 +875,15 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<Session> pinSession(String sessionId, bool pinned) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.pin',
+      <String, Object?>{'sessionId': sessionId, 'pinned': pinned},
+    );
+    return Session.fromJson(_resultMap(_resultField(result, 'session')));
+  }
+
+  @override
   Future<Session> archiveSession(String sessionId, bool archived) async {
     final Object? result = await _requirePeer().call(
       'sessions.archive',

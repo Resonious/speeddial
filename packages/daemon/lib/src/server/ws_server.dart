@@ -67,6 +67,7 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.cancel',
   'sessions.rename',
   'sessions.archive',
+  'sessions.pin',
   'sessions.acknowledgeCompletion',
   'sessions.delete',
   'sessions.setMode',
@@ -517,6 +518,7 @@ class SpeedDialServer {
       'sessions.cancel' => _sessionsCancel(params),
       'sessions.rename' => _sessionsRename(params),
       'sessions.archive' => _sessionsArchive(params),
+      'sessions.pin' => _sessionsPin(params),
       'sessions.acknowledgeCompletion' => _sessionsAcknowledgeCompletion(
         params,
       ),
@@ -1447,6 +1449,19 @@ class SpeedDialServer {
     final sessionId = _requiredString(params, 'sessionId');
     final title = _requiredString(params, 'title');
     final session = await _engine.rename(sessionId, title);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsPin(Map<String, Object?> params) async {
+    final sessionId = _requiredString(params, 'sessionId');
+    final pinned = params['pinned'];
+    if (pinned is! bool) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: pinned',
+      );
+    }
+    final session = await _engine.pin(sessionId, pinned);
     return <String, Object?>{'session': session.toJson()};
   }
 

@@ -218,6 +218,7 @@ void main() {
         0,
         reason: 'completionRevision is absent on older daemons',
       );
+      expect(session.pinned, isFalse);
       expect(session.done, isFalse, reason: 'done is absent on older daemons');
       expect(
         session.sandboxMode,
@@ -256,6 +257,7 @@ void main() {
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
+        pinned: true,
         completionRevision: 7,
         done: true,
         archived: true,
@@ -278,6 +280,7 @@ void main() {
       ]);
       expect(decoded.sandboxMode, SessionSandboxMode.unrestricted);
       expect(decoded.yolo, isTrue);
+      expect(decoded.pinned, isTrue);
       expect(decoded.completionRevision, 7);
       expect(decoded.done, isTrue);
       expect(decoded.archived, isTrue);

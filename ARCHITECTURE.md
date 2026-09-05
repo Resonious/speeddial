@@ -248,11 +248,11 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              chat flexible, right 360, both collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
 lib/src/ui/left/             daemon/project/session rail: connection status dot, toggleable
-                             project groups or cross-project activity-sorted session list,
+                             project groups or cross-project session list (pinned first, then activity),
                              session rows (title, status chip, provider badge),
                              new-session sheet (provider, worktree branch, and yolo —
                              model/thinking are picked in the
-                             composer on the live session), rename/archive/delete menus
+                             composer on the live session), pin/unpin/rename/archive/delete menus
 lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              harness/version list with update actions, write-only
                              daemon environment editor, and the built-in daemon's

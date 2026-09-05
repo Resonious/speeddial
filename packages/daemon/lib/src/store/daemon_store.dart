@@ -171,6 +171,11 @@ class DaemonStore {
         'DEFAULT 0',
       );
     }
+    if (!sessionColumns.contains('pinned')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0',
+      );
+    }
     if (!sessionColumns.contains('done')) {
       _db.execute(
         'ALTER TABLE sessions ADD COLUMN done INTEGER NOT NULL DEFAULT 0',
@@ -790,9 +795,9 @@ class DaemonStore {
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
       'thinking_levels, sandbox_mode, yolo, completion_revision, done, '
-      'archived, created_at, '
+      'archived, pinned, created_at, '
       'last_activity_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -811,6 +816,7 @@ class DaemonStore {
         session.completionRevision,
         session.done ? 1 : 0,
         session.archived ? 1 : 0,
+        session.pinned ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.lastActivityAt),
         _ts(session.updatedAt),
@@ -827,7 +833,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, completion_revision, done, archived, created_at, '
+      'yolo, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
@@ -841,7 +847,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, completion_revision, done, archived, created_at, '
+      'yolo, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
@@ -855,7 +861,7 @@ class DaemonStore {
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
       'thinking_level = ?, thinking_levels = ?, sandbox_mode = ?, '
-      'yolo = ?, completion_revision = ?, done = ?, archived = ?, '
+      'yolo = ?, completion_revision = ?, done = ?, archived = ?, pinned = ?, '
       'created_at = ?, last_activity_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
@@ -874,6 +880,7 @@ class DaemonStore {
         session.completionRevision,
         session.done ? 1 : 0,
         session.archived ? 1 : 0,
+        session.pinned ? 1 : 0,
         _ts(session.createdAt),
         _ts(session.lastActivityAt),
         _ts(session.updatedAt),
@@ -1256,6 +1263,7 @@ class DaemonStore {
     yolo: (row['yolo'] as int? ?? 0) != 0,
     completionRevision: row['completion_revision'] as int? ?? 0,
     done: (row['done'] as int? ?? 0) != 0,
+    pinned: (row['pinned'] as int) != 0,
     archived: (row['archived'] as int) != 0,
     createdAt: _fromTs(row['created_at'] as int),
     lastActivityAt: _fromTs(

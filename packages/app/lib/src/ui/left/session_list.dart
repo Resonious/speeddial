@@ -204,6 +204,17 @@ class SessionRow extends StatelessWidget {
     await data.sessions.rename(daemonId, session.id, title);
   }
 
+  Future<void> _pin(BuildContext context, AppData data) async {
+    try {
+      await data.sessions.pin(daemonId, session.id, !session.pinned);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not update pin: $error')));
+    }
+  }
+
   Future<void> _archive(BuildContext context, AppData data) async {
     await data.sessions.archive(daemonId, session.id, true);
   }
@@ -311,6 +322,11 @@ class SessionRow extends StatelessWidget {
                 fontSize: 10,
               ),
             ),
+          if (session.pinned)
+            const Tooltip(
+              message: 'Pinned',
+              child: Icon(Icons.push_pin, size: 12),
+            ),
           ProviderBadge(providerId: session.providerId),
           Text(
             session.mode.name,
@@ -328,6 +344,8 @@ class SessionRow extends StatelessWidget {
         icon: const Icon(Icons.more_vert, size: 18),
         onSelected: (_SessionAction action) {
           switch (action) {
+            case _SessionAction.pin:
+              _pin(context, data);
             case _SessionAction.rename:
               _rename(context, data);
             case _SessionAction.archive:
@@ -336,21 +354,24 @@ class SessionRow extends StatelessWidget {
               _delete(context, data);
           }
         },
-        itemBuilder: (BuildContext context) =>
-            const <PopupMenuEntry<_SessionAction>>[
-              PopupMenuItem<_SessionAction>(
-                value: _SessionAction.rename,
-                child: Text('Rename'),
-              ),
-              PopupMenuItem<_SessionAction>(
-                value: _SessionAction.archive,
-                child: Text('Archive'),
-              ),
-              PopupMenuItem<_SessionAction>(
-                value: _SessionAction.delete,
-                child: Text('Delete'),
-              ),
-            ],
+        itemBuilder: (BuildContext context) => <PopupMenuEntry<_SessionAction>>[
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.pin,
+            child: Text(session.pinned ? 'Unpin' : 'Pin'),
+          ),
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.rename,
+            child: Text('Rename'),
+          ),
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.archive,
+            child: Text('Archive'),
+          ),
+          PopupMenuItem<_SessionAction>(
+            value: _SessionAction.delete,
+            child: Text('Delete'),
+          ),
+        ],
       ),
       onTap: () {
         data.selection.selectedProjectId = projectId;
@@ -367,7 +388,7 @@ class SessionRow extends StatelessWidget {
   }
 }
 
-enum _SessionAction { rename, archive, delete }
+enum _SessionAction { pin, rename, archive, delete }
 
 /// Pre-filled single-field dialog renaming a session title. Pops with the
 /// trimmed new title, or null when cancelled / left empty.
@@ -463,6 +484,7 @@ class SessionList extends StatelessWidget {
     );
     final int firstPreviousDay = sessions.indexWhere(
       (Session session) =>
+          !session.pinned &&
           session.lastActivityAt.toLocal().isBefore(startOfToday),
     );
     final bool showPreviousDaysDivider = firstPreviousDay > 0;

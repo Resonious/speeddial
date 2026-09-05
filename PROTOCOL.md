@@ -143,9 +143,10 @@ Session = {
   yolo: boolean,              // native no-prompt mode where supported; daemon fallback otherwise
   completionRevision: int,    // increments whenever a turn reaches terminal idle successfully
   done: boolean,              // latest completion has not been acknowledged by a client
+  pinned: boolean,            // defaults to false when absent; pinned sessions sort first
   archived: boolean,
   createdAt: string,
-  lastActivityAt: string,     // last accepted user message or terminal turn outcome
+  lastActivityAt: string,     // last accepted user message, terminal turn outcome, or unpin
   updatedAt: string,
 }
 
@@ -509,6 +510,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   JWT-shaped bearer credential also skips auto-title so secrets do not enter navigation chrome.
 - `sessions.cancel {sessionId: string}` → `{}`
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
+- `sessions.pin {sessionId: string, pinned: boolean}` → `{session: Session}` — persists pin state and broadcasts `session.updated`; changing pinned from true to false refreshes `lastActivityAt`. Clients sort pinned sessions first, then by activity within each group.
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
 - `sessions.acknowledgeCompletion {sessionId: string, completionRevision: int}` →
   `{session: Session}` — clears `done` only when the supplied non-negative revision still matches

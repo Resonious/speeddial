@@ -639,6 +639,7 @@ class Session {
     required this.yolo,
     this.completionRevision = 0,
     this.done = false,
+    this.pinned = false,
     required this.archived,
     required this.createdAt,
     DateTime? lastActivityAt,
@@ -691,6 +692,7 @@ class Session {
   /// client. This state is persisted and owned by the daemon.
   final bool done;
 
+  final bool pinned;
   final bool archived;
   final DateTime createdAt;
   final DateTime lastActivityAt;
@@ -727,6 +729,7 @@ class Session {
     // Absent on pre-daemon-owned-completion daemons.
     completionRevision: json['completionRevision'] as int? ?? 0,
     done: json['done'] as bool? ?? false,
+    pinned: json['pinned'] as bool? ?? false,
     archived: json['archived']! as bool,
     createdAt: DateTime.parse(json['createdAt']! as String).toUtc(),
     lastActivityAt: DateTime.parse(
@@ -752,6 +755,7 @@ class Session {
     'yolo': yolo,
     'completionRevision': completionRevision,
     'done': done,
+    'pinned': pinned,
     'archived': archived,
     'createdAt': createdAt.toUtc().toIso8601String(),
     'lastActivityAt': lastActivityAt.toUtc().toIso8601String(),
