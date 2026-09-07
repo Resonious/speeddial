@@ -458,7 +458,8 @@ tokens before session creation/resume, and checks them periodically while runnin
   base branch, mode, model, thinking level, sandbox mode, and yolo setting; it is titled
   `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
-  The daemon starts a fresh provider session and supplies the copied user/agent conversation as
+  Creation copies history locally without starting an agent. On the first send, the daemon
+  starts a fresh provider session and supplies the copied user/agent conversation as
   inherited context with the fork's first new turn. This provider-independent handoff makes
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
   The source session and its agent remain unchanged.

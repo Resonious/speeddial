@@ -140,7 +140,7 @@ abstract class DaemonClient {
   });
 
   /// Forks [sessionId] into a new session whose history ends at the message
-  /// event identified by [seq].
+  /// event identified by [seq]. The provider starts on the first send.
   Future<Session> forkSession(String sessionId, int seq);
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].

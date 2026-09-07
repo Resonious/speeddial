@@ -912,8 +912,28 @@ class DaemonStore {
     }
   }
 
+  /// Persists a fork and its copied history atomically, with one disk commit.
+  /// [copyHistory] must be synchronous and must not start another transaction.
+  void insertFork(
+    Session session,
+    int throughSeq,
+    void Function() copyHistory,
+  ) {
+    _db.execute('BEGIN');
+    try {
+      insertSession(session);
+      copyHistory();
+      setForkContextSeq(session.id, throughSeq);
+      _db.execute('COMMIT');
+    } on Object {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// The stored provider-side session id for [sessionId]; null for unknown
-  /// sessions and for sessions persisted before resume support existed.
+  /// sessions, forks awaiting their first send, and sessions persisted before
+  /// resume support existed.
   String? providerSessionIdOf(String sessionId) {
     final rows = _db.select(
       'SELECT acp_session_id FROM sessions WHERE id = ?',

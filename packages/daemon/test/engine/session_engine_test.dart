@@ -231,59 +231,109 @@ void main() {
     },
   );
 
-  test('eventless Codex sessions start a replacement after restart', () async {
-    await eventsSub.cancel();
-    await changesSub.cancel();
-    await removalsSub.cancel();
-    await engine.dispose();
-    final File startReport = File(p.join(tempDir.path, 'codex-start.json'));
-    final File resumeReport = File(p.join(tempDir.path, 'codex-resume.json'));
-    store.updateDaemonEnvironment(
-      set: <String, String>{
-        'FAKE_CODEX_START_REPORT': startReport.path,
-        'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
-      },
-    );
-    engine = SessionEngine(store: store, providers: fakeCodexProviders());
-    configureTestMcp(engine);
-    await engine.restore();
-    eventsSub = engine.events.listen(events.add);
-    changesSub = engine.sessionChanges.listen(changes.add);
-    removalsSub = engine.sessionRemovals.listen(removals.add);
+  for (final String scenario in <String>['empty', 'fork', 'legacy fork']) {
+    test('Codex $scenario starts a replacement after restart', () async {
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      final File startReport = File(p.join(tempDir.path, 'codex-start.json'));
+      final File resumeReport = File(p.join(tempDir.path, 'codex-resume.json'));
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_CODEX_START_REPORT': startReport.path,
+          'FAKE_CODEX_RESUME_REPORT': resumeReport.path,
+        },
+      );
+      engine = SessionEngine(store: store, providers: fakeCodexProviders());
+      configureTestMcp(engine);
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
 
-    final Session session = await engine.createSession(
-      projectId: project.id,
-      providerId: 'fakeCodex',
-      yolo: true,
-    );
-    expect(startReport.existsSync(), isTrue);
-    startReport.deleteSync();
+      Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeCodex',
+        yolo: true,
+      );
+      expect(startReport.existsSync(), isTrue);
+      startReport.deleteSync();
+      if (scenario != 'empty') {
+        store.appendEvent(
+          session.id,
+          1,
+          const UserMessageEvent(text: 'Inherited'),
+        );
+        session = await engine.forkSession(
+          sourceSessionId: session.id,
+          throughSeq: 1,
+        );
+        expect(
+          startReport.existsSync(),
+          isFalse,
+          reason: 'fork must not spawn a provider',
+        );
+        expect(store.providerSessionIdOf(session.id), isNull);
+        if (scenario == 'legacy fork') {
+          // Earlier versions started an empty thread before copying history.
+          store.setProviderSessionId(session.id, 'vanished-empty-thread');
+        }
+      }
 
-    await eventsSub.cancel();
-    await changesSub.cancel();
-    await removalsSub.cancel();
-    await engine.dispose();
-    engine = SessionEngine(store: store, providers: fakeCodexProviders());
-    configureTestMcp(engine);
-    await engine.restore();
-    eventsSub = engine.events.listen(events.add);
-    changesSub = engine.sessionChanges.listen(changes.add);
-    removalsSub = engine.sessionRemovals.listen(removals.add);
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeCodexProviders());
+      configureTestMcp(engine);
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
 
-    await engine.sendMessage(session.id, 'First turn after restart');
-    await waitFor(
-      () => events.any(
-        (tuple) =>
-            tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
-      ),
-    );
-    expect(startReport.existsSync(), isTrue);
-    expect(
-      resumeReport.existsSync(),
-      isFalse,
-      reason: 'an empty Codex rollout cannot be resumed after app-server exits',
-    );
-  });
+      await engine.sendMessage(session.id, 'First turn after restart');
+      await waitFor(
+        () => events.any(
+          (tuple) =>
+              tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+        ),
+      );
+      expect(startReport.existsSync(), isTrue);
+      expect(store.forkContextSeqOf(session.id), isNull);
+      expect(
+        resumeReport.existsSync(),
+        isFalse,
+        reason:
+            'an empty Codex rollout cannot be resumed after app-server exits',
+      );
+      startReport.deleteSync();
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      events.clear();
+      engine = SessionEngine(store: store, providers: fakeCodexProviders());
+      configureTestMcp(engine);
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+      await engine.sendMessage(session.id, 'Continue persisted conversation');
+      await waitFor(
+        () => events.any(
+          (tuple) =>
+              tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+        ),
+      );
+      expect(resumeReport.existsSync(), isTrue);
+      expect(
+        startReport.existsSync(),
+        isFalse,
+        reason: 'completed forks must retain their provider conversation',
+      );
+    });
+  }
 
   test('Codex sessions stream native rich events and attachments', () async {
     await eventsSub.cancel();
@@ -1131,6 +1181,46 @@ void main() {
     },
   );
 
+  test(
+    'fork with a missing attachment rolls back without announcing a session',
+    () async {
+      final Session source = await engine.createSession(
+        projectId: 'p1',
+        providerId: 'fake',
+      );
+      store.appendEvent(
+        source.id,
+        1,
+        const UserMessageEvent(text: 'Copied first'),
+      );
+      store.appendEvent(
+        source.id,
+        2,
+        const UserMessageEvent(
+          text: 'Missing payload',
+          attachments: <Attachment>[
+            Attachment(
+              id: 'missing',
+              name: 'notes.txt',
+              mimeType: 'text/plain',
+              size: 1,
+            ),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final int changeCount = changes.length;
+      final int sessionCount = store.listSessions().length;
+      await expectLater(
+        engine.forkSession(sourceSessionId: source.id, throughSeq: 2),
+        throwsStateError,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(changes, hasLength(changeCount));
+      expect(store.listSessions(), hasLength(sessionCount));
+    },
+  );
+
   test('forkSession copies history and attachments through a message boundary '
       'and hands context to the first new turn', () async {
     final source = await engine.createSession(
@@ -1211,6 +1301,9 @@ void main() {
     expect(fork.mode, source.mode);
     expect(fork.model, source.model);
     expect(fork.yolo, isTrue);
+    expect(store.providerSessionIdOf(fork.id), isNull);
+    expect(fork.models, source.models);
+    expect(fork.thinkingLevel, source.thinkingLevel);
     final List<SessionEvent> copied = store.listEvents(fork.id).events;
     expect(copied.map((SessionEvent e) => e.seq), <int>[1, 2, 3, 4]);
     final UserMessageEvent copiedUser = copied.first as UserMessageEvent;

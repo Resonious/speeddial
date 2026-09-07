@@ -464,6 +464,9 @@ class SessionEngine {
       status: SessionStatus.idle,
       mode: source.mode,
       model: source.model,
+      models: source.models,
+      thinkingLevel: source.thinkingLevel,
+      thinkingLevels: source.thinkingLevels,
       cwd: source.cwd,
       baseBranch: source.baseBranch,
       sandboxMode: source.sandboxMode,
@@ -473,45 +476,15 @@ class SessionEngine {
       lastActivityAt: now,
       updatedAt: now,
     );
-    final Session created = await _createPreparedSession(
-      baseSession,
-      requestedModel: source.model,
-    );
-    try {
-      _copyForkHistory(source.id, created.id, throughSeq);
-      _store.setForkContextSeq(created.id, throughSeq);
-
-      // session/new starts in provider defaults. Preserve the source mode and
-      // thinking selection when the new agent accepts them; these settings
-      // are advisory for the same reason as resume-time reapplication.
-      if (source.mode != SessionMode.build) {
-        try {
-          await setMode(created.id, source.mode);
-        } on Object {
-          // The persisted mode already matches the source.
-        }
-      }
-      final String? thinkingLevel = source.thinkingLevel;
-      if (thinkingLevel != null &&
-          created.thinkingLevels.contains(thinkingLevel)) {
-        try {
-          await setThinkingLevel(created.id, thinkingLevel);
-        } on Object {
-          // Keep the provider-reported default when it rejects the source.
-        }
-      }
-      return _store.getSession(created.id)!;
-    } on Object {
-      // The fork was never announced as created. Tear it down without
-      // publishing a removal notification for an id clients never observed.
-      final _LiveSession? live = _live.remove(created.id);
-      if (live != null) {
-        live.closed = true;
-        await live.client.dispose();
-      }
-      _store.deleteSession(created.id);
-      rethrow;
+    // Copy locally before announcing the fork. Starting an agent here adds
+    // harness/MCP startup latency even when the user never continues it.
+    _store.insertFork(baseSession, throughSeq, () {
+      _copyForkHistory(source.id, baseSession.id, throughSeq);
+    });
+    if (!_sessionChangesController.isClosed) {
+      _sessionChangesController.add(baseSession);
     }
+    return baseSession;
   }
 
   /// Starts the ACP side of an already validated protocol session, adopts its
@@ -987,8 +960,9 @@ class SessionEngine {
 
   /// Respawns the provider transport for a session whose process is gone,
   /// making persisted sessions usable across daemon restarts. Codex removes
-  /// an empty thread's rollout when app-server exits, so an eventless Codex
-  /// session starts a replacement thread instead of resuming the vanished id.
+  /// an empty thread's rollout when app-server exits. Eventless Codex sessions
+  /// and forks with pending inherited context therefore start fresh threads.
+  /// Newly copied forks have no provider id until their first send.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
   /// `DaemonError(kErrConflict)` when the session is closed, predates resume
@@ -1009,7 +983,8 @@ class SessionEngine {
     final String? storedProviderSessionId = _store.providerSessionIdOf(
       sessionId,
     );
-    if (storedProviderSessionId == null) {
+    final bool pendingFork = _store.forkContextSeqOf(sessionId) != null;
+    if (storedProviderSessionId == null && !pendingFork) {
       throw DaemonError(
         kErrConflict,
         'Session "$sessionId" predates resume support (its agent process '
@@ -1023,9 +998,10 @@ class SessionEngine {
         'Provider "${session.providerId}" is not available on this host',
       );
     }
-    final bool replaceEmptyCodexThread =
-        spec.protocol == ProviderProtocol.codex &&
-        !_store.hasSessionEvents(sessionId);
+    final bool startNewThread =
+        storedProviderSessionId == null ||
+        (spec.protocol == ProviderProtocol.codex &&
+            (pendingFork || !_store.hasSessionEvents(sessionId)));
     final AgentClient client = _spawnAgent(session);
     var providerSessionId = storedProviderSessionId;
     final List<AcpConfigOption> configOptions;
@@ -1034,7 +1010,7 @@ class SessionEngine {
       if (info.authMethods.isNotEmpty) {
         await client.authenticate(info.authMethods.first);
       }
-      if (info.agentCapabilities['loadSession'] != true) {
+      if (!startNewThread && info.agentCapabilities['loadSession'] != true) {
         throw DaemonError(
           kErrConflict,
           'Provider "${session.providerId}" cannot resume sessions after a '
@@ -1044,7 +1020,7 @@ class SessionEngine {
       if (info.agentCapabilities['mcpServers'] != false) {
         await _prepareMcpServers?.call();
       }
-      if (replaceEmptyCodexThread) {
+      if (startNewThread) {
         final created = await client.newSession(
           cwd: session.cwd,
           mcpServers: _mcpServersFor(session, info),
@@ -1057,7 +1033,7 @@ class SessionEngine {
         _store.setProviderSessionId(sessionId, providerSessionId);
       } else {
         configOptions = await client.loadSession(
-          sessionId: providerSessionId,
+          sessionId: providerSessionId!,
           cwd: session.cwd,
           sandboxMode: session.sandboxMode,
           mcpServers: _mcpServersFor(session, info),

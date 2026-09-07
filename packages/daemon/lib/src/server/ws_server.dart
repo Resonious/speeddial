@@ -1321,6 +1321,7 @@ class SpeedDialServer {
         'Missing or invalid parameter: seq',
       );
     }
+    // The engine copies history locally; provider startup waits for send.
     final session = await _engine.forkSession(
       sourceSessionId: sessionId,
       throughSeq: rawSeq,
