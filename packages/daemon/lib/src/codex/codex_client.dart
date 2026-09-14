@@ -655,6 +655,11 @@ class CodexClient implements AgentClient {
       }
       configured[name] = <String, Object?>{
         'command': command,
+        // Optional servers still starting when Codex captures a step's tool
+        // catalog are omitted. The daemon bridge must finish discovery before
+        // the model answers, including after thread/resume.
+        'required': true,
+        'startup_timeout_sec': 30,
         if (rawArgs case final List<Object?> args) 'args': args.cast<String>(),
         if (environment.isNotEmpty) 'env': environment,
       };

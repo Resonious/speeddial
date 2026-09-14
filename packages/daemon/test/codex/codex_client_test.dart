@@ -69,20 +69,21 @@ void main() {
       expect(initialized.agentCapabilities['loadSession'], isTrue);
       expect(initialized.agentCapabilities['mcpServers'], isTrue);
 
+      final List<Map<String, Object?>> mcpServers = <Map<String, Object?>>[
+        <String, Object?>{
+          'name': 'speeddial',
+          'command': 'dart',
+          'args': <String>['run', 'mcp.dart'],
+          'env': <Object?>[
+            <String, Object?>{'name': 'TOKEN', 'value': 'secret'},
+          ],
+        },
+      ];
       final created = await client.newSession(
         cwd: Directory.current.path,
         model: 'gpt-test',
         yolo: true,
-        mcpServers: <Map<String, Object?>>[
-          <String, Object?>{
-            'name': 'speeddial',
-            'command': 'dart',
-            'args': <String>['run', 'mcp.dart'],
-            'env': <Object?>[
-              <String, Object?>{'name': 'TOKEN', 'value': 'secret'},
-            ],
-          },
-        ],
+        mcpServers: mcpServers,
       );
       expect(created.sessionId, startsWith('thr_fake_'));
       final AcpConfigOption model = created.configOptions.firstWhere(
@@ -113,6 +114,8 @@ void main() {
       );
       expect(servers['speeddial'], <String, Object?>{
         'command': 'dart',
+        'required': true,
+        'startup_timeout_sec': 30,
         'args': <Object?>['run', 'mcp.dart'],
         'env': <String, Object?>{'TOKEN': 'secret'},
       });
@@ -146,6 +149,7 @@ void main() {
         sessionId: created.sessionId,
         cwd: Directory.current.path,
         yolo: true,
+        mcpServers: mcpServers,
       );
       expect(
         resumedOptions
@@ -156,6 +160,7 @@ void main() {
       final Map<String, Object?> resume = await readJsonMap(resumeReport);
       expect(resume['sandbox'], 'danger-full-access');
       expect(resume['approvalPolicy'], 'never');
+      expect(resume['config'], config);
 
       await resumed.prompt(created.sessionId, textBlocks('resumed yolo turn'));
       final Map<String, Object?> turn = await readJsonMap(turnReport);

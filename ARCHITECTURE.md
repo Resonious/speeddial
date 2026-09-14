@@ -56,7 +56,9 @@ lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. I
                     because SpeedDial worktrees and localhost tooling must stay usable,
                     starts/steers/interrupts turns, applies model and reasoning-effort
                     settings, resolves command and patch approvals, injects MCP server
-                    configuration, and maps native message, reasoning, command, file-change,
+                    configuration as required (30-second startup budget) on both start and
+                    resume so Codex does not omit a pending bridge from the model's tools,
+                    and maps native message, reasoning, command, file-change,
                     MCP, collaboration, web-search, image, plan, review, usage, compaction,
                     and lifecycle notifications into the shared agent update stream.
 lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,

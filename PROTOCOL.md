@@ -366,6 +366,11 @@ warning instead of blocking healthy tools past the agent's bridge startup deadli
 connections are discarded (including those that finish connecting late); a subsequent tool
 listing may retry them. The upstream connections close with their authenticated bridge connection.
 
+Codex receives the daemon bridge with `required: true` and `startup_timeout_sec: 30`
+on both thread creation and resume. Codex must finish bridge startup before capturing the
+model's tool catalog; optional servers that are still starting can be omitted from a step.
+A bridge startup failure fails startup/resume instead of silently proceeding without its tools.
+
 The bridge's MCP initialization instructions describe managed tool discovery under
 `speeddial`, including the qualified naming scheme. Agents must inspect available tools
 (using their harness's tool discovery when needed) before reporting an integration unavailable;
