@@ -1423,6 +1423,7 @@ class SpeedDialServer {
         'Missing or invalid parameter: text',
       );
     }
+    // Provider adapters handle binary uploads, including disk-path fallbacks.
     await _engine.sendMessage(sessionId, text, attachments: attachments);
     return <String, Object?>{};
   }

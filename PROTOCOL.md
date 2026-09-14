@@ -474,8 +474,10 @@ tokens before session creation/resume, and checks them periodically while runnin
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
   may be empty only when `attachments` is non-empty. ACP providers accept text, image, and binary
-  attachments. Codex accepts text, non-text images, and audio; it rejects other binary attachments
-  with `-32602` before persisting the turn. Ante accepts text-like attachments (`text/*`,
+  attachments. Codex accepts text, non-text images, and audio natively; other binary attachments
+  are saved in a private transient directory on the daemon host and passed as text containing
+  the file label, MIME type, and absolute path for the agent to process with its tools.
+  These files remain available across turns until the agent process exits. Ante accepts text-like attachments (`text/*`,
   JSON/XML/YAML, source code, and SVG): the daemon sends their file label and UTF-8 content through
   Ante's `UserInput` operation. For non-text `image/*`, the daemon writes the decoded image to a
   private transient directory and adds an `@` file mention to `UserInput`, invoking Ante's native

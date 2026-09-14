@@ -62,6 +62,11 @@ class CodexClient implements AgentClient {
   final AgentPermissionHandler? _permissionHandler;
   final Duration initTimeout;
 
+  Directory? _attachmentDirectory;
+  Future<Directory>? _attachmentDirectoryFuture;
+  Future<void>? _attachmentCleanupFuture;
+  int _attachmentFileIndex = 0;
+
   Process? _process;
   Future<void>? _startFuture;
   Future<InitializeResult>? _initializedFuture;
@@ -248,7 +253,7 @@ class CodexClient implements AgentClient {
     try {
       final Map<String, Object?> params = <String, Object?>{
         'threadId': sessionId,
-        'input': _inputsFromPromptBlocks(promptBlocks),
+        'input': await _inputsFromPromptBlocks(promptBlocks),
         'cwd': state.cwd,
         if (state.model != null) 'model': state.model,
         if (state.effort != null) 'effort': state.effort,
@@ -333,6 +338,7 @@ class CodexClient implements AgentClient {
       }
     }
     await _closeControllers();
+    await (_attachmentCleanupFuture ??= _removeAttachments());
   }
 
   Future<void> _ensureStarted() => _startFuture ??= _start();
@@ -376,6 +382,7 @@ class CodexClient implements AgentClient {
           );
         }
         await _closeControllers();
+        await (_attachmentCleanupFuture ??= _removeAttachments());
       }),
     );
   }
@@ -487,9 +494,9 @@ class CodexClient implements AgentClient {
     return null;
   }
 
-  List<Map<String, Object?>> _inputsFromPromptBlocks(
+  Future<List<Map<String, Object?>>> _inputsFromPromptBlocks(
     List<Map<String, Object?>> blocks,
-  ) {
+  ) async {
     final List<Map<String, Object?>> inputs = <Map<String, Object?>>[];
     for (final Map<String, Object?> block in blocks) {
       switch (block['type']) {
@@ -540,10 +547,25 @@ class CodexClient implements AgentClient {
               'url': 'data:$mimeType;base64,$blob',
             });
           } else {
-            throw UnsupportedError(
-              'Codex app-server does not accept attachment "$name" '
-              'with MIME type $mimeType',
+            final List<int> bytes = base64Decode(blob);
+            final Directory directory = await (_attachmentDirectoryFuture ??=
+                _createAttachmentDirectory());
+            final String safeName = name.replaceAll(
+              RegExp(r'[^a-zA-Z0-9._-]'),
+              '_',
             );
+            final File file = File(
+              p.join(directory.path, '${++_attachmentFileIndex}-$safeName'),
+            );
+            await file.writeAsBytes(bytes, flush: true);
+            inputs.add(<String, Object?>{
+              'type': 'text',
+              'text':
+                  'Attached file ${jsonEncode(name)} '
+                  '(${jsonEncode(mimeType)}). Saved on disk at:\n'
+                  '${file.absolute.path}\n'
+                  'Use your tools to read or process this file.',
+            });
           }
         default:
           throw FormatException('Unknown Codex prompt block: ${block['type']}');
@@ -553,6 +575,42 @@ class CodexClient implements AgentClient {
       throw const FormatException('Codex turn input must not be empty');
     }
     return inputs;
+  }
+
+  Future<Directory> _createAttachmentDirectory() async {
+    final Directory directory = await Directory.systemTemp.createTemp(
+      'speeddial_codex_attachments_',
+    );
+    try {
+      if (!Platform.isWindows) {
+        final ProcessResult result = await Process.run('chmod', <String>[
+          '700',
+          directory.path,
+        ]);
+        if (result.exitCode != 0) {
+          throw FileSystemException(
+            'Could not restrict Codex attachment directory permissions',
+            directory.path,
+          );
+        }
+      }
+      if (_disposed || _exited) {
+        throw StateError('Codex client is not running');
+      }
+      _attachmentDirectory = directory;
+      return directory;
+    } on Object {
+      await directory.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  Future<void> _removeAttachments() async {
+    final Directory? directory = _attachmentDirectory;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+    _attachmentDirectory = null;
   }
 
   Map<String, Object?> _configForMcpServers(

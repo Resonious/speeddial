@@ -478,25 +478,38 @@ void main() {
         .last;
     expect(audioMessage.attachments.single.mimeType, 'audio/wav');
 
-    await expectLater(
-      engine.sendMessage(
-        session.id,
-        'Unsupported.',
-        attachments: const <OutgoingAttachment>[
-          OutgoingAttachment(
-            name: 'archive.zip',
-            mimeType: 'application/zip',
-            data: 'aQ==',
-          ),
-        ],
-      ),
-      throwsA(
-        isA<DaemonError>().having(
-          (DaemonError error) => error.message,
-          'message',
-          contains('text, image, or audio'),
+    final Future<PermissionRequestEvent> videoPermissionFuture =
+        waitForPermissionRequest();
+    await engine.sendMessage(
+      session.id,
+      '',
+      attachments: const <OutgoingAttachment>[
+        OutgoingAttachment(
+          name: 'clip.mp4',
+          mimeType: 'video/mp4',
+          data: 'aQ==',
         ),
-      ),
+      ],
+    );
+    final PermissionRequestEvent videoPermission = await videoPermissionFuture
+        .timeout(const Duration(seconds: 5));
+    await engine.respondPermission(
+      session.id,
+      videoPermission.request.requestId,
+      'accept',
+    );
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    final UserMessageEvent videoMessage = events
+        .where((tuple) => tuple.sessionId == session.id)
+        .map((tuple) => tuple.event)
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(videoMessage.attachments.single.mimeType, 'video/mp4');
+    expect(
+      store.getAttachment(session.id, videoMessage.attachments.single.id)?.data,
+      'aQ==',
     );
 
     final int errorsBefore = events

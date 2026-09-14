@@ -458,6 +458,52 @@ void main() {
     },
   );
 
+  test(
+    'saves binary attachments with safe unique paths until disposal',
+    () async {
+      final Directory temp = await Directory.systemTemp.createTemp(
+        'codex_files_',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final File report = File(p.join(temp.path, 'input.json'));
+      final CodexClient client = spawnCodex(
+        environment: <String, String>{'FAKE_CODEX_INPUT_REPORT': report.path},
+        requestPermission: (_, _, _, _) async => 'accept',
+      );
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+      final files = <File>[];
+      for (final String mimeType in <String>['video/mp4', 'application/zip']) {
+        await client.prompt(created.sessionId, <Map<String, Object?>>[
+          <String, Object?>{
+            'type': 'resource',
+            'resource': <String, Object?>{
+              'uri': 'speeddial-attachment:///id/..%2Fclip.mp4',
+              'mimeType': mimeType,
+              'blob': 'AAEC/w==',
+            },
+          },
+        ]);
+        final List<dynamic> inputs =
+            jsonDecode(await report.readAsString()) as List;
+        expect(inputs, hasLength(1));
+        expect(inputs.single['type'], 'text');
+        final String text = inputs.single['text'] as String;
+        expect(text, contains(mimeType));
+        final File file = File(text.split('\n')[1]);
+        expect(p.basename(file.path), endsWith('.._clip.mp4'));
+        expect(await file.readAsBytes(), <int>[0, 1, 2, 255]);
+        files.add(file);
+      }
+      expect(files[0].path, isNot(files[1].path));
+      expect(await files[0].exists(), isTrue);
+      await client.dispose();
+      for (final File file in files) {
+        expect(await file.exists(), isFalse);
+      }
+    },
+  );
+
   test('cancels while turn/start is still in flight', () async {
     final CodexClient client = spawnCodex();
     addTearDown(client.dispose);

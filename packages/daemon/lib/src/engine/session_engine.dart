@@ -789,43 +789,6 @@ class SessionEngine {
       );
     }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
-    final ProviderSpec provider = _providers.byId(live.session.providerId)!;
-    // Ante accepts every attachment type: text is inlined into its text-only
-    // `UserInput`, while images and other binary files are materialized to a
-    // transient directory and referenced by path. Codex has native
-    // text/image/audio input items and rejects everything else.
-    if (provider.protocol == ProviderProtocol.codex) {
-      bool supports(String mimeType) =>
-          isTextMimeType(mimeType) ||
-          isImageMimeType(mimeType) ||
-          mimeType.startsWith('audio/');
-      String? unsupportedName;
-      String? unsupportedMimeType;
-      for (final OutgoingAttachment attachment in attachments) {
-        if (!supports(attachment.mimeType)) {
-          unsupportedName = attachment.name;
-          unsupportedMimeType = attachment.mimeType;
-          break;
-        }
-      }
-      final List<_PreparedAttachment>? inherited = forkContext?.attachments;
-      if (unsupportedMimeType == null && inherited != null) {
-        for (final _PreparedAttachment attachment in inherited) {
-          if (!supports(attachment.data.mimeType)) {
-            unsupportedName = attachment.data.name;
-            unsupportedMimeType = attachment.data.mimeType;
-            break;
-          }
-        }
-      }
-      if (unsupportedMimeType != null) {
-        throw DaemonError(
-          _kErrInvalidParams,
-          'Codex app-server accepts only text, image, or audio attachments; '
-          '"$unsupportedName" has MIME type $unsupportedMimeType',
-        );
-      }
-    }
     // Decode and persist each attachment before the turn starts so the
     // metadata rides on the user message event and the payload is fetchable
     // via `attachments.read`. The wire handler has already validated the

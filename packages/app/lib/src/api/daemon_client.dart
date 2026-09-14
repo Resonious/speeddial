@@ -145,6 +145,8 @@ abstract class DaemonClient {
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].
   ///
+  /// Binary files are accepted; providers without native support receive a
+  /// daemon-local file path so their tools can process the upload.
   /// [attachments] carries the files (base64 payloads) to attach to the
   /// message; `text` may be empty when at least one attachment is present.
   /// The daemon broadcasts the user's message (with attachment metadata) as

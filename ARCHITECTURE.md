@@ -147,10 +147,10 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     file reads are deduplicated into attachment-backed tool content. MCP
                     injection supports ACP, Codex, and Ante. ACP
                     receives structured attachments; Codex receives native text, image,
-                    and audio inputs; Ante inlines UTF-8 text attachments and
+                    and audio inputs and saves other binary files to private transient disk
+                    paths referenced in text input; Ante inlines UTF-8 text attachments and
                     materializes images as transient `@` file mentions for Ante's native
-                    context resolver. Unsupported binary attachments are rejected before
-                    turn start. Tool progress persists lifecycle metadata rather than
+                    context resolver and saves other binary files as tool-readable paths. Tool progress persists lifecycle metadata rather than
                     repeated accumulated output; terminal tool content/raw payloads are
                     bounded before they enter history.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
