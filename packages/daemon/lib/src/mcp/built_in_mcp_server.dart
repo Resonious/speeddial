@@ -118,7 +118,20 @@ class BuiltInMcpServer {
         'title': 'SpeedDial',
         'version': '0.1.0',
       },
-      'instructions': 'Search other SpeedDial projects and sessions, browse session transcripts, archive or revive other sessions, or display an image in the user timeline.',
+      'instructions':
+          'SpeedDial exposes tools from enabled MCP servers through this single '
+          'speeddial server, alongside project/session search, transcript browsing, '
+          'session archiving, and image display. Managed tools are named '
+          '<server-name>__<tool-name> (for example, Linear__save_issue when a '
+          'Linear server provides that tool); their descriptions identify the '
+          'source server. Before reporting that an integration is unavailable, '
+          'inspect the available speeddial tools and use tool discovery/search '
+          'if your harness defers tool loading. Search by the integration name '
+          'and requested operation. MCP resource listings are not tool listings, '
+          'and managed servers do not appear as separate MCP connections. '
+          'Credentials stay in the SpeedDial daemon, so missing environment '
+          'variables or local credentials do not mean an integration is '
+          'unavailable. Use the exposed tools; report any actual tool error.',
     };
   }
 

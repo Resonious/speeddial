@@ -27,17 +27,20 @@ class McpProxySession {
   McpProxySession({
     required List<StoredMcpServer> servers,
     required this.cwd,
+    this.discoveryTimeout = const Duration(seconds: 15),
     McpUpstreamConnector? connector,
   }) : _servers = List<StoredMcpServer>.unmodifiable(servers),
        _connector = connector ?? connectMcpUpstream;
 
   final List<StoredMcpServer> _servers;
   final String cwd;
+
+  /// Total connection, initialization, and paginated listing budget per server.
+  /// Leave headroom below the agent's 30-second bridge startup timeout.
+  final Duration discoveryTimeout;
   final McpUpstreamConnector _connector;
   final Map<String, McpUpstreamConnection> _connections =
       <String, McpUpstreamConnection>{};
-  final Map<String, Future<McpUpstreamConnection>> _connecting =
-      <String, Future<McpUpstreamConnection>>{};
   final Map<String, _ToolRoute> _routes = <String, _ToolRoute>{};
   Future<McpProxyListResult>? _listing;
   bool _closed = false;
@@ -57,6 +60,7 @@ class McpProxySession {
     final List<_ServerTools> listed = await Future.wait(
       _servers.map(_listServerTools),
     );
+    if (_closed) throw StateError('MCP proxy session is closed');
     final List<Map<String, Object?>> tools = <Map<String, Object?>>[];
     final List<String> warnings = <String>[];
     final Map<String, _ToolRoute> routes = <String, _ToolRoute>{};
@@ -139,42 +143,47 @@ class McpProxySession {
   }
 
   Future<_ServerTools> _listServerTools(StoredMcpServer stored) async {
+    final String id = stored.profile.id;
     McpUpstreamConnection? connection;
-    try {
-      connection = await _connectionFor(stored);
+    bool abandoned = false;
+
+    Future<_ServerTools> discover() async {
+      final McpUpstreamConnection upstream =
+          _connections[id] ?? await _connector(stored, cwd);
+      // Future.timeout does not cancel its source. A late connection must not
+      // enter the cache or replace a connection from a subsequent retry.
+      if (abandoned || _closed) {
+        unawaited(_closeUpstream(upstream));
+        throw StateError('MCP discovery was abandoned');
+      }
+      connection = upstream;
+      _connections[id] = upstream;
       return _ServerTools(
         stored: stored,
-        connection: connection,
-        tools: await connection.listTools(),
+        connection: upstream,
+        tools: await upstream.listTools(),
+      );
+    }
+
+    try {
+      // listTools coalesces callers, so only this attempt owns the connection
+      // until it completes or times out. The budget spans all discovery steps.
+      return await discover().timeout(
+        discoveryTimeout,
+        onTimeout: () => throw TimeoutException(
+          'MCP discovery timed out after '
+          '${discoveryTimeout.inMilliseconds}ms (connect/initialize/tools/list)',
+          discoveryTimeout,
+        ),
       );
     } on Object catch (error) {
-      if (connection != null) {
-        _connections.remove(stored.profile.id);
-        unawaited(_closeUpstream(connection));
+      abandoned = true;
+      final McpUpstreamConnection? upstream = connection;
+      if (upstream != null) {
+        if (identical(_connections[id], upstream)) _connections.remove(id);
+        unawaited(_closeUpstream(upstream));
       }
       return _ServerTools(stored: stored, error: error);
-    }
-  }
-
-  Future<McpUpstreamConnection> _connectionFor(StoredMcpServer stored) async {
-    final String id = stored.profile.id;
-    final McpUpstreamConnection? existing = _connections[id];
-    if (existing != null) return existing;
-    final Future<McpUpstreamConnection>? active = _connecting[id];
-    if (active != null) return active;
-
-    final Future<McpUpstreamConnection> connecting = _connector(stored, cwd);
-    _connecting[id] = connecting;
-    try {
-      final McpUpstreamConnection connection = await connecting;
-      if (_closed) {
-        await _closeUpstream(connection);
-        throw StateError('MCP proxy session is closed');
-      }
-      _connections[id] = connection;
-      return connection;
-    } finally {
-      if (identical(_connecting[id], connecting)) _connecting.remove(id);
     }
   }
 

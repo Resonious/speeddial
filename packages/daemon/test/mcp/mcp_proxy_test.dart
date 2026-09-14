@@ -1,13 +1,131 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart';
 import 'package:speeddial_daemon/src/mcp/mcp_proxy.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  for (final bool stallConnection in <bool>[true, false]) {
+    test(
+      'stalled ${stallConnection ? 'connection' : 'listing'} preserves healthy '
+      'and built-in tools, cleans up late results, and permits retry',
+      () async {
+        final Completer<McpUpstreamConnection> connecting =
+            Completer<McpUpstreamConnection>();
+        final Completer<List<Map<String, Object?>>> listing =
+            Completer<List<Map<String, Object?>>>();
+        final _FakeConnection healthy = _FakeConnection(
+          'linear',
+          <Map<String, Object?>>[_tool('save_issue', 'Update issue.')],
+        );
+        final _FakeConnection slow = _FakeConnection(
+          'slow',
+          <Map<String, Object?>>[_tool('old', 'Old tool.')],
+          listing: stallConnection ? null : listing.future,
+        );
+        final _FakeConnection recovered = _FakeConnection(
+          'recovered',
+          <Map<String, Object?>>[_tool('new', 'New tool.')],
+        );
+        int attempts = 0;
+        final McpProxySession proxy = McpProxySession(
+          servers: <StoredMcpServer>[
+            _stored(id: 'linear', name: 'Linear', transport: McpTransport.http),
+            _stored(id: 'slow', name: 'Slow', transport: McpTransport.http),
+          ],
+          cwd: Directory.current.path,
+          discoveryTimeout: const Duration(milliseconds: 30),
+          connector: (StoredMcpServer server, String cwd) async {
+            if (server.profile.id == 'linear') return healthy;
+            attempts++;
+            if (attempts > 1) return recovered;
+            return stallConnection ? connecting.future : slow;
+          },
+        );
+        addTearDown(proxy.close);
+        final BuiltInMcpServer bridge = BuiltInMcpServer(
+          sessionId: 'session',
+          cwd: Directory.current.path,
+          daemonCall: (String method, Map<String, Object?> params) async {
+            final McpProxyListResult result = await proxy.listTools();
+            return <String, Object?>{
+              'tools': result.tools,
+              'warnings': result.warnings,
+            };
+          },
+        );
+        final Map<String, Object?>? response = await bridge
+            .handle(<String, Object?>{
+              'jsonrpc': '2.0',
+              'id': 1,
+              'method': 'tools/list',
+            })
+            .timeout(const Duration(seconds: 2));
+        final Map result = response!['result']! as Map;
+        expect(
+          (result['tools']! as List).map((dynamic tool) => tool['name']),
+          containsAll(<String>['search_sessions', 'Linear__save_issue']),
+        );
+        expect((result['_meta']! as Map)['speeddial/warnings'], <Matcher>[
+          startsWith('Slow: MCP discovery timed out'),
+        ]);
+        expect(
+          await proxy.callTool('Linear__save_issue', <String, Object?>{}),
+          containsPair('server', 'linear'),
+        );
+        expect(healthy.closed, isFalse);
+        if (!stallConnection) expect(slow.closed, isTrue);
+
+        // Retry before the original operation finishes: its late completion
+        // must neither evict the recovered connection nor restore old routes.
+        final McpProxyListResult retried = await proxy.listTools();
+        expect(retried.warnings, isEmpty);
+        expect(retried.tools.map((tool) => tool['name']), <String>[
+          'Linear__save_issue',
+          'Slow__new',
+        ]);
+        connecting.complete(slow);
+        listing.complete(slow.tools);
+        await Future<void>.delayed(Duration.zero);
+        expect(slow.closed, isTrue);
+        expect(recovered.closed, isFalse);
+        expect(
+          await proxy.callTool('Slow__new', <String, Object?>{}),
+          containsPair('server', 'recovered'),
+        );
+        await proxy.listTools();
+        expect(attempts, 2);
+      },
+    );
+  }
+
+  test('closing during connection discards the late connection', () async {
+    final Completer<McpUpstreamConnection> connecting =
+        Completer<McpUpstreamConnection>();
+    final _FakeConnection connection = _FakeConnection(
+      'late',
+      <Map<String, Object?>>[],
+    );
+    final McpProxySession proxy = McpProxySession(
+      servers: <StoredMcpServer>[
+        _stored(id: 'late', name: 'Late', transport: McpTransport.http),
+      ],
+      cwd: Directory.current.path,
+      connector: (StoredMcpServer server, String cwd) => connecting.future,
+    );
+    final Future<McpProxyListResult> listing = proxy.listTools();
+    final Future<void> checked = expectLater(listing, throwsStateError);
+    await proxy.close();
+    connecting.complete(connection);
+    await checked;
+    expect(connection.closed, isTrue);
+  });
+
   test(
     'aggregates, qualifies, routes, isolates failures, and closes',
     () async {
@@ -84,91 +202,82 @@ void main() {
     },
   );
 
-  test(
-    'strips lookaround pattern constraints and warns, leaving clean schemas',
-    () async {
-      final _FakeConnection upstream = _FakeConnection(
-        'upstream',
-        <Map<String, Object?>>[
-          <String, Object?>{
-            'name': 'create-contact',
-            'description': 'Create a contact.',
-            'inputSchema': <String, Object?>{
-              'type': 'object',
-              'required': <String>['email', 'names'],
-              'properties': <String, Object?>{
-                'email': <String, Object?>{
-                  'type': 'string',
-                  'format': 'email',
-                  'pattern':
-                      "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)@example\\.com\$",
-                },
-                'names': <String, Object?>{
-                  'type': 'array',
-                  'items': <String, Object?>{
-                    'type': 'string',
-                    'pattern': '^a(?=b)\$',
-                    'minLength': 1,
-                  },
-                },
-                'label': <String, Object?>{
-                  'type': 'string',
-                  'pattern': '^[a-z]+\$',
-                },
+  test('strips lookaround pattern constraints and warns, leaving clean schemas', () async {
+    final _FakeConnection
+    upstream = _FakeConnection('upstream', <Map<String, Object?>>[
+      <String, Object?>{
+        'name': 'create-contact',
+        'description': 'Create a contact.',
+        'inputSchema': <String, Object?>{
+          'type': 'object',
+          'required': <String>['email', 'names'],
+          'properties': <String, Object?>{
+            'email': <String, Object?>{
+              'type': 'string',
+              'format': 'email',
+              'pattern':
+                  "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)@example\\.com\$",
+            },
+            'names': <String, Object?>{
+              'type': 'array',
+              'items': <String, Object?>{
+                'type': 'string',
+                'pattern': '^a(?=b)\$',
+                'minLength': 1,
               },
             },
+            'label': <String, Object?>{
+              'type': 'string',
+              'pattern': '^[a-z]+\$',
+            },
           },
-        ],
-      );
-      final StoredMcpServer server = _stored(
-        id: 'upstream',
-        name: 'Resend.com',
-        transport: McpTransport.http,
-      );
-      final McpProxySession proxy = McpProxySession(
-        servers: <StoredMcpServer>[server],
-        cwd: Directory.current.path,
-        connector: (StoredMcpServer s, String cwd) async => upstream,
-      );
-      addTearDown(proxy.close);
+        },
+      },
+    ]);
+    final StoredMcpServer server = _stored(
+      id: 'upstream',
+      name: 'Resend.com',
+      transport: McpTransport.http,
+    );
+    final McpProxySession proxy = McpProxySession(
+      servers: <StoredMcpServer>[server],
+      cwd: Directory.current.path,
+      connector: (StoredMcpServer s, String cwd) async => upstream,
+    );
+    addTearDown(proxy.close);
 
-      final McpProxyListResult listed = await proxy.listTools();
-      final Map<String, Object?> tool = listed.tools.single;
-      expect(tool['name'], 'Resend_com__create-contact');
-      expect(
-        tool['description'],
-        'MCP server "Resend.com". Create a contact.',
-      );
-      final Map<String, Object?> properties =
-          (tool['inputSchema']! as Map).cast<String, Object?>();
-      final Map<String, Object?> propertiesMap =
-          (properties['properties']! as Map).cast<String, Object?>();
-      final Map<String, Object?> emailProp =
-          (propertiesMap['email']! as Map).cast<String, Object?>();
-      expect(emailProp, isNot(contains('pattern')));
-      expect(emailProp['format'], 'email');
-      expect(emailProp['type'], 'string');
-      final Map<String, Object?> names =
-          (propertiesMap['names']! as Map).cast<String, Object?>();
-      final Map<String, Object?> items =
-          (names['items']! as Map).cast<String, Object?>();
-      expect(items, isNot(contains('pattern')));
-      expect(items['minLength'], 1);
-      final Map<String, Object?> label =
-          (propertiesMap['label']! as Map).cast<String, Object?>();
-      expect(label['pattern'], '^[a-z]+\$');
-      expect(listed.warnings, <String>[
-        'Resend.com: removed 2 JSON-schema pattern constraint(s) using regex '
-            'lookaround unsupported by model providers',
-      ]);
+    final McpProxyListResult listed = await proxy.listTools();
+    final Map<String, Object?> tool = listed.tools.single;
+    expect(tool['name'], 'Resend_com__create-contact');
+    expect(tool['description'], 'MCP server "Resend.com". Create a contact.');
+    final Map<String, Object?> properties = (tool['inputSchema']! as Map)
+        .cast<String, Object?>();
+    final Map<String, Object?> propertiesMap =
+        (properties['properties']! as Map).cast<String, Object?>();
+    final Map<String, Object?> emailProp = (propertiesMap['email']! as Map)
+        .cast<String, Object?>();
+    expect(emailProp, isNot(contains('pattern')));
+    expect(emailProp['format'], 'email');
+    expect(emailProp['type'], 'string');
+    final Map<String, Object?> names = (propertiesMap['names']! as Map)
+        .cast<String, Object?>();
+    final Map<String, Object?> items = (names['items']! as Map)
+        .cast<String, Object?>();
+    expect(items, isNot(contains('pattern')));
+    expect(items['minLength'], 1);
+    final Map<String, Object?> label = (propertiesMap['label']! as Map)
+        .cast<String, Object?>();
+    expect(label['pattern'], '^[a-z]+\$');
+    expect(listed.warnings, <String>[
+      'Resend.com: removed 2 JSON-schema pattern constraint(s) using regex '
+          'lookaround unsupported by model providers',
+    ]);
 
-      await proxy.callTool(
-        'Resend_com__create-contact',
-        <String, Object?>{'email': 'a@example.com'},
-      );
-      expect(upstream.calls.single.name, 'create-contact');
-    },
-  );
+    await proxy.callTool('Resend_com__create-contact', <String, Object?>{
+      'email': 'a@example.com',
+    });
+    expect(upstream.calls.single.name, 'create-contact');
+  });
 
   test(
     'stdio client initializes, answers roots, paginates, and calls',
@@ -306,7 +415,9 @@ StoredMcpServer _stored({
 );
 
 class _FakeConnection implements McpUpstreamConnection {
-  _FakeConnection(this.label, this.tools);
+  _FakeConnection(this.label, this.tools, {this.listing});
+
+  final Future<List<Map<String, Object?>>>? listing;
 
   final String label;
   final List<Map<String, Object?>> tools;
@@ -315,7 +426,8 @@ class _FakeConnection implements McpUpstreamConnection {
   bool closed = false;
 
   @override
-  Future<List<Map<String, Object?>>> listTools() async => tools;
+  Future<List<Map<String, Object?>>> listTools() async =>
+      listing == null ? tools : await listing!;
 
   @override
   Future<Map<String, Object?>> callTool(

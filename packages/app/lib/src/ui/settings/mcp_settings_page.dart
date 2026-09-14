@@ -240,7 +240,8 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Enabled servers are registered directly with each agent. '
+                  'Enabled servers expose their tools to each agent through '
+                  'the speeddial MCP connection. '
                   'Credentials stay on this daemon and are never returned to '
                   'the app. Changes apply before the next turn for reloadable '
                   'sessions and to all new sessions.',

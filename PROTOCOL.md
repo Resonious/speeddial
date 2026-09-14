@@ -360,7 +360,16 @@ Anthropic-family tool-schema validators reject lookaround (`(?=`, `(?!`, `(?<=`,
 HTTP 400 that fails every turn, so unsupported constraints are dropped (server-side validation
 remains authoritative) and the affected server contributes a warning. A profile that fails to
 initialize contributes a warning without hiding the built-in tools or tools from healthy profiles.
-The upstream connections close with their authenticated bridge connection.
+Each upstream has a 15-second total discovery budget, including connection, initialization,
+and all `tools/list` pages. Discovery runs concurrently; a slow upstream contributes a named
+warning instead of blocking healthy tools past the agent's bridge startup deadline. Timed-out
+connections are discarded (including those that finish connecting late); a subsequent tool
+listing may retry them. The upstream connections close with their authenticated bridge connection.
+
+The bridge's MCP initialization instructions describe managed tool discovery under
+`speeddial`, including the qualified naming scheme. Agents must inspect available tools
+(using their harness's tool discovery when needed) before reporting an integration unavailable;
+MCP resource listings and local environment credentials do not indicate tool availability.
 
 Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file on POSIX) so its
 server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data
