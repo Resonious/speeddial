@@ -149,7 +149,7 @@ class UserMessageEvent extends SessionEvent {
       'text': text,
       if (attachments.isNotEmpty)
         'attachments': attachments
-            .map((a) => a.toJson())
+            .map((a) => a.toMetadataJson())
             .toList(growable: false),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
@@ -178,7 +178,7 @@ class ImageEvent extends SessionEvent {
     final DateTime? localTimestamp = timestamp;
     return <String, Object?>{
       'type': 'image',
-      'attachment': attachment.toJson(),
+      'attachment': attachment.toMetadataJson(),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

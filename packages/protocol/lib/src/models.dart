@@ -295,7 +295,7 @@ class ToolCallImage extends ToolCallContent {
   @override
   Map<String, Object?> toJson() => <String, Object?>{
     'type': 'image',
-    'attachment': attachment.toJson(),
+    'attachment': attachment.toMetadataJson(),
   };
 }
 
@@ -1440,7 +1440,10 @@ class Attachment {
     size: json['size']! as int,
   );
 
-  Map<String, Object?> toJson() => <String, Object?>{
+  Map<String, Object?> toJson() => toMetadataJson();
+
+  /// Metadata only, even when this instance carries a payload.
+  Map<String, Object?> toMetadataJson() => <String, Object?>{
     'id': id,
     'name': name,
     'mimeType': mimeType,
