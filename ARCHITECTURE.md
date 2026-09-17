@@ -48,6 +48,9 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+                    Explicit busy prompt rejections are retried for up to 30 seconds,
+                    with cancellation interrupting the wait; other request failures are
+                    reported separately from process exits.
                     ACP has no standard session permission policy; the built-in OMP provider
                     selects its native yolo mode through its launch command, while custom ACP
                     providers retain the engine's auto-resolution fallback.

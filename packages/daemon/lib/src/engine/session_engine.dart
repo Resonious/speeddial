@@ -1413,7 +1413,10 @@ class SessionEngine {
         final String message = switch (error) {
           AnteTurnException(:final message) => 'Ante turn failed: $message',
           CodexTurnException(:final message) => 'Codex turn failed: $message',
-          _ => 'Agent process ended: $error',
+          AcpProcessExitedException() => 'Agent process ended: $error',
+          AcpJsonRpcException(:final message) =>
+            'Agent request failed: $message',
+          _ => 'Agent turn failed: $error',
         };
         // Expire every parked permission first so a stale
         // respondPermission reports kErrNotFound and cannot flip the failed

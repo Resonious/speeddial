@@ -72,6 +72,96 @@ void main() {
   });
 
   test(
+    'retries rejected busy prompts without changing their content',
+    () async {
+      final client = spawnClient(cwd: tempDir.path);
+      addTearDown(client.dispose);
+      await client.initialized;
+      final session = await client.newSession(cwd: tempDir.path);
+      final blocks = textBlocks('busy-once');
+      final result = await client.prompt(session.sessionId, blocks);
+      expect(result.stopReason, 'end_turn');
+      expect(
+        File(p.join(tempDir.path, 'agent.busy_attempts')).readAsStringSync(),
+        '2',
+      );
+      expect(
+        jsonDecode(
+          File(p.join(tempDir.path, 'agent.last_prompt.json'))
+              .readAsStringSync(),
+        ),
+        blocks,
+      );
+    },
+  );
+
+  test('does not retry unrelated conflict errors', () async {
+    final client = spawnClient(cwd: tempDir.path);
+    addTearDown(client.dispose);
+    await client.initialized;
+    final session = await client.newSession(cwd: tempDir.path);
+    await expectLater(
+      client.prompt(session.sessionId, textBlocks('rpc-error')),
+      throwsA(isA<AcpJsonRpcException>()),
+    );
+    expect(
+      File(p.join(tempDir.path, 'agent.busy_attempts')).readAsStringSync(),
+      '1',
+    );
+  });
+
+  test('busy retries stop at their deadline', () async {
+    final client = AcpClient.spawn(
+      <String>[Platform.resolvedExecutable, fakeAgentScript()],
+      cwd: tempDir.path,
+      busyRetryTimeout: const Duration(milliseconds: 30),
+    );
+    addTearDown(client.dispose);
+    await client.initialized;
+    final session = await client.newSession(cwd: tempDir.path);
+    await expectLater(
+      client.prompt(session.sessionId, textBlocks('busy-always')),
+      throwsA(
+        isA<AcpJsonRpcException>().having(
+          (error) => error.code,
+          'code',
+          -32003,
+        ),
+      ),
+    );
+  });
+
+  test(
+    'cancel prevents a rejected busy prompt from being sent again',
+    () async {
+      final client = spawnClient(cwd: tempDir.path);
+      addTearDown(client.dispose);
+      await client.initialized;
+      final session = await client.newSession(cwd: tempDir.path);
+      final pending = client.prompt(
+        session.sessionId,
+        textBlocks('busy-always'),
+      );
+      final marker = File(p.join(tempDir.path, 'agent.busy_attempts'));
+      while (!marker.existsSync()) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      await client.cancel(session.sessionId);
+      expect((await pending).stopReason, 'cancelled');
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(marker.readAsStringSync(), '1');
+      // Cancellation does not poison subsequent prompts.
+      expect(
+        (await client.prompt(
+          session.sessionId,
+          textBlocks('busy-once'),
+        )).stopReason,
+        'end_turn',
+      );
+    },
+  );
+
+  test(
     'initializes, creates a session, and streams prompt updates in order',
     () async {
       final permissionCalls = <Map<String, Object?>>[];

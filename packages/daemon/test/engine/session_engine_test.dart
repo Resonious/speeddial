@@ -195,6 +195,46 @@ void main() {
     }
   }
 
+  test('busy ACP rejection recovers within one visible turn', () async {
+    final session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    await engine.sendMessage(session.id, 'busy-once');
+    expect(store.getSession(session.id)!.status, SessionStatus.running);
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    final history = store.listEvents(session.id).events;
+    expect(history.whereType<UserMessageEvent>(), hasLength(1));
+    expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+    expect(history.whereType<SessionErrorEvent>(), isEmpty);
+  });
+
+  test('ACP request errors do not claim the process exited', () async {
+    final session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    await engine.sendMessage(session.id, 'rpc-error');
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.error,
+    );
+    expect(
+      store
+          .listEvents(session.id)
+          .events
+          .whereType<SessionErrorEvent>()
+          .single
+          .message,
+      'Agent request failed: Unrelated conflict',
+    );
+    await engine.sendMessage(session.id, 'busy-once');
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+  });
+
   test('rejects sandbox modes for providers without that capability', () async {
     await expectLater(
       engine.createSession(

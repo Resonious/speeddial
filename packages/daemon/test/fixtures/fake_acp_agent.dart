@@ -424,6 +424,23 @@ Future<void> _runTurn(
   }
   final text = _promptText(promptParams);
 
+  if (text == 'busy-once' || text == 'busy-always' || text == 'rpc-error') {
+    final marker = File(p.join(cwd, 'agent.busy_attempts'));
+    final attempts = marker.existsSync()
+        ? int.parse(marker.readAsStringSync())
+        : 0;
+    marker.writeAsStringSync('${attempts + 1}');
+    if (text != 'busy-once' || attempts == 0) {
+      _pendingPrompts.remove(promptId);
+      return _sendError(
+        promptId,
+        -32003,
+        text == 'rpc-error' ? 'Unrelated conflict' : 'Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.',
+      );
+    }
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
   if (text == 'cancel') return; // Left pending; session/cancel resolves it.
   if (text == 'hang') return; // Never resolves; used with dispose().
   if (text == 'die') {

@@ -83,6 +83,7 @@ class AcpClient implements AgentClient {
     required String cwd,
     Map<String, String>? environment,
     this.initTimeout = const Duration(seconds: 30),
+    this.busyRetryTimeout = const Duration(seconds: 30),
     AgentPermissionHandler? requestPermission,
     AcpReadTextFileHandler? readTextFile,
     AcpWriteTextFileHandler? writeTextFile,
@@ -100,6 +101,11 @@ class AcpClient implements AgentClient {
   final String _cwd;
   final Map<String, String>? _environment;
   final Duration initTimeout;
+
+  /// Maximum time to retry an explicitly rejected busy prompt.
+  final Duration busyRetryTimeout;
+  final Map<String, Completer<void>> _promptCancellations =
+      <String, Completer<void>>{};
   final AgentPermissionHandler? _permissionHandler;
   final AcpReadTextFileHandler? _readTextFileHandler;
   final AcpWriteTextFileHandler? _writeTextFileHandler;
@@ -531,11 +537,50 @@ class AcpClient implements AgentClient {
     String sessionId,
     List<Map<String, Object?>> promptBlocks,
   ) async {
-    final result = await _request('session/prompt', <String, Object?>{
-      'sessionId': sessionId,
-      'prompt': promptBlocks,
-    });
-    return PromptResult.fromJson(result);
+    if (_promptCancellations.containsKey(sessionId)) {
+      throw StateError('An ACP turn is already running.');
+    }
+    final cancelled = Completer<void>();
+    _promptCancellations[sessionId] = cancelled;
+    final elapsed = Stopwatch()..start();
+    try {
+      while (true) {
+        if (cancelled.isCompleted) {
+          return const PromptResult(stopReason: 'cancelled');
+        }
+        try {
+          final result = await _request('session/prompt', <String, Object?>{
+            'sessionId': sessionId,
+            'prompt': promptBlocks,
+          });
+          return PromptResult.fromJson(result);
+        } on AcpJsonRpcException catch (error) {
+          if (cancelled.isCompleted) {
+            return const PromptResult(stopReason: 'cancelled');
+          }
+          // Some agents finish the ACP turn before background work releases
+          // their prompt slot. Retry only this explicit rejection: transport
+          // failures and other RPC errors may have already consumed the input.
+          if (error.code != -32003 ||
+              !error.message.startsWith('Agent is already processing') ||
+              elapsed.elapsed >= busyRetryTimeout) {
+            rethrow;
+          }
+          final remaining = busyRetryTimeout - elapsed.elapsed;
+          await Future.any<void>(<Future<void>>[
+            cancelled.future,
+            Future<void>.delayed(
+              remaining < const Duration(milliseconds: 250)
+                  ? remaining
+                  : const Duration(milliseconds: 250),
+            ),
+          ]);
+        }
+      }
+    } finally {
+      elapsed.stop();
+      _promptCancellations.remove(sessionId);
+    }
   }
 
   /// Cancels the ongoing prompt turn for the session.
@@ -544,6 +589,8 @@ class AcpClient implements AgentClient {
   /// permission requests with the cancelled outcome, per the ACP spec.
   @override
   Future<void> cancel(String sessionId) async {
+    final cancelled = _promptCancellations[sessionId];
+    if (cancelled != null && !cancelled.isCompleted) cancelled.complete();
     // Answer pending permission requests first so the agent cannot hang.
     final pending = _pendingPermissions.entries.toList();
     for (final entry in pending) {
