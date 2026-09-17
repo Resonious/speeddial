@@ -821,6 +821,69 @@ void main() {
     );
   });
 
+  for (final bool legacy in <bool>[false, true]) {
+    test('image message survives reload (legacy payload: $legacy)', () {
+      store.insertProject(project());
+      store.insertSession(session(id: 'a'));
+      final AttachmentData attachment = AttachmentData(
+        id: 'image-1',
+        name: 'screenshot.png',
+        mimeType: 'image/png',
+        size: 600 * 1024,
+        data: base64Encode(List<int>.filled(600 * 1024, 42)),
+      );
+      store.insertAttachment('a', attachment);
+      final SessionEvent saved = store.appendEvent(
+        'a',
+        1,
+        UserMessageEvent(text: 'Look at this', attachments: [attachment]),
+      );
+      store.appendEvent('a', 2, AgentMessageChunkEvent(text: 'reply'));
+      if (legacy) {
+        // Reproduce the persisted shape emitted by older daemons, without
+        // using the fixed event serializer.
+        final Database db = sqlite3.open(p.join(tempDir.path, 'speeddial.db'));
+        try {
+          db.execute(
+            'UPDATE session_events SET json = ? WHERE session_id = ? AND seq = 1',
+            [
+              jsonEncode({
+                ...saved.toJson(),
+                'attachments': [attachment.toJson(), attachment.toJson()],
+              }),
+              'a',
+            ],
+          );
+        } finally {
+          db.close();
+        }
+      }
+      store.dispose();
+      store = openStore(tempDir);
+
+      final newest = store.listEvents('a', limit: 1);
+      expect(newest.hasMore, isTrue);
+      expect(newest.events.single.seq, 2);
+      for (final page in [
+        store.listEvents('a', limit: 1, beforeSeq: 2),
+        store.listTranscriptEvents('a', limit: 1, beforeSeq: 2),
+      ]) {
+        expect(page.hasMore, isFalse);
+        final UserMessageEvent message = page.events.single as UserMessageEvent;
+        expect(message.text, 'Look at this');
+        expect(message.seq, saved.seq);
+        expect(message.timestamp, saved.timestamp);
+        expect(message.attachments, hasLength(legacy ? 2 : 1));
+        expect(message.attachments.first.toJson(), attachment.toMetadataJson());
+        expect(jsonEncode(message.toJson()).length, lessThan(1024));
+        expect(
+          store.getAttachment('a', message.attachments.first.id)?.data,
+          attachment.data,
+        );
+      }
+    });
+  }
+
   test('listEvents replaces oversized rows with bounded placeholders', () {
     store.insertProject(project());
     store.insertSession(session(id: 'a'));

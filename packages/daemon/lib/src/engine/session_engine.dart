@@ -1362,8 +1362,7 @@ class SessionEngine {
       live,
       UserMessageEvent(
         text: text,
-        // AttachmentData is an Attachment; only the metadata fields are
-        // serialized by Attachment.toJson (no payload).
+        // Event serialization keeps only metadata, even for AttachmentData.
         attachments: [for (final prepared in attachments) prepared.data],
       ),
     );

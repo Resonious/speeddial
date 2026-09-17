@@ -1113,20 +1113,49 @@ class DaemonStore {
   /// callers enforce protocol limits).
   static const int _maxHistoryEventBytes = 512 * 1024;
 
+  // Older daemons accidentally embedded AttachmentData payloads in user
+  // events. Strip those redundant bytes inside SQLite before applying the
+  // history cap, so existing messages remain readable without loading blobs
+  // into Dart. The authoritative payload stays in the attachments table.
+  ResultSet _historyRows(
+    String sessionId, {
+    required int limit,
+    int? beforeSeq,
+    bool transcriptOnly = false,
+  }) {
+    final String filter = transcriptOnly
+        ? r"AND json_extract(json, '$.type') IN "
+              "('userMessage', 'agentMessageChunk', 'sessionError') "
+        : '';
+    return _db.select(
+      r'''WITH history AS (
+      SELECT seq, timestamp,
+        CASE WHEN json_extract(json, '$.type') = 'userMessage'
+          AND json_type(json, '$.attachments') = 'array'
+        THEN json_set(json, '$.attachments', (
+          SELECT json_group_array(json_remove(value, '$.data'))
+          FROM json_each(session_events.json, '$.attachments')
+        )) ELSE json END AS json
+      FROM session_events
+      WHERE session_id = ? AND (? IS NULL OR seq < ?)
+    '''
+      '$filter'
+      'ORDER BY seq DESC LIMIT ?) '
+      'SELECT seq, timestamp, '
+      'CASE WHEN length(CAST(json AS BLOB)) > ? '
+      'THEN NULL ELSE json END AS json, '
+      'length(CAST(json AS BLOB)) AS json_bytes, '
+      'substr(json, 1, 64) AS json_prefix FROM history ORDER BY seq DESC',
+      [sessionId, beforeSeq, beforeSeq, limit + 1, _maxHistoryEventBytes],
+    );
+  }
+
   ({List<SessionEvent> events, bool hasMore}) listEvents(
     String sessionId, {
     int limit = 200,
     int? beforeSeq,
   }) {
-    final rows = _db.select(
-      'SELECT seq, timestamp, '
-      'CASE WHEN length(CAST(json AS BLOB)) > ? THEN NULL ELSE json END AS json, '
-      'length(CAST(json AS BLOB)) AS json_bytes, '
-      'substr(json, 1, 64) AS json_prefix FROM session_events '
-      'WHERE session_id = ? AND (? IS NULL OR seq < ?) '
-      'ORDER BY seq DESC LIMIT ?',
-      [_maxHistoryEventBytes, sessionId, beforeSeq, beforeSeq, limit + 1],
-    );
+    final rows = _historyRows(sessionId, limit: limit, beforeSeq: beforeSeq);
     final hasMore = rows.length > limit;
     final kept = hasMore ? rows.sublist(0, limit) : rows;
     final events = kept.reversed
@@ -1176,15 +1205,11 @@ class DaemonStore {
     int limit = 50,
     int? beforeSeq,
   }) {
-    final rows = _db.select(
-      'SELECT seq, timestamp, '
-      'CASE WHEN length(CAST(json AS BLOB)) > ? THEN NULL ELSE json END AS json, '
-      'length(CAST(json AS BLOB)) AS json_bytes FROM session_events '
-      'WHERE session_id = ? AND (? IS NULL OR seq < ?) '
-      r"AND json_extract(json, '$.type') IN "
-      "('userMessage', 'agentMessageChunk', 'sessionError') "
-      'ORDER BY seq DESC LIMIT ?',
-      [_maxHistoryEventBytes, sessionId, beforeSeq, beforeSeq, limit + 1],
+    final rows = _historyRows(
+      sessionId,
+      limit: limit,
+      beforeSeq: beforeSeq,
+      transcriptOnly: true,
     );
     final bool hasMore = rows.length > limit;
     final kept = hasMore ? rows.sublist(0, limit) : rows;

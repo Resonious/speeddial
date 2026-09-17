@@ -2,6 +2,35 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('events serialize AttachmentData as metadata only', () {
+    const AttachmentData attachment = AttachmentData(
+      id: 'image-1',
+      name: 'shot.png',
+      mimeType: 'image/png',
+      size: 3,
+      data: 'YWJj',
+    );
+    final Map<String, Object?> metadata = {
+      'id': 'image-1',
+      'name': 'shot.png',
+      'mimeType': 'image/png',
+      'size': 3,
+    };
+    expect(
+      UserMessageEvent(
+        text: '',
+        attachments: [attachment],
+      ).toJson()['attachments'],
+      [metadata],
+    );
+    expect(ImageEvent(attachment: attachment).toJson()['attachment'], metadata);
+    expect(
+      const ToolCallImage(attachment: attachment).toJson()['attachment'],
+      metadata,
+    );
+    expect(attachment.toJson()['data'], 'YWJj');
+  });
+
   final timestamp = DateTime.utc(2026, 8, 18, 14, 30, 15, 250);
 
   final toolCall = ToolCall(
