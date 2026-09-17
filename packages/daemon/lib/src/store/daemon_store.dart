@@ -34,6 +34,8 @@ import 'dart:convert';
 import 'package:sqlite3/sqlite3.dart' hide Session;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import 'session_search_index.dart';
+
 typedef StoredMcpServer = ({
   McpServerProfile profile,
   Map<String, String> secrets,
@@ -90,9 +92,11 @@ class DaemonStore {
   DaemonStore(String path) : _db = sqlite3.open(path) {
     _init();
     _restrictDatabasePermissions(path);
+    _search = SessionSearchIndex(_db);
   }
 
   final Database _db;
+  late final SessionSearchIndex _search;
 
   void _init() {
     _db.execute('PRAGMA journal_mode = WAL;');
@@ -822,6 +826,7 @@ class DaemonStore {
         _ts(session.updatedAt),
       ],
     );
+    _search.schedule();
   }
 
   /// Sessions, optionally filtered by [projectId] and/or hiding archived
@@ -890,6 +895,7 @@ class DaemonStore {
     if (_db.updatedRows == 0) {
       throw DaemonError(kErrNotFound, 'Session not found: ${session.id}');
     }
+    _search.schedule();
   }
 
   /// Permanently removes a session and (via cascade) its events and
@@ -964,6 +970,57 @@ class DaemonStore {
     if (_db.updatedRows == 0) {
       throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
     }
+  }
+
+  /// Indexed literal text search used by the public client. Queries return
+  /// bounded excerpts and keyset pages; no history is loaded by the client.
+  Future<SessionSearchPage> searchSessionText({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  }) async {
+    final String text = query.trim();
+    if (text.runes.length < sessionSearchMinLength ||
+        text.length > sessionSearchMaxLength ||
+        text.contains('\u0000')) {
+      throw DaemonError(
+        -32602,
+        'query must contain 3–256 characters without NUL',
+      );
+    }
+    if (limit < 1 || limit > 100) {
+      throw DaemonError(-32602, 'limit must be between 1 and 100');
+    }
+    final SearchRows matches = await _search.search(
+      query: text,
+      projectId: projectId,
+      includeArchived: includeArchived,
+      limit: limit,
+      cursor: cursor,
+    );
+    final List<SessionSearchResult> results = matches.rows
+        .take(limit)
+        .map(
+          (Map<String, Object?> row) => SessionSearchResult(
+            session: _sessionFromRow(row),
+            projectName: row['project_name'] as String?,
+            excerpt: sessionSearchExcerpt(row['search_text'] as String, text),
+          ),
+        )
+        .toList(growable: false);
+    final Session? last = results.lastOrNull?.session;
+    return SessionSearchPage(
+      results: results,
+      indexing: matches.indexing,
+      nextCursor: matches.rows.length > limit && last != null
+          ? SessionSearchCursor(
+              lastActivityAt: last.lastActivityAt,
+              id: last.id,
+            )
+          : null,
+    );
   }
 
   /// Searches sessions by title and persisted event JSON. Archived sessions
@@ -1073,6 +1130,7 @@ class DaemonStore {
       'VALUES (?, ?, ?, ?)',
       [sessionId, seq, _ts(timestamp), jsonEncode(json)],
     );
+    _search.schedule();
     return SessionEvent.fromJson(json);
   }
 
@@ -1233,7 +1291,10 @@ class DaemonStore {
     return (events: events, hasMore: hasMore);
   }
 
-  void dispose() => _db.close();
+  void dispose() {
+    _search.dispose();
+    _db.close();
+  }
 
   // -------------------------------------------------------------------------
   // Attachments
@@ -1289,7 +1350,7 @@ class DaemonStore {
     lastActiveAt: _fromTs(row['last_active_at'] as int),
   );
 
-  Session _sessionFromRow(Row row) => Session(
+  Session _sessionFromRow(Map<String, Object?> row) => Session(
     id: row['id'] as String,
     projectId: row['project_id'] as String,
     providerId: row['provider_id'] as String,

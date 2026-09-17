@@ -362,6 +362,60 @@ class TestDaemonServer {
 }
 
 void main() {
+  test(
+    'session search roundtrips filters, cursor, excerpts and indexing state',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+      );
+      addTearDown(client.dispose);
+      await client.connect();
+      Map<String, Object?>? received;
+      final SessionSearchCursor cursor = SessionSearchCursor(
+        lastActivityAt: DateTime.utc(2026),
+        id: 's2',
+      );
+      server.peers.single.registerHandler('sessions.search', (
+        Map<String, Object?> params,
+      ) {
+        received = params;
+        return <String, Object?>{
+          'results': <Object?>[
+            <String, Object?>{
+              'session': server.sessionJson(),
+              'projectName': 'Project',
+              'excerpt': 'release blocker',
+            },
+          ],
+          'nextCursor': cursor.toJson(),
+          'indexing': true,
+        };
+      });
+      final SessionSearchPage page = await client.searchSessions(
+        query: 'release',
+        projectId: 'p1',
+        includeArchived: true,
+        limit: 12,
+        cursor: cursor,
+      );
+      expect(received, <String, Object?>{
+        'query': 'release',
+        'projectId': 'p1',
+        'includeArchived': true,
+        'limit': 12,
+        'cursor': cursor.toJson(),
+      });
+      expect(page.results.single.session.id, 'sess-1');
+      expect(page.results.single.excerpt, 'release blocker');
+      expect(page.results.single.projectName, 'Project');
+      expect(page.nextCursor?.toJson(), cursor.toJson());
+      expect(page.indexing, isTrue);
+    },
+  );
+
   test('connect authenticates and typed calls roundtrip', () async {
     final TestDaemonServer server = await TestDaemonServer.start();
     addTearDown(server.close);

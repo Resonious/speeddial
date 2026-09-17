@@ -7,6 +7,7 @@ import '../../state/sessions_store.dart';
 import '../connection_status_indicator.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
+import 'session_search_dialog.dart';
 import '../settings/environment_page.dart';
 import '../settings/embedded_daemon_page.dart';
 import '../settings/harnesses_page.dart';
@@ -310,6 +311,14 @@ class _ProjectTree extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    key: const Key('search-sessions'),
+                    tooltip: 'Search sessions',
+                    icon: const Icon(Icons.search, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () =>
+                        _showSessionSearch(context, data, daemonId),
+                  ),
+                  IconButton(
                     key: const Key('toggle-session-grouping'),
                     tooltip: grouped
                         ? 'Show all sessions by activity'
@@ -398,6 +407,33 @@ class _ProjectTree extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _showSessionSearch(
+    BuildContext context,
+    AppData data,
+    String daemonId,
+  ) async {
+    final String daemonName =
+        data.connections.endpoints
+            .where((DaemonEndpoint endpoint) => endpoint.id == daemonId)
+            .firstOrNull
+            ?.name ??
+        daemonId;
+    final SessionSearchResult? result = await showDialog<SessionSearchResult>(
+      context: context,
+      builder: (BuildContext context) => SessionSearchDialog(
+        client: data.clientFor(daemonId),
+        daemonName: daemonName,
+      ),
+    );
+    if (result == null || !context.mounted) return;
+    data.sessions.rememberSearchResult(daemonId, result.session);
+    data.selection.selectedDaemonId = daemonId;
+    data.selection.selectedProjectId = result.session.projectId;
+    data.selection.selectedSessionId = result.session.id;
+    final ScaffoldState? scaffold = Scaffold.maybeOf(context);
+    if (scaffold != null && scaffold.isDrawerOpen) scaffold.closeDrawer();
   }
 
   Future<void> _setSessionGrouping(

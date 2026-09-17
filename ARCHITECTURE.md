@@ -288,6 +288,16 @@ lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with
 ```
 
 Performance rules for the app:
+- Session search: the rail opens a daemon-scoped modal. Queries debounce for 250 ms and
+  coalesce while a request is outstanding; stale replies cannot replace newer text or filters.
+  Results use a virtualized list of bounded excerpts and keyset pages. Only the selected result
+  enters SessionsStore; searching never fetches transcript pages or the full session list.
+  The daemon maintains a SQLite FTS5 trigram index in `store/session_search_index.dart`.
+  Transactional triggers mark titles/events dirty; short background batches persist their
+  cursor alongside 4 KiB text blocks with 256-character overlap. Streaming only rewrites the
+  bounded tail of a message. Existing histories backfill without a startup transcript scan,
+  and deletes cascade through the index. File-backed MATCH queries use separate read-only
+  connections in isolates so broad searches do not stall daemon/embedded-app event handling.
 - Timeline: `ListView.builder(reverse: true)`; adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at

@@ -271,6 +271,60 @@ void main() {
 
   group('auth', () {
     test(
+      'public session search is authenticated and validates requests',
+      () async {
+        await startServer(authToken: 'secret');
+        final WsClient client = await connect(server!.port);
+        addTearDown(client.close);
+        await expectLater(
+          client.peer.call('sessions.search', <String, Object?>{
+            'query': 'needle',
+          }),
+          throwsA(
+            isA<DaemonError>().having(
+              (e) => e.code,
+              'code',
+              kErrUnauthenticated,
+            ),
+          ),
+        );
+        await client.peer.call('auth.authenticate', <String, Object?>{
+          'token': 'secret',
+        });
+        for (final Map<String, Object?> params in <Map<String, Object?>>[
+          <String, Object?>{},
+          <String, Object?>{'query': 42},
+          <String, Object?>{'query': 'ab'},
+          <String, Object?>{'query': 'needle', 'limit': 0},
+          <String, Object?>{'query': 'needle', 'limit': 101},
+          <String, Object?>{'query': 'needle', 'limit': 2.5},
+          <String, Object?>{'query': 'needle', 'includeArchived': 'true'},
+          <String, Object?>{'query': 'needle', 'projectId': false},
+          <String, Object?>{'query': 'needle', 'cursor': 'invalid'},
+          <String, Object?>{
+            'query': 'needle',
+            'cursor': <String, Object?>{'lastActivityAt': 'bad', 'id': 's'},
+          },
+        ]) {
+          await expectLater(
+            client.peer.call('sessions.search', params),
+            throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+          );
+        }
+        final SessionSearchPage page = SessionSearchPage.fromJson(
+          j(
+            await client.peer.call('sessions.search', <String, Object?>{
+              'query': 'needle',
+            }),
+          ),
+        );
+        expect(page.results, isEmpty);
+        expect(page.nextCursor, isNull);
+        expect(page.indexing, isFalse);
+      },
+    );
+
+    test(
       'unauthenticated requests are gated until auth.authenticate',
       () async {
         await startServer(authToken: 'secret');

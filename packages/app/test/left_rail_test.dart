@@ -73,6 +73,33 @@ Session testSession({
 );
 
 void main() {
+  testWidgets('search beside grouping selects the session and its project', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    final Finder search = find.byKey(const Key('search-sessions'));
+    expect(
+      tester.getCenter(search).dx,
+      lessThan(
+        tester.getCenter(find.byKey(const Key('toggle-session-grouping'))).dx,
+      ),
+    );
+    await tester.tap(search);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('session-search-field')),
+      'refactor',
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('search-result-sess-2')));
+    await tester.pumpAndSettle();
+    expect(app.selection.selectedDaemonId, 'fake');
+    expect(app.selection.selectedProjectId, 'proj-demo');
+    expect(app.selection.selectedSessionId, 'sess-2');
+  });
+
   testWidgets('session menu pins and unpins a session', (
     WidgetTester tester,
   ) async {

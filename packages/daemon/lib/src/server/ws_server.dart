@@ -61,6 +61,7 @@ const List<String> _kProtocolMethods = <String>[
   'projects.remove',
   'projects.rename',
   'sessions.list',
+  'sessions.search',
   'sessions.create',
   'sessions.fork',
   'sessions.send',
@@ -512,6 +513,7 @@ class SpeedDialServer {
       'projects.remove' => _projectsRemove(params),
       'projects.rename' => _projectsRename(params),
       'sessions.list' => _sessionsList(params),
+      'sessions.search' => _sessionsSearch(params),
       'sessions.create' => _sessionsCreate(params),
       'sessions.fork' => _sessionsFork(params),
       'sessions.send' => _sessionsSend(params),
@@ -1272,6 +1274,38 @@ class SpeedDialServer {
           .map((session) => session.toJson())
           .toList(growable: false),
     };
+  }
+
+  Future<Object?> _sessionsSearch(Map<String, Object?> params) async {
+    final String query = _requiredString(params, 'query');
+    final Object? projectId = params['projectId'];
+    final Object? includeArchived = params['includeArchived'];
+    final Object? limit = params['limit'];
+    if (projectId != null && projectId is! String ||
+        includeArchived != null && includeArchived is! bool ||
+        limit != null && limit is! int) {
+      throw DaemonError(_kErrInvalidParams, 'Invalid search filters or limit');
+    }
+    SessionSearchCursor? cursor;
+    if (params['cursor'] != null) {
+      try {
+        cursor = SessionSearchCursor.fromJson(
+          params['cursor'] as Map<String, Object?>,
+        );
+        if (cursor.id.isEmpty || cursor.id.length > 256) {
+          throw const FormatException('Invalid cursor id');
+        }
+      } on Object {
+        throw DaemonError(_kErrInvalidParams, 'Invalid search cursor');
+      }
+    }
+    return (await _store.searchSessionText(
+      query: query,
+      projectId: projectId as String?,
+      includeArchived: includeArchived as bool? ?? false,
+      limit: limit as int? ?? 50,
+      cursor: cursor,
+    )).toJson();
   }
 
   Future<Object?> _sessionsCreate(Map<String, Object?> params) async {

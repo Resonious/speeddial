@@ -790,6 +790,27 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<SessionSearchPage> searchSessions({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.search',
+      <String, Object?>{
+        'query': query,
+        'projectId': ?projectId,
+        'includeArchived': includeArchived,
+        'limit': limit,
+        'cursor': ?cursor?.toJson(),
+      },
+    );
+    return SessionSearchPage.fromJson(result as Map<String, Object?>);
+  }
+
+  @override
   Future<Session> createSession({
     required String projectId,
     required String providerId,

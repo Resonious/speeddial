@@ -151,6 +151,17 @@ Session = {
 }
 
 FileEntry = { name: string, path: string, isDir: boolean, size: int, modifiedAt: string }
+SessionSearchCursor = { lastActivityAt: string, id: string }
+SessionSearchResult = {
+  session: Session,
+  projectName: string | null, // null when the project has been removed
+  excerpt: string,           // plain text around the match, at most 322 UTF-16 code units
+}
+SessionSearchPage = {
+  results: SessionSearchResult[],
+  nextCursor: SessionSearchCursor | null,
+  indexing: boolean,         // saved messages are still being indexed; results may be incomplete
+}
 FileDownload = { name: string, size: int, data: string } // full file payload, base64 encoded
 
 // Attachments (files the user attaches to a message)
@@ -418,6 +429,23 @@ tokens before session creation/resume, and checks them periodically while runnin
 
 ### Sessions
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
+- `sessions.search {query: string, projectId?: string, includeArchived?: boolean,
+  limit?: int, cursor?: SessionSearchCursor}` → `SessionSearchPage`
+  — searches titles and persisted user messages, agent messages/thoughts, and session errors
+  on this daemon. Matches case-insensitive literal substrings, including punctuation and
+  spaces; quotes and search operators have no special meaning. Does not search tool payloads,
+  attachment contents, or JSON metadata. Trimmed queries require at least 3 Unicode code points,
+  at most 256 UTF-16 code units, and no NUL; invalid queries, filters, cursors, or limits return
+  `-32602`. Archived sessions are excluded unless `includeArchived: true`.
+  Default limit 50, maximum 100, minimum 1. Each session appears once per page, ordered by
+  `lastActivityAt` descending then ID descending, regardless of pin state. Pass `nextCursor`
+  with the same query/filters for the next page; null means the current results are exhausted.
+  Activity can change between pages, so clients should deduplicate session IDs.
+  The index builds incrementally for existing histories and new events. While `indexing` is
+  true, clients should repeat the first page to obtain newly indexed matches. Index progress
+  survives daemon restarts. Identified streamed chunks match across interleaved events;
+  legacy chunks without message IDs join only adjacent chunks of the same type. Separate
+  messages and turns never concatenate. The public search includes the selected session.
 - `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean}` → `{session: Session}`
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as

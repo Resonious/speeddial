@@ -122,6 +122,14 @@ abstract class DaemonClient {
     bool includeArchived = false,
   });
 
+  Future<SessionSearchPage> searchSessions({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  });
+
   /// Creates a session and returns it; also surfaces on [sessionUpdates].
   /// When [baseBranch] is given the daemon fetches `origin/<baseBranch>` and
   /// runs the agent in a fresh worktree branched off the remote tip.

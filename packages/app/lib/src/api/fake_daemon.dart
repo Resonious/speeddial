@@ -665,6 +665,105 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<SessionSearchPage> searchSessions({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  }) async {
+    _ensureSeeded();
+    final String needle = query.trim().toLowerCase();
+    if (needle.runes.length < sessionSearchMinLength ||
+        query.trim().length > sessionSearchMaxLength ||
+        query.contains('\u0000') ||
+        limit < 1 ||
+        limit > 100) {
+      throw DaemonError(-32602, 'Invalid search query or limit');
+    }
+    final List<Session> sessions =
+        _sessions.values
+            .where(
+              (Session s) =>
+                  (includeArchived || !s.archived) &&
+                  (projectId == null || s.projectId == projectId) &&
+                  (cursor == null ||
+                      s.lastActivityAt.isBefore(cursor.lastActivityAt) ||
+                      s.lastActivityAt == cursor.lastActivityAt &&
+                          s.id.compareTo(cursor.id) < 0),
+            )
+            .toList()
+          ..sort((Session a, Session b) {
+            final int activity = b.lastActivityAt.compareTo(a.lastActivityAt);
+            return activity == 0 ? b.id.compareTo(a.id) : activity;
+          });
+    final List<SessionSearchResult> results = <SessionSearchResult>[];
+    for (final Session session in sessions) {
+      final Map<String, StringBuffer> messages = <String, StringBuffer>{
+        'title': StringBuffer(session.title),
+      };
+      int turn = 0;
+      String lastKind = '';
+      String lastKey = '';
+      for (final SessionEvent event
+          in _history[session.id] ?? <SessionEvent>[]) {
+        final Map<String, Object?> json = event.toJson();
+        final String kind = json['type'] as String;
+        final int seq = event.seq!;
+        if (kind == 'userMessage' || kind == 'turnComplete') turn = seq;
+        final bool chunk =
+            kind == 'agentMessageChunk' || kind == 'agentThoughtChunk';
+        final String? id = json['messageId'] as String?;
+        final String key = chunk && id != null
+            ? '$kind:$turn:id:$id'
+            : chunk && lastKind == kind && !lastKey.contains(':id:')
+            ? lastKey
+            : '$kind:$seq';
+        final String? text = switch (kind) {
+          'userMessage' ||
+          'agentMessageChunk' ||
+          'agentThoughtChunk' => json['text'] as String?,
+          'sessionError' => json['message'] as String?,
+          _ => null,
+        };
+        if (text != null) {
+          messages.putIfAbsent(key, StringBuffer.new).write(text);
+        }
+        lastKind = kind;
+        lastKey = key;
+      }
+      final String? match = messages.values
+          .map((StringBuffer b) => b.toString())
+          .where((String text) => text.toLowerCase().contains(needle))
+          .firstOrNull;
+      if (match == null) continue;
+      results.add(
+        SessionSearchResult(
+          session: session,
+          projectName: _projects
+              .where((Project p) => p.id == session.projectId)
+              .firstOrNull
+              ?.name,
+          excerpt: sessionSearchExcerpt(match, needle),
+        ),
+      );
+      if (results.length > limit) break;
+    }
+    final bool hasMore = results.length > limit;
+    if (hasMore) results.removeLast();
+    final Session? last = results.lastOrNull?.session;
+    return SessionSearchPage(
+      results: results,
+      nextCursor: hasMore && last != null
+          ? SessionSearchCursor(
+              lastActivityAt: last.lastActivityAt,
+              id: last.id,
+            )
+          : null,
+    );
+  }
+
+  @override
   Future<Session> createSession({
     required String projectId,
     required String providerId,

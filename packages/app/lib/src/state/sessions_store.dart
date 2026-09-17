@@ -123,6 +123,16 @@ class SessionsStore extends StoreBase {
   bool isDone(String daemonId, String sessionId) =>
       _isDone(_scopedKey(daemonId, sessionId));
 
+  /// Cache a selected search hit without fetching an unbounded session list.
+  void rememberSearchResult(String daemonId, Session session) {
+    _ensureDaemonSubscriptions(daemonId);
+    _sessionsByProject.putIfAbsent(
+      _scopedKey(daemonId, session.projectId),
+      () => <Session>[],
+    );
+    _replace(daemonId, session);
+  }
+
   /// Active sessions across every daemon, newest activity first.
   ///
   /// This is the compact global projection used by Wear OS surfaces. It
