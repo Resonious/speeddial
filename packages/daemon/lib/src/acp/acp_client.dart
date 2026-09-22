@@ -27,6 +27,16 @@ typedef AcpWriteTextFileHandler = Future<void> Function(
   String content,
 );
 
+/// Reports whether a prompt is parked behind the agent's own busy state.
+///
+/// Agents such as OMP keep running their own background turns (for example
+/// when a finished subagent wakes the main agent) after the client's turn
+/// completed; a prompt sent during one is rejected as busy. `waiting` is
+/// true while the client is retrying such a rejection, false once the
+/// prompt leaves the busy wait for any reason (accepted, failed, or
+/// cancelled).
+typedef AcpBusyWaitHandler = void Function(String sessionId, bool waiting);
+
 /// Thrown when the agent process exits while requests are still pending or
 /// before initialization completes.
 class AcpProcessExitedException implements Exception {
@@ -83,17 +93,19 @@ class AcpClient implements AgentClient {
     required String cwd,
     Map<String, String>? environment,
     this.initTimeout = const Duration(seconds: 30),
-    this.busyRetryTimeout = const Duration(seconds: 30),
     AgentPermissionHandler? requestPermission,
     AcpReadTextFileHandler? readTextFile,
     AcpWriteTextFileHandler? writeTextFile,
+    AcpBusyWaitHandler? busyWaitChanged,
   }) : _command = List<String>.of(command),
        _cwd = cwd, // ignore: prefer_initializing_formals — public API name
        // ignore: prefer_initializing_formals — public API name
        _environment = environment,
        _permissionHandler = requestPermission,
        _readTextFileHandler = readTextFile,
-       _writeTextFileHandler = writeTextFile {
+       _writeTextFileHandler = writeTextFile,
+       // ignore: prefer_initializing_formals — public API name
+       _busyWaitChanged = busyWaitChanged {
     _processFuture = _start();
   }
 
@@ -101,14 +113,12 @@ class AcpClient implements AgentClient {
   final String _cwd;
   final Map<String, String>? _environment;
   final Duration initTimeout;
-
-  /// Maximum time to retry an explicitly rejected busy prompt.
-  final Duration busyRetryTimeout;
   final Map<String, Completer<void>> _promptCancellations =
       <String, Completer<void>>{};
   final AgentPermissionHandler? _permissionHandler;
   final AcpReadTextFileHandler? _readTextFileHandler;
   final AcpWriteTextFileHandler? _writeTextFileHandler;
+  final AcpBusyWaitHandler? _busyWaitChanged;
 
   late final Future<Process> _processFuture;
 
@@ -532,6 +542,14 @@ class AcpClient implements AgentClient {
   /// [promptBlocks] are the ACP prompt content blocks (text, image, resource)
   /// sent verbatim as the request's `prompt` parameter; empty for a turn
   /// without any content.
+  ///
+  /// An explicit busy rejection (the agent is running its own background
+  /// turn — OMP continues subagent-driven work after yielding to the user)
+  /// is retried with backoff until the agent accepts the prompt or the turn
+  /// is cancelled: background turns are invisible to ACP and routinely
+  /// outlast any fixed deadline, so giving up would error the session and
+  /// drop a message the agent never saw. [AcpBusyWaitHandler] reports the
+  /// wait; [cancel] interrupts it.
   @override
   Future<PromptResult> prompt(
     String sessionId,
@@ -542,7 +560,19 @@ class AcpClient implements AgentClient {
     }
     final cancelled = Completer<void>();
     _promptCancellations[sessionId] = cancelled;
-    final elapsed = Stopwatch()..start();
+    var busyWaiting = false;
+    var retryDelay = const Duration(milliseconds: 250);
+    const maxRetryDelay = Duration(seconds: 2);
+    void setBusyWaiting(bool waiting) {
+      if (busyWaiting == waiting) return;
+      busyWaiting = waiting;
+      try {
+        _busyWaitChanged?.call(sessionId, waiting);
+      } on Object {
+        // A listener failure must not break the prompt loop.
+      }
+    }
+
     try {
       while (true) {
         if (cancelled.isCompleted) {
@@ -558,27 +588,25 @@ class AcpClient implements AgentClient {
           if (cancelled.isCompleted) {
             return const PromptResult(stopReason: 'cancelled');
           }
-          // Some agents finish the ACP turn before background work releases
-          // their prompt slot. Retry only this explicit rejection: transport
-          // failures and other RPC errors may have already consumed the input.
+          // Retry only this explicit rejection: transport failures and other
+          // RPC errors may have already consumed the input.
           if (error.code != -32003 ||
-              !error.message.startsWith('Agent is already processing') ||
-              elapsed.elapsed >= busyRetryTimeout) {
+              !error.message.startsWith('Agent is already processing')) {
             rethrow;
           }
-          final remaining = busyRetryTimeout - elapsed.elapsed;
+          setBusyWaiting(true);
           await Future.any<void>(<Future<void>>[
             cancelled.future,
-            Future<void>.delayed(
-              remaining < const Duration(milliseconds: 250)
-                  ? remaining
-                  : const Duration(milliseconds: 250),
-            ),
+            Future<void>.delayed(retryDelay),
           ]);
+          if (retryDelay < maxRetryDelay) {
+            final doubled = retryDelay * 2;
+            retryDelay = doubled > maxRetryDelay ? maxRetryDelay : doubled;
+          }
         }
       }
     } finally {
-      elapsed.stop();
+      setBusyWaiting(false);
       _promptCancellations.remove(sessionId);
     }
   }

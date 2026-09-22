@@ -48,9 +48,11 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
-                    Explicit busy prompt rejections are retried for up to 30 seconds,
-                    with cancellation interrupting the wait; other request failures are
-                    reported separately from process exits.
+                    Explicit busy prompt rejections (the agent is running its own
+                    background turn — OMP continues subagent-driven work after
+                    yielding) are retried with backoff until the agent accepts or
+                    the turn is cancelled, never surfaced as turn errors; other
+                    request failures are reported separately from process exits.
                     ACP has no standard session permission policy; the built-in OMP provider
                     selects its native yolo mode through its launch command, while custom ACP
                     providers retain the engine's auto-resolution fallback.
@@ -146,7 +148,12 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     provider omits them, making logical streamed content daemon-owned.
                     Handles permission requests (parked until respondPermission, or
                     auto-resolved as a yolo fallback), cancel, process exit, and turn
-                    lifecycle. Eventless Codex sessions whose empty rollout vanished with their
+                    lifecycle. The update subscription lives for the agent's lifetime
+                    rather than one turn, so updates arriving between client turns
+                    (an OMP background wakeup after a finished subagent) are persisted
+                    instead of dropped, and a prompt parked behind such an agent-busy
+                    turn surfaces as a `session`-kind agentActivity instead of an
+                    error. Eventless Codex sessions whose empty rollout vanished with their
                     app-server process start a replacement thread before their first turn.
                     Inline tool-result images and provider-reported image
                     file reads are deduplicated into attachment-backed tool content. MCP

@@ -29,6 +29,9 @@
 //         `session/cancel` notification resolves it with `cancelled`.
 //       - "weird": emits an unknown update variant (must be dropped by the
 //         client), then usage_update and `end_turn`.
+//       - "wake-late": resolves `end_turn` immediately, then emits an
+//         agent_message_chunk ~150ms later with no turn in flight (an
+//         OMP-style background wakeup).
 //       - "die": parks a session/request_permission, then exits the process
 //         when `<cwd>/agent.turn.die` appears (mid-request agent death).
 //       - "hang": sends nothing and never resolves the turn.
@@ -496,6 +499,25 @@ Future<void> _runTurn(
       'size': 100,
       'used': 10,
     });
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
+  if (text == 'wake-late') {
+    // Simulates an agent that yields its turn and later wakes on its own
+    // (OMP's subagent completion): the prompt resolves immediately and the
+    // wakeup content arrives as an update with no client turn in flight.
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 150)).then(
+        (_) => _sendUpdate(<String, Object?>{
+          'sessionUpdate': 'agent_message_chunk',
+          'content': <String, Object?>{
+            'type': 'text',
+            'text': 'Subagent result arrived.',
+          },
+          'messageId': 'wake1',
+        }),
+      ),
+    );
     return _resolvePrompt(promptId, 'end_turn');
   }
 

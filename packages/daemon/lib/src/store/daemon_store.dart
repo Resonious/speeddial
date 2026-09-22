@@ -1102,9 +1102,14 @@ class DaemonStore {
   // Session events
   // -------------------------------------------------------------------------
 
-  /// Whether [sessionId] has accepted any turn or emitted provider output.
-  bool hasSessionEvents(String sessionId) => _db.select(
-    'SELECT 1 FROM session_events WHERE session_id = ? LIMIT 1',
+  /// Whether [sessionId] has accepted a user message — the marker that the
+  /// provider's thread has seen a turn and therefore has a rollout worth
+  /// resuming. Provider noise (usage, activity snapshots) must not count:
+  /// Codex drops the rollout when its app-server exits before the first
+  /// turn even when such events were already persisted.
+  bool hasUserMessage(String sessionId) => _db.select(
+    "SELECT 1 FROM session_events WHERE session_id = ? "
+    "AND json_extract(json, '\$.type') = 'userMessage' LIMIT 1",
     <Object?>[sessionId],
   ).isNotEmpty;
 

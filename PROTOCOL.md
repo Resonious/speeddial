@@ -505,7 +505,11 @@ tokens before session creation/resume, and checks them periodically while runnin
   inherited context with the fork's first new turn. This provider-independent handoff makes
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
   The source session and its agent remain unchanged.
-- `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running. `text`
+- `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+  An agent busy with its own background work (OMP keeps running subagent-driven turns
+  after yielding to the user) does not fail the send: the daemon holds the prompt,
+  surfaces the wait as a `session`-kind `agentActivity`, and delivers the message once
+  the agent accepts it. `text`
   may be empty only when `attachments` is non-empty. ACP providers accept text, image, and binary
   attachments. Codex accepts text, non-text images, and audio natively; other binary attachments
   are saved in a private transient directory on the daemon host and passed as text containing

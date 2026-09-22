@@ -110,25 +110,42 @@ void main() {
     );
   });
 
-  test('busy retries stop at their deadline', () async {
+  test('reports the busy wait while retrying a rejected prompt', () async {
+    final waits = <bool>[];
     final client = AcpClient.spawn(
       <String>[Platform.resolvedExecutable, fakeAgentScript()],
       cwd: tempDir.path,
-      busyRetryTimeout: const Duration(milliseconds: 30),
+      busyWaitChanged: (sessionId, waiting) => waits.add(waiting),
     );
     addTearDown(client.dispose);
     await client.initialized;
     final session = await client.newSession(cwd: tempDir.path);
-    await expectLater(
-      client.prompt(session.sessionId, textBlocks('busy-always')),
-      throwsA(
-        isA<AcpJsonRpcException>().having(
-          (error) => error.code,
-          'code',
-          -32003,
-        ),
-      ),
+    final result = await client.prompt(
+      session.sessionId,
+      textBlocks('busy-once'),
     );
+    expect(result.stopReason, 'end_turn');
+    expect(waits, <bool>[true, false]);
+  });
+
+  test('a cancelled busy wait is reported and never errors', () async {
+    final waits = <bool>[];
+    final client = AcpClient.spawn(
+      <String>[Platform.resolvedExecutable, fakeAgentScript()],
+      cwd: tempDir.path,
+      busyWaitChanged: (sessionId, waiting) => waits.add(waiting),
+    );
+    addTearDown(client.dispose);
+    await client.initialized;
+    final session = await client.newSession(cwd: tempDir.path);
+    final pending = client.prompt(session.sessionId, textBlocks('busy-always'));
+    final marker = File(p.join(tempDir.path, 'agent.busy_attempts'));
+    while (!marker.existsSync()) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await client.cancel(session.sessionId);
+    expect((await pending).stopReason, 'cancelled');
+    expect(waits, <bool>[true, false]);
   });
 
   test(

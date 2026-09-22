@@ -81,6 +81,18 @@ class _LiveSession {
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
 
+  /// Lifetime subscription to the provider's session updates, attached when
+  /// the live session is created and cancelled at teardown. Agents like OMP
+  /// keep working after yielding a turn (a finished subagent wakes the main
+  /// agent) and emit updates with no client turn in flight; listening only
+  /// while a turn runs would drop them.
+  StreamSubscription<AcpSessionUpdate>? updatesSubscription;
+
+  /// Whether the busy-wait activity is currently shown: the in-flight
+  /// prompt was rejected as busy and is being retried until the agent's own
+  /// background turn releases it.
+  bool busyWaitActive = false;
+
   /// Parked permission requests: requestId → completer of the chosen option.
   final Map<String, Completer<String>> pendingPermissions = {};
 
@@ -223,6 +235,7 @@ class SessionEngine {
     _live.remove(sessionId);
     _mcpReloadPending.remove(sessionId);
     live.closed = true;
+    await live.updatesSubscription?.cancel();
     await live.client.dispose();
     return true;
   }
@@ -573,13 +586,15 @@ class SessionEngine {
     }
     _store.insertSession(session);
     _store.setProviderSessionId(session.id, providerSessionId);
-    _live[session.id] = _LiveSession(
+    final _LiveSession live = _LiveSession(
       session: session,
       client: client,
       providerSessionId: providerSessionId,
       modelConfigId: modelOption?.configId,
       thinkingConfigId: thinking?.configId,
     );
+    _live[session.id] = live;
+    _subscribeToUpdates(live);
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(session);
     }
@@ -681,6 +696,8 @@ class SessionEngine {
             _readTextFile(session.id, path),
         writeTextFile: (providerSessionId, path, content) =>
             _writeTextFile(session.id, path, content),
+        busyWaitChanged: (providerSessionId, waiting) =>
+            _onBusyWaitChanged(session.id, waiting),
       ),
       ProviderProtocol.codex => CodexClient.spawn(
         command,
@@ -923,8 +940,9 @@ class SessionEngine {
 
   /// Respawns the provider transport for a session whose process is gone,
   /// making persisted sessions usable across daemon restarts. Codex removes
-  /// an empty thread's rollout when app-server exits. Eventless Codex sessions
-  /// and forks with pending inherited context therefore start fresh threads.
+  /// an empty thread's rollout when app-server exits. Codex sessions whose
+  /// user never sent a turn, and forks with pending inherited context,
+  /// therefore start fresh threads.
   /// Newly copied forks have no provider id until their first send.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
@@ -964,7 +982,7 @@ class SessionEngine {
     final bool startNewThread =
         storedProviderSessionId == null ||
         (spec.protocol == ProviderProtocol.codex &&
-            (pendingFork || !_store.hasSessionEvents(sessionId)));
+            (pendingFork || !_store.hasUserMessage(sessionId)));
     final AgentClient client = _spawnAgent(session);
     var providerSessionId = storedProviderSessionId;
     final List<AcpConfigOption> configOptions;
@@ -1041,6 +1059,9 @@ class SessionEngine {
       thinkingConfigId: thinkingOption?.configId,
     );
     _live[sessionId] = live;
+    // Attached after the load: an agent replaying its transcript during
+    // session/load must not duplicate the daemon's own persisted history.
+    _subscribeToUpdates(live);
     // A setMode only persisted the
     // choice; reapply it now. Advisory: a rejecting agent must not fail the
     // resume — the next explicit setMode tries again.
@@ -1312,6 +1333,7 @@ class SessionEngine {
       _expirePendingPermissions(live, 'Session deleted');
       _toolCalls.remove(sessionId);
       _toolCallImages.remove(sessionId);
+      await live.updatesSubscription?.cancel();
       await live.client.dispose();
     }
     _store.deleteSession(sessionId);
@@ -1325,6 +1347,7 @@ class SessionEngine {
     for (final live in _live.values) {
       live.closed = true;
       _expirePendingPermissions(live, 'Daemon shutting down');
+      await live.updatesSubscription?.cancel();
       await live.client.dispose();
     }
     _live.clear();
@@ -1391,12 +1414,6 @@ class SessionEngine {
     List<_PreparedAttachment> attachments,
     _ForkContext? forkContext,
   ) async {
-    final updates = live.client.sessionUpdates(live.providerSessionId);
-    final subscription = updates.listen((update) {
-      final event = _mapUpdate(live, update);
-      if (event != null) _emit(live, event);
-    });
-
     try {
       final result = await live.client.prompt(
         live.providerSessionId,
@@ -1425,8 +1442,87 @@ class SessionEngine {
         _setStatus(live, SessionStatus.error, activity: true);
       }
     } finally {
-      await subscription.cancel();
+      // The client normally ends the wait through its busyWaitChanged
+      // callback; this closes it even if that report was lost.
+      _endBusyWait(live);
     }
+  }
+
+  /// Attaches the lifetime updates subscription for a freshly created live
+  /// session. Listening must not be scoped to turns: providers can emit
+  /// updates while no client turn is in flight (OMP's background turns are
+  /// invisible to ACP while they run, but config and activity pushes still
+  /// arrive), and a per-turn subscription silently drops them.
+  void _subscribeToUpdates(_LiveSession live) {
+    live.updatesSubscription = live.client
+        .sessionUpdates(live.providerSessionId)
+        .listen((update) {
+          if (live.closed) return;
+          final SessionEvent? event = _mapUpdate(live, update);
+          if (event == null) return;
+          // Streamed output while the prompt is parked behind the agent's
+          // own background turn means the agent accepted the message and
+          // started working on it: close the wait indicator.
+          _endBusyWait(live);
+          _emit(live, event);
+        });
+  }
+
+  /// Activity id of the busy-wait indicator; one row per live session,
+  /// replaced in place by later snapshots.
+  static const String _busyWaitActivityId = 'agent-busy-wait';
+
+  /// Handles the ACP client's busy-wait report. The wait is surfaced as a
+  /// provider activity so a user who messages a session mid-background-turn
+  /// sees why their turn is quiet instead of an unexplained spinner (and
+  /// never a session error).
+  void _onBusyWaitChanged(String sessionId, bool waiting) {
+    final _LiveSession? live = _live[sessionId];
+    if (live == null || live.closed) return;
+    if (waiting) {
+      _beginBusyWait(live);
+    } else {
+      _endBusyWait(live);
+    }
+  }
+
+  void _beginBusyWait(_LiveSession live) {
+    if (live.busyWaitActive) return;
+    live.busyWaitActive = true;
+    _breakSyntheticContent(live);
+    _emit(
+      live,
+      const AgentActivityEvent(
+        activity: AgentActivity(
+          id: _busyWaitActivityId,
+          kind: 'session',
+          title: "Waiting for the agent's background work to finish",
+          status: AgentActivityStatus.running,
+          details: <String>[
+            'The agent is still processing its own work (for example a '
+                'finished subagent waking it up). Your message will be '
+                'delivered as soon as the agent is idle.',
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _endBusyWait(_LiveSession live) {
+    if (!live.busyWaitActive) return;
+    live.busyWaitActive = false;
+    _emit(
+      live,
+      const AgentActivityEvent(
+        activity: AgentActivity(
+          id: _busyWaitActivityId,
+          kind: 'session',
+          title: "The agent's background work finished",
+          status: AgentActivityStatus.completed,
+          details: <String>[],
+        ),
+      ),
+    );
   }
 
   /// The structured provider prompt blocks for a turn. A fork's inherited
@@ -1693,7 +1789,9 @@ class SessionEngine {
                 _persistInlineToolImage(live, block, pathHint: pathHint),
           ),
         );
-        _toolCalls[sessionId]?[mapped.id] = mapped;
+        _toolCalls
+            .putIfAbsent(sessionId, () => <String, ToolCall>{})[mapped.id] =
+            mapped;
         return ToolCallEvent(toolCall: boundInitialToolCallForEmit(mapped));
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
@@ -1726,7 +1824,9 @@ class SessionEngine {
           live,
           _withPriorToolImages(mapped, prior),
         );
-        _toolCalls[sessionId]?[toolCallId] = merged;
+        _toolCalls
+            .putIfAbsent(sessionId, () => <String, ToolCall>{})[toolCallId] =
+            merged;
         // Persisted/broadcast progress is metadata-only. The in-memory state
         // stays complete so the terminal event can carry a bounded preview.
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));

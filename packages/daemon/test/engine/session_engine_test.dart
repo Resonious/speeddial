@@ -211,6 +211,67 @@ void main() {
     expect(history.whereType<SessionErrorEvent>(), isEmpty);
   });
 
+  test('an agent-busy send waits as a visible activity instead of erroring',
+      () async {
+    final session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    await engine.sendMessage(session.id, 'busy-once');
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    final history = store.listEvents(session.id).events;
+    expect(history.whereType<SessionErrorEvent>(), isEmpty);
+    expect(
+      history.whereType<TurnCompleteEvent>().single.stopReason,
+      'end_turn',
+    );
+    final activities = history
+        .whereType<AgentActivityEvent>()
+        .map((event) => event.activity)
+        .where((activity) => activity.id == 'agent-busy-wait')
+        .toList();
+    expect(
+      activities.map((activity) => activity.status),
+      <AgentActivityStatus>[
+        AgentActivityStatus.running,
+        AgentActivityStatus.completed,
+      ],
+    );
+  });
+
+  test('updates arriving after a turn ends are persisted', () async {
+    final session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    await engine.sendMessage(session.id, 'wake-late');
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    await waitFor(
+      () => store
+          .listEvents(session.id)
+          .events
+          .whereType<AgentMessageChunkEvent>()
+          .any((event) => event.text == 'Subagent result arrived.'),
+    );
+    final history = store.listEvents(session.id).events;
+    final chunkIndex = history.indexWhere(
+      (event) =>
+          event is AgentMessageChunkEvent &&
+          event.text == 'Subagent result arrived.',
+    );
+    final turnEndIndex = history.indexWhere(
+      (event) => event is TurnCompleteEvent,
+    );
+    expect(turnEndIndex, isNonNegative);
+    expect(chunkIndex, greaterThan(turnEndIndex));
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    expect(history.whereType<SessionErrorEvent>(), isEmpty);
+  });
+
   test('ACP request errors do not claim the process exited', () async {
     final session = await engine.createSession(
       projectId: project.id,
@@ -300,14 +361,19 @@ void main() {
       expect(startReport.existsSync(), isTrue);
       startReport.deleteSync();
       if (scenario != 'empty') {
+        // The engine listens from session creation, so the app server's MCP
+        // startup activity may already occupy early seqs; the inherited
+        // message must follow whatever has already landed.
+        await waitFor(() => store.listEvents(session.id).events.isNotEmpty);
+        final int inheritedSeq = store.nextSeq(session.id);
         store.appendEvent(
           session.id,
-          1,
+          inheritedSeq,
           const UserMessageEvent(text: 'Inherited'),
         );
         session = await engine.forkSession(
           sourceSessionId: session.id,
-          throughSeq: 1,
+          throughSeq: inheritedSeq,
         );
         expect(
           startReport.existsSync(),
