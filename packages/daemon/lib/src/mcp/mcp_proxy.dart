@@ -122,6 +122,7 @@ class McpProxySession {
         routes[publicName] = _ToolRoute(
           connection: server.connection!,
           upstreamName: rawName,
+          secrets: server.stored.secrets.values.toList(growable: false),
         );
       }
       if (strippedInServer > 0) {
@@ -195,7 +196,28 @@ class McpProxySession {
     if (_routes.isEmpty) await listTools();
     final _ToolRoute? route = _routes[name];
     if (route == null) throw ArgumentError('Unknown managed MCP tool: $name');
-    return route.connection.callTool(route.upstreamName, arguments);
+    try {
+      return await route.connection.callTool(route.upstreamName, arguments);
+    } on Object catch (error) {
+      // Preserve transport failures as MCP tool errors before JSON-RPC's
+      // generic exception handler replaces them with "Internal error".
+      String message = _errorMessage(error);
+      final List<String> secrets =
+          route.secrets.where((String secret) => secret.isNotEmpty).toList()
+            ..sort((String a, String b) => b.length.compareTo(a.length));
+      for (final String secret in secrets) {
+        message = message.replaceAll(secret, '[redacted]');
+      }
+      return <String, Object?>{
+        'isError': true,
+        'content': <Object?>[
+          <String, Object?>{
+            'type': 'text',
+            'text': 'MCP tool "$name" failed: $message',
+          },
+        ],
+      };
+    }
   }
 
   Future<void> close() async {
@@ -312,10 +334,15 @@ Object? _stripLookaroundValue(Object? value, void Function() onRemoved) {
 }
 
 class _ToolRoute {
-  const _ToolRoute({required this.connection, required this.upstreamName});
+  const _ToolRoute({
+    required this.connection,
+    required this.upstreamName,
+    required this.secrets,
+  });
 
   final McpUpstreamConnection connection;
   final String upstreamName;
+  final List<String> secrets;
 }
 
 class _ServerTools {

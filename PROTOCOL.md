@@ -376,6 +376,9 @@ and all `tools/list` pages. Discovery runs concurrently; a slow upstream contrib
 warning instead of blocking healthy tools past the agent's bridge startup deadline. Timed-out
 connections are discarded (including those that finish connecting late); a subsequent tool
 listing may retry them. The upstream connections close with their authenticated bridge connection.
+Exceptions while calling an upstream tool are returned as MCP `isError: true` results,
+including the qualified tool name and error detail with configured secret values redacted.
+Calls are not automatically replayed after failure, since a tool may have side effects.
 
 Codex receives the daemon bridge with `required: true` and `startup_timeout_sec: 30`
 on both thread creation and resume. Codex must finish bridge startup before capturing the

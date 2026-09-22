@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/harnesses/harness_service.dart';
+import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:speeddial_daemon/src/mcp/mcp_proxy.dart';
 import 'package:speeddial_daemon/src/server/ws_server.dart';
@@ -52,6 +53,7 @@ class TestMcpConnection implements McpUpstreamConnection {
   TestMcpConnection(this.serverName);
 
   final String serverName;
+  Object? callError;
   final List<({String name, Map<String, Object?> arguments})> calls =
       <({String name, Map<String, Object?> arguments})>[];
   bool closed = false;
@@ -75,6 +77,7 @@ class TestMcpConnection implements McpUpstreamConnection {
     Map<String, Object?> arguments,
   ) async {
     calls.add((name: name, arguments: arguments));
+    if (callError case final Object error) throw error;
     return <String, Object?>{
       'content': <Object?>[
         <String, Object?>{'type': 'text', 'text': serverName},
@@ -1102,6 +1105,46 @@ void main() {
         );
         expect(call['structuredContent'], <String, Object?>{'value': 7});
         expect(upstream?.calls.single.name, 'echo');
+        for (final Object error in <Object>[
+          TimeoutException('MCP request "tools/call" timed out'),
+          StateError('MCP HTTP 401: rejected top-secret'),
+          const FormatException('MCP HTTP response must be an object'),
+        ]) {
+          upstream!.callError = error;
+          final BuiltInMcpServer bridgeServer = BuiltInMcpServer(
+            sessionId: owner.id,
+            cwd: dir.path,
+            daemonCall: (String method, Map<String, Object?> params) =>
+                mcp.peer.call(method, params),
+          );
+          final Map<String, Object?>? response = await bridgeServer.handle(
+            <String, Object?>{
+              'jsonrpc': '2.0',
+              'id': 1,
+              'method': 'tools/call',
+              'params': <String, Object?>{
+                'name': 'filesystem__echo',
+                'arguments': <String, Object?>{},
+              },
+            },
+          );
+          final Map result = response!['result']! as Map;
+          expect(result['isError'], isTrue);
+          final String text =
+              ((result['content']! as List).single as Map)['text']! as String;
+          expect(text, contains('filesystem__echo'));
+          expect(text, isNot(contains('Internal error')));
+          expect(text, isNot(contains('top-secret')));
+          expect(
+            text,
+            contains(switch (error) {
+              TimeoutException() => 'timed out',
+              StateError() => 'MCP HTTP 401: rejected [redacted]',
+              _ => 'MCP HTTP response must be an object',
+            }),
+          );
+        }
+        expect(upstream!.calls, hasLength(4));
         await mcp.close();
 
         await client.peer.call('mcp.update', <String, Object?>{
