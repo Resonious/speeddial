@@ -197,27 +197,31 @@ class ProviderRegistry {
 
   /// All providers (built-ins plus user additions), with live availability
   /// and selectable models (static or probed).
+  ///
+  /// Probes run concurrently: they spawn agent CLIs, so a serial loop would
+  /// make one slow probe hold up every later provider in the list.
   Future<List<ProviderInfo>> list() async {
-    final out = <ProviderInfo>[];
-    for (final spec in _providers.values) {
-      out.add(
+    final List<ProviderSpec> specs = _providers.values.toList(growable: false);
+    final List<List<String>> models = await Future.wait(<Future<List<String>>>[
+      for (final ProviderSpec spec in specs) _modelsFor(spec),
+    ]);
+    return <ProviderInfo>[
+      for (int i = 0; i < specs.length; i++)
         ProviderInfo(
-          id: spec.id,
-          name: spec.name,
-          available: isAvailable(spec.id),
-          command: spec.command.join(' '),
-          models: await _modelsFor(spec),
-          protocol: spec.protocol.name,
-          sandboxModes: spec.protocol == ProviderProtocol.codex
+          id: specs[i].id,
+          name: specs[i].name,
+          available: isAvailable(specs[i].id),
+          command: specs[i].command.join(' '),
+          models: models[i],
+          protocol: specs[i].protocol.name,
+          sandboxModes: specs[i].protocol == ProviderProtocol.codex
               ? const <SessionSandboxMode>[
                   SessionSandboxMode.workspaceWrite,
                   SessionSandboxMode.unrestricted,
                 ]
               : const <SessionSandboxMode>[],
         ),
-      );
-    }
-    return out;
+    ];
   }
 
   /// The provider spec, or null for an unknown id.

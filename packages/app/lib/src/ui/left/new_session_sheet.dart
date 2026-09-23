@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../../state/daemon_config_store.dart';
 
 /// Modal sheet used to create a session under [projectId] of [daemonId].
 ///
@@ -37,9 +40,6 @@ class NewSessionSheet extends StatefulWidget {
   State<NewSessionSheet> createState() => _NewSessionSheetState();
 }
 
-/// Providers plus the project's branch list (empty for non-git projects).
-typedef _SheetData = ({DaemonInfo info, List<Branch> branches});
-
 /// Dropdown sentinel for the sheet's free-form model entry. NUL is not a
 /// valid model id.
 const String _kCustomModelChoice = '\u0000custom-model';
@@ -66,7 +66,8 @@ String _anteProviderLabel(String qualified) {
 }
 
 class _NewSessionSheetState extends State<NewSessionSheet> {
-  Future<_SheetData>? _data;
+  bool _started = false;
+  bool _loading = false;
   String? _providerId;
   ProviderInfo? _selectedProvider;
   String? _modelId;
@@ -91,20 +92,42 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _data ??= _load();
+    if (_started) return;
+    _started = true;
+    final AppData data = widget.data;
+    final DaemonConfigStore config = data.daemonConfig;
+    // Only a cold cache blocks the form; anything cached paints at once and
+    // the refresh lands behind it.
+    _loading = config.infoFor(widget.daemonId) == null ||
+        data.git.branchesFor(widget.projectId) == null;
+    // The refresh is scheduled, never run here: git.refresh notifies its
+    // listeners synchronously, and didChangeDependencies is inside the build
+    // phase, so a direct call would mark this sheet dirty mid-build.
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      // Cache-aware and fire-and-forget, both on every open: the form reads
+      // the results out of the stores (build listens to them), so the fresh
+      // values replace the cached ones in place.
+      final Future<void> info = config.refreshInfo(widget.daemonId);
+      final Future<void> branches = data.git.refresh(
+        widget.daemonId,
+        widget.projectId,
+      );
+      if (_loading) {
+        unawaited(
+          Future.wait<void>(<Future<void>>[info, branches]).whenComplete(
+            _onFirstLoad,
+          ),
+        );
+      }
+    });
   }
 
-  Future<_SheetData> _load() async {
-    final client = widget.data.clientFor(widget.daemonId);
-    final DaemonInfo info = await client.info();
-    List<Branch> branches = const <Branch>[];
-    try {
-      branches = await client.gitBranches(widget.projectId);
-    } on Exception {
-      // Not a git repository (or git missing on the daemon host): the
-      // worktree controls stay hidden and sessions use the project dir.
-    }
-    return (info: info, branches: branches);
+  /// First load only: clears the spinner. The form reads the stores from here
+  /// on, so no values are copied into widget state.
+  void _onFirstLoad() {
+    if (!mounted) return;
+    setState(() => _loading = false);
   }
 
   Future<void> _selectProvider(String providerId) async {
@@ -166,25 +189,31 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     }
   }
 
-  Widget _buildForm(BuildContext context, AsyncSnapshot<_SheetData> snapshot) {
+  Widget _buildForm(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final AppData data = widget.data;
     final List<ProviderInfo> providers =
-        snapshot.data?.info.providers ?? const <ProviderInfo>[];
-    final List<Branch> branches = snapshot.data?.branches ?? const <Branch>[];
+        data.daemonConfig.infoFor(widget.daemonId)?.providers ??
+        const <ProviderInfo>[];
+    // Null until the git fetch lands (or for a non-git project): the worktree
+    // controls stay hidden either way.
+    final List<Branch> branches =
+        data.git.branchesFor(widget.projectId) ?? const <Branch>[];
 
-    if (snapshot.connectionState == ConnectionState.waiting) {
+    // Only a cold cache blocks the form: with anything cached the sheet paints
+    // immediately and the refresh updates it in place.
+    if (_loading && providers.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (snapshot.hasError || providers.isEmpty) {
+    if (providers.isEmpty) {
+      final Object? error = data.daemonConfig.infoErrorFor(widget.daemonId);
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Text(
-          providers.isEmpty
-              ? 'No providers available'
-              : 'Failed to load providers',
+          error != null ? 'Failed to load providers' : 'No providers available',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.error,
           ),
@@ -439,7 +468,15 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           children: <Widget>[
             Text('New session', style: textTheme.titleMedium),
             const SizedBox(height: 16),
-            FutureBuilder<_SheetData>(future: _data, builder: _buildForm),
+            // The form reads the provider/branch caches through the stores,
+            // so a background refresh lands here without a rebuild of its own.
+            ListenableBuilder(
+              listenable: Listenable.merge(<Listenable>[
+                widget.data.daemonConfig,
+                widget.data.git,
+              ]),
+              builder: (BuildContext context, Widget? _) => _buildForm(context),
+            ),
           ],
         ),
       ),
