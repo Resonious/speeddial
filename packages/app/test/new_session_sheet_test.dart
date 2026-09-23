@@ -150,10 +150,8 @@ void main() {
 
     expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
     expect(find.byKey(const Key('new-session-yolo')), findsOneWidget);
-    expect(
-      find.byKey(const Key('new-session-short-prompt')),
-      findsOneWidget,
-    );
+    // Short Prompt is Ante-only, and the default provider here is omp.
+    expect(find.byKey(const Key('new-session-short-prompt')), findsNothing);
     expect(find.byKey(const Key('new-session-no-sandbox')), findsNothing);
     expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
@@ -329,7 +327,15 @@ void main() {
       find.byKey(const Key('new-session-short-prompt')),
     );
 
-    // Default: unchecked.
+    Future<void> pickAnte() async {
+      await tester.tap(find.byKey(const Key('new-session-provider')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ante').last);
+      await tester.pumpAndSettle();
+    }
+
+    // Default: unchecked. Pick Ante first — the checkbox only exists there.
+    await pickAnte();
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
     final Session defaultSession = createdSession(app, projectId);
@@ -338,6 +344,7 @@ void main() {
     // Check it, then cancel without submitting.
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
+    await pickAnte();
     final Finder toggle = find.byKey(const Key('new-session-short-prompt'));
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
@@ -348,6 +355,7 @@ void main() {
     // Reopen: still checked.
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
+    await pickAnte();
     expect(promptTile().value, isTrue);
 
     // Submitting sends the flag.
@@ -361,6 +369,7 @@ void main() {
     // Unchecking sticks the same way.
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
+    await pickAnte();
     await tester.ensureVisible(toggle);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
@@ -368,6 +377,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
+    await pickAnte();
     expect(promptTile().value, isFalse);
   });
 

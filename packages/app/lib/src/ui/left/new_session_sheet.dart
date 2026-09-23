@@ -378,25 +378,28 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                   widget.data.newSessionYolo = _yolo;
                 }),
         ),
-        CheckboxListTile(
-          key: const Key('new-session-short-prompt'),
-          value: _shortPrompt,
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          controlAffinity: ListTileControlAffinity.leading,
-          title: const Text('Short Prompt'),
-          subtitle: const Text(
-            'Run the Ante agent with its condensed system prompt',
+        // Ante-only: other harnesses have no prompt-verbosity switch, so
+        // the checkbox would be dead weight (the flag is ignored).
+        if (_selectedProvider?.protocol == 'ante')
+          CheckboxListTile(
+            key: const Key('new-session-short-prompt'),
+            value: _shortPrompt,
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text('Short Prompt'),
+            subtitle: const Text(
+              'Run the Ante agent with its condensed system prompt',
+            ),
+            onChanged: _submitting
+                ? null
+                : (bool? value) => setState(() {
+                    _shortPrompt = value ?? false;
+                    // Sticky even when the sheet is cancelled: the next
+                    // sheet seeds from this.
+                    widget.data.newSessionShortPrompt = _shortPrompt;
+                  }),
           ),
-          onChanged: _submitting
-              ? null
-              : (bool? value) => setState(() {
-                  _shortPrompt = value ?? false;
-                  // Sticky even when the sheet is cancelled: the next
-                  // sheet seeds from this.
-                  widget.data.newSessionShortPrompt = _shortPrompt;
-                }),
-        ),
         if (branches.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),
           CheckboxListTile(
