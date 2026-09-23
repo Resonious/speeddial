@@ -13,10 +13,12 @@ import 'package:speeddial_app/src/ui/left/new_session_sheet.dart';
 /// Pumps a host scaffold that opens [NewSessionSheet] as a real modal
 /// bottom-sheet route (mirroring the left rail: scroll-controlled,
 /// safe-area) against a fake daemon (either [fake] or a fresh scripted one).
-/// The sheet is already open when this returns.
+/// The sheet is already open when this returns. Pass [settle] false to stop
+/// on the sheet's first frame, before its in-flight fetches complete.
 Future<({AppData app, String projectId})> pumpSheet(
   WidgetTester tester, {
   FakeDaemonClient? fake,
+  bool settle = true,
 }) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final FakeDaemonClient fakeClient =
@@ -64,7 +66,11 @@ Future<({AppData app, String projectId})> pumpSheet(
     ),
   );
   await tester.tap(find.text('open-sheet'));
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
   return (app: app, projectId: projectId);
 }
 
@@ -77,7 +83,65 @@ Session createdSession(AppData app, String projectId) {
   );
 }
 
+/// A [FakeDaemonClient] that counts `daemon.info` calls and can gate the
+/// provider catalog behind a slow reply.
+class CountingInfoDaemon extends FakeDaemonClient {
+  CountingInfoDaemon({this.infoDelay = Duration.zero})
+    : super(eventDelay: const Duration(milliseconds: 1));
+
+  final Duration infoDelay;
+  int infoCalls = 0;
+
+  @override
+  Future<DaemonInfo> info() async {
+    infoCalls++;
+    if (infoDelay > Duration.zero) await Future<void>.delayed(infoDelay);
+    return super.info();
+  }
+}
+
 void main() {
+  testWidgets('a cold catalog blocks the form until the first fetch lands', (
+    WidgetTester tester,
+  ) async {
+    final CountingInfoDaemon fake = CountingInfoDaemon(
+      infoDelay: const Duration(milliseconds: 50),
+    );
+    await pumpSheet(tester, fake: fake, settle: false);
+
+    // Nothing cached yet: the first open waits on the round-trip.
+    expect(fake.infoCalls, 1);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('reopening paints the cached catalog at once and refreshes '
+      'behind it', (WidgetTester tester) async {
+    final CountingInfoDaemon fake = CountingInfoDaemon(
+      infoDelay: const Duration(milliseconds: 50),
+    );
+    await pumpSheet(tester, fake: fake);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('open-sheet'));
+    await tester.pump();
+
+    // First frame of the reopened sheet: the form is already there from the
+    // cache, with the 50ms refetch still in flight.
+    expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('OMP Agent'), findsOneWidget);
+
+    // The refresh still runs on every open, cached or not.
+    await tester.pumpAndSettle();
+    expect(fake.infoCalls, 2);
+  });
+
   testWidgets('the form asks for provider, safety settings and worktree; a '
       'model picker appears for providers that advertise models', (
     WidgetTester tester,

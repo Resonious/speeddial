@@ -160,12 +160,17 @@ class GitStore extends StoreBase {
     notifyListeners();
     try {
       final DaemonClient client = _clientFor(daemonId);
-      final GitStatus status =
-          await client.gitStatus(projectId, sessionId: sessionId);
-      final List<Branch> branches =
-          await client.gitBranches(projectId, sessionId: sessionId);
-      _status[key] = status;
-      _branches[key] = branches;
+      // Status and branches are independent round-trips: start both before
+      // awaiting either, so the pane's spinner covers one round-trip instead
+      // of two. Future.wait (rather than the records `.wait`) because it
+      // rethrows the daemon's own error instead of wrapping it, and callers
+      // read [errorFor] expecting a DaemonError.
+      final List<Object?> results = await Future.wait<Object?>(<Future<Object?>>[
+        client.gitStatus(projectId, sessionId: sessionId),
+        client.gitBranches(projectId, sessionId: sessionId),
+      ]);
+      _status[key] = results[0]! as GitStatus;
+      _branches[key] = results[1]! as List<Branch>;
       _errors.remove(key);
     } catch (error) {
       _errors[key] = error;
