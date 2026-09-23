@@ -279,7 +279,8 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that
-                             download to a client-local temporary copy and open via the OS,
+                             save through the system picker on mobile, download through the browser
+                             on web, and open a temporary local copy via the OS on desktop,
                              collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              including lazily loaded image outputs,

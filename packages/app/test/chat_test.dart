@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,6 +94,60 @@ void main() {
     );
     await tester.pump();
     return (app, fakeClient);
+  }
+
+  FilePicker.platform = FilePickerIO();
+
+  for (final String outcome in <String>['saved', 'cancelled', 'failed']) {
+    testWidgets('download shows progress and handles $outcome', (tester) async {
+      final FilePicker originalPicker = FilePicker.platform;
+      final _DownloadPicker picker = _DownloadPicker();
+      FilePicker.platform = picker;
+      addTearDown(() {
+        FilePicker.platform = originalPicker;
+      });
+      final _DownloadFake fake = _DownloadFake();
+      final (AppData app, _) = await pumpChat(tester, fake: fake);
+      await tester.pumpAndSettle();
+      final Future<void> Function(String) open = tester
+          .widget<Timeline>(find.byType(Timeline))
+          .openLocalFile!;
+      final Future<void> pending = open('archive.zip');
+      await tester.pump();
+      expect(find.text('Preparing download…'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(picker.calls, 0);
+      await open('archive.zip');
+      expect(fake.downloads, 1);
+      if (outcome == 'failed') {
+        fake.download.completeError(const DaemonError(-32602, 'File missing'));
+      } else {
+        fake.download.complete(
+          FileDownload(name: 'archive.zip', size: 3, data: 'AAf/'),
+        );
+        await tester.pump();
+        expect(picker.calls, 1);
+        expect(picker.bytes, <int>[0, 7, 255]);
+        picker.result.complete(
+          outcome == 'saved' ? '/document/primary:Documents/archive.zip' : null,
+        );
+      }
+      await tester.pump();
+      await pending;
+      await tester.pumpAndSettle();
+      expect(find.text('Preparing download…'), findsNothing);
+      expect(
+        find.text('Saved archive.zip'),
+        outcome == 'saved' ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('File missing'),
+        outcome == 'failed' ? findsOneWidget : findsNothing,
+      );
+      expect(find.textContaining('Could not'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      app.dispose();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   }
 
   /// Pumps frames until [condition] holds or [attempts] budget is spent.
@@ -1324,5 +1381,37 @@ class _DroppedConnectionFake extends FakeDaemonClient {
     List<OutgoingAttachment>? attachments,
   }) async {
     throw const DaemonConnectionError('peer closed');
+  }
+}
+
+class _DownloadFake extends FakeDaemonClient {
+  final Completer<FileDownload> download = Completer<FileDownload>();
+  int downloads = 0;
+
+  @override
+  Future<FileDownload> downloadFile(String sessionId, String path) {
+    downloads++;
+    return download.future;
+  }
+}
+
+class _DownloadPicker extends FilePicker {
+  final Completer<String?> result = Completer<String?>();
+  int calls = 0;
+  Uint8List? bytes;
+
+  @override
+  Future<String?> saveFile({
+    String? dialogTitle,
+    String? fileName,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Uint8List? bytes,
+    bool lockParentWindow = false,
+  }) {
+    calls++;
+    this.bytes = bytes;
+    return result.future;
   }
 }

@@ -1,20 +1,29 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-Future<bool> openDownloadedFile(String name, Uint8List bytes) async {
+import 'downloaded_file_result.dart';
+
+Future<DownloadedFileResult> openDownloadedFile(
+  String name,
+  Uint8List bytes,
+) async {
   final String safeName = _safeFileName(name);
-  if (Platform.isAndroid || Platform.isIOS) {
+  if (defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS) {
     final String? path = await FilePicker.platform.saveFile(
       fileName: safeName,
       bytes: bytes,
     );
-    if (path == null) return false;
-    return launchUrl(Uri.file(path), mode: LaunchMode.externalApplication);
+    // The picker has already written the bytes. Android document-provider
+    // locations are not filesystem paths and must never become file:// URLs.
+    return path == null
+        ? DownloadedFileResult.cancelled
+        : DownloadedFileResult.saved;
   }
 
   final Directory directory = Directory(
@@ -26,7 +35,13 @@ Future<bool> openDownloadedFile(String name, Uint8List bytes) async {
     '${directory.path}${Platform.pathSeparator}$prefix-$safeName',
   );
   await file.writeAsBytes(bytes, flush: true);
-  return launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication);
+  final bool opened = await launchUrl(
+    Uri.file(file.path),
+    mode: LaunchMode.externalApplication,
+  );
+  return opened
+      ? DownloadedFileResult.opened
+      : DownloadedFileResult.unsupported;
 }
 
 String _safeFileName(String name) {

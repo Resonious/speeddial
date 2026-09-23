@@ -158,6 +158,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   PermissionRequest? _pending;
   bool _forking = false;
   bool _draftErrorShown = false;
+  final ValueNotifier<bool> _downloading = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    _downloading.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -224,6 +231,27 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
         return Column(
           children: <Widget>[
+            ValueListenableBuilder<bool>(
+              valueListenable: _downloading,
+              builder: (
+                BuildContext context,
+                bool downloading,
+                Widget? child,
+              ) => downloading ? child! : const SizedBox.shrink(),
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Row(
+                  children: <Widget>[
+                    SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(child: Text('Preparing download…')),
+                  ],
+                ),
+              ),
+            ),
             Expanded(child: surface),
             if (catchingUp) const _CatchingUp(),
             if (pending != null)
@@ -301,18 +329,29 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   }
 
   Future<void> _openLocalFile(String path) async {
+    if (_downloading.value) return;
+    _downloading.value = true;
     try {
       final FileDownload download = await widget.data
           .clientFor(widget.daemonId)
           .downloadFile(widget.sessionId, path);
-      final bool opened = await openDownloadedFile(download);
-      if (!opened) {
-        await _showMessage('Could not open ${download.name}');
+      if (!mounted) return;
+      final DownloadedFileResult result = await openDownloadedFile(download);
+      switch (result) {
+        case DownloadedFileResult.saved:
+          await _showMessage('Saved ${download.name}');
+        case DownloadedFileResult.unsupported:
+          await _showMessage('Could not open ${download.name}');
+        case DownloadedFileResult.opened:
+        case DownloadedFileResult.cancelled:
+          break;
       }
     } on DaemonError catch (error) {
       await _showError(error);
     } on Object catch (error) {
-      await _showMessage('Could not open file: $error');
+      await _showMessage('Could not download file: $error');
+    } finally {
+      if (mounted) _downloading.value = false;
     }
   }
 
