@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
@@ -396,6 +397,8 @@ class AgentMessageView extends StatefulWidget {
 class _AgentMessageViewState extends State<AgentMessageView> {
   final Map<String, TextSpan> _highlightCache = <String, TextSpan>{};
   final Map<String, String?> _languageCache = <String, String?>{};
+  final _MessageSelectionDelegate _selectionDelegate =
+      _MessageSelectionDelegate();
   late final Map<String, MarkdownElementBuilder> _elementBuilders;
 
   Timer? _settleTimer;
@@ -423,6 +426,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   @override
   void dispose() {
     _settleTimer?.cancel();
+    _selectionDelegate.dispose();
     super.dispose();
   }
 
@@ -517,17 +521,75 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           color: Theme.of(context).colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: MarkdownBody(
-          // Bump the key when highlight availability changes so the body
-          // re-parses and re-runs the (cached) highlighter; data changes
-          // re-parse natively.
-          key: ValueKey<String>('agent-message-$_settled-$_highlighterReady'),
-          data: widget.text,
-          styleSheet: _styleSheetFor(context, bodyStyle),
-          syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
-          builders: _elementBuilders,
+        child: SelectionContainer(
+          delegate: _selectionDelegate,
+          child: MarkdownBody(
+            // Bump the key when highlight availability changes so the body
+            // re-parses and re-runs the (cached) highlighter; data changes
+            // re-parse natively.
+            key: ValueKey<String>('agent-message-$_settled-$_highlighterReady'),
+            data: widget.text,
+            styleSheet: _styleSheetFor(context, bodyStyle),
+            syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
+            builders: _elementBuilders,
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Markdown lays list markers in a separate gutter. During a mobile handle
+/// drag, Flutter otherwise leaves the selection on the previous block when
+/// the finger is over that gutter, even though list text is on the same line.
+class _MessageSelectionDelegate extends StaticSelectionContainerDelegate {
+  static const double _maxGutterWidth = 48;
+  static final RegExp _numberedMarker = RegExp(r'^\d+\.$');
+
+  @override
+  SelectionResult handleSelectionEdgeUpdate(SelectionEdgeUpdateEvent event) {
+    final Offset position = event.globalPosition;
+    double? nearestTextX;
+    for (final Selectable selectable in selectables) {
+      // Keep markers in copied ranges, but do not let one become the target
+      // when a handle passes through the marker gutter.
+      if (selectable is RenderParagraph) {
+        final InlineSpan span = (selectable as RenderParagraph).text;
+        if (span is TextSpan) {
+          final String? label = span.text;
+          if (label == '•' ||
+              (label != null && _numberedMarker.hasMatch(label))) {
+            continue;
+          }
+        }
+      }
+      final Matrix4 transform = selectable.getTransformTo(null);
+      for (final Rect box in selectable.boundingBoxes) {
+        final Rect bounds = MatrixUtils.transformRect(transform, box);
+        if (position.dy < bounds.top || position.dy > bounds.bottom) continue;
+        if (bounds.contains(position)) {
+          return super.handleSelectionEdgeUpdate(event);
+        }
+        final double gap = bounds.left - position.dx;
+        if (gap > 0 &&
+            gap <= _maxGutterWidth &&
+            (nearestTextX == null || bounds.left < nearestTextX)) {
+          nearestTextX = bounds.left;
+        }
+      }
+    }
+    if (nearestTextX == null) return super.handleSelectionEdgeUpdate(event);
+    final Offset adjusted = Offset(nearestTextX + 1, position.dy);
+    return super.handleSelectionEdgeUpdate(
+      event.type == SelectionEventType.endEdgeUpdate
+          ? SelectionEdgeUpdateEvent.forEnd(
+              globalPosition: adjusted,
+              granularity: event.granularity,
+            )
+          : SelectionEdgeUpdateEvent.forStart(
+              globalPosition: adjusted,
+              granularity: event.granularity,
+            ),
     );
   }
 }
