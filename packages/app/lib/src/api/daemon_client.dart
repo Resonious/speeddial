@@ -135,7 +135,8 @@ abstract class DaemonClient {
   /// runs the agent in a fresh worktree branched off the remote tip.
   /// [sandboxMode] selects provider isolation when advertised. [yolo] selects
   /// native no-prompt behavior where supported, with daemon auto-approval as
-  /// a fallback.
+  /// a fallback. [shortPrompt] runs the Ante agent with its compact prompt
+  /// set; other providers ignore it.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -145,6 +146,7 @@ abstract class DaemonClient {
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   });
 
   /// Forks [sessionId] into a new session whose history ends at the message

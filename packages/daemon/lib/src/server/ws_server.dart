@@ -1318,6 +1318,7 @@ class SpeedDialServer {
     final rawBaseBranch = params['baseBranch'];
     final rawSandboxMode = params['sandboxMode'];
     final rawYolo = params['yolo'];
+    final rawShortPrompt = params['shortPrompt'];
     final session = await _engine.createSession(
       projectId: projectId,
       providerId: providerId,
@@ -1332,6 +1333,7 @@ class SpeedDialServer {
           ? null
           : _parseSandboxMode(rawSandboxMode),
       yolo: rawYolo is bool && rawYolo,
+      shortPrompt: rawShortPrompt is bool && rawShortPrompt,
     );
     // The engine already published `session.updated` (suppressed by the
     // created-set while `sessions.create` is in flight); PROTOCOL.md wants an

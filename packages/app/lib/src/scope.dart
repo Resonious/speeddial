@@ -362,6 +362,11 @@ class AppData {
   /// permission request.
   bool newSessionYolo = false;
 
+  /// Sticky default for the new-session sheet's "Short Prompt" checkbox,
+  /// mirroring [newSessionYolo]: in-memory only, not persisted across
+  /// launches.
+  bool newSessionShortPrompt = false;
+
   /// Endpoint id of the in-process daemon's non-persistent connection.
   static const String embeddedDaemonId = 'embedded';
 

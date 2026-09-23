@@ -103,11 +103,13 @@ Future<void> _dispatch(Map<String, Object?> message) async {
       _effort = _model == 'fake-model' ? 'medium' : null;
       _provider = value['provider'] as String? ?? 'fake-provider';
       _permissionMode = value['permission_mode'] as String? ?? 'strict';
+      await _captureSessionConfig(value);
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await _captureMcpHome();
       await _extensions(parent);
     case 'ResumeSession':
+      await _captureSessionConfig(value);
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await _captureMcpHome();
@@ -166,6 +168,15 @@ Future<void> _captureMcpHome() async {
   final File settingsFile = File(p.join(anteHome, 'settings.json'));
   await File(reportPath).writeAsString(await settingsFile.readAsString());
   await File('$reportPath.home').writeAsString(anteHome);
+}
+
+/// Reports the session-config payload (permission mode, short prompt, ...)
+/// the client sent with StartSession/ResumeSession.
+Future<void> _captureSessionConfig(Map<String, Object?> value) async {
+  final String? reportPath =
+      Platform.environment['FAKE_ANTE_SESSION_CONFIG_REPORT'];
+  if (reportPath == null || reportPath.isEmpty) return;
+  await File(reportPath).writeAsString(jsonEncode(value), flush: true);
 }
 
 Future<void> _captureUserInput(String text) async {

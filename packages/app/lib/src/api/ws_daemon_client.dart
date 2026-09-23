@@ -820,6 +820,7 @@ class WsDaemonClient implements DaemonClient {
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     final Object? result = await _requirePeer().call(
       'sessions.create',
@@ -832,6 +833,7 @@ class WsDaemonClient implements DaemonClient {
         'baseBranch': ?baseBranch,
         'sandboxMode': ?sandboxMode?.wire,
         if (yolo) 'yolo': true,
+        if (shortPrompt) 'shortPrompt': true,
       },
     );
     return Session.fromJson(_resultMap(_resultField(result, 'session')));

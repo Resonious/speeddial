@@ -267,7 +267,8 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
 lib/src/ui/left/             daemon/project/session rail: connection status dot, toggleable
                              project groups or cross-project session list (pinned first, then activity),
                              session rows (title, status chip, provider badge),
-                             new-session sheet (provider, worktree branch, and yolo —
+                             new-session sheet (provider, worktree branch, yolo,
+                             and short prompt —
                              model/thinking are picked in the
                              composer on the live session), pin/unpin/rename/archive/delete menus
 lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed

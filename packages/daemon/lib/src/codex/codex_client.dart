@@ -135,6 +135,8 @@ class CodexClient implements AgentClient {
     String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    // Codex has no prompt-verbosity switch; the flag is ignored.
+    bool shortPrompt = false,
   }) async {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{
@@ -168,6 +170,7 @@ class CodexClient implements AgentClient {
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     await initialized;
     final Map<String, Object?> params = <String, Object?>{

@@ -319,6 +319,9 @@ class SessionEngine {
   /// With [yolo], supported built-in harnesses receive their native no-prompt
   /// mode. The engine also resolves any permission request that still arrives
   /// (see [_onPermissionRequest]) instead of parking it for a client.
+  ///
+  /// With [shortPrompt], Ante runs its compact prompt set; other providers
+  /// ignore the flag.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -329,6 +332,7 @@ class SessionEngine {
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
@@ -423,6 +427,7 @@ class SessionEngine {
       baseBranch: baseBranch,
       sandboxMode: effectiveSandboxMode,
       yolo: yolo,
+      shortPrompt: shortPrompt,
       archived: false,
       createdAt: now,
       lastActivityAt: now,
@@ -484,6 +489,7 @@ class SessionEngine {
       baseBranch: source.baseBranch,
       sandboxMode: source.sandboxMode,
       yolo: source.yolo,
+      shortPrompt: source.shortPrompt,
       archived: false,
       createdAt: now,
       lastActivityAt: now,
@@ -542,6 +548,7 @@ class SessionEngine {
         provider: requestedProvider,
         sandboxMode: baseSession.sandboxMode,
         yolo: baseSession.yolo,
+        shortPrompt: baseSession.shortPrompt,
       );
       providerSessionId = created.sessionId;
       modelOption = _modelOptionOf(created.configOptions);
@@ -1008,6 +1015,7 @@ class SessionEngine {
           model: session.model,
           sandboxMode: session.sandboxMode,
           yolo: session.yolo,
+          shortPrompt: session.shortPrompt,
         );
         providerSessionId = created.sessionId;
         configOptions = created.configOptions;
@@ -1019,6 +1027,7 @@ class SessionEngine {
           sandboxMode: session.sandboxMode,
           mcpServers: _mcpServersFor(session, info),
           yolo: session.yolo,
+          shortPrompt: session.shortPrompt,
         );
       }
     } on Object catch (error) {
@@ -2132,6 +2141,7 @@ class SessionEngine {
       thinkingLevels: session.thinkingLevels,
       sandboxMode: session.sandboxMode,
       yolo: session.yolo,
+      shortPrompt: session.shortPrompt,
       completionRevision: completed
           ? session.completionRevision + 1
           : session.completionRevision,
@@ -2159,6 +2169,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2185,6 +2196,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2209,6 +2221,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: archived ? false : session.done,
     archived: archived,
@@ -2233,6 +2246,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2257,6 +2271,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2282,6 +2297,7 @@ class SessionEngine {
         thinkingLevels: levels,
         sandboxMode: session.sandboxMode,
         yolo: session.yolo,
+        shortPrompt: session.shortPrompt,
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
@@ -2310,6 +2326,7 @@ class SessionEngine {
         thinkingLevels: snapshot.thinkingLevels,
         sandboxMode: session.sandboxMode,
         yolo: session.yolo,
+        shortPrompt: session.shortPrompt,
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
@@ -2334,6 +2351,7 @@ class SessionEngine {
     thinkingLevels: session.thinkingLevels,
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
     completionRevision: session.completionRevision,
     done: done,
     archived: session.archived,

@@ -150,6 +150,10 @@ void main() {
 
     expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
     expect(find.byKey(const Key('new-session-yolo')), findsOneWidget);
+    expect(
+      find.byKey(const Key('new-session-short-prompt')),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('new-session-no-sandbox')), findsNothing);
     expect(find.byKey(const Key('new-session-worktree')), findsOneWidget);
     expect(find.byKey(const Key('new-session-base-branch')), findsOneWidget);
@@ -315,6 +319,56 @@ void main() {
     await tester.tap(find.text('open-sheet'));
     await tester.pumpAndSettle();
     expect(yoloTile().value, isFalse);
+  });
+
+  testWidgets('short prompt is off by default, sent when checked, and sticky '
+      'across sheet opens', (WidgetTester tester) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+
+    CheckboxListTile promptTile() => tester.widget<CheckboxListTile>(
+      find.byKey(const Key('new-session-short-prompt')),
+    );
+
+    // Default: unchecked.
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    final Session defaultSession = createdSession(app, projectId);
+    expect(defaultSession.shortPrompt, isFalse);
+
+    // Check it, then cancel without submitting.
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    final Finder toggle = find.byKey(const Key('new-session-short-prompt'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // Reopen: still checked.
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    expect(promptTile().value, isTrue);
+
+    // Submitting sends the flag.
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    final Session created = app.sessions.sessionsFor(projectId).singleWhere(
+      (Session s) => s.id != 'sess-1' && s.id != 'sess-2' && s.shortPrompt,
+    );
+    expect(created.shortPrompt, isTrue);
+
+    // Unchecking sticks the same way.
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+    expect(promptTile().value, isFalse);
   });
 
   testWidgets('Codex always disables its sandbox without showing a choice', (

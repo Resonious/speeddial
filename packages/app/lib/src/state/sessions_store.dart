@@ -250,6 +250,7 @@ class SessionsStore extends StoreBase {
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     _ensureDaemonSubscriptions(daemonId);
     final Session session = await _clientFor(daemonId).createSession(
@@ -261,6 +262,7 @@ class SessionsStore extends StoreBase {
       baseBranch: baseBranch,
       sandboxMode: sandboxMode,
       yolo: yolo,
+      shortPrompt: shortPrompt,
     );
     // Upsert rather than blind-add: daemons surface the created session on
     // `sessionUpdates`, and a live listener (running synchronously inside

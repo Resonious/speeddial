@@ -29,6 +29,7 @@ abstract interface class AgentClient {
     String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   });
 
   Future<List<AcpConfigOption>> loadSession({
@@ -37,6 +38,7 @@ abstract interface class AgentClient {
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     bool yolo = false,
+    bool shortPrompt = false,
   });
 
   Future<List<AcpConfigOption>> setConfigOption(

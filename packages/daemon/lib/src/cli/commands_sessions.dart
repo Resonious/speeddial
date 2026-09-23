@@ -89,7 +89,7 @@ class SessionsListCommand extends Command<int> {
 }
 
 /// `speeddial sessions create --project <id> --provider <id>` plus optional
-/// `[--model m] [--mode plan] [--title t] [--base b] [--yolo]`
+/// `[--model m] [--mode plan] [--title t] [--base b] [--yolo] [--short-prompt]`
 class SessionsCreateCommand extends Command<int> {
   SessionsCreateCommand() {
     argParser
@@ -112,6 +112,10 @@ class SessionsCreateCommand extends Command<int> {
       ..addFlag(
         'yolo',
         help: 'Auto-approve every permission request from the agent.',
+      )
+      ..addFlag(
+        'short-prompt',
+        help: 'Run the Ante agent with its compact prompt set.',
       );
   }
 
@@ -143,6 +147,7 @@ class SessionsCreateCommand extends Command<int> {
         title: argResults!['title'] as String?,
         baseBranch: argResults!['base'] as String?,
         yolo: argResults!['yolo'] as bool,
+        shortPrompt: argResults!['short-prompt'] as bool,
       );
       if (conn.json) {
         output.raw(<String, Object?>{'session': session.toJson()});

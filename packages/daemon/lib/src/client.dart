@@ -266,7 +266,8 @@ class DaemonClient {
   /// [baseBranch] is given the daemon creates a git worktree off
   /// `origin/<baseBranch>` and uses it as the session cwd. [sandboxMode]
   /// selects provider isolation when advertised. With [yolo] the daemon
-  /// auto-approves the agent's permission requests.
+  /// auto-approves the agent's permission requests. [shortPrompt] runs the
+  /// Ante agent with its compact prompt set.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -277,6 +278,7 @@ class DaemonClient {
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     final result = await _peer.call('sessions.create', <String, Object?>{
       'projectId': projectId,
@@ -288,6 +290,7 @@ class DaemonClient {
       'baseBranch': ?baseBranch,
       'sandboxMode': ?sandboxMode?.wire,
       if (yolo) 'yolo': true,
+      if (shortPrompt) 'shortPrompt': true,
     });
     final map = _asMap(result, 'sessions.create');
     return Session.fromJson(_asMap(map['session'], 'sessions.create'));

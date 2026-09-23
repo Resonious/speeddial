@@ -417,6 +417,7 @@ void main() {
       thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
       sandboxMode: SessionSandboxMode.unrestricted,
       yolo: true,
+      shortPrompt: true,
       completionRevision: 4,
       done: true,
       archived: true,
@@ -442,6 +443,7 @@ void main() {
     ]);
     expect(reloaded.sandboxMode, SessionSandboxMode.unrestricted);
     expect(reloaded.yolo, isTrue);
+    expect(reloaded.shortPrompt, isTrue);
     expect(reloaded.completionRevision, 4);
     expect(reloaded.done, isTrue);
     expect(reloaded.archived, isTrue);

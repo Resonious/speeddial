@@ -637,6 +637,7 @@ class Session {
     this.thinkingLevels = const <String>[],
     this.sandboxMode,
     required this.yolo,
+    this.shortPrompt = false,
     this.completionRevision = 0,
     this.done = false,
     this.pinned = false,
@@ -683,6 +684,10 @@ class Session {
   /// Yolo mode: native no-prompt policy where supported, with daemon fallback.
   final bool yolo;
 
+  /// Ante's compact prompt set: a condensed system prompt and smaller
+  /// built-in tool descriptions. Other providers ignore it.
+  final bool shortPrompt;
+
   /// Monotonically increases whenever a turn reaches a successful terminal
   /// state. Clients include the observed revision when acknowledging [done]
   /// so a delayed acknowledgement cannot clear a newer completion.
@@ -726,6 +731,8 @@ class Session {
         : SessionSandboxMode.parse(json['sandboxMode']! as String),
     // Absent on pre-yolo daemons.
     yolo: json['yolo'] as bool? ?? false,
+    // Absent on pre-short-prompt daemons.
+    shortPrompt: json['shortPrompt'] as bool? ?? false,
     // Absent on pre-daemon-owned-completion daemons.
     completionRevision: json['completionRevision'] as int? ?? 0,
     done: json['done'] as bool? ?? false,
@@ -753,6 +760,7 @@ class Session {
     'thinkingLevels': thinkingLevels,
     'sandboxMode': sandboxMode?.wire,
     'yolo': yolo,
+    'shortPrompt': shortPrompt,
     'completionRevision': completionRevision,
     'done': done,
     'pinned': pinned,

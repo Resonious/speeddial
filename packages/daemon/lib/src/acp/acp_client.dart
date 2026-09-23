@@ -463,6 +463,8 @@ class AcpClient implements AgentClient {
     String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    // ACP has no standard prompt-verbosity field; the flag is ignored.
+    bool shortPrompt = false,
   }) async {
     final result = await _request('session/new', <String, Object?>{
       'cwd': cwd,
@@ -494,6 +496,7 @@ class AcpClient implements AgentClient {
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     final result = await _request('session/load', <String, Object?>{
       'sessionId': sessionId,

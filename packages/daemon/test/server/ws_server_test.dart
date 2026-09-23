@@ -2331,6 +2331,61 @@ void main() {
       },
     );
 
+    test('sessions.create persists shortPrompt and defaults it off', () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_short_prompt_');
+      final project = Project.fromJson(
+        (j(
+                  await client.peer.call('projects.add', <String, Object?>{
+                    'path': dir.path,
+                  }),
+                )['project']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+
+      final created = j(
+        await client.peer.call('sessions.create', <String, Object?>{
+          'projectId': project.id,
+          'providerId': 'fake',
+          'shortPrompt': true,
+        }),
+      );
+      final session = Session.fromJson(
+        (created['session']! as Map).cast<String, Object?>(),
+      );
+      expect(session.shortPrompt, isTrue);
+
+      final defaultCreated = j(
+        await client.peer.call('sessions.create', <String, Object?>{
+          'projectId': project.id,
+          'providerId': 'fake',
+        }),
+      );
+      final defaultSession = Session.fromJson(
+        (defaultCreated['session']! as Map).cast<String, Object?>(),
+      );
+      expect(defaultSession.shortPrompt, isFalse);
+
+      // The flag survives a daemon restart through the store.
+      final listed = j(
+        await client.peer.call('sessions.list', <String, Object?>{
+          'projectId': project.id,
+        }),
+      );
+      final List<Object?> rawSessions = listed['sessions']! as List<Object?>;
+      final Session row = rawSessions
+          .map(
+            (Object? raw) => Session.fromJson(
+              (raw! as Map).cast<String, Object?>(),
+            ),
+          )
+          .firstWhere((Session s) => s.id == session.id);
+      expect(row.shortPrompt, isTrue);
+      await client.close();
+    });
+
     test(
       'sessions.create with baseBranch runs the session in a worktree',
       () async {

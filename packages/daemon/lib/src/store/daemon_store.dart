@@ -16,7 +16,8 @@
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
 ///                      sandbox_mode TEXT NULL, yolo INT (auto-approve
-///                      permissions), completion_revision INT, done INT,
+///                      permissions), short_prompt INT (Ante compact prompt
+///                      set), completion_revision INT, done INT,
 ///                      archived INT, created_at,
 ///                      last_activity_at, updated_at
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
@@ -161,6 +162,11 @@ class DaemonStore {
     if (!sessionColumns.contains('yolo')) {
       _db.execute(
         'ALTER TABLE sessions ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (!sessionColumns.contains('short_prompt')) {
+      _db.execute(
+        'ALTER TABLE sessions ADD COLUMN short_prompt INTEGER NOT NULL DEFAULT 0',
       );
     }
     if (!sessionColumns.contains('sandbox_mode')) {
@@ -798,10 +804,11 @@ class DaemonStore {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
-      'thinking_levels, sandbox_mode, yolo, completion_revision, done, '
+      'thinking_levels, sandbox_mode, yolo, short_prompt, '
+      'completion_revision, done, '
       'archived, pinned, created_at, '
       'last_activity_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -817,6 +824,7 @@ class DaemonStore {
         jsonEncode(session.thinkingLevels),
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
+        session.shortPrompt ? 1 : 0,
         session.completionRevision,
         session.done ? 1 : 0,
         session.archived ? 1 : 0,
@@ -838,7 +846,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, completion_revision, done, archived, pinned, created_at, '
+      'yolo, short_prompt, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
@@ -852,7 +860,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, completion_revision, done, archived, pinned, created_at, '
+      'yolo, short_prompt, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
@@ -866,7 +874,7 @@ class DaemonStore {
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
       'thinking_level = ?, thinking_levels = ?, sandbox_mode = ?, '
-      'yolo = ?, completion_revision = ?, done = ?, archived = ?, pinned = ?, '
+      'yolo = ?, short_prompt = ?, completion_revision = ?, done = ?, archived = ?, pinned = ?, '
       'created_at = ?, last_activity_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
@@ -882,6 +890,7 @@ class DaemonStore {
         jsonEncode(session.thinkingLevels),
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
+        session.shortPrompt ? 1 : 0,
         session.completionRevision,
         session.done ? 1 : 0,
         session.archived ? 1 : 0,
@@ -1372,6 +1381,7 @@ class DaemonStore {
         ? null
         : SessionSandboxMode.parse(row['sandbox_mode']! as String),
     yolo: (row['yolo'] as int? ?? 0) != 0,
+    shortPrompt: (row['short_prompt'] as int? ?? 0) != 0,
     completionRevision: row['completion_revision'] as int? ?? 0,
     done: (row['done'] as int? ?? 0) != 0,
     pinned: (row['pinned'] as int) != 0,

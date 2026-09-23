@@ -214,6 +214,11 @@ void main() {
         reason: 'yolo is absent on pre-yolo daemons',
       );
       expect(
+        session.shortPrompt,
+        isFalse,
+        reason: 'shortPrompt is absent on pre-short-prompt daemons',
+      );
+      expect(
         session.completionRevision,
         0,
         reason: 'completionRevision is absent on older daemons',
@@ -257,6 +262,7 @@ void main() {
         thinkingLevels: const <String>['off', 'auto', 'low', 'high', 'max'],
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
+        shortPrompt: true,
         pinned: true,
         completionRevision: 7,
         done: true,
@@ -280,6 +286,7 @@ void main() {
       ]);
       expect(decoded.sandboxMode, SessionSandboxMode.unrestricted);
       expect(decoded.yolo, isTrue);
+      expect(decoded.shortPrompt, isTrue);
       expect(decoded.pinned, isTrue);
       expect(decoded.completionRevision, 7);
       expect(decoded.done, isTrue);

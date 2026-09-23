@@ -163,6 +163,54 @@ void main() {
     expect(permissionRequests, 0);
   });
 
+  test('short prompt is sent on start and resume, defaulting off', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'ante_short_prompt_test',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final File report = File(p.join(tempDir.path, 'config-report.json'));
+
+    Future<Map<String, Object?>> capture({required bool shortPrompt}) async {
+      if (await report.exists()) await report.delete();
+      final AnteClient client = spawnAnte(
+        environment: <String, String>{
+          'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
+        },
+      );
+      addTearDown(client.dispose);
+      if (shortPrompt) {
+        await client.loadSession(
+          sessionId: 'ses_01M0H000000000000000000000',
+          cwd: Directory.current.path,
+          shortPrompt: true,
+        );
+      } else {
+        await client.newSession(cwd: Directory.current.path);
+      }
+      for (var attempt = 0; attempt < 50; attempt++) {
+        if (await report.exists()) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(await report.exists(), isTrue);
+      final Map<String, Object?> captured = Map<String, Object?>.from(
+        jsonDecode(await report.readAsString()) as Map,
+      );
+      return captured;
+    }
+
+    final Map<String, Object?> started = await capture(shortPrompt: true);
+    expect(started['short_prompt'], isTrue);
+
+    final Map<String, Object?> resumed = await capture(shortPrompt: true);
+    expect(resumed['short_prompt'], isTrue);
+
+    // Default stays off: the key is omitted entirely.
+    final Map<String, Object?> defaultStart = await capture(
+      shortPrompt: false,
+    );
+    expect(defaultStart.containsKey('short_prompt'), isFalse);
+  });
+
   test('seeds new sessions with the Ante settings default model', () async {
     final Directory tempDir = await Directory.systemTemp.createTemp(
       'ante_defaults_test',

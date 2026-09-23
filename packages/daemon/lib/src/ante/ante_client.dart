@@ -127,6 +127,7 @@ class AnteClient implements AgentClient {
     String? provider,
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     await initialized;
     await _ensureStarted(mcpServers);
@@ -134,6 +135,7 @@ class AnteClient implements AgentClient {
     final Map<String, Object?> config = <String, Object?>{
       'cwd': cwd,
       'permission_mode': yolo ? 'yolo' : 'strict',
+      if (shortPrompt) 'short_prompt': true,
     };
     // Seed the Ante settings default when the caller did not pick a model:
     // serve mode otherwise resolves the subscription instead of the
@@ -183,6 +185,7 @@ class AnteClient implements AgentClient {
     SessionSandboxMode? sandboxMode,
     List<Map<String, Object?>> mcpServers = const <Map<String, Object?>>[],
     bool yolo = false,
+    bool shortPrompt = false,
   }) async {
     await initialized;
     await _ensureStarted(mcpServers);
@@ -193,7 +196,10 @@ class AnteClient implements AgentClient {
     _suppressReplay = true;
     try {
       await _sendOp(<String, Object?>{
-        'ResumeSession': <String, Object?>{'session_id': sessionId},
+        'ResumeSession': <String, Object?>{
+          'session_id': sessionId,
+          if (shortPrompt) 'short_prompt': true,
+        },
       }, opId);
       final _AnteSessionState state = await completer.future.timeout(
         initTimeout,

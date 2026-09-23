@@ -141,6 +141,8 @@ Session = {
                               // "default", which clears an explicit effort override.
   sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
   yolo: boolean,              // native no-prompt mode where supported; daemon fallback otherwise
+  shortPrompt: boolean,       // Ante's compact prompt set; other providers ignore it
+                              // (absent on pre-short-prompt daemons, defaulting false)
   completionRevision: int,    // increments whenever a turn reaches terminal idle successfully
   done: boolean,              // latest completion has not been acknowledged by a client
   pinned: boolean,            // defaults to false when absent; pinned sessions sort first
@@ -449,7 +451,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   survives daemon restarts. Identified streamed chunks match across interleaved events;
   legacy chunks without message IDs join only adjacent chunks of the same type. Separate
   messages and turns never concatenate. The public search includes the selected session.
-- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean}` → `{session: Session}`
+- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean, shortPrompt?: boolean}` → `{session: Session}`
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as
   `openai-compatible/<model>`); the daemon pins that upstream provider in
@@ -478,6 +480,9 @@ tokens before session creation/resume, and checks them periodically while runnin
     the first `allow_once`), emits `permissionRequest` and `permissionResolved` back-to-back,
     never enters `waitingPermission`, and continues the turn. A request offering no allow option
     still parks for a client response.
+  — with `shortPrompt: true` (default `false`), Ante receives `short_prompt: true` in its
+    new-session and resume operations and runs its compact prompt set (condensed system prompt
+    and smaller built-in tool descriptions); other providers ignore the flag.
   — `sandboxMode` is accepted only when advertised by the selected provider's
     `ProviderInfo.sandboxModes` (`-32602` otherwise). For compatibility, Codex still advertises
     `workspaceWrite` and `unrestricted`, but always uses and reports `unrestricted`; its
@@ -500,7 +505,8 @@ tokens before session creation/resume, and checks them periodically while runnin
   session containing the source session's persisted history through `seq`. `seq` must identify a
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
   side of any visible exchange. The fork inherits the source provider, project, cwd/worktree,
-  base branch, mode, model, thinking level, sandbox mode, and yolo setting; it is titled
+  base branch, mode, model, thinking level, sandbox mode, yolo setting, and short prompt
+  setting; it is titled
   `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
   Creation copies history locally without starting an agent. On the first send, the daemon

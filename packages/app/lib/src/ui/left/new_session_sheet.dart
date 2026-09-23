@@ -78,6 +78,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   String? _baseBranch;
   bool _useWorktree = true;
   bool _yolo = false;
+  bool _shortPrompt = false;
   bool _submitting = false;
   String? _error;
 
@@ -87,6 +88,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     // Sticky across sheet opens: seed from the last choice (kept on
     // AppData) instead of always starting unchecked.
     _yolo = widget.data.newSessionYolo;
+    _shortPrompt = widget.data.newSessionShortPrompt;
   }
 
   @override
@@ -169,6 +171,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             ? SessionSandboxMode.unrestricted
             : null,
         yolo: _yolo,
+        shortPrompt: _shortPrompt,
       );
       data.selection.selectedProjectId = session.projectId;
       data.selection.selectedSessionId = session.id;
@@ -373,6 +376,25 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                   // Sticky even when the sheet is cancelled: the next
                   // sheet seeds from this.
                   widget.data.newSessionYolo = _yolo;
+                }),
+        ),
+        CheckboxListTile(
+          key: const Key('new-session-short-prompt'),
+          value: _shortPrompt,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text('Short Prompt'),
+          subtitle: const Text(
+            'Run the Ante agent with its condensed system prompt',
+          ),
+          onChanged: _submitting
+              ? null
+              : (bool? value) => setState(() {
+                  _shortPrompt = value ?? false;
+                  // Sticky even when the sheet is cancelled: the next
+                  // sheet seeds from this.
+                  widget.data.newSessionShortPrompt = _shortPrompt;
                 }),
         ),
         if (branches.isNotEmpty) ...<Widget>[
