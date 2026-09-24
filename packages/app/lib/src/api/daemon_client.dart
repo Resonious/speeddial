@@ -209,8 +209,9 @@ abstract class DaemonClient {
   Future<void> respondPermission(
     String sessionId,
     String requestId,
-    String optionId,
-  );
+    String optionId, {
+    List<UserQuestionAnswer>? answers,
+  });
 
   // ---------------------------------------------------------------------
   // Files

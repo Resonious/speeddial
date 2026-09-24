@@ -160,6 +160,27 @@ Future<void> _dispatch(Map<String, Object?> message) async {
     case 'UserInput':
       final String text = variant.value as String? ?? '';
       await _runTurn(parent, text);
+    case 'QuestionResponse':
+      final pending = _pendingTurn;
+      if (pending == null ||
+          value['turn_id'] != pending.turnId ||
+          value['tool_use_id'] != 'ask-1') {
+        throw StateError('Question response does not match a pending question');
+      }
+      _pendingTurn = null;
+      await _event(<String, Object?>{
+        'MessageDelta': jsonEncode(value['reply']),
+      }, pending.parent);
+      await _event(<String, Object?>{
+        'TurnResume': <String, Object?>{'turn_id': pending.turnId},
+      }, pending.parent);
+      await _event(<String, Object?>{
+        'TurnEnd': <String, Object?>{
+          'turn_id': pending.turnId,
+          'status': 'Completed',
+          'steps': 1,
+        },
+      }, pending.parent);
     case 'ApprovalResponse':
       final pending = _pendingTurn;
       if (pending == null) return;
@@ -285,6 +306,68 @@ Future<void> _runTurn(String parent, String text) async {
   await _event(<String, Object?>{
     'TurnStart': <String, Object?>{'turn_id': parent},
   }, parent);
+  if (text.startsWith('ask')) {
+    _pendingTurn = (parent: parent, turnId: parent);
+    await _event(<String, Object?>{
+      'TurnPause': <String, Object?>{
+        'turn_id': parent,
+        'reason': <String, Object?>{
+          'Question': <String, Object?>{
+            'tool_use_id': 'ask-1',
+            'questions': <Object?>[
+              <String, Object?>{
+                'header': 'Setup',
+                'question': 'Which setup?',
+                'multi_select': false,
+                'options': <Object?>[
+                  <String, Object?>{
+                    'label': 'Local',
+                    'description': 'On this machine',
+                    'preview': 'localhost',
+                  },
+                  <String, Object?>{
+                    'label': 'Remote',
+                    'description': 'On a server',
+                  },
+                ],
+              },
+              <String, Object?>{
+                'header': 'Features',
+                'question': 'Which features?',
+                'multi_select': true,
+                'options': <Object?>[
+                  <String, Object?>{'label': 'Logs', 'description': ''},
+                  <String, Object?>{'label': 'Metrics', 'description': ''},
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }, parent);
+    if (text == 'ask die') {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      exit(15);
+    }
+    if (text == 'ask resume' || text == 'ask end') {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      _pendingTurn = null;
+      if (text == 'ask resume') {
+        await _event(<String, Object?>{
+          'TurnResume': <String, Object?>{'turn_id': parent},
+        }, parent);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await _event(<String, Object?>{
+        'TurnEnd': <String, Object?>{
+          'turn_id': parent,
+          'status': 'Completed',
+          'steps': 1,
+        },
+      }, parent);
+    }
+    return;
+  }
   if (text == 'die') exit(15);
   if (text == 'cancel') {
     _pendingTurn = (parent: parent, turnId: parent);

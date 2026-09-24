@@ -412,8 +412,11 @@ class ChatStore extends StoreBase {
     String daemonId,
     String sessionId,
     String requestId,
-    String optionId,
-  ) => _clientFor(daemonId).respondPermission(sessionId, requestId, optionId);
+    String optionId, {
+    List<UserQuestionAnswer>? answers,
+  }) =>
+      _clientFor(daemonId)
+          .respondPermission(sessionId, requestId, optionId, answers: answers);
 
   // ---------------------------------------------------------------------
   // Cross-daemon id resolution

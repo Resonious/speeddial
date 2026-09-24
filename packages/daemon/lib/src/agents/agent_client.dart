@@ -10,6 +10,13 @@ typedef AgentPermissionHandler = Future<String> Function(
   List<PermissionOptionData> options,
 );
 
+/// Returns an encoded provider question reply. Expiration clears the UI prompt.
+typedef AgentQuestionHandler = Future<String> Function(
+  String toolCallId,
+  List<UserQuestion> questions,
+  Future<void> expired,
+);
+
 /// Common session transport used by the engine.
 ///
 /// ACP clients implement this directly. Custom transports translate their

@@ -362,6 +362,40 @@ class TestDaemonServer {
 }
 
 void main() {
+  test('structured question answers cross the websocket without losing labels or notes', () async {
+    final server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final client = WsDaemonClient(url: server.url, token: 'secret');
+    addTearDown(client.dispose);
+    await client.connect();
+    Map<String, Object?>? received;
+    server.peers.single.registerHandler('sessions.respondPermission', (params) {
+      received = params;
+      return <String, Object?>{};
+    });
+    await client.respondPermission(
+      'session',
+      'ask',
+      'answer',
+      answers: const [
+        UserQuestionAnswer(selected: ['Local'], note: 'Keep data here'),
+      ],
+    );
+    expect(received, {
+      'sessionId': 'session',
+      'requestId': 'ask',
+      'optionId': 'answer',
+      'answers': [
+        {
+          'selected': ['Local'],
+          'note': 'Keep data here',
+        },
+      ],
+    });
+    await client.respondPermission('session', 'ask', 'dismiss');
+    expect(received!.containsKey('answers'), isFalse);
+  });
+
   test(
     'session search roundtrips filters, cursor, excerpts and indexing state',
     () async {

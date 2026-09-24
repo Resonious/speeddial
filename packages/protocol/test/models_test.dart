@@ -2,6 +2,34 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('question requests preserve all fields and old permission requests still decode', () {
+    final json = <String, Object?>{
+      'requestId': 'ask',
+      'toolCallId': 'tool',
+      'title': 'Questions',
+      'options': <Object?>[],
+      'questions': <Object?>[
+        <String, Object?>{
+          'header': 'Setup',
+          'question': 'Which setup?',
+          'multiSelect': true,
+          'options': <Object?>[
+            <String, Object?>{
+              'label': 'Local',
+              'description': 'Here',
+              'preview': 'localhost',
+            },
+          ],
+        },
+      ],
+    };
+    expect(PermissionRequest.fromJson(json).toJson(), json);
+    json.remove('questions');
+    final legacy = PermissionRequest.fromJson(json);
+    expect(legacy.questions, isEmpty);
+    expect(legacy.toJson(), json);
+  });
+
   group('enum wire values', () {
     test('SessionStatus uses waitingPermission override', () {
       expect(SessionStatus.idle.wire, 'idle');

@@ -6,6 +6,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
+import '../chat/question_banner.dart';
 import 'wear_scaffold.dart';
 
 /// Compact live conversation for one session.
@@ -135,21 +136,41 @@ class _WearChatPageState extends State<WearChatPage> {
           child: Column(
             children: <Widget>[
               Expanded(
-                child: _WearTimeline(
-                  items: _items,
-                  historyStatus: chat.historyStatusFor(widget.sessionId),
-                  hasOlder: chat.hasOlderHistory(widget.sessionId),
-                  loadingOlder: chat.isLoadingOlderHistory(widget.sessionId),
-                  onLoadOlder: () {
-                    unawaited(
-                      chat.loadOlderHistory(widget.daemonId, widget.sessionId),
-                    );
-                  },
-                  onRetry: () =>
-                      chat.retryHistory(widget.daemonId, widget.sessionId),
-                ),
+                child: _permission?.questions.isNotEmpty == true
+                    ? QuestionBanner(
+                        key: ValueKey(_permission!.requestId),
+                        request: _permission!,
+                        onSubmit: (answers) =>
+                            widget.data.chat.respondPermission(
+                              widget.daemonId,
+                              widget.sessionId,
+                              _permission!.requestId,
+                              answers == null ? 'dismiss' : 'answer',
+                              answers: answers,
+                            ),
+                      )
+                    : _WearTimeline(
+                        items: _items,
+                        historyStatus: chat.historyStatusFor(widget.sessionId),
+                        hasOlder: chat.hasOlderHistory(widget.sessionId),
+                        loadingOlder: chat.isLoadingOlderHistory(
+                          widget.sessionId,
+                        ),
+                        onLoadOlder: () {
+                          unawaited(
+                            chat.loadOlderHistory(
+                              widget.daemonId,
+                              widget.sessionId,
+                            ),
+                          );
+                        },
+                        onRetry: () => chat.retryHistory(
+                          widget.daemonId,
+                          widget.sessionId,
+                        ),
+                      ),
               ),
-              if (_permission != null)
+              if (_permission != null && _permission!.questions.isEmpty)
                 _WearPermissionBar(request: _permission!, onSelected: _respond),
               _WearComposer(
                 controller: _composer,

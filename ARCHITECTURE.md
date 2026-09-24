@@ -150,6 +150,10 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     via SessionStore, and broadcasts to listeners. It preserves provider
                     message/thought ids and assigns turn-scoped synthetic ids when a
                     provider omits them, making logical streamed content daemon-owned.
+                    Ante Question pauses use the same parked-request lifecycle with typed
+                    question/answer payloads; choices and free-text notes return through
+                    respondPermission. Questions bypass yolo auto-approval and expire on
+                    provider resume, turn end, cancellation, or exit.
                     Handles permission requests (parked until respondPermission, or
                     auto-resolved as a yolo fallback), cancel, process exit, and turn
                     lifecycle. The update subscription lives for the agent's lifetime

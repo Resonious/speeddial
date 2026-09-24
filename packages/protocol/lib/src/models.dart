@@ -499,6 +499,7 @@ class PermissionRequest {
     required this.toolCallId,
     required this.title,
     required this.options,
+    this.questions = const <UserQuestion>[],
   });
 
   final String requestId;
@@ -508,10 +509,14 @@ class PermissionRequest {
 
   final String title;
   final List<PermissionOption> options;
+  final List<UserQuestion> questions;
 
   factory PermissionRequest.fromJson(Map<String, Object?> json) =>
       PermissionRequest(
         requestId: json['requestId']! as String,
+        questions: (json['questions'] as List<Object?>? ?? const <Object?>[])
+            .map((e) => UserQuestion.fromJson(e! as Map<String, Object?>))
+            .toList(growable: false),
         toolCallId: json['toolCallId'] as String?,
         title: json['title']! as String,
         options: (json['options']! as List<Object?>)
@@ -521,6 +526,8 @@ class PermissionRequest {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'requestId': requestId,
+    if (questions.isNotEmpty)
+      'questions': questions.map((e) => e.toJson()).toList(growable: false),
     'toolCallId': toolCallId,
     'title': title,
     'options': options.map((e) => e.toJson()).toList(growable: false),
@@ -1643,5 +1650,70 @@ class DaemonInfo {
     'protocolVersion': protocolVersion,
     'authRequired': authRequired,
     'providers': providers.map((e) => e.toJson()).toList(growable: false),
+  };
+}
+
+/// A structured clarification requested by an agent.
+class UserQuestion {
+  const UserQuestion({
+    required this.header,
+    required this.question,
+    required this.options,
+    this.multiSelect = false,
+  });
+  final String header;
+  final String question;
+  final bool multiSelect;
+  final List<UserQuestionOption> options;
+  factory UserQuestion.fromJson(Map<String, Object?> json) => UserQuestion(
+    header: json['header']! as String,
+    question: json['question']! as String,
+    multiSelect: json['multiSelect'] as bool? ?? false,
+    options: (json['options']! as List<Object?>)
+        .map((e) => UserQuestionOption.fromJson(e! as Map<String, Object?>))
+        .toList(growable: false),
+  );
+  Map<String, Object?> toJson() => <String, Object?>{
+    'header': header,
+    'question': question,
+    'multiSelect': multiSelect,
+    'options': options.map((e) => e.toJson()).toList(growable: false),
+  };
+}
+
+class UserQuestionOption {
+  const UserQuestionOption({
+    required this.label,
+    required this.description,
+    this.preview,
+  });
+  final String label;
+  final String description;
+  final String? preview;
+  factory UserQuestionOption.fromJson(Map<String, Object?> json) =>
+      UserQuestionOption(
+        label: json['label']! as String,
+        description: json['description'] as String? ?? '',
+        preview: json['preview'] as String?,
+      );
+  Map<String, Object?> toJson() => <String, Object?>{
+    'label': label,
+    'description': description,
+    if (preview != null) 'preview': preview,
+  };
+}
+
+class UserQuestionAnswer {
+  const UserQuestionAnswer({required this.selected, this.note});
+  final List<String> selected;
+  final String? note;
+  factory UserQuestionAnswer.fromJson(Map<String, Object?> json) =>
+      UserQuestionAnswer(
+        selected: List<String>.from(json['selected']! as List<Object?>),
+        note: json['note'] as String?,
+      );
+  Map<String, Object?> toJson() => <String, Object?>{
+    'selected': selected,
+    'note': note,
   };
 }

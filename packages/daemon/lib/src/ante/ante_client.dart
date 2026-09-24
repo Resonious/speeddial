@@ -28,6 +28,7 @@ class AnteClient implements AgentClient {
     List<String>? catalogCommand,
     Map<String, String>? environment,
     AgentPermissionHandler? requestPermission,
+    AgentQuestionHandler? requestQuestions,
     this.initTimeout = const Duration(seconds: 30),
   }) : _command = List<String>.of(command),
        _catalogCommand = catalogCommand == null
@@ -36,7 +37,8 @@ class AnteClient implements AgentClient {
        _cwd = cwd, // ignore: prefer_initializing_formals — public API name
        // ignore: prefer_initializing_formals — public API name
        _environment = environment,
-       _permissionHandler = requestPermission {
+       _permissionHandler = requestPermission,
+       _questionHandler = requestQuestions {
     if (_command.isEmpty) {
       throw ArgumentError.value(command, 'command', 'must not be empty');
     }
@@ -48,6 +50,8 @@ class AnteClient implements AgentClient {
   final String _cwd;
   final Map<String, String>? _environment;
   final AgentPermissionHandler? _permissionHandler;
+  final AgentQuestionHandler? _questionHandler;
+  Completer<void>? _questionExpired;
   final Duration initTimeout;
   final Random _random = Random.secure();
 
@@ -310,6 +314,7 @@ class AnteClient implements AgentClient {
   Future<void> cancel(String sessionId) async {
     _requireSession(sessionId);
     if (_currentTurnOp == null) return;
+    _expireQuestion();
     await _sendOp('Interrupt', _nextOpId());
   }
 
@@ -323,6 +328,7 @@ class AnteClient implements AgentClient {
   @override
   Future<void> dispose() async {
     if (_disposed) return;
+    _expireQuestion();
     final Future<Process>? processFuture = _processFuture;
     try {
       if (processFuture != null && !_exited && !_shutdownSent) {
@@ -333,6 +339,7 @@ class AnteClient implements AgentClient {
       // Process teardown below is authoritative.
     }
     _disposed = true;
+    _expireQuestion();
 
     Process? process;
     if (processFuture != null) {
@@ -699,9 +706,16 @@ class AnteClient implements AgentClient {
           _suppressReplay = false;
         }
       case 'TurnPause':
-        if (!_suppressReplay) unawaited(_handleApproval(_map(value)));
+        if (!_suppressReplay) {
+          final pause = _map(value);
+          if (_map(pause['reason']).containsKey('Question')) {
+            unawaited(_handleQuestions(pause));
+          } else {
+            unawaited(_handleApproval(pause));
+          }
+        }
       case 'TurnResume':
-        break;
+        _expireQuestion();
       case 'TurnEnd':
         _handleTurnEnd(parent, _map(value));
       case 'MessageDelta':
@@ -796,7 +810,10 @@ class AnteClient implements AgentClient {
     if (opId == null) return;
     final Completer<PromptResult>? completer = _turnWaiters.remove(opId);
     if (completer == null || completer.isCompleted) return;
-    if (_currentTurnOp == opId) _currentTurnOp = null;
+    if (_currentTurnOp == opId) {
+      _currentTurnOp = null;
+      _expireQuestion();
+    }
 
     final Object? status = value['status'];
     if (status == 'Completed') {
@@ -824,6 +841,48 @@ class AnteClient implements AgentClient {
       }
     }
     completer.complete(PromptResult(stopReason: '$status'));
+  }
+
+  void _expireQuestion() {
+    final expired = _questionExpired;
+    _questionExpired = null;
+    if (expired != null && !expired.isCompleted) expired.complete();
+  }
+
+  Future<void> _handleQuestions(Map<String, Object?> value) async {
+    final String? turnOp = _currentTurnOp;
+    if (turnOp == null) return;
+    _expireQuestion();
+    final expired = Completer<void>();
+    _questionExpired = expired;
+    try {
+      final question = _map(_map(value['reason'])['Question']);
+      final String toolId = question['tool_use_id']! as String;
+      final questions = (question['questions']! as List<Object?>)
+          .map((raw) {
+            final json = _map(raw);
+            return UserQuestion.fromJson(<String, Object?>{
+              ...json,
+              'multiSelect': json['multi_select'] ?? false,
+            });
+          })
+          .toList(growable: false);
+      final handler = _questionHandler;
+      final String reply = handler == null || questions.isEmpty
+          ? jsonEncode('Dismissed')
+          : await handler(toolId, questions, expired.future);
+      if (expired.isCompleted || _currentTurnOp != turnOp || isClosed) return;
+      await _sendOp(<String, Object?>{
+        'QuestionResponse': <String, Object?>{
+          'turn_id': value['turn_id'],
+          'tool_use_id': toolId,
+          'reply': jsonDecode(reply),
+        },
+      }, _nextOpId());
+    } on Object catch (error) {
+      if (expired.isCompleted || _currentTurnOp != turnOp || isClosed) return;
+      _handleOperationError(turnOp, 'Could not answer Ante question: $error');
+    }
   }
 
   Future<void> _handleApproval(Map<String, Object?> value) async {
@@ -1283,6 +1342,7 @@ class AnteClient implements AgentClient {
   void _onExit(int exitCode) {
     if (_exited) return;
     _exited = true;
+    _expireQuestion();
     _fail(
       AnteTurnException('Ante process exited with status $exitCode.'),
       exitCode: exitCode,

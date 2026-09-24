@@ -95,6 +95,7 @@ class _LiveSession {
 
   /// Parked permission requests: requestId → completer of the chosen option.
   final Map<String, Completer<String>> pendingPermissions = {};
+  final Map<String, List<UserQuestion>> pendingQuestions = {};
 
   /// Fallback logical-content identities for providers (currently Ante, and
   /// legacy ACP agents) that do not identify message/thought chunks.
@@ -736,6 +737,20 @@ class SessionEngine {
         catalogCommand: spec.catalogCommand,
         environment: environment,
         requestPermission: permissionHandler,
+        requestQuestions: (toolId, questions, expired) => _onPermissionRequest(
+          session.id,
+          toolId,
+          'Answer the agent',
+          const <PermissionOptionData>[
+            PermissionOptionData(
+              optionId: 'dismiss',
+              name: 'Skip questions',
+              kind: 'reject_once',
+            ),
+          ],
+          questions: questions,
+          expired: expired,
+        ),
       ),
     };
   }
@@ -1373,13 +1388,14 @@ class SessionEngine {
   Future<void> respondPermission(
     String sessionId,
     String requestId,
-    String optionId,
-  ) async {
+    String optionId, {
+    List<UserQuestionAnswer>? answers,
+  }) async {
     final live = _live[sessionId];
     if (live == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
     }
-    final completer = live.pendingPermissions.remove(requestId);
+    final completer = live.pendingPermissions[requestId];
     if (completer == null) {
       // Covers never-parked ids, expired ids, and stale ids on sessions whose
       // agent died (the pending set was cleared when the turn errored).
@@ -1400,7 +1416,39 @@ class SessionEngine {
     }
     // The resolved event + status flip happen inside the parked handler as it
     // resumes and returns the option to the agent.
-    completer.complete(optionId);
+    final questions = live.pendingQuestions[requestId];
+    String response = optionId;
+    if (questions != null) {
+      if (optionId == 'dismiss' && answers == null) {
+        response = jsonEncode('Dismissed');
+      } else if (optionId == 'answer' &&
+          answers != null &&
+          answers.length == questions.length) {
+        for (var i = 0; i < questions.length; i++) {
+          final question = questions[i];
+          final answer = answers[i];
+          if ((!question.multiSelect && answer.selected.length > 1) ||
+              answer.selected.toSet().length != answer.selected.length ||
+              answer.selected.any(
+                (label) => !question.options.any((o) => o.label == label),
+              )) {
+            throw DaemonError(-32602, 'Invalid question selection');
+          }
+        }
+        response = jsonEncode(<String, Object?>{
+          'Answered': answers.map((e) => e.toJson()).toList(growable: false),
+        });
+      } else {
+        throw DaemonError(
+          -32602,
+          'Expected answer with one entry per question, or dismiss',
+        );
+      }
+    } else if (answers != null) {
+      throw DaemonError(-32602, 'This request does not accept answers');
+    }
+    live.pendingPermissions.remove(requestId);
+    completer.complete(response);
   }
 
   /// Kills the agent (if alive), removes the session and its events, and
@@ -1873,9 +1921,10 @@ class SessionEngine {
                 _persistInlineToolImage(live, block, pathHint: pathHint),
           ),
         );
-        _toolCalls
-            .putIfAbsent(sessionId, () => <String, ToolCall>{})[mapped.id] =
-            mapped;
+        _toolCalls.putIfAbsent(
+          sessionId,
+          () => <String, ToolCall>{},
+        )[mapped.id] = mapped;
         return ToolCallEvent(toolCall: boundInitialToolCallForEmit(mapped));
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
@@ -1908,9 +1957,10 @@ class SessionEngine {
           live,
           _withPriorToolImages(mapped, prior),
         );
-        _toolCalls
-            .putIfAbsent(sessionId, () => <String, ToolCall>{})[toolCallId] =
-            merged;
+        _toolCalls.putIfAbsent(
+          sessionId,
+          () => <String, ToolCall>{},
+        )[toolCallId] = merged;
         // Persisted/broadcast progress is metadata-only. The in-memory state
         // stays complete so the terminal event can carry a bounded preview.
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
@@ -1964,8 +2014,10 @@ class SessionEngine {
     String sessionId,
     String? toolCallId,
     String title,
-    List<PermissionOptionData> options,
-  ) async {
+    List<PermissionOptionData> options, {
+    List<UserQuestion> questions = const <UserQuestion>[],
+    Future<void>? expired,
+  }) async {
     final live = _live[sessionId];
     if (live == null) {
       throw StateError('Permission request for unknown session: $sessionId');
@@ -1978,7 +2030,7 @@ class SessionEngine {
     // first allow_always option wins, then the first allow_once. The
     // request/resolved events are still emitted back-to-back so the transcript
     // records fallback approvals. A request with no allow option still parks.
-    if (live.session.yolo) {
+    if (live.session.yolo && questions.isEmpty) {
       PermissionOption? allow;
       for (final option in mapped) {
         if (option.kind == PermissionKind.allowAlways) {
@@ -1998,6 +2050,7 @@ class SessionEngine {
               toolCallId: toolCallId,
               title: title,
               options: mapped,
+              questions: questions,
             ),
           ),
         );
@@ -2013,6 +2066,7 @@ class SessionEngine {
     }
     final completer = Completer<String>();
     live.pendingPermissions[requestId] = completer;
+    if (questions.isNotEmpty) live.pendingQuestions[requestId] = questions;
     _emit(
       live,
       PermissionRequestEvent(
@@ -2021,16 +2075,44 @@ class SessionEngine {
           toolCallId: toolCallId,
           title: title,
           options: mapped,
+          questions: questions,
         ),
       ),
     );
     _setStatus(live, SessionStatus.waitingPermission);
-    final optionId = await completer.future;
+    final String optionId;
+    try {
+      optionId = await (expired == null
+          ? completer.future
+          : Future.any<String>([
+              completer.future,
+              expired.then((_) => 'expired'),
+            ]));
+    } on Object {
+      if (questions.isNotEmpty) {
+        _emit(
+          live,
+          PermissionResolvedEvent(requestId: requestId, optionId: 'expired'),
+        );
+      }
+      rethrow;
+    } finally {
+      live.pendingPermissions.remove(requestId);
+      live.pendingQuestions.remove(requestId);
+    }
     _emit(
       live,
-      PermissionResolvedEvent(requestId: requestId, optionId: optionId),
+      PermissionResolvedEvent(
+        requestId: requestId,
+        optionId: questions.isEmpty || optionId == 'expired'
+            ? optionId
+            : (optionId == jsonEncode('Dismissed') ? 'dismiss' : 'answer'),
+      ),
     );
-    _setStatus(live, SessionStatus.running);
+    if (live.session.status == SessionStatus.waitingPermission &&
+        live.pendingPermissions.isEmpty) {
+      _setStatus(live, SessionStatus.running);
+    }
     return optionId;
   }
 

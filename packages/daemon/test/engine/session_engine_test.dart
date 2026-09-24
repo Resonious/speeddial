@@ -819,6 +819,134 @@ void main() {
     });
   }
 
+  for (final scenario in [
+    'answer',
+    'dismiss',
+    'resume',
+    'end',
+    'cancel',
+    'die',
+  ]) {
+    test(
+      'Ante questions: $scenario, including yolo and stale replies',
+      () async {
+        await engine.dispose();
+        engine = SessionEngine(store: store, providers: fakeAnteProviders());
+        await engine.restore();
+        final session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fakeAnte',
+          yolo: true,
+        );
+        await engine.sendMessage(
+          session.id,
+          ['resume', 'end', 'die'].contains(scenario) ? 'ask $scenario' : 'ask',
+        );
+        await waitFor(
+          () => store
+              .listEvents(session.id)
+              .events
+              .whereType<PermissionRequestEvent>()
+              .isNotEmpty,
+        );
+        final request = store
+            .listEvents(session.id)
+            .events
+            .whereType<PermissionRequestEvent>()
+            .single
+            .request;
+        expect(request.questions.length, 2);
+        expect(request.questions.last.multiSelect, isTrue);
+        expect(
+          store.getSession(session.id)!.status,
+          SessionStatus.waitingPermission,
+        );
+        if (scenario == 'answer') {
+          await expectLater(
+            engine.respondPermission(
+              session.id,
+              request.requestId,
+              'answer',
+              answers: const [
+                UserQuestionAnswer(selected: ['invalid']),
+                UserQuestionAnswer(selected: []),
+              ],
+            ),
+            throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+          );
+          expect(
+            store.getSession(session.id)!.status,
+            SessionStatus.waitingPermission,
+          );
+          await engine.respondPermission(
+            session.id,
+            request.requestId,
+            'answer',
+            answers: const [
+              UserQuestionAnswer(selected: [], note: 'Custom setup'),
+              UserQuestionAnswer(
+                selected: ['Logs', 'Metrics'],
+                note: 'Both please',
+              ),
+            ],
+          );
+        } else if (scenario == 'dismiss') {
+          await engine.respondPermission(
+            session.id,
+            request.requestId,
+            'dismiss',
+          );
+        } else if (scenario == 'cancel') {
+          await engine.cancel(session.id);
+        }
+        await waitFor(
+          () =>
+              store.getSession(session.id)!.status ==
+              (scenario == 'die' ? SessionStatus.error : SessionStatus.idle),
+        );
+        await expectLater(
+          engine.respondPermission(session.id, request.requestId, 'dismiss'),
+          throwsA(
+            isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound),
+          ),
+        );
+        final history = store.listEvents(session.id).events;
+        expect(
+          history.last,
+          scenario == 'die'
+              ? isA<SessionErrorEvent>()
+              : isA<TurnCompleteEvent>(),
+        );
+        if (scenario == 'answer' || scenario == 'dismiss') {
+          final output = history
+              .whereType<AgentMessageChunkEvent>()
+              .map((e) => e.text)
+              .join();
+          expect(
+            jsonDecode(output),
+            scenario == 'dismiss'
+                ? 'Dismissed'
+                : {
+                    'Answered': [
+                      {'selected': [], 'note': 'Custom setup'},
+                      {
+                        'selected': ['Logs', 'Metrics'],
+                        'note': 'Both please',
+                      },
+                    ],
+                  },
+          );
+        }
+        if (scenario == 'resume' || scenario == 'end' || scenario == 'die') {
+          expect(
+            history.whereType<PermissionResolvedEvent>().single.optionId,
+            'expired',
+          );
+        }
+      },
+    );
+  }
+
   test('Ante sessions pin the provider of a qualified model id', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

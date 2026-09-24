@@ -9,6 +9,7 @@ import '../daemon_error_text.dart';
 import 'composer.dart';
 import 'downloaded_file_opener.dart';
 import 'permission_banner.dart';
+import 'question_banner.dart';
 import 'timeline.dart';
 
 /// Center pane: the selected session's timeline, pending permission banner and
@@ -254,7 +255,19 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             ),
             Expanded(child: surface),
             if (catchingUp) const _CatchingUp(),
-            if (pending != null)
+            if (pending != null && pending.questions.isNotEmpty)
+              QuestionBanner(
+                key: ValueKey(pending.requestId),
+                request: pending,
+                onSubmit: (answers) => chat.respondPermission(
+                  daemonId,
+                  sessionId,
+                  pending.requestId,
+                  answers == null ? 'dismiss' : 'answer',
+                  answers: answers,
+                ),
+              ),
+            if (pending != null && pending.questions.isEmpty)
               PermissionBanner(
                 request: pending,
                 onOptionSelected: (PermissionOption option) {

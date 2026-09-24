@@ -1392,8 +1392,9 @@ class FakeDaemonClient implements DaemonClient {
   Future<void> respondPermission(
     String sessionId,
     String requestId,
-    String optionId,
-  ) async {
+    String optionId, {
+    List<UserQuestionAnswer>? answers,
+  }) async {
     _ensureSeeded();
     _requireSession(sessionId);
     final String? pending = _pendingPermissions[sessionId];

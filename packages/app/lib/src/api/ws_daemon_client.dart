@@ -993,12 +993,14 @@ class WsDaemonClient implements DaemonClient {
   Future<void> respondPermission(
     String sessionId,
     String requestId,
-    String optionId,
-  ) async {
+    String optionId, {
+    List<UserQuestionAnswer>? answers,
+  }) async {
     await _requirePeer().call('sessions.respondPermission', <String, Object?>{
       'sessionId': sessionId,
       'requestId': requestId,
       'optionId': optionId,
+      if (answers != null) 'answers': answers.map((e) => e.toJson()).toList(),
     });
   }
 

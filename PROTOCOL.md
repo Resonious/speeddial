@@ -262,7 +262,11 @@ PermissionRequest = {
   toolCallId: string | null,
   title: string,
   options: PermissionOption[],
+  questions?: UserQuestion[], // nonempty = clarification; never auto-answered by yolo
 }
+UserQuestion = { header: string, question: string, multiSelect: boolean, options: UserQuestionOption[] }
+UserQuestionOption = { label: string, description: string, preview?: string }
+UserQuestionAnswer = { selected: string[], note: string | null }
 PermissionOption = { optionId: string, name: string, kind: "allow_once" | "allow_always" | "reject_once" | "reject_always" }
 
 AgentActivity = {
@@ -292,6 +296,14 @@ one turn and clients must not merge them across `userMessage`/`turnComplete`
 boundaries. The field remains optional only so history persisted by older daemon
 versions continues to decode; clients use adjacency-based grouping for those
 legacy events.
+
+For a request with nonempty `questions`, respond with `optionId: "answer"` and
+one `answers` entry per question, in order, or `optionId: "dismiss"` without answers.
+Selections are exact option labels; a free-text answer has an empty selection and a note.
+Empty selection and note leave a question unanswered. Invalid answers return `-32602`
+and leave the request pending. Question resolution uses `answer`, `dismiss`, or `expired`
+in `permissionResolved.optionId`. Ante questions expire on TurnResume/TurnEnd; ordinary
+cancellation and process failure also invalidate pending requests.
 
 ## Methods
 
@@ -598,7 +610,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   returned session reflects the agent-reported state, which may differ from the requested level
   when the agent clamps it.
 - `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, and activity details for compact clients. Legacy oversized tool snapshots are projected as same-id `history` activities, so clients fold a run of redundant snapshots into one bounded row.
-- `sessions.respondPermission {sessionId: string, requestId: string, optionId: string}` → `{}` — errors `-32002` if request unknown/expired
+- `sessions.respondPermission {sessionId: string, requestId: string, optionId: string, answers?: UserQuestionAnswer[]}` → `{}` — errors `-32002` if request unknown/expired
 
 ### Attachments
 - `attachments.read {sessionId: string, attachmentId: string}` → `{attachment: AttachmentData}` — fetches one

@@ -182,6 +182,33 @@ Future<void> openFirstSession(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('structured questions fit a small round watch', (tester) async {
+    final (_, fake) = await pumpWear(tester, size: const Size(192, 192));
+    fake.seedHistory('sess-1', const <SessionEvent>[
+      PermissionRequestEvent(
+        request: PermissionRequest(
+          requestId: 'ask',
+          toolCallId: 'tool',
+          title: 'Question',
+          options: [],
+          questions: [
+            UserQuestion(
+              header: 'Setup',
+              question: 'Where should it run?',
+              options: [
+                UserQuestionOption(label: 'Local', description: 'This machine'),
+                UserQuestionOption(label: 'Remote', description: 'A server'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ]);
+    await openFirstSession(tester);
+    expect(find.text('Where should it run?'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('keeps header actions inside a 240px round screen', (
     WidgetTester tester,
   ) async {

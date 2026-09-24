@@ -1610,7 +1610,26 @@ class SpeedDialServer {
     final sessionId = _requiredString(params, 'sessionId');
     final requestId = _requiredString(params, 'requestId');
     final optionId = _requiredString(params, 'optionId');
-    await _engine.respondPermission(sessionId, requestId, optionId);
+    final rawAnswers = params['answers'];
+    final List<UserQuestionAnswer>? answers;
+    try {
+      answers = rawAnswers == null
+          ? null
+          : (rawAnswers as List<Object?>)
+                .map(
+                  (e) =>
+                      UserQuestionAnswer.fromJson(e! as Map<String, Object?>),
+                )
+                .toList();
+    } on Object {
+      throw DaemonError(_kErrInvalidParams, 'Invalid question answers');
+    }
+    await _engine.respondPermission(
+      sessionId,
+      requestId,
+      optionId,
+      answers: answers,
+    );
     return <String, Object?>{};
   }
 
