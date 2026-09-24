@@ -84,6 +84,9 @@ class Composer extends StatefulWidget {
     this.onDraftChanged,
     this.attachmentPicker,
     this.clipboardImageReader,
+    this.sharedAttachments = const <OutgoingAttachment>[],
+    this.onRemoveSharedAttachment,
+    this.onSharedAttachmentsSent,
     required this.onSend,
     required this.onStop,
     required this.onModeChanged,
@@ -141,6 +144,12 @@ class Composer extends StatefulWidget {
   /// Injectable clipboard image reader for tests; defaults to
   /// [Pasteboard.image].
   final ClipboardImageReader? clipboardImageReader;
+
+  /// Attachment staged from Android sharing for this session. Kept by the
+  /// share store so it survives composer remounts and send failures.
+  final List<OutgoingAttachment> sharedAttachments;
+  final ValueChanged<OutgoingAttachment>? onRemoveSharedAttachment;
+  final ValueChanged<List<OutgoingAttachment>>? onSharedAttachmentsSent;
 
   /// Starts a turn with [text] and [attachments]. Completes when the daemon
   /// accepted it; on failure (a [DaemonError] surfaced as a SnackBar by the
@@ -207,7 +216,10 @@ class _ComposerState extends State<Composer> {
 
   /// Send is enabled with text, attachments, or both (PROTOCOL.md allows
   /// `sessions.send` with empty text when attachments are present).
-  bool get _canSend => _hasText || _attachments.isNotEmpty;
+  bool get _canSend =>
+      _hasText ||
+      _attachments.isNotEmpty ||
+      widget.sharedAttachments.isNotEmpty;
 
   @override
   void initState() {
@@ -369,6 +381,10 @@ class _ComposerState extends State<Composer> {
     final List<OutgoingAttachment> attachments = List<OutgoingAttachment>.of(
       _attachments,
     );
+    final List<OutgoingAttachment> shared = List<OutgoingAttachment>.of(
+      widget.sharedAttachments,
+    );
+    attachments.addAll(shared);
     if ((text.isEmpty && attachments.isEmpty) || _running || !mounted) {
       return;
     }
@@ -379,7 +395,7 @@ class _ComposerState extends State<Composer> {
       _hasText = false;
       _attachments.clear();
     });
-    unawaited(_dispatch(text, attachments));
+    unawaited(_dispatch(text, attachments, shared));
   }
 
   /// Runs the send future; restores the draft (text into the field AND
@@ -389,6 +405,7 @@ class _ComposerState extends State<Composer> {
   Future<void> _dispatch(
     String text,
     List<OutgoingAttachment> attachments,
+    List<OutgoingAttachment> shared,
   ) async {
     try {
       await widget.onSend(text, attachments);
@@ -398,9 +415,14 @@ class _ComposerState extends State<Composer> {
         text: text,
         selection: TextSelection.collapsed(offset: text.length),
       );
-      setState(() => _attachments.addAll(attachments));
+      setState(
+        () => _attachments.addAll(
+          attachments.where((OutgoingAttachment a) => !shared.contains(a)),
+        ),
+      );
       return;
     }
+    if (shared.isNotEmpty) widget.onSharedAttachmentsSent?.call(shared);
     final Future<void> Function(String text)? onDraftChanged =
         widget.onDraftChanged;
     if (onDraftChanged != null) {
@@ -451,10 +473,20 @@ class _ComposerState extends State<Composer> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                if (_attachments.isNotEmpty)
+                if (_attachments.isNotEmpty ||
+                    widget.sharedAttachments.isNotEmpty)
                   _AttachmentChips(
-                    attachments: List<OutgoingAttachment>.of(_attachments),
-                    onRemove: _removeAttachment,
+                    attachments: <OutgoingAttachment>[
+                      ..._attachments,
+                      ...widget.sharedAttachments,
+                    ],
+                    onRemove: (OutgoingAttachment attachment) {
+                      if (widget.sharedAttachments.contains(attachment)) {
+                        widget.onRemoveSharedAttachment?.call(attachment);
+                      } else {
+                        _removeAttachment(attachment);
+                      }
+                    },
                   ),
                 Shortcuts(
                   shortcuts: <ShortcutActivator, Intent>{

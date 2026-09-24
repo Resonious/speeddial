@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../scope.dart';
 import '../state/settings_store.dart';
@@ -31,10 +32,9 @@ class SpeedDialShell extends StatelessWidget {
     // System bars stay transparent; icon brightness follows the active
     // theme so icons stay legible in both light and dark mode. The narrow
     // AppBar sets this for itself, but the wide layout has no AppBar.
-    final Brightness icons =
-        Theme.of(context).brightness == Brightness.dark
-            ? Brightness.light
-            : Brightness.dark;
+    final Brightness icons = Theme.of(context).brightness == Brightness.dark
+        ? Brightness.light
+        : Brightness.dark;
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -42,7 +42,99 @@ class SpeedDialShell extends StatelessWidget {
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarIconBrightness: icons,
       ),
-      child: const _Shell(),
+      child: Stack(children: const <Widget>[_Shell(), _FloatingShare()]),
+    );
+  }
+}
+
+class _FloatingShare extends StatelessWidget {
+  const _FloatingShare();
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[data.shares, data.selection]),
+      builder: (BuildContext context, Widget? _) {
+        final OutgoingAttachment? file = data.shares.pending;
+        final String? error = data.shares.error;
+        if (file == null && error == null) return const SizedBox.shrink();
+        final String? daemonId = data.selection.selectedDaemonId;
+        final String? sessionId = data.selection.selectedSessionId;
+        final bool canAttach =
+            file != null &&
+            daemonId != null &&
+            sessionId != null &&
+            !data.shares.creating;
+        return Positioned(
+          top: MediaQuery.paddingOf(context).top + 8,
+          right: MediaQuery.paddingOf(context).right + 8,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: (MediaQuery.sizeOf(context).width - 16).clamp(0, 300),
+            ),
+            child: Material(
+              elevation: 8,
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        const Icon(Icons.attach_file, size: 18),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            file?.name ?? 'Share failed',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconButton(
+                          key: const Key('cancel-shared-file'),
+                          tooltip: 'Dismiss shared file',
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.close, size: 18),
+                          onPressed: data.shares.cancel,
+                        ),
+                      ],
+                    ),
+                    if (error != null)
+                      Text(
+                        error,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    if (data.shares.creating)
+                      const LinearProgressIndicator()
+                    else if (file != null)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          key: const Key('attach-shared-file'),
+                          onPressed: canAttach
+                              ? () => data.shares.attachTo(daemonId, sessionId)
+                              : null,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: Text(
+                            canAttach
+                                ? 'Attach to session'
+                                : 'Open a session to attach',
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -57,7 +149,8 @@ class _Shell extends StatefulWidget {
 class _ShellState extends State<_Shell> {
   bool _leftOpen = true;
   bool _rightOpen = true;
-  final GlobalKey<ScaffoldState> _narrowScaffoldKey = GlobalKey<ScaffoldState>();
+  final GlobalKey<ScaffoldState> _narrowScaffoldKey =
+      GlobalKey<ScaffoldState>();
   final FocusNode _composerFocusNode = FocusNode();
 
   /// Keeps the chat pane's element (and therefore its session watch, cache
@@ -112,15 +205,18 @@ class _ShellState extends State<_Shell> {
                               onSessionCreated: _onSessionCreated,
                             ),
                           ),
-                        if (_leftOpen) const VerticalDivider(width: 1, thickness: 1),
+                        if (_leftOpen)
+                          const VerticalDivider(width: 1, thickness: 1),
                         Expanded(
                           child: ChatPane(
                             key: _chatPaneKey,
                             composerFocusNode: _composerFocusNode,
                           ),
                         ),
-                        if (_rightOpen) const VerticalDivider(width: 1, thickness: 1),
-                        if (_rightOpen) const SizedBox(width: 360, child: RightPanel()),
+                        if (_rightOpen)
+                          const VerticalDivider(width: 1, thickness: 1),
+                        if (_rightOpen)
+                          const SizedBox(width: 360, child: RightPanel()),
                       ],
                     ),
                   ),
@@ -178,8 +274,9 @@ class _ShellState extends State<_Shell> {
       // the footer of the Git tab — the commit field — rides up above the
       // keyboard while the TabBar stays on screen.
       builder: (BuildContext context) => Padding(
-        padding:
-            EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
         child: SizedBox(
           height: MediaQuery.sizeOf(context).height * 0.75,
           child: const RightPanel(),
@@ -227,8 +324,9 @@ class _DesktopTopBar extends StatelessWidget {
               ),
               Expanded(
                 child: _TopBarTitle(
-                  style: textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               const _DaemonStatusChip(),
@@ -268,15 +366,11 @@ class _ThemeModeButton extends StatelessWidget {
         return IconButton(
           tooltip: 'Theme: $label',
           icon: Icon(icon),
-          onPressed: () => _setThemeMode(
-            context,
-            settings,
-            switch (mode) {
-              ThemeMode.system => ThemeMode.light,
-              ThemeMode.light => ThemeMode.dark,
-              ThemeMode.dark => ThemeMode.system,
-            },
-          ),
+          onPressed: () => _setThemeMode(context, settings, switch (mode) {
+            ThemeMode.system => ThemeMode.light,
+            ThemeMode.light => ThemeMode.dark,
+            ThemeMode.dark => ThemeMode.system,
+          }),
         );
       },
     );
@@ -313,8 +407,7 @@ class _TopBarTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
     return ListenableBuilder(
-      listenable:
-          Listenable.merge(<Listenable>[data.selection, data.sessions]),
+      listenable: Listenable.merge(<Listenable>[data.selection, data.sessions]),
       builder: (BuildContext context, Widget? _) {
         final String? sessionId = data.selection.selectedSessionId;
         final String title = sessionId == null
@@ -341,7 +434,10 @@ class _DaemonStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[data.connections, data.selection]),
+      listenable: Listenable.merge(<Listenable>[
+        data.connections,
+        data.selection,
+      ]),
       builder: (BuildContext context, Widget? _) {
         final String? id = data.selection.selectedDaemonId;
         final ConnectionStatus status = id == null
@@ -358,10 +454,9 @@ class _DaemonStatusChip extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   id == null ? 'Not connected' : status.name,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),

@@ -19,6 +19,7 @@ import 'state/mcp_store.dart';
 import 'state/projects_store.dart';
 import 'state/sessions_store.dart';
 import 'state/settings_store.dart';
+import 'state/share_store.dart';
 
 /// Connection state of a daemon endpoint. Driven live from each
 /// [WsDaemonClient]'s `connState`: [connecting] is the first attempt,
@@ -336,6 +337,7 @@ class AppData {
     git = GitStore(clientFor: this.clientFor);
     mcp = McpStore(clientFor: this.clientFor);
     daemonConfig = DaemonConfigStore(clientFor: this.clientFor);
+    shares = ShareStore(this);
     // Endpoints added after construction connect on arrival; status-only
     // changes are filtered out by [_connectedEndpointIds] to avoid churn.
     this.connections.addListener(_onConnectionsChanged);
@@ -354,6 +356,7 @@ class AppData {
   late final GitStore git;
   late final McpStore mcp;
   late final DaemonConfigStore daemonConfig;
+  late final ShareStore shares;
 
   /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
   /// sheet seeds its toggle from here and writes back on change, so the
@@ -656,6 +659,7 @@ class AppData {
     }
     _websocketClients.clear();
     _connectedEndpointIds.clear();
+    shares.dispose();
     connections.dispose();
     selection.dispose();
     projects.dispose();

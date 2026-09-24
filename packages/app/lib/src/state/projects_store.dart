@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'store_base.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -18,8 +19,8 @@ import '../api/daemon_client.dart';
 /// store is disposed.
 class ProjectsStore extends StoreBase {
   ProjectsStore({required DaemonClient Function(String daemonId) clientFor})
-      // ignore: prefer_initializing_formals
-      : _clientFor = clientFor;
+    // ignore: prefer_initializing_formals
+    : _clientFor = clientFor;
 
   final DaemonClient Function(String daemonId) _clientFor;
 
@@ -41,7 +42,10 @@ class ProjectsStore extends StoreBase {
 
   /// Projects known for [daemonId]; empty until the first refresh succeeds.
   List<Project> projectsFor(String daemonId) => List<Project>.unmodifiable(
-      _projectsByDaemon[daemonId] ?? const <Project>[]);
+    _projectsByDaemon[daemonId] ?? const <Project>[],
+  );
+
+  bool hasLoaded(String daemonId) => _projectsByDaemon.containsKey(daemonId);
 
   bool isLoading(String daemonId) => _loading.contains(daemonId);
 
@@ -69,8 +73,8 @@ class ProjectsStore extends StoreBase {
   Future<Project> add(String daemonId, String path, {String? name}) async {
     _ensureDaemonSubscriptions(daemonId);
     try {
-      final Project project =
-          await _clientFor(daemonId).addProject(path, name: name);
+      final Project project = await _clientFor(daemonId)
+          .addProject(path, name: name);
       // Update the cache only if a listing already exists, so a stale
       // empty bucket never hides other projects.
       _projectsByDaemon[daemonId]?.add(project);
@@ -88,7 +92,8 @@ class ProjectsStore extends StoreBase {
     try {
       await _clientFor(daemonId).removeProject(projectId);
       _projectsByDaemon[daemonId]?.removeWhere(
-          (Project p) => p.id == projectId);
+        (Project p) => p.id == projectId,
+      );
       _lastError = null;
       notifyListeners();
     } catch (error) {
