@@ -695,6 +695,130 @@ void main() {
     },
   );
 
+  for (final String scenario in <String>[
+    'saved',
+    'legacy',
+    'live legacy',
+    'orphan',
+    'default',
+    'missing',
+  ]) {
+    test('Ante fork preserves upstream provider: $scenario', () async {
+      Future<void> restart() async {
+        await eventsSub.cancel();
+        await changesSub.cancel();
+        await removalsSub.cancel();
+        await engine.dispose();
+        store.dispose();
+        store = DaemonStore(p.join(tempDir.path, 'speeddial.db'));
+        engine = SessionEngine(store: store, providers: fakeAnteProviders());
+        await engine.restore();
+        eventsSub = engine.events.listen(events.add);
+        changesSub = engine.sessionChanges.listen(changes.add);
+        removalsSub = engine.sessionRemovals.listen(removals.add);
+      }
+
+      final File report = File(p.join(tempDir.path, 'ante-config.json'));
+      final String stateDir = p.join(tempDir.path, 'ante-state');
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_ANTE_STATE_DIR': stateDir,
+          'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
+        },
+      );
+      await restart();
+      final Session source = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeAnte',
+        model: scenario == 'default' ? null : 'other-provider/fake-model',
+      );
+      final String expectedProvider = scenario == 'default'
+          ? 'fake-provider'
+          : 'other-provider';
+      expect(store.anteProviderOf(source.id).provider, expectedProvider);
+      final String nativeId = store.providerSessionIdOf(source.id)!;
+      // An interrupted source remains forkable without restarting its agent.
+      await engine.sendMessage(source.id, 'die');
+      await waitFor(
+        () => store.getSession(source.id)!.status == SessionStatus.error,
+      );
+      if (scenario == 'legacy' ||
+          scenario == 'missing' ||
+          scenario == 'live legacy') {
+        store.setAnteProvider(source.id, null);
+      }
+      final int boundary = store
+          .listEvents(source.id)
+          .events
+          .whereType<UserMessageEvent>()
+          .single
+          .seq!;
+      if (scenario != 'live legacy') await restart();
+      final Session fork = await engine.forkSession(
+        sourceSessionId: source.id,
+        throughSeq: boundary,
+      );
+      // Pending forks can themselves be forked, including after deleting the
+      // original SpeedDial row; native session files remain owned by Ante.
+      final Session nested = await engine.forkSession(
+        sourceSessionId: fork.id,
+        throughSeq: boundary,
+      );
+      await engine.delete(source.id);
+      await engine.delete(fork.id);
+      await report.delete();
+      if (scenario == 'orphan') store.setAnteProvider(nested.id, null);
+      await restart();
+      expect(report.existsSync(), isFalse, reason: 'fork creation stays lazy');
+      if (scenario == 'missing' || scenario == 'orphan') {
+        if (scenario == 'missing') {
+          await File(p.join(stateDir, '$nativeId.json')).delete();
+        }
+        await expectLater(
+          engine.sendMessage(nested.id, 'continue'),
+          throwsA(
+            isA<DaemonError>().having(
+              (error) => error.code,
+              'code',
+              scenario == 'missing' ? kErrAgentProcess : kErrConflict,
+            ),
+          ),
+        );
+        expect(
+          report.existsSync(),
+          isFalse,
+          reason: 'must not start a new session with a guessed provider',
+        );
+        expect(
+          store.listEvents(nested.id).events.whereType<UserMessageEvent>(),
+          hasLength(1),
+        );
+        return;
+      }
+      final permission = waitForPermissionRequest();
+      await engine.sendMessage(nested.id, 'continue');
+      final request = await permission;
+      await engine.respondPermission(
+        nested.id,
+        request.request.requestId,
+        'Accept',
+      );
+      await waitFor(
+        () => store.getSession(nested.id)!.status == SessionStatus.idle,
+      );
+      final Map<String, Object?> config = Map<String, Object?>.from(
+        jsonDecode(await report.readAsString()) as Map,
+      );
+      expect(config['provider'], expectedProvider);
+      expect(config['model'], 'fake-model');
+      expect(store.getSession(nested.id)!.model, 'fake-model');
+      expect(store.providerSessionIdOf(nested.id), isNot(nativeId));
+      expect(store.anteProviderOf(nested.id).provider, expectedProvider);
+      expect(store.anteProviderOf(nested.id).sourceSessionId, isNull);
+      expect(store.forkContextSeqOf(nested.id), isNull);
+    });
+  }
+
   test('Ante sessions pin the provider of a qualified model id', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

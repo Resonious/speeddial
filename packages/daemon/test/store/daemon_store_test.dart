@@ -554,6 +554,23 @@ void main() {
       reason: 'legacy rows have no resumable provider session id',
     );
 
+    expect(store.anteProviderOf('s1'), (provider: null, sourceSessionId: null));
+    store.setAnteProvider('s1', null, sourceSessionId: 'ante-original');
+    store.dispose();
+    store = openStore(tempDir);
+    expect(store.anteProviderOf('s1'), (
+      provider: null,
+      sourceSessionId: 'ante-original',
+    ));
+    store.setAnteProvider('s1', 'moonshotai');
+    store.updateSession(store.getSession('s1')!);
+    store.dispose();
+    store = openStore(tempDir);
+    expect(store.anteProviderOf('s1'), (
+      provider: 'moonshotai',
+      sourceSessionId: null,
+    ));
+
     // New inserts carry the base branch, sandbox/yolo settings, thinking
     // level fields, and the advertised models.
     store.insertSession(

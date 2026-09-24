@@ -499,6 +499,21 @@ class SessionEngine {
     // harness/MCP startup latency even when the user never continues it.
     _store.insertFork(baseSession, throughSeq, () {
       _copyForkHistory(source.id, baseSession.id, throughSeq);
+      if (spec.protocol == ProviderProtocol.ante) {
+        final inherited = _store.anteProviderOf(source.id);
+        final AgentClient? sourceClient = _live[source.id]?.client;
+        final String? provider =
+            inherited.provider ??
+            (sourceClient is AnteClient ? sourceClient.upstreamProvider : null);
+        _store.setAnteProvider(
+          baseSession.id,
+          provider,
+          sourceSessionId: provider == null
+              ? inherited.sourceSessionId ??
+                    _store.providerSessionIdOf(source.id)
+              : null,
+        );
+      }
     });
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(baseSession);
@@ -593,6 +608,9 @@ class SessionEngine {
     }
     _store.insertSession(session);
     _store.setProviderSessionId(session.id, providerSessionId);
+    if (client is AnteClient) {
+      _store.setAnteProvider(session.id, client.upstreamProvider);
+    }
     final _LiveSession live = _LiveSession(
       session: session,
       client: client,
@@ -876,6 +894,38 @@ class SessionEngine {
   /// [sendMessage] calls from each spawning their own agent process.
   final Map<String, Future<_LiveSession>> _resuming = {};
 
+  /// Older sessions did not persist Ante's upstream. Resolve it from the
+  /// original native session on the first fork send, never by guessing from a
+  /// bare model id (multiple providers can serve the same model).
+  Future<String> _anteProviderForFork(Session session) async {
+    final inherited = _store.anteProviderOf(session.id);
+    if (inherited.provider != null) return inherited.provider!;
+    final String? sourceSessionId = inherited.sourceSessionId;
+    if (sourceSessionId == null) {
+      throw DaemonError(
+        kErrConflict,
+        'This Ante fork has no saved upstream provider. Fork the original '
+        'session again to preserve its provider.',
+      );
+    }
+    final AnteClient probe = _spawnAgent(session) as AnteClient;
+    try {
+      await probe.loadSession(
+        sessionId: sourceSessionId,
+        cwd: session.cwd,
+        shortPrompt: session.shortPrompt,
+      );
+      final String? provider = probe.upstreamProvider;
+      if (provider == null) {
+        throw StateError('Ante did not report the saved upstream provider');
+      }
+      _store.setAnteProvider(session.id, provider);
+      return provider;
+    } finally {
+      await probe.dispose();
+    }
+  }
+
   /// Materializes a fork's copied user/agent messages as one structured
   /// context block plus the copied attachment payloads. Ordinary sessions
   /// and forks that already completed a new turn return null.
@@ -1023,10 +1073,14 @@ class SessionEngine {
         await _prepareMcpServers?.call();
       }
       if (startNewThread) {
+        final String? upstreamProvider = spec.protocol == ProviderProtocol.ante
+            ? await _anteProviderForFork(session)
+            : null;
         final created = await client.newSession(
           cwd: session.cwd,
           mcpServers: _mcpServersFor(session, info),
           model: session.model,
+          provider: upstreamProvider,
           sandboxMode: session.sandboxMode,
           yolo: session.yolo,
           shortPrompt: session.shortPrompt,
@@ -1058,6 +1112,9 @@ class SessionEngine {
         kErrAgentProcess,
         'Failed to resume session "$sessionId": $error',
       );
+    }
+    if (client is AnteClient) {
+      _store.setAnteProvider(sessionId, client.upstreamProvider);
     }
     final modelOption = _modelOptionOf(configOptions);
     final thinkingOption = _thinkingOptionOf(configOptions);

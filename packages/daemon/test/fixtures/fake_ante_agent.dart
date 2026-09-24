@@ -5,7 +5,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
-const String _sessionId = 'ses_01M0H000000000000000000000';
+String _sessionId = 'ses_01M0H000000000000000000000';
 String _model = 'fake-model';
 String? _effort = 'medium';
 String _provider = 'fake-provider';
@@ -19,22 +19,27 @@ Future<void> main(List<String> args) async {
     stdout.writeln(
       jsonEncode(<String, Object?>{
         'providers': <Object?>[
-          <String, Object?>{
-            'id': 'fake-provider',
-            'display_name': 'Fake Provider',
-            'preferred_models': <Object?>[
-              <String, Object?>{
-                'id': 'fake-model',
-                'description': 'Fake model',
-                'effort': 'medium',
-                'effort_options': <String>['min', 'low', 'medium', 'high'],
-              },
-              <String, Object?>{
-                'id': 'fake-large',
-                'description': 'Large fake model',
-              },
-            ],
-          },
+          for (final String provider in <String>[
+            'fake-provider',
+            if (Platform.environment['FAKE_ANTE_STATE_DIR'] != null)
+              'other-provider',
+          ])
+            <String, Object?>{
+              'id': provider,
+              'display_name': 'Fake Provider',
+              'preferred_models': <Object?>[
+                <String, Object?>{
+                  'id': 'fake-model',
+                  'description': 'Fake model',
+                  'effort': 'medium',
+                  'effort_options': <String>['min', 'low', 'medium', 'high'],
+                },
+                <String, Object?>{
+                  'id': 'fake-large',
+                  'description': 'Large fake model',
+                },
+              ],
+            },
         ],
       }),
     );
@@ -103,6 +108,7 @@ Future<void> _dispatch(Map<String, Object?> message) async {
       _effort = _model == 'fake-model' ? 'medium' : null;
       _provider = value['provider'] as String? ?? 'fake-provider';
       _permissionMode = value['permission_mode'] as String? ?? 'strict';
+      await _saveSession();
       await _captureSessionConfig(value);
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -112,6 +118,7 @@ Future<void> _dispatch(Map<String, Object?> message) async {
       final String? failureFile =
           Platform.environment['FAKE_ANTE_RESUME_FAILURE_FILE'];
       if (failureFile != null && File(failureFile).existsSync()) exit(16);
+      await _loadSession(value['session_id'] as String);
       await _captureSessionConfig(value);
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -159,6 +166,28 @@ Future<void> _dispatch(Map<String, Object?> message) async {
       _pendingTurn = null;
       await _finishApprovedTurn(pending.parent, pending.turnId);
   }
+}
+
+Future<void> _saveSession() async {
+  final String? stateDir = Platform.environment['FAKE_ANTE_STATE_DIR'];
+  if (stateDir == null) return;
+  await Directory(stateDir).create(recursive: true);
+  _sessionId = 'ses_fake_$pid';
+  await File(p.join(stateDir, '$_sessionId.json'))
+      .writeAsString(jsonEncode(_sessionPayload()));
+}
+
+Future<void> _loadSession(String sessionId) async {
+  final String? stateDir = Platform.environment['FAKE_ANTE_STATE_DIR'];
+  if (stateDir == null) return;
+  final Map<String, dynamic> state = jsonDecode(
+    await File(p.join(stateDir, '$sessionId.json')).readAsString(),
+  ) as Map<String, dynamic>;
+  _sessionId = sessionId;
+  _provider = (state['provider'] as Map)['id'] as String;
+  _model = (state['model'] as Map)['id'] as String;
+  _effort = (state['model'] as Map)['effort'] as String?;
+  _permissionMode = state['permission_mode'] as String;
 }
 
 Future<void> _captureMcpHome() async {

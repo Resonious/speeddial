@@ -504,15 +504,18 @@ tokens before session creation/resume, and checks them periodically while runnin
 - `sessions.fork {sessionId: string, seq: int}` → `{session: Session}` — creates a new idle
   session containing the source session's persisted history through `seq`. `seq` must identify a
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
-  side of any visible exchange. The fork inherits the source provider, project, cwd/worktree,
-  base branch, mode, model, thinking level, sandbox mode, yolo setting, and short prompt
-  setting; it is titled
-  `Fork of <source title>`.
+  side of any visible exchange. The fork inherits the source provider (including Ante's pinned
+  upstream provider), project, cwd/worktree, base branch, mode, model, thinking level, sandbox
+  mode, yolo setting, and short prompt setting; it is titled `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
   Creation copies history locally without starting an agent. On the first send, the daemon
   starts a fresh provider session and supplies the copied user/agent conversation as
   inherited context with the fork's first new turn. This provider-independent handoff makes
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
+  For older Ante sessions without stored upstream metadata, the first send resolves it from
+  the original saved Ante session. If that identity cannot be recovered, the send fails instead
+  of selecting a different provider. Forks created by older daemons without either identity
+  must be recreated from the original session.
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
   An agent busy with its own background work (OMP keeps running subagent-driven turns

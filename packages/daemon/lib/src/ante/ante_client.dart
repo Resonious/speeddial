@@ -98,6 +98,9 @@ class AnteClient implements AgentClient {
   bool _disposed = false;
   bool _shutdownSent = false;
 
+  /// The upstream selected by Ante, including defaults resolved at startup.
+  String? get upstreamProvider => _session?.providerId;
+
   @override
   Future<InitializeResult> get initialized =>
       _initializedFuture ??= _initialize();
