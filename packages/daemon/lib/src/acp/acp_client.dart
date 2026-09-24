@@ -134,6 +134,9 @@ class AcpClient implements AgentClient {
   Future<InitializeResult>? _initializedFuture;
   int _nextId = 1;
   bool _exited = false;
+
+  @override
+  bool get isClosed => _disposed || _exited;
   bool _disposed = false;
   Completer<void> _writeQueue = Completer<void>()..complete();
 

@@ -645,6 +645,180 @@ void main() {
     expect(store.getSession(session.id)!.status, SessionStatus.error);
   });
 
+  test(
+    'Codex process death resumes its saved thread on the next send',
+    () async {
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      final File report = File(p.join(tempDir.path, 'codex-resume.json'));
+      store.updateDaemonEnvironment(
+        set: <String, String>{'FAKE_CODEX_RESUME_REPORT': report.path},
+      );
+      engine = SessionEngine(store: store, providers: fakeCodexProviders());
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeCodex',
+      );
+      final String? providerSessionId = store.providerSessionIdOf(session.id);
+      await engine.sendMessage(session.id, 'die');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      final Future<PermissionRequestEvent> permission =
+          waitForPermissionRequest();
+      await engine.sendMessage(session.id, 'continue');
+      final PermissionRequestEvent request = await permission;
+      await engine.respondPermission(
+        session.id,
+        request.request.requestId,
+        'accept',
+      );
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final Map<String, Object?> resumed = Map<String, Object?>.from(
+        jsonDecode(await report.readAsString()) as Map,
+      );
+      expect(resumed['threadId'], providerSessionId);
+      expect(store.providerSessionIdOf(session.id), providerSessionId);
+      final history = store.listEvents(session.id).events;
+      expect(history.whereType<UserMessageEvent>(), hasLength(2));
+      expect(history.whereType<SessionErrorEvent>(), hasLength(1));
+      expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+    },
+  );
+
+  for (final String scenario in <String>[
+    'saved',
+    'legacy',
+    'live legacy',
+    'orphan',
+    'default',
+    'missing',
+  ]) {
+    test('Ante fork preserves upstream provider: $scenario', () async {
+      Future<void> restart() async {
+        await eventsSub.cancel();
+        await changesSub.cancel();
+        await removalsSub.cancel();
+        await engine.dispose();
+        store.dispose();
+        store = DaemonStore(p.join(tempDir.path, 'speeddial.db'));
+        engine = SessionEngine(store: store, providers: fakeAnteProviders());
+        await engine.restore();
+        eventsSub = engine.events.listen(events.add);
+        changesSub = engine.sessionChanges.listen(changes.add);
+        removalsSub = engine.sessionRemovals.listen(removals.add);
+      }
+
+      final File report = File(p.join(tempDir.path, 'ante-config.json'));
+      final String stateDir = p.join(tempDir.path, 'ante-state');
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_ANTE_STATE_DIR': stateDir,
+          'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
+        },
+      );
+      await restart();
+      final Session source = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeAnte',
+        model: scenario == 'default' ? null : 'other-provider/fake-model',
+      );
+      final String expectedProvider = scenario == 'default'
+          ? 'fake-provider'
+          : 'other-provider';
+      expect(store.anteProviderOf(source.id).provider, expectedProvider);
+      final String nativeId = store.providerSessionIdOf(source.id)!;
+      // An interrupted source remains forkable without restarting its agent.
+      await engine.sendMessage(source.id, 'die');
+      await waitFor(
+        () => store.getSession(source.id)!.status == SessionStatus.error,
+      );
+      if (scenario == 'legacy' ||
+          scenario == 'missing' ||
+          scenario == 'live legacy') {
+        store.setAnteProvider(source.id, null);
+      }
+      final int boundary = store
+          .listEvents(source.id)
+          .events
+          .whereType<UserMessageEvent>()
+          .single
+          .seq!;
+      if (scenario != 'live legacy') await restart();
+      final Session fork = await engine.forkSession(
+        sourceSessionId: source.id,
+        throughSeq: boundary,
+      );
+      // Pending forks can themselves be forked, including after deleting the
+      // original SpeedDial row; native session files remain owned by Ante.
+      final Session nested = await engine.forkSession(
+        sourceSessionId: fork.id,
+        throughSeq: boundary,
+      );
+      await engine.delete(source.id);
+      await engine.delete(fork.id);
+      await report.delete();
+      if (scenario == 'orphan') store.setAnteProvider(nested.id, null);
+      await restart();
+      expect(report.existsSync(), isFalse, reason: 'fork creation stays lazy');
+      if (scenario == 'missing' || scenario == 'orphan') {
+        if (scenario == 'missing') {
+          await File(p.join(stateDir, '$nativeId.json')).delete();
+        }
+        await expectLater(
+          engine.sendMessage(nested.id, 'continue'),
+          throwsA(
+            isA<DaemonError>().having(
+              (error) => error.code,
+              'code',
+              scenario == 'missing' ? kErrAgentProcess : kErrConflict,
+            ),
+          ),
+        );
+        expect(
+          report.existsSync(),
+          isFalse,
+          reason: 'must not start a new session with a guessed provider',
+        );
+        expect(
+          store.listEvents(nested.id).events.whereType<UserMessageEvent>(),
+          hasLength(1),
+        );
+        return;
+      }
+      final permission = waitForPermissionRequest();
+      await engine.sendMessage(nested.id, 'continue');
+      final request = await permission;
+      await engine.respondPermission(
+        nested.id,
+        request.request.requestId,
+        'Accept',
+      );
+      await waitFor(
+        () => store.getSession(nested.id)!.status == SessionStatus.idle,
+      );
+      final Map<String, Object?> config = Map<String, Object?>.from(
+        jsonDecode(await report.readAsString()) as Map,
+      );
+      expect(config['provider'], expectedProvider);
+      expect(config['model'], 'fake-model');
+      expect(store.getSession(nested.id)!.model, 'fake-model');
+      expect(store.providerSessionIdOf(nested.id), isNot(nativeId));
+      expect(store.anteProviderOf(nested.id).provider, expectedProvider);
+      expect(store.anteProviderOf(nested.id).sourceSessionId, isNull);
+      expect(store.forkContextSeqOf(nested.id), isNull);
+    });
+  }
+
   test('Ante sessions pin the provider of a qualified model id', () async {
     await eventsSub.cancel();
     await changesSub.cancel();
@@ -665,6 +839,114 @@ void main() {
     // the bare model id and that provider's advertised list.
     expect(session.model, 'fake-large');
     expect(session.models, <String>['fake-model', 'fake-large']);
+  });
+
+  test('Ante process death resumes the saved session on the next send', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    final File report = File(p.join(tempDir.path, 'ante-session.json'));
+    final File failResume = File(p.join(tempDir.path, 'ante-resume.fail'));
+    store.updateDaemonEnvironment(
+      set: <String, String>{
+        'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
+        'FAKE_ANTE_RESUME_FAILURE_FILE': failResume.path,
+      },
+    );
+    engine = SessionEngine(store: store, providers: fakeAnteProviders());
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeAnte',
+      shortPrompt: true,
+    );
+    final String? providerSessionId = store.providerSessionIdOf(session.id);
+    await engine.sendMessage(session.id, 'die');
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.error,
+    );
+    final List<SessionEvent> failedHistory = store
+        .listEvents(session.id)
+        .events;
+    expect(
+      failedHistory.whereType<SessionErrorEvent>().single.message,
+      contains('Ante process exited'),
+    );
+    expect(failedHistory.whereType<TurnCompleteEvent>(), isEmpty);
+
+    // Settings remain editable while the transport is dead, and are reapplied.
+    await engine.setThinkingLevel(session.id, 'high');
+    await engine.setModel(session.id, 'fake-large');
+    await engine.setMode(session.id, SessionMode.plan);
+
+    // A failed restart must reject before accepting the user's message and
+    // leave the saved session available for another recovery attempt.
+    await failResume.writeAsString('fail');
+    await expectLater(
+      engine.sendMessage(session.id, 'not accepted'),
+      throwsA(
+        isA<DaemonError>().having(
+          (DaemonError error) => error.code,
+          'code',
+          kErrAgentProcess,
+        ),
+      ),
+    );
+    expect(
+      store.listEvents(session.id).events.whereType<UserMessageEvent>(),
+      hasLength(1),
+    );
+    await failResume.delete();
+
+    final Future<PermissionRequestEvent> permission =
+        waitForPermissionRequest();
+    final List<Object?> sends = await Future.wait(<Future<Object?>>[
+      for (final String text in <String>['continue', 'concurrent'])
+        engine
+            .sendMessage(session.id, text)
+            .then<Object?>((_) => null, onError: (Object error) => error),
+    ]);
+    expect(sends.where((Object? result) => result == null), hasLength(1));
+    expect(sends.whereType<DaemonError>().single.code, kErrConflict);
+    final PermissionRequestEvent request = await permission.timeout(
+      const Duration(seconds: 5),
+    );
+    await engine.respondPermission(
+      session.id,
+      request.request.requestId,
+      'Accept',
+    );
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    final Map<String, Object?> resumed = Map<String, Object?>.from(
+      jsonDecode(await report.readAsString()) as Map,
+    );
+    expect(resumed['session_id'], providerSessionId);
+    expect(resumed['short_prompt'], isTrue);
+    expect(store.providerSessionIdOf(session.id), providerSessionId);
+    expect(store.getSession(session.id)!.model, 'fake-large');
+    expect(store.getSession(session.id)!.mode, SessionMode.plan);
+    final List<SessionEvent> history = store.listEvents(session.id).events;
+    expect(
+      history.take(failedHistory.length).map((event) => event.toJson()),
+      failedHistory.map((event) => event.toJson()),
+    );
+    expect(history.whereType<UserMessageEvent>(), hasLength(2));
+    expect(history.whereType<SessionErrorEvent>(), hasLength(1));
+    expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+    expect(
+      history
+          .whereType<AgentMessageChunkEvent>()
+          .map((event) => event.text)
+          .join(),
+      'Hello world',
+    );
   });
 
   test('Ante sessions stream rich events and attachments', () async {
@@ -2555,6 +2837,25 @@ void main() {
       SessionStatus.error,
       reason: 'a stale respondPermission must not revive the session',
     );
+
+    // Recover on this same daemon, preserving the failed turn and session id.
+    final String? providerSessionId = store.providerSessionIdOf(session.id);
+    final permission = waitForPermissionRequest();
+    await engine.sendMessage(session.id, 'continue after the crash');
+    final recovered = await permission;
+    await engine.respondPermission(
+      session.id,
+      recovered.request.requestId,
+      'allow',
+    );
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    expect(store.providerSessionIdOf(session.id), providerSessionId);
+    final history = store.listEvents(session.id).events;
+    expect(history.whereType<UserMessageEvent>(), hasLength(2));
+    expect(history.whereType<SessionErrorEvent>(), hasLength(1));
+    expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
   });
 
   test('createSession rejects cwd outside the project sandbox', () async {

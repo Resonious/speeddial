@@ -16,6 +16,9 @@ typedef AgentPermissionHandler = Future<String> Function(
 /// native messages into the ACP-shaped update vocabulary consumed by the
 /// existing engine mapper.
 abstract interface class AgentClient {
+  /// Whether the transport exited or was disposed and cannot be reused.
+  bool get isClosed;
+
   Future<InitializeResult> get initialized;
 
   Stream<String> get stderrLines;

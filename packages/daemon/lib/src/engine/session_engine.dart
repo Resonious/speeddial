@@ -499,6 +499,21 @@ class SessionEngine {
     // harness/MCP startup latency even when the user never continues it.
     _store.insertFork(baseSession, throughSeq, () {
       _copyForkHistory(source.id, baseSession.id, throughSeq);
+      if (spec.protocol == ProviderProtocol.ante) {
+        final inherited = _store.anteProviderOf(source.id);
+        final AgentClient? sourceClient = _live[source.id]?.client;
+        final String? provider =
+            inherited.provider ??
+            (sourceClient is AnteClient ? sourceClient.upstreamProvider : null);
+        _store.setAnteProvider(
+          baseSession.id,
+          provider,
+          sourceSessionId: provider == null
+              ? inherited.sourceSessionId ??
+                    _store.providerSessionIdOf(source.id)
+              : null,
+        );
+      }
     });
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(baseSession);
@@ -593,6 +608,9 @@ class SessionEngine {
     }
     _store.insertSession(session);
     _store.setProviderSessionId(session.id, providerSessionId);
+    if (client is AnteClient) {
+      _store.setAnteProvider(session.id, client.upstreamProvider);
+    }
     final _LiveSession live = _LiveSession(
       session: session,
       client: client,
@@ -766,8 +784,8 @@ class SessionEngine {
   }
 
   /// Starts a turn for [text] with the attached files. When the session's
-  /// agent process is gone (daemon restarted), the agent is first respawned
-  /// and resumed via ACP `session/load` — see [_resume]. Errors
+  /// agent process is gone (exited or daemon restarted), it is first
+  /// respawned and resumed through its provider — see [_resume]. Errors
   /// `kErrConflict` when a turn is already running or the session cannot be
   /// resumed (closed, predates resume support, or the provider lacks
   /// `session/load`).
@@ -786,6 +804,11 @@ class SessionEngine {
   }) async {
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
+    if (live != null && live.client.isClosed && live.turn == null) {
+      // Keep cleanup inside the shared resume future so concurrent sends
+      // cannot start a replacement while the old transport is being disposed.
+      live = null;
+    }
     if (live != null && _mcpReloadPending.contains(sessionId)) {
       if (live.turn != null) {
         throw DaemonError(
@@ -870,6 +893,38 @@ class SessionEngine {
   /// In-flight resume attempts, keyed by session id; prevents concurrent
   /// [sendMessage] calls from each spawning their own agent process.
   final Map<String, Future<_LiveSession>> _resuming = {};
+
+  /// Older sessions did not persist Ante's upstream. Resolve it from the
+  /// original native session on the first fork send, never by guessing from a
+  /// bare model id (multiple providers can serve the same model).
+  Future<String> _anteProviderForFork(Session session) async {
+    final inherited = _store.anteProviderOf(session.id);
+    if (inherited.provider != null) return inherited.provider!;
+    final String? sourceSessionId = inherited.sourceSessionId;
+    if (sourceSessionId == null) {
+      throw DaemonError(
+        kErrConflict,
+        'This Ante fork has no saved upstream provider. Fork the original '
+        'session again to preserve its provider.',
+      );
+    }
+    final AnteClient probe = _spawnAgent(session) as AnteClient;
+    try {
+      await probe.loadSession(
+        sessionId: sourceSessionId,
+        cwd: session.cwd,
+        shortPrompt: session.shortPrompt,
+      );
+      final String? provider = probe.upstreamProvider;
+      if (provider == null) {
+        throw StateError('Ante did not report the saved upstream provider');
+      }
+      _store.setAnteProvider(session.id, provider);
+      return provider;
+    } finally {
+      await probe.dispose();
+    }
+  }
 
   /// Materializes a fork's copied user/agent messages as one structured
   /// context block plus the copied attachment payloads. Ordinary sessions
@@ -958,6 +1013,15 @@ class SessionEngine {
   /// A provider failure during resume marks the session `error` (its remote
   /// state is presumed lost) and throws `kErrAgentProcess`.
   Future<_LiveSession> _resume(String sessionId) async {
+    final _LiveSession? dead = _live[sessionId];
+    if (dead != null && dead.client.isClosed && dead.turn == null) {
+      _live.remove(sessionId);
+      _mcpReloadPending.remove(sessionId);
+      dead.closed = true;
+      _expirePendingPermissions(dead, 'Agent process ended');
+      await dead.updatesSubscription?.cancel();
+      await dead.client.dispose();
+    }
     final Session? session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
@@ -1009,10 +1073,14 @@ class SessionEngine {
         await _prepareMcpServers?.call();
       }
       if (startNewThread) {
+        final String? upstreamProvider = spec.protocol == ProviderProtocol.ante
+            ? await _anteProviderForFork(session)
+            : null;
         final created = await client.newSession(
           cwd: session.cwd,
           mcpServers: _mcpServersFor(session, info),
           model: session.model,
+          provider: upstreamProvider,
           sandboxMode: session.sandboxMode,
           yolo: session.yolo,
           shortPrompt: session.shortPrompt,
@@ -1044,6 +1112,9 @@ class SessionEngine {
         kErrAgentProcess,
         'Failed to resume session "$sessionId": $error',
       );
+    }
+    if (client is AnteClient) {
+      _store.setAnteProvider(sessionId, client.upstreamProvider);
     }
     final modelOption = _modelOptionOf(configOptions);
     final thinkingOption = _thinkingOptionOf(configOptions);
@@ -1180,7 +1251,7 @@ class SessionEngine {
   /// mode when the agent is respawned.
   Future<Session> setMode(String sessionId, SessionMode mode) async {
     final live = _live[sessionId];
-    if (live != null && live.turn == null) {
+    if (live != null && !live.client.isClosed && live.turn == null) {
       await live.client.setMode(live.providerSessionId, mode.wire);
     }
     return _updateSession(sessionId, (session) => _withMode(session, mode));
@@ -1214,6 +1285,7 @@ class SessionEngine {
     final live = _live[sessionId];
     if (models.isNotEmpty &&
         live != null &&
+        !live.client.isClosed &&
         live.turn == null &&
         live.modelConfigId != null) {
       final configOptions = await live.client.setConfigOption(
@@ -1264,7 +1336,10 @@ class SessionEngine {
       );
     }
     final live = _live[sessionId];
-    if (live != null && live.turn == null && live.thinkingConfigId != null) {
+    if (live != null &&
+        !live.client.isClosed &&
+        live.turn == null &&
+        live.thinkingConfigId != null) {
       final configOptions = await live.client.setConfigOption(
         live.providerSessionId,
         live.thinkingConfigId!,

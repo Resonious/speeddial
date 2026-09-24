@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -130,19 +131,22 @@ void main() {
 
   test('a cancelled busy wait is reported and never errors', () async {
     final waits = <bool>[];
+    final busy = Completer<void>();
     final client = AcpClient.spawn(
       <String>[Platform.resolvedExecutable, fakeAgentScript()],
       cwd: tempDir.path,
-      busyWaitChanged: (sessionId, waiting) => waits.add(waiting),
+      busyWaitChanged: (sessionId, waiting) {
+        waits.add(waiting);
+        if (waiting && !busy.isCompleted) busy.complete();
+      },
     );
     addTearDown(client.dispose);
     await client.initialized;
     final session = await client.newSession(cwd: tempDir.path);
     final pending = client.prompt(session.sessionId, textBlocks('busy-always'));
-    final marker = File(p.join(tempDir.path, 'agent.busy_attempts'));
-    while (!marker.existsSync()) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
+    // The fixture's marker precedes the busy response reaching the client.
+    // Cancel only after the client actually enters the wait being tested.
+    await busy.future.timeout(const Duration(seconds: 5));
     await client.cancel(session.sessionId);
     expect((await pending).stopReason, 'cancelled');
     expect(waits, <bool>[true, false]);

@@ -12,6 +12,8 @@
 ///                      status, mode, model NULL, models TEXT JSON-array
 ///                      (default '[]'), cwd, base_branch NULL,
 ///                      acp_session_id NULL (legacy column for provider-side resume id),
+///                      ante_provider NULL (pinned upstream),
+///                      ante_provider_session_id NULL (legacy fork provider lookup),
 ///                      fork_context_seq NULL (copied history to inject into
 ///                      the fork's first provider turn), thinking_level NULL,
 ///                      thinking_levels TEXT JSON-array (default '[]'),
@@ -144,6 +146,14 @@ class DaemonStore {
     }
     if (!sessionColumns.contains('acp_session_id')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN acp_session_id TEXT');
+    }
+    for (final String column in <String>[
+      'ante_provider',
+      'ante_provider_session_id',
+    ]) {
+      if (!sessionColumns.contains(column)) {
+        _db.execute('ALTER TABLE sessions ADD COLUMN $column TEXT');
+      }
     }
     if (!sessionColumns.contains('thinking_level')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN thinking_level TEXT');
@@ -922,6 +932,36 @@ class DaemonStore {
       providerSessionId,
       sessionId,
     ]);
+    if (_db.updatedRows == 0) {
+      throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
+    }
+  }
+
+  /// Ante's upstream identity, kept separate from the public harness/model.
+  /// Legacy forks retain a native session id to resolve the provider lazily.
+  ({String? provider, String? sourceSessionId}) anteProviderOf(
+    String sessionId,
+  ) {
+    final rows = _db.select(
+      'SELECT ante_provider, ante_provider_session_id FROM sessions WHERE id = ?',
+      [sessionId],
+    );
+    if (rows.isEmpty) return (provider: null, sourceSessionId: null);
+    return (
+      provider: rows.first['ante_provider'] as String?,
+      sourceSessionId: rows.first['ante_provider_session_id'] as String?,
+    );
+  }
+
+  void setAnteProvider(
+    String sessionId,
+    String? provider, {
+    String? sourceSessionId,
+  }) {
+    _db.execute(
+      'UPDATE sessions SET ante_provider = ?, ante_provider_session_id = ? WHERE id = ?',
+      [provider, sourceSessionId, sessionId],
+    );
     if (_db.updatedRows == 0) {
       throw DaemonError(kErrNotFound, 'Session not found: $sessionId');
     }

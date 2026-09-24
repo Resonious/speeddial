@@ -66,8 +66,12 @@ lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. I
                     and maps native message, reasoning, command, file-change,
                     MCP, collaboration, web-search, image, plan, review, usage, compaction,
                     and lifecycle notifications into the shared agent update stream.
-lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Starts/resumes sessions,
-                    sends `UserInput`, handles approval pauses, and maps message/thought
+lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolved upstream
+                    provider to the engine, which persists that identity separately from
+                    the bare public model id. Forks copy it before lazy startup; legacy
+                    forks retain the source native session id for a provider lookup on
+                    their first send. Starts/resumes sessions, sends `UserInput`,
+                    handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
                     info blocks, shell output, compaction, and errors into the shared agent
                     update stream. Native `Agent` tool progress is flattened into tagged

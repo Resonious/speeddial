@@ -89,6 +89,9 @@ class CodexClient implements AgentClient {
   int _nextRequestId = 1;
   int _activitySerial = 0;
   bool _exited = false;
+
+  @override
+  bool get isClosed => _disposed || _exited;
   bool _disposed = false;
   bool _controllersClosed = false;
 
