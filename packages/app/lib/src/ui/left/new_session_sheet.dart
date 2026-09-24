@@ -100,7 +100,8 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final DaemonConfigStore config = data.daemonConfig;
     // Only a cold cache blocks the form; anything cached paints at once and
     // the refresh lands behind it.
-    _loading = config.infoFor(widget.daemonId) == null ||
+    _loading =
+        config.infoFor(widget.daemonId) == null ||
         data.git.branchesFor(widget.projectId) == null;
     // The refresh is scheduled, never run here: git.refresh notifies its
     // listeners synchronously, and didChangeDependencies is inside the build
@@ -117,9 +118,8 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       );
       if (_loading) {
         unawaited(
-          Future.wait<void>(<Future<void>>[info, branches]).whenComplete(
-            _onFirstLoad,
-          ),
+          Future.wait<void>(<Future<void>>[info, branches])
+              .whenComplete(_onFirstLoad),
         );
       }
     });
@@ -161,7 +161,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         providerId: _providerId!,
         model: (_customModel != null && _customModel!.isNotEmpty)
             ? _customModel
-            : (_modelId == null || _modelId!.isEmpty) ? null : _modelId,
+            : (_modelId == null || _modelId!.isEmpty)
+            ? null
+            : _modelId,
         baseBranch: _useWorktree ? _baseBranch : null,
         sandboxMode:
             _selectedProvider?.sandboxModes.contains(
@@ -172,6 +174,13 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             : null,
         yolo: _yolo,
         shortPrompt: _shortPrompt,
+      );
+      data.shares.rememberSession(
+        widget.daemonId,
+        session,
+        creationModel: (_customModel != null && _customModel!.isNotEmpty)
+            ? _customModel
+            : _modelId,
       );
       data.selection.selectedProjectId = session.projectId;
       data.selection.selectedSessionId = session.id;

@@ -92,7 +92,7 @@ class _ChatPaneState extends State<ChatPane> {
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
     return ListenableBuilder(
-      listenable: data.selection,
+      listenable: Listenable.merge(<Listenable>[data.selection, data.shares]),
       builder: (BuildContext context, Widget? _) {
         // Re-sync on every rebuild, not just on selection changes. When a
         // pane is recreated while a session is already selected (layout
@@ -291,6 +291,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 },
                 draft: data.drafts.textFor(daemonId, sessionId),
                 onDraftChanged: _saveDraft,
+                sharedAttachments: data.shares.stagedFor(daemonId, sessionId),
+                onRemoveSharedAttachment: (OutgoingAttachment file) =>
+                    data.shares.removeStaged(
+                      daemonId,
+                      sessionId,
+                      <OutgoingAttachment>[file],
+                    ),
+                onSharedAttachmentsSent: (List<OutgoingAttachment> files) =>
+                    data.shares.removeStaged(daemonId, sessionId, files),
                 onSend: (String text, List<OutgoingAttachment> attachments) {
                   if (status == SessionStatus.running) {
                     return Future<void>.value();

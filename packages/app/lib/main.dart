@@ -76,7 +76,25 @@ Future<void> main(List<String> args) async {
   }
   await data.settings.init();
   await data.drafts.init();
+  await data.shares.init();
+  if (!demoMode && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    await data.shares.startAndroid();
+    unawaited(_refreshShareCatalog(data));
+  }
   runApp(SpeedDialApp(data: data, companionSync: companionSync));
+}
+
+Future<void> _refreshShareCatalog(AppData data) async {
+  for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    await data.projects.refresh(endpoint.id);
+    try {
+      await data.sessions.refresh(endpoint.id);
+    } on Object catch (error) {
+      debugPrint(
+        'Share target session refresh failed for ${endpoint.id}: $error',
+      );
+    }
+  }
 }
 
 Future<void> _connectAndRefreshSessions(AppData data) async {
