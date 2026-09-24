@@ -56,6 +56,7 @@ Future<void> _startTurn(Map<String, Object?> params) async {
     },
   });
 
+  if (text == 'die') exit(15);
   if (text.contains('wait for cancel')) {
     _pendingTurn = params;
     return;

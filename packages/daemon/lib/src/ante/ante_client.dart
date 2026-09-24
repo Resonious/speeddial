@@ -92,6 +92,9 @@ class AnteClient implements AgentClient {
   bool _sawMessageDelta = false;
   bool _sawThinkingDelta = false;
   bool _exited = false;
+
+  @override
+  bool get isClosed => _disposed || _exited;
   bool _disposed = false;
   bool _shutdownSent = false;
 

@@ -766,8 +766,8 @@ class SessionEngine {
   }
 
   /// Starts a turn for [text] with the attached files. When the session's
-  /// agent process is gone (daemon restarted), the agent is first respawned
-  /// and resumed via ACP `session/load` — see [_resume]. Errors
+  /// agent process is gone (exited or daemon restarted), it is first
+  /// respawned and resumed through its provider — see [_resume]. Errors
   /// `kErrConflict` when a turn is already running or the session cannot be
   /// resumed (closed, predates resume support, or the provider lacks
   /// `session/load`).
@@ -786,6 +786,11 @@ class SessionEngine {
   }) async {
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
+    if (live != null && live.client.isClosed && live.turn == null) {
+      // Keep cleanup inside the shared resume future so concurrent sends
+      // cannot start a replacement while the old transport is being disposed.
+      live = null;
+    }
     if (live != null && _mcpReloadPending.contains(sessionId)) {
       if (live.turn != null) {
         throw DaemonError(
@@ -958,6 +963,15 @@ class SessionEngine {
   /// A provider failure during resume marks the session `error` (its remote
   /// state is presumed lost) and throws `kErrAgentProcess`.
   Future<_LiveSession> _resume(String sessionId) async {
+    final _LiveSession? dead = _live[sessionId];
+    if (dead != null && dead.client.isClosed && dead.turn == null) {
+      _live.remove(sessionId);
+      _mcpReloadPending.remove(sessionId);
+      dead.closed = true;
+      _expirePendingPermissions(dead, 'Agent process ended');
+      await dead.updatesSubscription?.cancel();
+      await dead.client.dispose();
+    }
     final Session? session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
@@ -1180,7 +1194,7 @@ class SessionEngine {
   /// mode when the agent is respawned.
   Future<Session> setMode(String sessionId, SessionMode mode) async {
     final live = _live[sessionId];
-    if (live != null && live.turn == null) {
+    if (live != null && !live.client.isClosed && live.turn == null) {
       await live.client.setMode(live.providerSessionId, mode.wire);
     }
     return _updateSession(sessionId, (session) => _withMode(session, mode));
@@ -1214,6 +1228,7 @@ class SessionEngine {
     final live = _live[sessionId];
     if (models.isNotEmpty &&
         live != null &&
+        !live.client.isClosed &&
         live.turn == null &&
         live.modelConfigId != null) {
       final configOptions = await live.client.setConfigOption(
@@ -1264,7 +1279,10 @@ class SessionEngine {
       );
     }
     final live = _live[sessionId];
-    if (live != null && live.turn == null && live.thinkingConfigId != null) {
+    if (live != null &&
+        !live.client.isClosed &&
+        live.turn == null &&
+        live.thinkingConfigId != null) {
       final configOptions = await live.client.setConfigOption(
         live.providerSessionId,
         live.thinkingConfigId!,

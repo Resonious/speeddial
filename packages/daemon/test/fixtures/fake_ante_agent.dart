@@ -109,6 +109,9 @@ Future<void> _dispatch(Map<String, Object?> message) async {
       await _captureMcpHome();
       await _extensions(parent);
     case 'ResumeSession':
+      final String? failureFile =
+          Platform.environment['FAKE_ANTE_RESUME_FAILURE_FILE'];
+      if (failureFile != null && File(failureFile).existsSync()) exit(16);
       await _captureSessionConfig(value);
       await _sessionStart(parent);
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -253,6 +256,7 @@ Future<void> _runTurn(String parent, String text) async {
   await _event(<String, Object?>{
     'TurnStart': <String, Object?>{'turn_id': parent},
   }, parent);
+  if (text == 'die') exit(15);
   if (text == 'cancel') {
     _pendingTurn = (parent: parent, turnId: parent);
     return;

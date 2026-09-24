@@ -544,7 +544,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   ending in `turnComplete`; a client awaiting the response only gates the send, never the whole turn, so a
   connection drop mid-turn errors nothing the caller is still waiting on (the draft is cleared on ack, not
   on turn completion).
-  Sessions survive a daemon restart: when the agent process is gone, the daemon respawns it and
+  Sessions survive an agent process exit or daemon restart: on the next send, the daemon respawns it and
   resumes the conversation through the provider transport before starting the turn. ACP uses
   `session/load`; Codex uses `thread/resume`; Ante starts the persisted Ante session id and
   suppresses replayed history until the next live `TurnStart`. Errors `-32003` when the session is
@@ -554,7 +554,9 @@ tokens before session creation/resume, and checks them periodically while runnin
   SpeedDial session still has no events, the daemon starts a replacement Codex thread and persists
   its id instead of attempting `thread/resume`. A daemon
   restart that interrupts a turn marks the session `error` and appends a `sessionError` event to
-  its history; the session becomes usable again on the next send.
+  its history; the session becomes usable again on the next send. An agent exit during a turn
+  likewise records an error; the failed turn is not automatically retried. The next send reloads
+  the saved provider session while preserving the daemon transcript and session settings.
   A session's `lastActivityAt` advances when the accepted user message starts the turn and again
   when the turn reaches its terminal idle/error outcome, so clients can order sessions by recent
   conversation activity independently of metadata changes.
