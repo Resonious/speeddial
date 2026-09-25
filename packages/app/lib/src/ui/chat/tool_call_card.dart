@@ -6,6 +6,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'message_view.dart';
+import 'tool_call_edit_diff.dart';
 
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
@@ -223,17 +224,23 @@ class _ToolCallContentList extends StatelessWidget {
     final bool hasInput = _hasRawValue(toolCall.rawInput);
     final bool hasTypedOutput = toolCall.content.isNotEmpty;
     final bool hasRawOutput = _hasRawValue(toolCall.rawOutput);
+    final ToolEditDiff? editDiff = extractEditDiffFromToolCall(toolCall);
     final List<Widget> children = <Widget>[
-      if (hasInput) _RawToolDataView(label: 'Input', value: toolCall.rawInput!),
+      if (editDiff != null)
+        _EditDiffView(diff: editDiff, fallbackPaths: toolCall.locations),
+      if (hasInput && editDiff == null)
+        _RawToolDataView(label: 'Input', value: toolCall.rawInput!),
       if (hasTypedOutput) const _ToolDataLabel(label: 'Output'),
       for (final ToolCallContent content in toolCall.content)
         _ToolCallContentView(
           content: content,
           attachmentLoader: attachmentLoader,
         ),
-      if (!hasTypedOutput && hasRawOutput)
+      if (!hasTypedOutput &&
+          hasRawOutput &&
+          editDiff?.absorbsRawOutput != true)
         _RawToolDataView(label: 'Output', value: toolCall.rawOutput!),
-      if (!hasTypedOutput && !hasRawOutput)
+      if (!hasTypedOutput && !hasRawOutput && editDiff == null)
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
           child: Text(
@@ -491,6 +498,80 @@ class _DiffView extends StatelessWidget {
     for (final String line in diff.newText.split('\n')) {
       if (line.isEmpty) continue;
       add('+', line, colors.success);
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: colors.codeBackground,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Text.rich(TextSpan(children: spans), style: colors.mono),
+      ),
+    );
+  }
+}
+
+/// Renders a normalized edit diff: a dim line-number gutter, red deletions,
+/// green additions, and purple header/omission markers.
+class _EditDiffView extends StatelessWidget {
+  const _EditDiffView({required this.diff, required this.fallbackPaths});
+
+  final ToolEditDiff diff;
+  final List<String> fallbackPaths;
+
+  static String _gutter(int? value) =>
+      value == null ? '    ' : value.toString().padLeft(4);
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    final ThemeData theme = Theme.of(context);
+    final Color neutral = theme.colorScheme.onSurfaceVariant;
+    final String? path = diff.path ??
+        (fallbackPaths.length == 1 ? fallbackPaths.single : null);
+
+    final List<InlineSpan> spans = <InlineSpan>[];
+    if (path != null) {
+      spans.add(
+        TextSpan(
+          text: '$path\n',
+          style: colors.mono.copyWith(color: neutral, fontWeight: FontWeight.w600),
+        ),
+      );
+    }
+    spans.add(
+      TextSpan(
+        text: '+${diff.additions} -${diff.deletions}\n',
+        style: colors.mono.copyWith(color: neutral, fontSize: 11),
+      ),
+    );
+    for (final ToolEditLine line in diff.lines) {
+      final int? num = line.sign == '-' ? line.oldNum : line.newNum;
+      spans.add(
+        TextSpan(
+          text: _gutter(num),
+          style: colors.mono.copyWith(color: neutral, fontSize: 11),
+        ),
+      );
+      final bool omission = line.sign == ' ' && line.text.startsWith('…');
+      final Color? color = line.isHeader
+          ? colors.purple
+          : omission
+              ? null
+              : switch (line.sign) {
+                  '+' => colors.success,
+                  '-' => colors.diffRemove,
+                  _ => null,
+                };
+      spans.add(
+        TextSpan(
+          text: line.isHeader ? '${line.text}\n' : '${line.sign} ${line.text}\n',
+          style: color == null ? null : colors.mono.copyWith(color: color),
+        ),
+      );
     }
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
