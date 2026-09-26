@@ -1003,6 +1003,54 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<List<NativeCommand>> listCommands(String sessionId) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final Session session = _sessions[sessionId]!;
+    return switch (session.providerId) {
+      'codex' => const <NativeCommand>[
+        NativeCommand(
+          name: 'compact',
+          description: 'Compact conversation context',
+        ),
+        NativeCommand(
+          name: 'review',
+          description: 'Review uncommitted changes',
+          argumentHint: 'review instructions',
+        ),
+      ],
+      'ante' => const <NativeCommand>[
+        NativeCommand(
+          name: 'compact',
+          description: 'Compact conversation context',
+          argumentHint: 'instructions',
+        ),
+        NativeCommand(
+          name: 'context',
+          description: 'Show context usage by category',
+        ),
+      ],
+      _ => const <NativeCommand>[],
+    };
+  }
+
+  @override
+  Future<void> runCommand(
+    String sessionId,
+    String name, {
+    String arguments = '',
+  }) async {
+    final List<NativeCommand> commands = await listCommands(sessionId);
+    if (!commands.any((NativeCommand command) => command.name == name)) {
+      throw DaemonError(kErrConflict, 'Unknown native command: /$name');
+    }
+    await sendMessage(
+      sessionId,
+      '/$name${arguments.isEmpty ? '' : ' $arguments'}',
+    );
+  }
+
+  @override
   Future<void> sendMessage(
     String sessionId,
     String text, {

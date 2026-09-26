@@ -73,6 +73,8 @@ class Composer extends StatefulWidget {
     this.focusNode,
     required this.status,
     required this.mode,
+    this.commands = const <NativeCommand>[],
+    this.onSlashStarted,
     this.usage,
     this.model,
     this.models = const <String>[],
@@ -101,6 +103,10 @@ class Composer extends StatefulWidget {
 
   /// Session mode driving the build/plan selector.
   final SessionMode mode;
+
+  /// Native commands advertised by the active harness session.
+  final List<NativeCommand> commands;
+  final VoidCallback? onSlashStarted;
 
   /// Latest turn usage, shown in the footer when non-null.
   final UsageInfo? usage;
@@ -173,6 +179,15 @@ class _InsertNewlineIntent extends Intent {
   const _InsertNewlineIntent();
 }
 
+class _MoveCommandIntent extends Intent {
+  const _MoveCommandIntent(this.delta);
+  final int delta;
+}
+
+class _DismissCommandIntent extends Intent {
+  const _DismissCommandIntent();
+}
+
 class _PasteImageAction extends Action<PasteTextIntent> {
   _PasteImageAction(this.onPaste);
 
@@ -203,10 +218,17 @@ class _PasteImageAction extends Action<PasteTextIntent> {
 }
 
 class _ComposerState extends State<Composer> {
+  static final RegExp _commandWhitespace = RegExp(r'\s');
+
   late final TextEditingController _controller;
+  final FocusNode _ownedFocusNode = FocusNode();
   late final _PasteImageAction _pasteImageAction;
   bool _hasText = false;
   bool _suppressDraftSave = false;
+  bool _menuDismissed = false;
+  late String _lastText;
+  List<NativeCommand> _commandMatches = const <NativeCommand>[];
+  int _activeCommand = 0;
   int _pastedImageCount = 0;
 
   /// Files picked but not yet sent; cleared on send, restored on failure.
@@ -225,9 +247,19 @@ class _ComposerState extends State<Composer> {
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.draft);
+    _lastText = widget.draft;
     _hasText = widget.draft.trim().isNotEmpty;
     _pasteImageAction = _PasteImageAction(_pasteImage);
     _controller.addListener(_onTextChanged);
+    _refilterCommands();
+  }
+
+  @override
+  void didUpdateWidget(Composer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.commands, widget.commands)) {
+      _refilterCommands();
+    }
   }
 
   @override
@@ -235,12 +267,24 @@ class _ComposerState extends State<Composer> {
     _controller
       ..removeListener(_onTextChanged)
       ..dispose();
+    _ownedFocusNode.dispose();
     super.dispose();
   }
 
   void _onTextChanged() {
+    final String previousText = _lastText;
+    _lastText = _controller.text;
     final bool hasText = _controller.text.trim().isNotEmpty;
-    if (hasText != _hasText) {
+    final List<NativeCommand> oldMatches = _commandMatches;
+    final bool wasShowing = _showCommandMenu;
+    _menuDismissed = false;
+    _refilterCommands();
+    if (_controller.text == '/' && previousText != '/') {
+      widget.onSlashStarted?.call();
+    }
+    if (hasText != _hasText ||
+        wasShowing != _showCommandMenu ||
+        !_sameCommands(oldMatches, _commandMatches)) {
       setState(() => _hasText = hasText);
     }
     final Future<void> Function(String text)? onDraftChanged =
@@ -248,6 +292,52 @@ class _ComposerState extends State<Composer> {
     if (!_suppressDraftSave && onDraftChanged != null) {
       unawaited(onDraftChanged(_controller.text));
     }
+  }
+
+  bool get _showCommandMenu =>
+      !_menuDismissed && _commandMatches.isNotEmpty && !_running;
+
+  static bool _sameCommands(List<NativeCommand> a, List<NativeCommand> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].name != b[i].name) return false;
+    }
+    return true;
+  }
+
+  void _refilterCommands() {
+    final String text = _controller.text;
+    if (!text.startsWith('/') || text.contains(_commandWhitespace)) {
+      _commandMatches = const <NativeCommand>[];
+      _activeCommand = 0;
+      return;
+    }
+    final String query = text.substring(1).toLowerCase();
+    _commandMatches = <NativeCommand>[
+      for (final NativeCommand command in widget.commands)
+        if (command.name.toLowerCase().startsWith(query)) command,
+    ];
+    _activeCommand = 0;
+  }
+
+  void _selectCommand(NativeCommand command) {
+    _menuDismissed = true;
+    _controller.value = TextEditingValue(
+      text: '/${command.name} ',
+      selection: TextSelection.collapsed(offset: command.name.length + 2),
+    );
+    setState(() => _commandMatches = const <NativeCommand>[]);
+    (widget.focusNode ?? _ownedFocusNode).requestFocus();
+  }
+
+  void _moveCommand(int delta) {
+    if (!_showCommandMenu) return;
+    setState(() {
+      _activeCommand = (_activeCommand + delta).clamp(
+        0,
+        _commandMatches.length - 1,
+      );
+    });
   }
 
   /// Default file picker: multi-select with bytes on every desktop, mobile
@@ -394,8 +484,17 @@ class _ComposerState extends State<Composer> {
     setState(() {
       _hasText = false;
       _attachments.clear();
+      _commandMatches = const <NativeCommand>[];
     });
     unawaited(_dispatch(text, attachments, shared));
+  }
+
+  void _submitFromKeyboard() {
+    if (_showCommandMenu) {
+      _selectCommand(_commandMatches[_activeCommand]);
+      return;
+    }
+    _send();
   }
 
   /// Runs the send future; restores the draft (text into the field AND
@@ -488,6 +587,28 @@ class _ComposerState extends State<Composer> {
                       }
                     },
                   ),
+                if (_showCommandMenu)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 224),
+                    child: ListView.builder(
+                      key: const Key('slash-command-menu'),
+                      shrinkWrap: true,
+                      itemCount: _commandMatches.length,
+                      itemBuilder: (BuildContext context, int index) {
+                        final NativeCommand command = _commandMatches[index];
+                        return ListTile(
+                          key: Key('slash-command-/${command.name}'),
+                          dense: true,
+                          selected: index == _activeCommand,
+                          title: Text(
+                            '/${command.name}${command.argumentHint == null ? '' : ' ${command.argumentHint}'}',
+                          ),
+                          subtitle: Text(command.description),
+                          onTap: () => _selectCommand(command),
+                        );
+                      },
+                    ),
+                  ),
                 Shortcuts(
                   shortcuts: <ShortcutActivator, Intent>{
                     const SingleActivator(LogicalKeyboardKey.enter):
@@ -498,13 +619,23 @@ class _ComposerState extends State<Composer> {
                       LogicalKeyboardKey.enter,
                       shift: true,
                     ): const _InsertNewlineIntent(),
+                    if (_showCommandMenu) ...<ShortcutActivator, Intent>{
+                      const SingleActivator(LogicalKeyboardKey.arrowDown):
+                          const _MoveCommandIntent(1),
+                      const SingleActivator(LogicalKeyboardKey.arrowUp):
+                          const _MoveCommandIntent(-1),
+                      const SingleActivator(LogicalKeyboardKey.escape):
+                          const _DismissCommandIntent(),
+                      const SingleActivator(LogicalKeyboardKey.tab):
+                          const _SendMessageIntent(),
+                    },
                   },
                   child: Actions(
                     actions: <Type, Action<Intent>>{
                       PasteTextIntent: _pasteImageAction,
                       _SendMessageIntent: CallbackAction<_SendMessageIntent>(
                         onInvoke: (_) {
-                          _send();
+                          _submitFromKeyboard();
                           return null;
                         },
                       ),
@@ -515,9 +646,22 @@ class _ComposerState extends State<Composer> {
                               return null;
                             },
                           ),
+                      _MoveCommandIntent: CallbackAction<_MoveCommandIntent>(
+                        onInvoke: (_MoveCommandIntent intent) {
+                          _moveCommand(intent.delta);
+                          return null;
+                        },
+                      ),
+                      _DismissCommandIntent:
+                          CallbackAction<_DismissCommandIntent>(
+                            onInvoke: (_) {
+                              setState(() => _menuDismissed = true);
+                              return null;
+                            },
+                          ),
                     },
                     child: TextField(
-                      focusNode: widget.focusNode,
+                      focusNode: widget.focusNode ?? _ownedFocusNode,
                       controller: _controller,
                       minLines: 1,
                       maxLines: 8,

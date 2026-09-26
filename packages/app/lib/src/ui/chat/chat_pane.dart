@@ -159,7 +159,68 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   PermissionRequest? _pending;
   bool _forking = false;
   bool _draftErrorShown = false;
+  List<NativeCommand> _commands = const <NativeCommand>[];
+  bool _loadingCommands = false;
+  bool _refreshCommandsAfterLoad = false;
   final ValueNotifier<bool> _downloading = ValueNotifier<bool>(false);
+
+  @override
+  void initState() {
+    super.initState();
+    _commands = switch (widget.data.sessions
+        .byId(widget.sessionId)
+        ?.providerId) {
+      'codex' => const <NativeCommand>[
+        NativeCommand(
+          name: 'compact',
+          description: 'Compact conversation context',
+        ),
+        NativeCommand(
+          name: 'review',
+          description: 'Review uncommitted changes',
+          argumentHint: 'review instructions',
+        ),
+      ],
+      'ante' => const <NativeCommand>[
+        NativeCommand(
+          name: 'compact',
+          description: 'Compact conversation context',
+          argumentHint: 'instructions',
+        ),
+        NativeCommand(
+          name: 'context',
+          description: 'Show context usage by category',
+        ),
+      ],
+      _ => const <NativeCommand>[],
+    };
+    unawaited(_loadCommands());
+  }
+
+  Future<void> _loadCommands() async {
+    if (_loadingCommands) {
+      _refreshCommandsAfterLoad = true;
+      return;
+    }
+    _loadingCommands = true;
+    try {
+      final List<NativeCommand> commands = await widget.data.chat.listCommands(
+        widget.daemonId,
+        widget.sessionId,
+      );
+      if (mounted) setState(() => _commands = commands);
+    } on Object catch (error) {
+      if (mounted) await _showMessage('Could not load commands: $error');
+    } finally {
+      _loadingCommands = false;
+      if (_refreshCommandsAfterLoad && mounted) {
+        _refreshCommandsAfterLoad = false;
+        unawaited(
+          Future<void>.delayed(const Duration(milliseconds: 75), _loadCommands),
+        );
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -291,6 +352,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 focusNode: widget.composerFocusNode,
                 status: status,
                 mode: mode,
+                commands: _commands,
+                onSlashStarted: () => unawaited(_loadCommands()),
                 usage: usage,
                 model: session?.model,
                 models: session?.models ?? const <String>[],
@@ -317,7 +380,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                   if (status == SessionStatus.running) {
                     return Future<void>.value();
                   }
-                  return _sendMessage(text, attachments);
+                  return _sendOrRunCommand(text, attachments);
                 },
                 onStop: () => unawaited(_cancelTurn()),
                 onModeChanged: (SessionMode next) {
@@ -392,6 +455,43 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       await _showError(error);
       // Delegate the text+attachments restore to the composer, which knows
       // the draft.
+      rethrow;
+    }
+  }
+
+  Future<void> _sendOrRunCommand(
+    String text,
+    List<OutgoingAttachment> attachments,
+  ) async {
+    final String? providerId = widget.data.sessions
+        .byId(widget.sessionId)
+        ?.providerId;
+    final int space = text.indexOf(' ');
+    final String name = text.startsWith('/')
+        ? text.substring(1, space < 0 ? text.length : space)
+        : '';
+    if ((providerId != 'codex' && providerId != 'ante') || name.isEmpty) {
+      await _sendMessage(text, attachments);
+      return;
+    }
+    if (attachments.isNotEmpty) {
+      final error = DaemonError(
+        -32602,
+        'Native commands do not accept attachments',
+      );
+      await _showError(error);
+      throw error;
+    }
+    final String arguments = space < 0 ? '' : text.substring(space + 1).trim();
+    try {
+      await widget.data.chat.runCommand(
+        widget.daemonId,
+        widget.sessionId,
+        name,
+        arguments: arguments,
+      );
+    } on DaemonError catch (error) {
+      await _showError(error);
       rethrow;
     }
   }

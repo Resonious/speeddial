@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
 import 'package:speeddial_daemon/src/agents/agent_client.dart';
 import 'package:speeddial_daemon/src/ante/ante_client.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 String fakeAnteScript() => <String>[
@@ -42,6 +43,26 @@ List<Map<String, Object?>> textBlocks(String text) => <Map<String, Object?>>[
 ];
 
 void main() {
+  test('native operations use Ante protocol and discover skills', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final commands = await client.availableCommands(created.sessionId);
+    expect(commands.map((command) => command.name),
+        containsAll(<String>['compact', 'context']));
+    for (final name in <String>['compact', 'context']) {
+      final NativeCommand command = commands.firstWhere((c) => c.name == name);
+      final result = await client.runNativeCommand(created.sessionId, command, '');
+      expect(result.stopReason, 'end_turn');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    final NativeCommand skill = (await client.availableCommands(created.sessionId))
+        .firstWhere((command) => command.name == 'commit');
+    expect(skill.kind, 'skill');
+    final result = await client.runNativeCommand(created.sessionId, skill, 'now');
+    expect(result.stopReason, 'end_turn');
+  });
+
   test('starts a session and exposes Ante model and effort options', () async {
     final AnteClient client = spawnAnte();
     addTearDown(client.dispose);

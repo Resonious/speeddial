@@ -298,7 +298,10 @@ lib/src/ui/chat/             timeline (virtualized ListView, reversed), message 
                              via file_picker with image thumbnails + file chips, mode
                              selector, model + thinking/effort selectors fed by the
                              provider, stop button while running), expandable provider
-                             activity cards, usage/context footer
+                             activity cards, usage/context footer. A leading `/` opens a
+                             filtered menu of commands discovered from the live session.
+                             Codex compact/review/skills and Ante compact/context/skills dispatch
+                             through their native transports, with the usual turn events.
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
                              highlight) and Git (branch picker, staged/unstaged lists,
                              per-file diff view, commit field + button, push, create PR)

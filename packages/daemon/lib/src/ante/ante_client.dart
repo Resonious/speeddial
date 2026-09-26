@@ -9,6 +9,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
+import '../agents/native_commands.dart';
 
 /// A failure reported by Ante for one turn.
 class AnteTurnException implements Exception {
@@ -21,7 +22,7 @@ class AnteTurnException implements Exception {
 }
 
 /// Ante's JSONL `ante serve` transport, translated into engine updates.
-class AnteClient implements AgentClient {
+class AnteClient implements AgentClient, NativeCommandClient {
   AnteClient.spawn(
     List<String> command, {
     required String cwd,
@@ -80,6 +81,9 @@ class AnteClient implements AgentClient {
       <String, Completer<_AnteSessionState>>{};
   final Map<String, Completer<PromptResult>> _turnWaiters =
       <String, Completer<PromptResult>>{};
+  final Map<String, Completer<PromptResult>> _commandWaiters =
+      <String, Completer<PromptResult>>{};
+  List<NativeCommand> _skills = const <NativeCommand>[];
   final Map<String, SplayTreeMap<int, String>> _toolProgress =
       <String, SplayTreeMap<int, String>>{};
   final Set<String> _planToolIds = <String>{};
@@ -304,6 +308,73 @@ class AnteClient implements AgentClient {
       await _sendOp(<String, Object?>{'UserInput': text}, opId);
     } on Object {
       _turnWaiters.remove(opId);
+      _currentTurnOp = null;
+      rethrow;
+    }
+    return completer.future;
+  }
+
+  @override
+  Future<List<NativeCommand>> availableCommands(String sessionId) async {
+    _requireSession(sessionId);
+    return <NativeCommand>[
+      const NativeCommand(
+        name: 'compact',
+        description: 'Compact conversation context',
+        argumentHint: 'instructions',
+      ),
+      const NativeCommand(
+        name: 'context',
+        description: 'Show context usage by category',
+      ),
+      ..._skills,
+    ];
+  }
+
+  @override
+  Future<PromptResult> runNativeCommand(
+    String sessionId,
+    NativeCommand command,
+    String arguments,
+  ) async {
+    _requireSession(sessionId);
+    if (_currentTurnOp != null) {
+      throw StateError('An Ante turn is already running.');
+    }
+    final String opId = _nextOpId();
+    final Completer<PromptResult> completer = Completer<PromptResult>();
+    final Object op;
+    if (command.kind == 'skill') {
+      op = <String, Object?>{
+        'SlashCommand': <String, Object?>{
+          'name': command.name,
+          'args': arguments,
+        },
+      };
+    } else {
+      op = switch (command.name) {
+        'compact' => <String, Object?>{
+          'Compact': <String, Object?>{
+            if (arguments.isNotEmpty) 'instructions': arguments,
+          },
+        },
+        'context' when arguments.isEmpty => 'ContextReport',
+        _ => throw ArgumentError.value(command.name, 'name', 'unknown command'),
+      };
+    }
+    if (command.kind == 'skill') {
+      _turnWaiters[opId] = completer;
+    } else {
+      _commandWaiters[opId] = completer;
+    }
+    _currentTurnOp = opId;
+    _sawMessageDelta = false;
+    _sawThinkingDelta = false;
+    try {
+      await _sendOp(op, opId);
+    } on Object {
+      _turnWaiters.remove(opId);
+      _commandWaiters.remove(opId);
       _currentTurnOp = null;
       rethrow;
     }
@@ -686,6 +757,7 @@ class AnteClient implements AgentClient {
 
     switch (type) {
       case 'SessionStart':
+        _skills = _skillsFrom(_map(value)['skills']);
         final _AnteSessionState state = _AnteSessionState.fromJson(_map(value));
         _adoptSession(state, emitActivity: true);
         final Completer<_AnteSessionState>? waiter = _sessionWaiters.remove(
@@ -770,8 +842,10 @@ class AnteClient implements AgentClient {
         _handleInfoBlockAppend(_map(value));
       case 'CompactEnd':
         _onCompactEnd(_map(value));
+        _completeCommand(parent);
       case 'ContextReport':
         _handleContextReport(eventId, _map(value));
+        _completeCommand(parent);
       case 'ShellOutput':
         _handleShellOutput(eventId, _map(value));
       case 'Error':
@@ -1122,6 +1196,7 @@ class AnteClient implements AgentClient {
         value['session_id'] as String? ?? _session?.sessionId ?? '';
     if (sessionId.isEmpty) return;
     final List<Map<String, Object?>> skills = _maps(value['skills']);
+    _skills = _skillsFrom(skills);
     final List<Map<String, Object?>> subagents = _maps(value['subagents']);
     final List<Map<String, Object?>> servers = _maps(value['mcp_servers']);
     var toolCount = 0;
@@ -1205,7 +1280,7 @@ class AnteClient implements AgentClient {
       id: id,
       kind: 'compaction',
       title: 'Conversation compacted',
-      status: summary == null ? 'failed' : 'completed',
+      status: 'completed',
       details: <String>[if (summary != null && summary.isNotEmpty) summary],
     );
     _activities[id] = activity;
@@ -1273,8 +1348,34 @@ class AnteClient implements AgentClient {
       turnWaiter.completeError(error);
       return;
     }
+    final Completer<PromptResult>? commandWaiter = _commandWaiters.remove(
+      parent,
+    );
+    if (commandWaiter != null && !commandWaiter.isCompleted) {
+      _currentTurnOp = null;
+      commandWaiter.completeError(error);
+      return;
+    }
     _publishFailureActivity(message);
   }
+
+  void _completeCommand(String? parent) {
+    final Completer<PromptResult>? waiter = _commandWaiters.remove(parent);
+    if (waiter == null || waiter.isCompleted) return;
+    if (_currentTurnOp == parent) _currentTurnOp = null;
+    waiter.complete(const PromptResult(stopReason: 'end_turn'));
+  }
+
+  static List<NativeCommand> _skillsFrom(Object? raw) => <NativeCommand>[
+    for (final Map<String, Object?> skill in _maps(raw))
+      if (skill['name'] case final String name when name.isNotEmpty)
+        NativeCommand(
+          name: name,
+          description: skill['description'] as String? ?? 'Run Ante skill',
+          argumentHint: skill['argument_hint'] as String?,
+          kind: 'skill',
+        ),
+  ];
 
   void _publishFailureActivity(String message) {
     if (_session == null) return;
@@ -1383,6 +1484,10 @@ class AnteClient implements AgentClient {
       if (!waiter.isCompleted) waiter.completeError(error);
     }
     _turnWaiters.clear();
+    for (final Completer<PromptResult> waiter in _commandWaiters.values) {
+      if (!waiter.isCompleted) waiter.completeError(error);
+    }
+    _commandWaiters.clear();
     _currentTurnOp = null;
   }
 

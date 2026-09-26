@@ -314,6 +314,28 @@ class DaemonClient {
     });
   }
 
+  Future<List<NativeCommand>> listCommands(String sessionId) async {
+    final result = await _peer.call('sessions.commands', <String, Object?>{
+      'sessionId': sessionId,
+    });
+    final map = _asMap(result, 'sessions.commands');
+    return (map['commands'] as List)
+        .map((e) => NativeCommand.fromJson(_asMap(e, 'sessions.commands')))
+        .toList(growable: false);
+  }
+
+  Future<void> runCommand(
+    String sessionId,
+    String name, {
+    String arguments = '',
+  }) async {
+    await _peer.call('sessions.command', <String, Object?>{
+      'sessionId': sessionId,
+      'name': name,
+      if (arguments.isNotEmpty) 'arguments': arguments,
+    });
+  }
+
   /// `sessions.cancel` — cancels the running turn of [sessionId] (no-op when
   /// idle).
   Future<void> cancel(String sessionId) async {

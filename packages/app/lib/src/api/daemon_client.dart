@@ -167,6 +167,16 @@ abstract class DaemonClient {
     List<OutgoingAttachment> attachments = const [],
   });
 
+  /// Native operations exposed by this session's harness.
+  Future<List<NativeCommand>> listCommands(String sessionId);
+
+  /// Starts a native harness operation, returning after the daemon accepts it.
+  Future<void> runCommand(
+    String sessionId,
+    String name, {
+    String arguments = '',
+  });
+
   /// Fetches an attachment's base64 payload by id; errors `-32002` when the
   /// session or attachment is unknown.
   Future<AttachmentData> readAttachment(String sessionId, String attachmentId);

@@ -868,6 +868,31 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<List<NativeCommand>> listCommands(String sessionId) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.commands',
+      <String, Object?>{'sessionId': sessionId},
+    );
+    final Object? raw = _resultField(result, 'commands');
+    return (raw as List<Object?>)
+        .map((Object? value) => NativeCommand.fromJson(_resultMap(value)))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> runCommand(
+    String sessionId,
+    String name, {
+    String arguments = '',
+  }) async {
+    await _requirePeer().call('sessions.command', <String, Object?>{
+      'sessionId': sessionId,
+      'name': name,
+      if (arguments.isNotEmpty) 'arguments': arguments,
+    });
+  }
+
+  @override
   Future<AttachmentData> readAttachment(
     String sessionId,
     String attachmentId,

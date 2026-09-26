@@ -65,6 +65,13 @@ Future<void> _dispatch(Map<String, Object?> message) async {
   final Object? rawOp = message['op'];
   if (rawOp is String) {
     switch (rawOp) {
+      case 'ContextReport':
+        await _event(<String, Object?>{
+          'ContextReport': <String, Object?>{
+            'total_tokens': 100,
+            'limit_tokens': 200000,
+          },
+        }, parent);
       case 'Interrupt':
         final pending = _pendingTurn;
         if (pending != null) {
@@ -160,6 +167,13 @@ Future<void> _dispatch(Map<String, Object?> message) async {
     case 'UserInput':
       final String text = variant.value as String? ?? '';
       await _runTurn(parent, text);
+    case 'Compact':
+      await _event('CompactStart', parent);
+      await _event(<String, Object?>{
+        'CompactEnd': <String, Object?>{'summary': 'Compacted context'},
+      }, parent);
+    case 'SlashCommand':
+      await _runTurn(parent, 'skill:${value['name']}:${value['args']}');
     case 'QuestionResponse':
       final pending = _pendingTurn;
       if (pending == null ||
@@ -276,6 +290,9 @@ Map<String, Object?> _sessionPayload() => <String, Object?>{
   'session_id': _sessionId,
   'cwd': Directory.current.path,
   'permission_mode': _permissionMode,
+  'skills': <Object?>[
+    <String, Object?>{'name': 'commit', 'description': 'Commit changes'},
+  ],
 };
 
 Future<void> _extensions(String parent) {

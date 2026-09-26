@@ -47,6 +47,64 @@ Future<Map<String, Object?>> readJsonMap(File file) async =>
     Map<String, Object?>.from(jsonDecode(await file.readAsString()) as Map);
 
 void main() {
+  test('native compact and review dispatch to Codex app-server', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'codex_commands_',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final File compactReport = File(p.join(tempDir.path, 'compact.json'));
+    final File reviewReport = File(p.join(tempDir.path, 'review.json'));
+    final File turnReport = File(p.join(tempDir.path, 'turn.json'));
+    final CodexClient client = spawnCodex(
+      environment: <String, String>{
+        'FAKE_CODEX_COMPACT_REPORT': compactReport.path,
+        'FAKE_CODEX_REVIEW_REPORT': reviewReport.path,
+        'FAKE_CODEX_TURN_REPORT': turnReport.path,
+      },
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final commands = await client.availableCommands(created.sessionId);
+    expect(commands.map((command) => command.name), <String>[
+      'compact',
+      'review',
+      'commit',
+    ]);
+    expect(
+      (await client.runNativeCommand(
+        created.sessionId,
+        commands[0],
+        '',
+      )).stopReason,
+      'end_turn',
+    );
+    expect((await readJsonMap(compactReport))['threadId'], created.sessionId);
+    expect(
+      (await client.runNativeCommand(
+        created.sessionId,
+        commands[1],
+        'auth',
+      )).stopReason,
+      'end_turn',
+    );
+    final review = await readJsonMap(reviewReport);
+    expect((review['target'] as Map)['type'], 'custom');
+    expect((review['target'] as Map)['instructions'], 'auth');
+    expect(
+      (await client.runNativeCommand(
+        created.sessionId,
+        commands[2],
+        'now',
+      )).stopReason,
+      'end_turn',
+    );
+    final turn = await readJsonMap(turnReport);
+    final input = turn['input'] as List;
+    expect((input.first as Map)['type'], 'skill');
+    expect((input.first as Map)['path'], '/fake/skills/commit/SKILL.md');
+    expect((input.last as Map)['text'], 'now');
+  });
+
   test(
     'starts and resumes native threads with models and managed MCP',
     () async {

@@ -272,6 +272,86 @@ void main() {
     return server!;
   }
 
+  test('native command RPC discovers and runs Codex review', () async {
+    final String fixture = <String>[
+      p.join(
+        Directory.current.path,
+        'test',
+        'fixtures',
+        'fake_codex_app_server.dart',
+      ),
+      p.join(
+        Directory.current.path,
+        'packages',
+        'daemon',
+        'test',
+        'fixtures',
+        'fake_codex_app_server.dart',
+      ),
+    ].firstWhere((path) => File(path).existsSync());
+    providers = ProviderRegistry(
+      configOverrides: <String, Object?>{
+        'providers': <String, Object?>{
+          'codex': <String, Object?>{
+            'name': 'Fake Codex',
+            'command': <String>[Platform.resolvedExecutable, fixture],
+            'protocol': 'codex',
+          },
+        },
+      },
+      modelsProbe: (command) async => const <String>[],
+    );
+    await startServer();
+    final WsClient client = await connect(server!.port);
+    addTearDown(client.close);
+    final Project project = Project.fromJson(
+      (j(
+                await client.peer.call('projects.add', <String, Object?>{
+                  'path': tempDir.path,
+                }),
+              )['project']!
+              as Map)
+          .cast<String, Object?>(),
+    );
+    final Session session = Session.fromJson(
+      (j(
+                await client.peer.call('sessions.create', <String, Object?>{
+                  'projectId': project.id,
+                  'providerId': 'codex',
+                }),
+              )['session']!
+              as Map)
+          .cast<String, Object?>(),
+    );
+    final commands = j(
+      await client.peer.call('sessions.commands', <String, Object?>{
+        'sessionId': session.id,
+      }),
+    );
+    expect(
+      (commands['commands'] as List).map((e) => (e as Map)['name']),
+      containsAll(<String>['compact', 'review']),
+    );
+    final Future<Map<String, Object?>> complete = waitForEvent(
+      client,
+      (event) => event is TurnCompleteEvent,
+    );
+    await client.peer.call('sessions.command', <String, Object?>{
+      'sessionId': session.id,
+      'name': 'review',
+      'arguments': 'auth',
+    });
+    await complete;
+    final events = client
+        .of('session.event')
+        .map(
+          (n) => SessionEvent.fromJson(
+            (n.params['event']! as Map).cast<String, Object?>(),
+          ),
+        );
+    expect(events.whereType<UserMessageEvent>().last.text, '/review auth');
+  });
+
   group('auth', () {
     test(
       'public session search is authenticated and validates requests',
@@ -2377,9 +2457,8 @@ void main() {
       final List<Object?> rawSessions = listed['sessions']! as List<Object?>;
       final Session row = rawSessions
           .map(
-            (Object? raw) => Session.fromJson(
-              (raw! as Map).cast<String, Object?>(),
-            ),
+            (Object? raw) =>
+                Session.fromJson((raw! as Map).cast<String, Object?>()),
           )
           .firstWhere((Session s) => s.id == session.id);
       expect(row.shortPrompt, isTrue);

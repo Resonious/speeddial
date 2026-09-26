@@ -61,6 +61,20 @@ void main() {
       expect(() => SessionMode.parse('builds'), throwsFormatException);
     });
 
+    test('NativeCommand preserves command metadata', () {
+      const command = NativeCommand(
+        name: 'commit',
+        description: 'Commit changes',
+        argumentHint: 'message',
+        kind: 'skill',
+      );
+      final decoded = NativeCommand.fromJson(command.toJson());
+      expect(decoded.name, 'commit');
+      expect(decoded.description, 'Commit changes');
+      expect(decoded.argumentHint, 'message');
+      expect(decoded.kind, 'skill');
+    });
+
     test('SessionSandboxMode is name-based', () {
       for (final SessionSandboxMode mode in SessionSandboxMode.values) {
         expect(SessionSandboxMode.parse(mode.wire), mode);

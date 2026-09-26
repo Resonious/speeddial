@@ -33,6 +33,7 @@ import 'package:uuid/uuid.dart';
 import '../acp/acp_client.dart';
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
+import '../agents/native_commands.dart';
 import '../ante/ante_client.dart';
 import '../codex/codex_client.dart';
 import '../git/git_service.dart';
@@ -898,11 +899,99 @@ class SessionEngine {
     // turn that dies after it started is the session's problem, not the
     // sender's, and the client already cleared its draft on ack.
     final active = live;
-    active.turn = _driveTurn(active, text, prepared, forkContext).whenComplete(
-      () {
-        active.turn = null;
-      },
+    active.turn =
+        _driveTurn(
+          active,
+          () => active.client.prompt(
+            active.providerSessionId,
+            _promptBlocks(text, prepared, forkContext: forkContext),
+          ),
+          forkContext: forkContext,
+        ).whenComplete(() {
+          active.turn = null;
+        });
+  }
+
+  Future<_LiveSession> _commandSession(String sessionId) async {
+    final _LiveSession? current = _live[sessionId];
+    if (current != null && !current.client.isClosed) return current;
+    return _resuming.putIfAbsent(
+      sessionId,
+      () => _resume(sessionId).whenComplete(() {
+        _resuming.remove(sessionId);
+      }),
     );
+  }
+
+  /// Discovers operations offered by the active native transport. Ante adds
+  /// its current session skills; Codex exposes app-server operations.
+  Future<List<NativeCommand>> availableCommands(String sessionId) async {
+    final _LiveSession live = await _commandSession(sessionId);
+    final AgentClient client = live.client;
+    if (client is! NativeCommandClient) return const <NativeCommand>[];
+    return (client as NativeCommandClient).availableCommands(
+      live.providerSessionId,
+    );
+  }
+
+  /// Starts a native operation with the same persisted turn lifecycle as a
+  /// user prompt. The transport determines whether the operation is a full
+  /// agent turn (review/skill) or an agent-side maintenance action (compact).
+  Future<void> runCommand(
+    String sessionId,
+    String name, {
+    String arguments = '',
+  }) async {
+    final _LiveSession live = await _commandSession(sessionId);
+    if (live.turn != null) {
+      throw DaemonError(
+        kErrConflict,
+        'A turn is already running for session "$sessionId"',
+      );
+    }
+    if (_store.forkContextSeqOf(sessionId) != null) {
+      throw DaemonError(
+        kErrConflict,
+        'Send a message to this fork before running a native command',
+      );
+    }
+    final AgentClient client = live.client;
+    if (client is! NativeCommandClient) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Provider does not expose native commands',
+      );
+    }
+    final NativeCommandClient nativeClient = client as NativeCommandClient;
+    final List<NativeCommand> commands = await nativeClient.availableCommands(
+      live.providerSessionId,
+    );
+    NativeCommand? selected;
+    for (final NativeCommand command in commands) {
+      if (command.name == name) {
+        selected = command;
+        break;
+      }
+    }
+    if (selected == null) {
+      throw DaemonError(_kErrInvalidParams, 'Unknown native command: /$name');
+    }
+    if (selected.kind == 'builtin' &&
+        selected.argumentHint == null &&
+        arguments.isNotEmpty) {
+      throw DaemonError(_kErrInvalidParams, '/$name does not take arguments');
+    }
+    final String text = '/$name${arguments.isEmpty ? '' : ' $arguments'}';
+    _beginTurn(live, text, const <_PreparedAttachment>[]);
+    final NativeCommand command = selected;
+    live.turn = _driveTurn(
+      live,
+      () => nativeClient.runNativeCommand(
+        live.providerSessionId,
+        command,
+        arguments,
+      ),
+    ).whenComplete(() => live.turn = null);
   }
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
@@ -1542,15 +1631,11 @@ class SessionEngine {
   /// [cancel] and [dispose] observe the in-flight future via `live.turn`.
   Future<void> _driveTurn(
     _LiveSession live,
-    String text,
-    List<_PreparedAttachment> attachments,
+    Future<PromptResult> Function() run, {
     _ForkContext? forkContext,
-  ) async {
+  }) async {
     try {
-      final result = await live.client.prompt(
-        live.providerSessionId,
-        _promptBlocks(text, attachments, forkContext: forkContext),
-      );
+      final result = await run();
       if (forkContext != null) {
         _store.setForkContextSeq(live.sessionId, null);
       }

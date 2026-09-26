@@ -165,6 +165,13 @@ class AcpClient implements AgentClient {
       environment: _environment,
       mode: ProcessStartMode.normal,
     );
+    // A process that exits before initialize can fail the stdin sink as well
+    // as the pending request. Observe the sink failure; _onExit reports the
+    // provider failure to callers through their pending request.
+    unawaited(process.stdin.done.then(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    ));
     unawaited(_readResponses(process));
     // Close the stderr controller (if still open) when stderr ends; the
     // broadcast sink keeps delivering to listeners added until then.

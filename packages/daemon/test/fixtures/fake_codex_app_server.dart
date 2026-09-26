@@ -521,6 +521,24 @@ Future<void> _handle(Map<String, Object?> message) async {
         ],
         'nextCursor': null,
       });
+    case 'skills/list':
+      await _respond(id, <String, Object?>{
+        'data': <Object?>[
+          <String, Object?>{
+            'cwd': (params['cwds'] as List).first,
+            'errors': <Object?>[],
+            'skills': <Object?>[
+              <String, Object?>{
+                'name': 'commit',
+                'description': 'Commit changes',
+                'enabled': true,
+                'path': '/fake/skills/commit/SKILL.md',
+                'scope': 'repo',
+              },
+            ],
+          },
+        ],
+      });
     case 'thread/start':
       await _writeReport('FAKE_CODEX_START_REPORT', params);
       await _respond(id, <String, Object?>{
@@ -545,6 +563,37 @@ Future<void> _handle(Map<String, Object?> message) async {
     case 'turn/start':
       params['_requestId'] = id;
       await _startTurn(params);
+    case 'thread/compact/start':
+      await _writeReport('FAKE_CODEX_COMPACT_REPORT', params);
+      await _respond(id, const <String, Object?>{});
+      await _notify('turn/completed', <String, Object?>{
+        'threadId': _threadId,
+        'turn': <String, Object?>{
+          'id': 'turn_compact',
+          'status': 'completed',
+          'items': <Object?>[],
+          'error': null,
+        },
+      });
+    case 'review/start':
+      await _writeReport('FAKE_CODEX_REVIEW_REPORT', params);
+      await _respond(id, <String, Object?>{
+        'turn': <String, Object?>{
+          'id': 'turn_review',
+          'status': 'inProgress',
+          'items': <Object?>[],
+          'error': null,
+        },
+      });
+      await _notify('turn/completed', <String, Object?>{
+        'threadId': _threadId,
+        'turn': <String, Object?>{
+          'id': 'turn_review',
+          'status': 'completed',
+          'items': <Object?>[],
+          'error': null,
+        },
+      });
     case 'turn/interrupt':
       await _respond(id, const <String, Object?>{});
       if (_pendingTurn != null) {

@@ -65,6 +65,8 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.create',
   'sessions.fork',
   'sessions.send',
+  'sessions.commands',
+  'sessions.command',
   'sessions.cancel',
   'sessions.rename',
   'sessions.archive',
@@ -517,6 +519,8 @@ class SpeedDialServer {
       'sessions.create' => _sessionsCreate(params),
       'sessions.fork' => _sessionsFork(params),
       'sessions.send' => _sessionsSend(params),
+      'sessions.commands' => _sessionsCommands(params),
+      'sessions.command' => _sessionsCommand(params),
       'sessions.cancel' => _sessionsCancel(params),
       'sessions.rename' => _sessionsRename(params),
       'sessions.archive' => _sessionsArchive(params),
@@ -1367,6 +1371,29 @@ class SpeedDialServer {
     });
     _createdBroadcast.add(session.id);
     return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsCommands(Map<String, Object?> params) async {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final commands = await _engine.availableCommands(sessionId);
+    return <String, Object?>{
+      'commands': commands.map((command) => command.toJson()).toList(),
+    };
+  }
+
+  Future<Object?> _sessionsCommand(Map<String, Object?> params) async {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final String name = _requiredString(params, 'name');
+    final Object? rawArguments = params['arguments'];
+    if (rawArguments != null && rawArguments is! String) {
+      throw DaemonError(_kErrInvalidParams, 'Invalid parameter: arguments');
+    }
+    await _engine.runCommand(
+      sessionId,
+      name,
+      arguments: rawArguments as String? ?? '',
+    );
+    return <String, Object?>{};
   }
 
   Future<Object?> _sessionsSend(Map<String, Object?> params) async {

@@ -180,6 +180,7 @@ void main() {
   Future<void> pumpComposer(
     WidgetTester tester, {
     required AttachmentPicker picker,
+    List<NativeCommand> commands = const <NativeCommand>[],
     ClipboardImageReader? clipboardImageReader,
     Future<void> Function(String text, List<OutgoingAttachment> attachments)?
     onSend,
@@ -194,6 +195,7 @@ void main() {
           body: Composer(
             status: SessionStatus.idle,
             mode: SessionMode.build,
+            commands: commands,
             attachmentPicker: picker,
             clipboardImageReader: clipboardImageReader,
             onSend:
@@ -206,6 +208,116 @@ void main() {
       ),
     );
   }
+
+  testWidgets('slash menu filters native commands and keyboard selection', (
+    WidgetTester tester,
+  ) async {
+    final List<String> sent = <String>[];
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      commands: const <NativeCommand>[
+        NativeCommand(name: 'compact', description: 'Compact context'),
+        NativeCommand(name: 'review', description: 'Review changes'),
+      ],
+      onSend: (String text, List<OutgoingAttachment> _) async => sent.add(text),
+    );
+    await tester.enterText(find.byType(TextField), '/');
+    await tester.pump();
+    expect(find.byKey(const Key('slash-command-menu')), findsOneWidget);
+    expect(find.byKey(const Key('slash-command-/review')), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '/re');
+    await tester.pump();
+    expect(find.byKey(const Key('slash-command-/compact')), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(sent, isEmpty);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '/review ',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(sent, <String>['/review']);
+  });
+
+  testWidgets('Codex review command uses native command API', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, FakeDaemonClient fake) = await pumpChat(
+      tester,
+      selectSession: false,
+    );
+    final Project project = (await fake.listProjects()).first;
+    final Session session = await fake.createSession(
+      projectId: project.id,
+      providerId: 'codex',
+    );
+    await app.sessions.refresh('fake');
+    app.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = project.id
+      ..selectedSessionId = session.id;
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), '/review auth changes');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(
+      tester,
+      () => app.chat
+          .eventsFor(session.id)
+          .whereType<UserMessageEvent>()
+          .isNotEmpty,
+    );
+    expect(
+      app.chat.eventsFor(session.id).whereType<UserMessageEvent>().first.text,
+      '/review auth changes',
+    );
+    await tester.pump(const Duration(seconds: 2));
+  });
+
+  testWidgets('slash menu only opens for first token and supports Escape', (
+    WidgetTester tester,
+  ) async {
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      commands: const <NativeCommand>[
+        NativeCommand(name: 'context', description: 'Context usage'),
+      ],
+    );
+    await tester.enterText(find.byType(TextField), 'hello /');
+    await tester.pump();
+    expect(find.byKey(const Key('slash-command-menu')), findsNothing);
+    await tester.enterText(find.byType(TextField), '/');
+    await tester.pump();
+    expect(find.byKey(const Key('slash-command-/context')), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byKey(const Key('slash-command-menu')), findsNothing);
+  });
+
+  testWidgets('slash menu arrow keys choose the next native command', (
+    WidgetTester tester,
+  ) async {
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      commands: const <NativeCommand>[
+        NativeCommand(name: 'compact', description: 'Compact context'),
+        NativeCommand(name: 'review', description: 'Review changes'),
+      ],
+    );
+    await tester.enterText(find.byType(TextField), '/');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '/review ',
+    );
+  });
 
   testWidgets(
     'session already selected when the pane first mounts still renders its history',

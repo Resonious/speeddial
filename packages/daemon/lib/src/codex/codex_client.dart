@@ -9,6 +9,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../acp/acp_types.dart';
 
 import '../agents/agent_client.dart';
+import '../agents/native_commands.dart';
 
 /// A failed Codex turn, reported by `turn/completed`.
 class CodexTurnException implements Exception {
@@ -38,7 +39,7 @@ class CodexJsonRpcException implements Exception {
 /// vocabulary without passing through ACP. Structured command, patch, MCP,
 /// collaboration, web-search, image, plan, reasoning, usage, and lifecycle
 /// fields remain available through tool-call content and raw payloads.
-class CodexClient implements AgentClient {
+class CodexClient implements AgentClient, NativeCommandClient {
   CodexClient.spawn(
     List<String> command, {
     required String cwd,
@@ -77,6 +78,8 @@ class CodexClient implements AgentClient {
       <Object, Completer<Map<String, Object?>>>{};
   final Map<String, _CodexSessionState> _sessions =
       <String, _CodexSessionState>{};
+  final Map<String, Map<String, String>> _skillPaths =
+      <String, Map<String, String>>{};
   final Map<String, _SessionChannel> _sessionChannels =
       <String, _SessionChannel>{};
   final Map<String, String> _turnThreads = <String, String>{};
@@ -295,6 +298,152 @@ class CodexClient implements AgentClient {
       }
       if (identical(state.turnCompleter, completer)) {
         state.turnCompleter = null;
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<NativeCommand>> availableCommands(String sessionId) async {
+    final _CodexSessionState state = _requireSession(sessionId);
+    const List<NativeCommand> builtins = <NativeCommand>[
+      NativeCommand(
+        name: 'compact',
+        description: 'Compact conversation context',
+      ),
+      NativeCommand(
+        name: 'review',
+        description: 'Review uncommitted changes',
+        argumentHint: 'review instructions',
+      ),
+    ];
+    final Map<String, Object?> result;
+    try {
+      result = await _request('skills/list', <String, Object?>{
+        'cwds': <String>[state.cwd],
+      });
+    } on CodexJsonRpcException catch (error) {
+      if (error.code == -32601) return builtins;
+      rethrow;
+    }
+    final Map<String, String> paths = <String, String>{};
+    final List<NativeCommand> skills = <NativeCommand>[];
+    final Object? rawEntries = result['data'];
+    if (rawEntries is List) {
+      for (final Object? rawEntry in rawEntries) {
+        final Object? rawSkills = _asMap(rawEntry)['skills'];
+        if (rawSkills is! List) continue;
+        for (final Object? rawSkill in rawSkills) {
+          final Map<String, Object?> skill = _asMap(rawSkill);
+          final String? name = skill['name'] as String?;
+          final String? path = skill['path'] as String?;
+          if (name == null ||
+              name.isEmpty ||
+              path == null ||
+              path.isEmpty ||
+              skill['enabled'] == false ||
+              builtins.any((command) => command.name == name)) {
+            continue;
+          }
+          paths[name] = path;
+          skills.add(
+            NativeCommand(
+              name: name,
+              description: skill['description'] as String? ?? 'Run Codex skill',
+              kind: 'skill',
+            ),
+          );
+        }
+      }
+    }
+    _skillPaths[sessionId] = paths;
+    return <NativeCommand>[...builtins, ...skills];
+  }
+
+  @override
+  Future<PromptResult> runNativeCommand(
+    String sessionId,
+    NativeCommand command,
+    String arguments,
+  ) async {
+    final _CodexSessionState state = _requireSession(sessionId);
+    if (state.turnCompleter != null) {
+      throw StateError('A Codex turn is already running for $sessionId');
+    }
+    final Completer<PromptResult> completer = Completer<PromptResult>();
+    state.turnCompleter = completer;
+    try {
+      switch (command.name) {
+        case 'compact':
+          if (arguments.isNotEmpty) {
+            throw ArgumentError.value(
+              arguments,
+              'arguments',
+              'Codex compact takes no arguments',
+            );
+          }
+          await _request('thread/compact/start', <String, Object?>{
+            'threadId': sessionId,
+          });
+        case 'review':
+          final Map<String, Object?> result = await _request(
+            'review/start',
+            <String, Object?>{
+              'threadId': sessionId,
+              'target': arguments.isEmpty
+                  ? <String, Object?>{'type': 'uncommittedChanges'}
+                  : <String, Object?>{
+                      'type': 'custom',
+                      'instructions': arguments,
+                    },
+            },
+          );
+          final String? turnId = _asMap(result['turn'])['id'] as String?;
+          if (turnId != null && identical(state.turnCompleter, completer)) {
+            state.activeTurnId = turnId;
+            _turnThreads[turnId] = sessionId;
+          }
+        default:
+          final String? path = command.kind == 'skill'
+              ? (_skillPaths[sessionId] ??
+                    const <String, String>{})[command.name]
+              : null;
+          if (path == null) {
+            throw ArgumentError.value(command.name, 'name', 'unknown command');
+          }
+          final Map<String, Object?> result = await _request(
+            'turn/start',
+            <String, Object?>{
+              'threadId': sessionId,
+              'input': <Map<String, Object?>>[
+                <String, Object?>{
+                  'type': 'skill',
+                  'name': command.name,
+                  'path': path,
+                },
+                if (arguments.isNotEmpty)
+                  <String, Object?>{'type': 'text', 'text': arguments},
+              ],
+              'cwd': state.cwd,
+              if (state.model != null) 'model': state.model,
+              if (state.effort != null) 'effort': state.effort,
+              if (state.yolo) 'approvalPolicy': 'never',
+            },
+          );
+          final String? turnId = _asMap(result['turn'])['id'] as String?;
+          if (turnId == null || turnId.isEmpty) {
+            throw const FormatException('Codex response is missing turn.id');
+          }
+          if (identical(state.turnCompleter, completer)) {
+            state.activeTurnId = turnId;
+            _turnThreads[turnId] = sessionId;
+          }
+      }
+      return await completer.future;
+    } on Object {
+      if (identical(state.turnCompleter, completer)) {
+        state.turnCompleter = null;
+        state.activeTurnId = null;
       }
       rethrow;
     }

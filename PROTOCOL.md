@@ -74,6 +74,13 @@ HarnessInfo = {
   version: string,            // installed CLI's version output
 }
 
+NativeCommand = {
+  name: string,             // name without the leading slash
+  description: string,
+  argumentHint?: string,    // shown when the operation accepts free-form text
+  kind: "builtin" | "skill", // skill is discovered from the active harness
+}
+
 Project = {
   id: string,
   name: string,
@@ -530,6 +537,8 @@ tokens before session creation/resume, and checks them periodically while runnin
   must be recreated from the original session.
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+- `sessions.commands {sessionId: string}` → `{commands: NativeCommand[]}` — lists native operations available on the live provider session. Codex exposes `compact`, `review`, and enabled skills from `skills/list`; Ante exposes `compact`, `context`, and discovered skills. Other providers return an empty list.
+- `sessions.command {sessionId: string, name: string, arguments?: string}` → `{}` — starts the named native operation. It persists `/name arguments` as the user event and streams provider activity and completion through the normal session event channel. Codex `compact` calls `thread/compact/start`, `review` calls `review/start` (uncommitted changes by default, custom instructions when provided), and skills use structured `skill` input in `turn/start`. Ante `compact`, `context`, and skills use its `Compact`, `ContextReport`, and `SlashCommand` operations. Unknown commands and unsupported providers fail with `-32602`; an active turn fails with `-32003`. Attachments are not accepted.
   An agent busy with its own background work (OMP keeps running subagent-driven turns
   after yielding to the user) does not fail the send: the daemon holds the prompt,
   surfaces the wait as a `session`-kind `agentActivity`, and delivers the message once

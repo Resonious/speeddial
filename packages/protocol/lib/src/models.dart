@@ -1196,6 +1196,35 @@ class Project {
   };
 }
 
+/// A native command advertised for one live agent session.
+class NativeCommand {
+  const NativeCommand({
+    required this.name,
+    required this.description,
+    this.argumentHint,
+    this.kind = 'builtin',
+  });
+
+  final String name;
+  final String description;
+  final String? argumentHint;
+  final String kind;
+
+  factory NativeCommand.fromJson(Map<String, Object?> json) => NativeCommand(
+    name: json['name']! as String,
+    description: json['description']! as String,
+    argumentHint: json['argumentHint'] as String?,
+    kind: json['kind'] as String? ?? 'builtin',
+  );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'name': name,
+    'description': description,
+    if (argumentHint != null) 'argumentHint': argumentHint,
+    'kind': kind,
+  };
+}
+
 /// A provider that can run agent sessions.
 class ProviderInfo {
   const ProviderInfo({

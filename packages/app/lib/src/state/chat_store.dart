@@ -390,6 +390,16 @@ class ChatStore extends StoreBase {
       _clientFor(daemonId)
           .sendMessage(sessionId, text, attachments: attachments);
 
+  Future<List<NativeCommand>> listCommands(String daemonId, String sessionId) =>
+      _clientFor(daemonId).listCommands(sessionId);
+
+  Future<void> runCommand(
+    String daemonId,
+    String sessionId,
+    String name, {
+    String arguments = '',
+  }) => _clientFor(daemonId).runCommand(sessionId, name, arguments: arguments);
+
   /// Fetches an attachment's payload, memoized per composite
   /// `daemonId/sessionId/attachmentId` key. Attachments are immutable (their
   /// payload never changes once assigned an id), so the first result stays
