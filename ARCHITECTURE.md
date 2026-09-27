@@ -226,6 +226,12 @@ WebSocket except `serve` and `token`:
 
 ## App
 
+The desktop embedded daemon owns its engine, SQLite store, and WebSocket server
+on a dedicated Dart isolate. The UI exchanges only startup configuration, endpoint,
+errors, and shutdown signals with that worker; regular requests still use WebSocket
+JSON-RPC. Shutdown waits for daemon cleanup and worker exit, including when startup
+is still in progress. Synchronous daemon work must never run on the UI isolate.
+
 Package name `speeddial_app`. No third-party state management: plain `ChangeNotifier`
 stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context)`
 (lib/src/scope.dart) exposing the store graph. Deps: `web_socket_channel`,
@@ -234,7 +240,7 @@ stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context
 
 ```
 lib/main.dart                hidden native MCP subprocess dispatch, then runApp; desktop builds start an embedded in-process daemon
-                             (lib/src/local_daemon/) from the persisted
+                             (lib/src/local_daemon/) on a dedicated Dart isolate from the persisted
                              EmbeddedDaemonStore config and auto-add a
                              non-persistent "This computer" endpoint; web/mobile
                              skip embedding. SpeedDialApp is a WidgetsBindingObserver

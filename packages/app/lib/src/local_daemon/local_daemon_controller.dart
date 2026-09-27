@@ -1,8 +1,8 @@
 /// Contract for the embedded in-process daemon, implemented per platform.
 ///
 /// Desktop builds (linux/macos/windows) use the native implementation backed
-/// by `package:speeddial_daemon`'s [LocalDaemon]; web/mobile use a stub that
-/// reports unsupported. The app gates embedding on
+/// by `package:speeddial_daemon`'s [LocalDaemon] on a dedicated isolate;
+/// web/mobile use a stub that reports unsupported. The app gates embedding on
 /// [embeddedDaemonSupported] (from `local_daemon.dart`) and never calls
 /// [start] otherwise.
 library;
@@ -13,7 +13,8 @@ abstract class LocalDaemonController {
   /// [port] (0 = OS-chosen) and [token] (empty = no auth; required for
   /// non-loopback hosts). Returns the WebSocket endpoint URL
   /// (`ws://<host>:<port>/ws`) on success; `null` when unsupported, already
-  /// starting, or the bind failed (see [lastError]).
+  /// starting/stopping, stopped during startup, or the bind failed
+  /// (see [lastError]).
   ///
   /// Idempotent: calling [start] again after success returns the same URL.
   Future<String?> start({
@@ -29,7 +30,6 @@ abstract class LocalDaemonController {
   /// True after a successful [start] and before [stop].
   bool get isRunning;
 
-  /// The error that made the most recent [start] return `null`; null after a
-  /// successful start (or before any attempt).
+  /// The latest startup, worker, or shutdown error; cleared by a new start.
   Object? get lastError;
 }
