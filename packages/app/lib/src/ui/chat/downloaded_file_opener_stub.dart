@@ -8,3 +8,8 @@ Future<DownloadedFileResult> openDownloadedFile(
   String name,
   Uint8List bytes,
 ) async => DownloadedFileResult.unsupported;
+
+Future<DownloadedFileResult> openDownloadedStream(
+  String name,
+  Stream<Uint8List> bytes,
+) async => DownloadedFileResult.unsupported;

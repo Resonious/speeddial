@@ -81,6 +81,7 @@ const List<String> _kProtocolMethods = <String>[
   'fs.list',
   'fs.read',
   'fs.download',
+  'fs.downloadChunk',
   'git.status',
   'git.diff',
   'git.branches',
@@ -537,6 +538,7 @@ class SpeedDialServer {
       'fs.list' => _fsList(params),
       'fs.read' => _fsRead(params),
       'fs.download' => _fsDownload(params),
+      'fs.downloadChunk' => _fsDownloadChunk(params),
       'git.status' => _gitStatus(params),
       'git.diff' => _gitDiff(params),
       'git.branches' => _gitBranches(params),
@@ -1686,6 +1688,25 @@ class SpeedDialServer {
       maxBytes: rawMaxBytes is int && rawMaxBytes > 0 ? rawMaxBytes : null,
     );
     return result.toJson();
+  }
+
+  Future<Object?> _fsDownloadChunk(Map<String, Object?> params) async {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final session = _store.getSession(sessionId);
+    if (session == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final Object? offset = params['offset'];
+    final Object? revision = params['revision'];
+    if (offset is! int || (revision != null && revision is! String)) {
+      throw const DaemonError(-32602, 'Invalid download parameters');
+    }
+    return (await _fs.downloadChunk(
+      rootPath: session.cwd,
+      path: _requiredString(params, 'path'),
+      offset: offset,
+      revision: revision as String?,
+    )).toJson();
   }
 
   Object? _fsDownload(Map<String, Object?> params) {

@@ -1063,6 +1063,25 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<FileDownloadChunk> downloadFileChunk(
+    String sessionId,
+    String path, {
+    required int offset,
+    String? revision,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'fs.downloadChunk',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'path': path,
+        'offset': offset,
+        'revision': ?revision,
+      },
+    );
+    return FileDownloadChunk.fromJson(_resultMap(result));
+  }
+
+  @override
   Future<FileDownload> downloadFile(String sessionId, String path) async {
     final Object? result = await _requirePeer().call(
       'fs.download',

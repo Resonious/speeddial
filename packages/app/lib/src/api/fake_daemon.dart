@@ -1498,6 +1498,28 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<FileDownloadChunk> downloadFileChunk(
+    String sessionId,
+    String path, {
+    required int offset,
+    String? revision,
+  }) async {
+    final FileDownload file = await downloadFile(sessionId, path);
+    final bytes = base64Decode(file.data);
+    if (offset < 0 || offset > bytes.length) {
+      throw const DaemonError(-32602, 'Invalid offset');
+    }
+    final int end = (offset + 256 * 1024).clamp(0, bytes.length);
+    return FileDownloadChunk(
+      name: file.name,
+      size: file.size,
+      offset: offset,
+      revision: 'demo',
+      data: base64Encode(bytes.sublist(offset, end)),
+    );
+  }
+
+  @override
   Future<FileDownload> downloadFile(String sessionId, String path) async {
     _ensureSeeded();
     final Session? session = _sessions[sessionId];

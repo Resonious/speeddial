@@ -38,10 +38,7 @@ class FsService {
     final target = resolveInRoot(rootPath, path ?? '.');
     final type = FileSystemEntity.typeSync(target, followLinks: true);
     if (type != FileSystemEntityType.directory) {
-      throw DaemonError(
-        _kErrInvalidParams,
-        'Not a directory: ${path ?? '.'}',
-      );
+      throw DaemonError(_kErrInvalidParams, 'Not a directory: ${path ?? '.'}');
     }
     final root = p.canonicalize(rootPath);
     final relPrefix = p.relative(target, from: root);
@@ -51,13 +48,15 @@ class FsService {
       final isDir = FileSystemEntity.isDirectorySync(entity.path);
       if (isDir && name == '.git') continue; // Skip `.git` internals.
       final stat = entity.statSync();
-      entries.add(FileEntry(
-        name: name,
-        path: relPrefix == '.' ? name : p.join(relPrefix, name),
-        isDir: isDir,
-        size: isDir ? 0 : stat.size,
-        modifiedAt: stat.modified.toUtc(),
-      ));
+      entries.add(
+        FileEntry(
+          name: name,
+          path: relPrefix == '.' ? name : p.join(relPrefix, name),
+          isDir: isDir,
+          size: isDir ? 0 : stat.size,
+          modifiedAt: stat.modified.toUtc(),
+        ),
+      );
     }
     entries.sort((a, b) {
       if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
@@ -101,8 +100,8 @@ class FsService {
       final effectiveMax = maxBytes == null || maxBytes <= 0
           ? kFsReadDefaultMaxBytes
           : maxBytes > kFsReadHardCapBytes
-              ? kFsReadHardCapBytes
-              : maxBytes;
+          ? kFsReadHardCapBytes
+          : maxBytes;
       if (length <= effectiveMax) {
         final bytes = file.readAsBytesSync();
         return FileReadResult(
@@ -151,6 +150,63 @@ class FsService {
     );
   }
 
+  /// Stateless bounded reads: no file handles survive requests or disconnects.
+  Future<FileDownloadChunk> downloadChunk({
+    required String rootPath,
+    required String path,
+    required int offset,
+    String? revision,
+  }) async {
+    if (offset < 0 || (offset > 0 && revision == null)) {
+      throw const DaemonError(
+        -32602,
+        'Invalid download offset or missing revision',
+      );
+    }
+    final String target = resolveInRoot(rootPath, path, allowAbsolute: true);
+    final File file = File(target);
+    final FileStat before = await file.stat();
+    if (before.type != FileSystemEntityType.file) {
+      throw const DaemonError(-32602, 'Download source is not a regular file');
+    }
+    String version(FileStat stat) =>
+        '${stat.size}:${stat.modified.microsecondsSinceEpoch}:${stat.changed.microsecondsSinceEpoch}';
+    final String current = version(before);
+    if (revision != null && revision != current) {
+      throw const DaemonError(
+        -32003,
+        'File changed during download; try again',
+      );
+    }
+    if (offset > before.size) {
+      throw const DaemonError(-32602, 'Download offset exceeds file size');
+    }
+    final RandomAccessFile handle = await file.open();
+    try {
+      await handle.setPosition(offset);
+      final int remaining = before.size - offset;
+      final bytes = await handle.read(
+        remaining < 256 * 1024 ? remaining : 256 * 1024,
+      );
+      if (version(await file.stat()) != current ||
+          bytes.length != (remaining < 256 * 1024 ? remaining : 256 * 1024)) {
+        throw const DaemonError(
+          -32003,
+          'File changed during download; try again',
+        );
+      }
+      return FileDownloadChunk(
+        name: p.basename(target),
+        size: before.size,
+        offset: offset,
+        revision: current,
+        data: base64Encode(bytes),
+      );
+    } finally {
+      await handle.close();
+    }
+  }
+
   /// Resolves [requested] against [rootPath], rejecting absolute paths unless
   /// [allowAbsolute] is true, and rejecting anything that escapes the root
   /// (after canonicalization) with `-32602`.
@@ -175,17 +231,14 @@ class FsService {
     final candidate = p.canonicalize(
       absolute ? requested : p.join(root, requested),
     );
-    final prefix = root.endsWith(p.separator)
-        ? root
-        : '$root${p.separator}';
+    final prefix = root.endsWith(p.separator) ? root : '$root${p.separator}';
     if (candidate == root || candidate.startsWith(prefix)) {
       final realRoot = _realPathOfDeepestExisting(root);
       final realCandidate = _realPathOfDeepestExisting(candidate);
       final realPrefix = realRoot.endsWith(p.separator)
           ? realRoot
           : '$realRoot${p.separator}';
-      if (realCandidate == realRoot ||
-          realCandidate.startsWith(realPrefix)) {
+      if (realCandidate == realRoot || realCandidate.startsWith(realPrefix)) {
         return candidate;
       }
     }

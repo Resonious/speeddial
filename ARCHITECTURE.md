@@ -288,7 +288,9 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
 lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that
-                             save through the system picker on mobile, download through the browser
+                             transfer in bounded 256 KiB RPC chunks with progress/cancellation,
+                             spool to disk on native platforms and export through the Android
+                             system picker without whole-file buffers, download through browser Blobs
                              on web, and open a temporary local copy via the OS on desktop,
                              collapsible
                              tool-call cards (status icon, title, expandable content/diff),

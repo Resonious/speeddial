@@ -8,6 +8,7 @@ import '../../state/chat_store.dart';
 import '../daemon_error_text.dart';
 import 'composer.dart';
 import 'downloaded_file_opener.dart';
+import 'file_download_transfer.dart';
 import 'permission_banner.dart';
 import 'question_banner.dart';
 import 'timeline.dart';
@@ -162,6 +163,10 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   List<NativeCommand> _commands = const <NativeCommand>[];
   bool _loadingCommands = false;
   bool _refreshCommandsAfterLoad = false;
+  FileDownloadTransfer? _transfer;
+  final ValueNotifier<String> _downloadProgress = ValueNotifier<String>(
+    'Preparing download…',
+  );
   final ValueNotifier<bool> _downloading = ValueNotifier<bool>(false);
 
   @override
@@ -224,6 +229,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   @override
   void dispose() {
+    _transfer?.cancelled = true;
+    _downloadProgress.dispose();
     _downloading.dispose();
     super.dispose();
   }
@@ -300,17 +307,31 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 bool downloading,
                 Widget? child,
               ) => downloading ? child! : const SizedBox.shrink(),
-              child: const Padding(
-                padding: EdgeInsets.all(12),
-                child: Row(
-                  children: <Widget>[
-                    SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(child: Text('Preparing download…')),
-                  ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: ValueListenableBuilder<String>(
+                  valueListenable: _downloadProgress,
+                  builder: (context, value, child) => Row(
+                    children: <Widget>[
+                      const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(value)),
+                      TextButton(
+                        onPressed:
+                            _transfer?.completed == true ||
+                                _transfer?.cancelled == true
+                            ? null
+                            : () {
+                                _transfer?.cancelled = true;
+                                _downloadProgress.value = 'Cancelling…';
+                              },
+                        child: const Text('Cancel'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -417,25 +438,44 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     if (_downloading.value) return;
     _downloading.value = true;
     try {
-      final FileDownload download = await widget.data
-          .clientFor(widget.daemonId)
-          .downloadFile(widget.sessionId, path);
+      final FileDownloadTransfer transfer = FileDownloadTransfer(
+        widget.data.clientFor(widget.daemonId),
+        widget.sessionId,
+        path,
+      );
+      _transfer = transfer;
+      _downloadProgress.value = 'Preparing download…';
+      await transfer.prepare();
       if (!mounted) return;
-      final DownloadedFileResult result = await openDownloadedFile(download);
+      final DownloadedFileResult result = await openDownloadedStream(
+        transfer.name,
+        transfer.bytes((received, total) {
+          if (mounted) {
+            _downloadProgress.value = received == total
+                ? 'Saving ${transfer.name}…'
+                : 'Downloading ${total == 0 ? 100 : (received * 100 / total).floor()}%'
+                      ' (${(received / 1048576).toStringAsFixed(1)} / '
+                      '${(total / 1048576).toStringAsFixed(1)} MiB)';
+          }
+        }),
+      );
       switch (result) {
         case DownloadedFileResult.saved:
-          await _showMessage('Saved ${download.name}');
+          await _showMessage('Saved ${transfer.name}');
         case DownloadedFileResult.unsupported:
-          await _showMessage('Could not open ${download.name}');
+          await _showMessage('Could not open ${transfer.name}');
         case DownloadedFileResult.opened:
         case DownloadedFileResult.cancelled:
           break;
       }
+    } on DownloadCancelled {
+      // The platform sink removes the partial file.
     } on DaemonError catch (error) {
       await _showError(error);
     } on Object catch (error) {
       await _showMessage('Could not download file: $error');
     } finally {
+      _transfer = null;
       if (mounted) _downloading.value = false;
     }
   }

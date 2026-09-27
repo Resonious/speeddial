@@ -171,6 +171,7 @@ SessionSearchPage = {
   nextCursor: SessionSearchCursor | null,
   indexing: boolean,         // saved messages are still being indexed; results may be incomplete
 }
+FileDownloadChunk = { name: string, size: int, offset: int, revision: string, data: string } // bounded base64 payload
 FileDownload = { name: string, size: int, data: string } // full file payload, base64 encoded
 
 // Attachments (files the user attaches to a message)
@@ -674,6 +675,21 @@ clients cannot use the internal methods without the MCP secret.
   binary-safe file for a chat link. Relative paths resolve from the session's `cwd`; absolute paths
   are accepted only when they resolve inside that `cwd`. Symlink escapes, directories, missing
   files, and files larger than 64 MiB are rejected with `-32602`.
+
+- `fs.downloadChunk {sessionId: string, path: string, offset: int, revision?: string}`
+  → `FileDownloadChunk`. Preferred download API, with no total file size cap. Same cwd
+  and symlink confinement as `fs.download`. Each response contains at most 256 KiB
+  of decoded bytes; `size` is the total file size, `offset` echoes the requested
+  byte offset, and `name` is the basename. Start at offset 0 without a revision;
+  subsequent calls must send the returned opaque revision and advance the offset
+  by the decoded byte count. Reaching `size` completes the transfer (an empty file
+  returns empty data). Negative/out-of-range offsets, missing revisions at nonzero
+  offsets, and nonregular files return `-32602`. Changes to the file's size, mtime,
+  or ctime between reads return `-32003`; this is change detection, not an immutable
+  snapshot or cryptographic integrity guarantee. Reads are asynchronous, and each
+  request closes its file handle. Cancellation needs no RPC: stop requesting chunks.
+  Clients validate offsets, size, revision, and payload bounds. Older daemons return
+  `-32601`; clients may fall back to legacy `fs.download` with its 64 MiB cap.
 
 `fs.list` and `fs.read` paths are relative to the project root; absolute paths are rejected with
 `-32602`.

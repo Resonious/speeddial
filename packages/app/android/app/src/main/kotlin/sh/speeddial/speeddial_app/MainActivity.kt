@@ -19,6 +19,14 @@ import java.io.ByteArrayOutputStream
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
+    private val downloadSaver = DownloadSaver(this)
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (!downloadSaver.onActivityResult(requestCode, resultCode, data)) {
+            super.onActivityResult(requestCode, resultCode, data)
+        }
+    }
+
     private var shareChannel: MethodChannel? = null
     private var shareReady = false
     private var pendingShare: Map<String, String>? = null
@@ -36,6 +44,12 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "sh.speeddial/downloads")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "save") {
+                    downloadSaver.save(call.argument<String>("path"), call.argument<String>("name"), result)
+                } else result.notImplemented()
+            }
         shareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE_CHANNEL)
         shareChannel?.setMethodCallHandler { call, result ->
             when (call.method) {

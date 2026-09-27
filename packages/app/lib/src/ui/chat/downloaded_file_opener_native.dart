@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'downloaded_file_result.dart';
@@ -52,4 +53,52 @@ String _safeFileName(String name) {
   return sanitized.isEmpty || sanitized == '.' || sanitized == '..'
       ? 'download'
       : sanitized;
+}
+
+Future<DownloadedFileResult> openDownloadedStream(
+  String name,
+  Stream<Uint8List> bytes,
+) async {
+  final Directory directory = await Directory.systemTemp.createTemp(
+    'speeddial-download-',
+  );
+  final File file = File(
+    '${directory.path}${Platform.pathSeparator}${_safeFileName(name)}',
+  );
+  bool keep = false;
+  try {
+    final RandomAccessFile output = await file.open(mode: FileMode.write);
+    try {
+      await for (final Uint8List chunk in bytes) {
+        await output.writeFrom(chunk);
+      }
+    } finally {
+      await output.close();
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final bool? saved = await const MethodChannel('sh.speeddial/downloads')
+          .invokeMethod<bool>('save', <String, Object?>{
+            'path': file.path,
+            'name': _safeFileName(name),
+          });
+      return saved == true
+          ? DownloadedFileResult.saved
+          : DownloadedFileResult.cancelled;
+    }
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      // The repository has no iOS runner yet; preserve the existing picker path.
+      return await openDownloadedFile(name, await file.readAsBytes());
+    }
+    final bool opened = await launchUrl(
+      Uri.file(file.path),
+      mode: LaunchMode.externalApplication,
+    );
+    keep =
+        opened; // External applications may read the file after launch returns.
+    return opened
+        ? DownloadedFileResult.opened
+        : DownloadedFileResult.unsupported;
+  } finally {
+    if (!keep) await directory.delete(recursive: true);
+  }
 }

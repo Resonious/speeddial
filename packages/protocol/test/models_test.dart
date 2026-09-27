@@ -389,6 +389,20 @@ void main() {
       expect(decoded.toJson(), model.toJson());
     });
 
+    test('FileDownloadChunk preserves metadata and offset', () {
+      const model = FileDownloadChunk(
+        name: 'file.bin',
+        size: 70000000,
+        offset: 65536,
+        revision: 'opaque',
+        data: 'AAECAw==',
+      );
+      expect(
+        FileDownloadChunk.fromJson(model.toJson()).toJson(),
+        model.toJson(),
+      );
+    });
+
     test('FileDownload', () {
       const model = FileDownload(name: 'report.pdf', size: 4, data: 'AAECAw==');
       final decoded = FileDownload.fromJson(model.toJson());

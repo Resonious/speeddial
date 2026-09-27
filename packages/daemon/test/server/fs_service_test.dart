@@ -2,6 +2,7 @@
 library;
 
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/server/fs_service.dart';
@@ -40,13 +41,19 @@ void main() {
 
       final entries = fs.list(rootPath: tempDir.path);
 
-      expect(entries.map((e) => e.name).toList(),
-          <String>['sub', 'alpha.txt', 'zebra.txt']);
+      expect(entries.map((e) => e.name).toList(), <String>[
+        'sub',
+        'alpha.txt',
+        'zebra.txt',
+      ]);
       expect(entries.first.isDir, isTrue);
       expect(entries.first.size, 0);
       expect(entries.first.path, 'sub');
-      expect(entries.where((e) => e.name == '.git'), isEmpty,
-          reason: 'git internals must never surface in listings');
+      expect(
+        entries.where((e) => e.name == '.git'),
+        isEmpty,
+        reason: 'git internals must never surface in listings',
+      );
       final alpha = entries.firstWhere((e) => e.name == 'alpha.txt');
       expect(alpha.path, 'alpha.txt');
       expect(alpha.size, 'alpha'.length);
@@ -60,29 +67,30 @@ void main() {
 
       final entries = fs.list(rootPath: tempDir.path, path: 'sub');
 
-      expect(
-        entries.map((e) => e.name).toList(),
-        <String>['deeper', 'inner.txt'],
-      );
-      expect(
-        entries.map((e) => e.path).toList(),
-        <String>['sub/deeper', 'sub/inner.txt'],
-      );
+      expect(entries.map((e) => e.name).toList(), <String>[
+        'deeper',
+        'inner.txt',
+      ]);
+      expect(entries.map((e) => e.path).toList(), <String>[
+        'sub/deeper',
+        'sub/inner.txt',
+      ]);
     });
 
-    test('rejects non-directories, escapes, and absolute paths with -32602',
-        () {
-      write('file.txt', 'x');
+    test(
+      'rejects non-directories, escapes, and absolute paths with -32602',
+      () {
+        write('file.txt', 'x');
 
-      for (final path in <String?>['file.txt', '..', '/etc', 'nope']) {
-        expect(
-          () => fs.list(rootPath: tempDir.path, path: path),
-          throwsA(isA<DaemonError>()
-              .having((e) => e.code, 'code', -32602)),
-          reason: 'expected -32602 for path "$path"',
-        );
-      }
-    });
+        for (final path in <String?>['file.txt', '..', '/etc', 'nope']) {
+          expect(
+            () => fs.list(rootPath: tempDir.path, path: path),
+            throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+            reason: 'expected -32602 for path "$path"',
+          );
+        }
+      },
+    );
   });
 
   group('read', () {
@@ -140,8 +148,9 @@ void main() {
     });
 
     test('NUL bytes past the 8 KiB probe are not treated as binary', () {
-      final bytes = List<int>.filled(16 * 1024, 0x78) // 'x'
-        ..[16 * 1024 - 1] = 0;
+      final bytes =
+          List<int>.filled(16 * 1024, 0x78) // 'x'
+            ..[16 * 1024 - 1] = 0;
       File(p.join(tempDir.path, 'late.bin')).writeAsBytesSync(bytes);
 
       final result = fs.read(rootPath: tempDir.path, path: 'late.bin');
@@ -165,8 +174,7 @@ void main() {
       ]) {
         expect(
           () => fs.read(rootPath: tempDir.path, path: bad),
-          throwsA(isA<DaemonError>()
-              .having((e) => e.code, 'code', -32602)),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
           reason: 'expected -32602 for $bad',
         );
       }
@@ -178,6 +186,103 @@ void main() {
 
       outside.deleteSync();
     });
+  });
+
+  group('downloadChunk', () {
+    test(
+      'reads a file over 64 MiB with bounded payloads and a final tail',
+      () async {
+        final File file = File(p.join(tempDir.path, 'large.bin'));
+        final RandomAccessFile handle = file.openSync(mode: FileMode.write);
+        const int size = 65 * 1024 * 1024 + 3;
+        handle.truncateSync(size);
+        handle.setPositionSync(size - 3);
+        handle.writeFromSync(<int>[1, 2, 255]);
+        handle.closeSync();
+        final first = await fs.downloadChunk(
+          rootPath: tempDir.path,
+          path: file.path,
+          offset: 0,
+        );
+        expect(first.size, size);
+        expect(base64Decode(first.data).length, 256 * 1024);
+        final tail = await fs.downloadChunk(
+          rootPath: tempDir.path,
+          path: file.path,
+          offset: size - 3,
+          revision: first.revision,
+        );
+        expect(base64Decode(tail.data), <int>[1, 2, 255]);
+        final end = await fs.downloadChunk(
+          rootPath: tempDir.path,
+          path: file.path,
+          offset: size,
+          revision: first.revision,
+        );
+        expect(end.data, isEmpty);
+      },
+    );
+
+    test('detects changed files and validates offsets', () async {
+      write('file', 'abc');
+      final first = await fs.downloadChunk(
+        rootPath: tempDir.path,
+        path: 'file',
+        offset: 0,
+      );
+      for (final int offset in <int>[-1, 4]) {
+        await expectLater(
+          fs.downloadChunk(
+            rootPath: tempDir.path,
+            path: 'file',
+            offset: offset,
+            revision: first.revision,
+          ),
+          throwsA(isA<DaemonError>()),
+        );
+      }
+      await expectLater(
+        fs.downloadChunk(rootPath: tempDir.path, path: 'file', offset: 1),
+        throwsA(isA<DaemonError>()),
+      );
+      write('file', 'changed');
+      await expectLater(
+        fs.downloadChunk(
+          rootPath: tempDir.path,
+          path: 'file',
+          offset: 1,
+          revision: first.revision,
+        ),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32003)),
+      );
+    });
+
+    test(
+      'handles empty files and rejects directories and symlink escapes',
+      () async {
+        write('empty', '');
+        expect(
+          (await fs.downloadChunk(
+            rootPath: tempDir.path,
+            path: 'empty',
+            offset: 0,
+          )).data,
+          '',
+        );
+        Link(p.join(tempDir.path, 'escape')).createSync(tempDir.parent.path);
+        for (final String path in <String>[
+          '.',
+          'missing',
+          '../outside',
+          'escape/outside',
+        ]) {
+          await expectLater(
+            fs.downloadChunk(rootPath: tempDir.path, path: path, offset: 0),
+            throwsA(isA<DaemonError>()),
+          );
+        }
+      },
+    );
   });
 
   group('download', () {
@@ -210,13 +315,11 @@ void main() {
 
       expect(
         () => fs.download(rootPath: tempDir.path, path: outside.path),
-        throwsA(isA<DaemonError>().
-            having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
       expect(
         () => fs.download(rootPath: tempDir.path, path: '.'),
-        throwsA(isA<DaemonError>()
-            .having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
     });
 
@@ -230,8 +333,7 @@ void main() {
 
       expect(
         () => fs.download(rootPath: tempDir.path, path: 'escape.bin'),
-        throwsA(isA<DaemonError>()
-            .having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
     });
 
@@ -262,13 +364,11 @@ void main() {
       );
       expect(
         () => fs.resolveInRoot(tempDir.path, '..'),
-        throwsA(isA<DaemonError>().
-            having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
       expect(
         () => fs.resolveInRoot(tempDir.path, '../../etc'),
-        throwsA(isA<DaemonError>().
-            having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
     });
   });
@@ -294,26 +394,23 @@ void main() {
 
       expect(
         () => fs.list(rootPath: tempDir.path, path: 'evil'),
-        throwsA(isA<DaemonError>()
-            .having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
         reason: 'listing a symlinked escape must be rejected',
       );
       expect(
         () => fs.read(rootPath: tempDir.path, path: 'evil/secret.txt'),
-        throwsA(isA<DaemonError>()
-            .having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
         reason: 'reading through a symlinked escape must be rejected',
       );
     });
 
     test('rejects a file symlink pointing outside the root', () {
-      Link(p.join(tempDir.path, 'leak.txt')).createSync(
-          p.join(outside.path, 'secret.txt'));
+      Link(p.join(tempDir.path, 'leak.txt'))
+          .createSync(p.join(outside.path, 'secret.txt'));
 
       expect(
         () => fs.read(rootPath: tempDir.path, path: 'leak.txt'),
-        throwsA(isA<DaemonError>()
-            .having((e) => e.code, 'code', -32602)),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
       );
     });
 
@@ -332,8 +429,10 @@ void main() {
       // Even a *missing* path under an in-root symlinked directory is fine
       // as long as the resolved real ancestor stays inside the root.
       Link(p.join(tempDir.path, 'inroot')).createSync(tempDir.path);
-      final resolved =
-          fs.resolveInRoot(tempDir.path, 'inroot/not-there-yet.txt');
+      final resolved = fs.resolveInRoot(
+        tempDir.path,
+        'inroot/not-there-yet.txt',
+      );
       expect(resolved, p.join(tempDir.path, 'inroot', 'not-there-yet.txt'));
     });
   });

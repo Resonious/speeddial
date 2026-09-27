@@ -3916,6 +3916,28 @@ void main() {
             }),
           ),
         );
+        final chunk = FileDownloadChunk.fromJson(
+          j(
+            await client.peer.call('fs.downloadChunk', <String, Object?>{
+              'sessionId': session.id,
+              'path': p.join(dir.path, 'bin.dat'),
+              'offset': 0,
+            }),
+          ),
+        );
+        expect(chunk.data, downloaded.data);
+        expect(chunk.size, downloaded.size);
+        expect(chunk.offset, 0);
+        for (final Map<String, Object?> params in <Map<String, Object?>>[
+          {'sessionId': session.id, 'path': '../outside', 'offset': 0},
+          {'sessionId': session.id, 'path': 'bin.dat', 'offset': '0'},
+          {'sessionId': session.id, 'path': 'bin.dat', 'offset': 1},
+        ]) {
+          await expectLater(
+            client.peer.call('fs.downloadChunk', params),
+            throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+          );
+        }
         expect(downloaded.name, 'bin.dat');
         expect(base64Decode(downloaded.data), <int>[
           0x89,

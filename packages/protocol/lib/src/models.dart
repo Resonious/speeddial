@@ -872,6 +872,38 @@ class FileDownload {
   };
 }
 
+/// A bounded part of a file returned by `fs.downloadChunk`.
+class FileDownloadChunk {
+  const FileDownloadChunk({
+    required this.name,
+    required this.size,
+    required this.offset,
+    required this.revision,
+    required this.data,
+  });
+  final String name;
+  final int size;
+  final int offset;
+  final String revision;
+  final String data;
+
+  factory FileDownloadChunk.fromJson(Map<String, Object?> json) =>
+      FileDownloadChunk(
+        name: json['name']! as String,
+        size: json['size']! as int,
+        offset: json['offset']! as int,
+        revision: json['revision']! as String,
+        data: json['data']! as String,
+      );
+  Map<String, Object?> toJson() => <String, Object?>{
+    'name': name,
+    'size': size,
+    'offset': offset,
+    'revision': revision,
+    'data': data,
+  };
+}
+
 /// One file's git state, as reported by `git status --porcelain=v2`.
 class GitStatusFile {
   const GitStatusFile({

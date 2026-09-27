@@ -242,6 +242,13 @@ abstract class DaemonClient {
   /// inside it.
   Future<FileDownload> downloadFile(String sessionId, String path);
 
+  Future<FileDownloadChunk> downloadFileChunk(
+    String sessionId,
+    String path, {
+    required int offset,
+    String? revision,
+  });
+
   // ---------------------------------------------------------------------
   // Git
   // ---------------------------------------------------------------------

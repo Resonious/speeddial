@@ -22,3 +22,8 @@ Future<DownloadedFileResult> openDownloadedFile(FileDownload download) async {
   }
   return platform.openDownloadedFile(download.name, bytes);
 }
+
+Future<DownloadedFileResult> openDownloadedStream(
+  String name,
+  Stream<Uint8List> bytes,
+) => platform.openDownloadedStream(name, bytes);

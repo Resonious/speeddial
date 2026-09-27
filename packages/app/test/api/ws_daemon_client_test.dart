@@ -221,6 +221,16 @@ class TestDaemonServer {
       }
       return <String, Object?>{'attachment': stored};
     });
+    peer.registerHandler('fs.downloadChunk', (Map<String, Object?> params) {
+      downloads.add(params);
+      return <String, Object?>{
+        'name': 'result.bin',
+        'size': 9,
+        'offset': params['offset'],
+        'revision': 'version',
+        'data': 'AAf/',
+      };
+    });
     peer.registerHandler('fs.download', (Map<String, Object?> params) {
       downloads.add(params);
       return <String, Object?>{'name': 'result.bin', 'size': 3, 'data': 'AAf/'};
@@ -700,6 +710,36 @@ void main() {
       );
     },
   );
+
+  test('downloadFileChunk sends offsets and revisions', () async {
+    final TestDaemonServer server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final WsDaemonClient client = WsDaemonClient(
+      url: server.url,
+      token: 'secret',
+    );
+    addTearDown(client.dispose);
+    await client.connect();
+    final chunk = await client.downloadFileChunk(
+      'sess-1',
+      '/demo/result.bin',
+      offset: 6,
+      revision: 'version',
+    );
+    expect(server.downloads.single, <String, Object?>{
+      'sessionId': 'sess-1',
+      'path': '/demo/result.bin',
+      'offset': 6,
+      'revision': 'version',
+    });
+    expect(chunk.toJson(), <String, Object?>{
+      'name': 'result.bin',
+      'size': 9,
+      'offset': 6,
+      'revision': 'version',
+      'data': 'AAf/',
+    });
+  });
 
   test('downloadFile sends the session path and decodes binary data', () async {
     final TestDaemonServer server = await TestDaemonServer.start();
