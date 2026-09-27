@@ -391,3 +391,14 @@ not expose files, git mutations, MCP, worktree, project, or daemon settings.
 Voice dictation, E2E-encrypted relay pairing, iOS/Android store packaging. UI must remain
 mobile-sized-layout correct (verified via narrow viewport), daemon must not assume
 loopback-only networking (token auth + bind flag).
+
+### Mobile incoming shares
+
+`ShareStore` consumes the `sh.speeddial/share` platform channel on Android and
+iOS. Both reuse floating attachments, composer staging, and project-specific
+session creation settings. iOS includes a native ShareExtension with a project
+picker and an App Group inbox; the app imports one file on launch/resume, then
+advances after attach/dismiss. The extension has no daemon credentials and does
+not send messages. Its immutable inbox entries are published atomically and
+consumed by a serial native worker. See `packages/app/README.md` for signing,
+limits, lifecycle behavior, and device validation.

@@ -77,8 +77,13 @@ Future<void> main(List<String> args) async {
   await data.settings.init();
   await data.drafts.init();
   await data.shares.init();
-  if (!demoMode && !kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-    await data.shares.startAndroid();
+  if (!demoMode &&
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    await data.shares.startMobile(
+      ios: defaultTargetPlatform == TargetPlatform.iOS,
+    );
     unawaited(_refreshShareCatalog(data));
   }
   runApp(SpeedDialApp(data: data, companionSync: companionSync));
@@ -145,6 +150,7 @@ class _SpeedDialAppState extends State<SpeedDialApp>
     // shutdown hook for the in-process daemon.
     if (state == AppLifecycleState.resumed) {
       widget.data.reconnectAll();
+      unawaited(widget.data.shares.resumeIOS());
     } else if (state == AppLifecycleState.detached) {
       unawaited(_flushDrafts());
       unawaited(widget.data.stopLocalDaemon());

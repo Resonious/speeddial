@@ -9,7 +9,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../scope.dart';
 import 'sessions_store.dart';
 
-/// Android's share payload is held in memory until the user stages or cancels
+/// A mobile share payload is held in memory until the user stages or cancels
 /// it. Only project labels and session creation settings go to preferences.
 class ShareStore extends ChangeNotifier {
   ShareStore(this.data);
@@ -29,6 +29,8 @@ class ShareStore extends ChangeNotifier {
   String? _error;
   bool _creating = false;
   bool _started = false;
+  bool _iosInbox = false;
+  bool _readingInbox = false;
   String _lastSaved = '';
   Future<bool>? _persisting;
 
@@ -69,9 +71,12 @@ class ShareStore extends ChangeNotifier {
       return;
     }
     staged.add(file);
-    if (identical(_pending, file)) _pending = null;
+    if (identical(_pending, file)) {
+      _pending = null;
+    }
     _error = null;
     notifyListeners();
+    unawaited(resumeIOS());
   }
 
   void removeStaged(
@@ -95,6 +100,7 @@ class ShareStore extends ChangeNotifier {
     _pending = null;
     _error = null;
     notifyListeners();
+    unawaited(resumeIOS());
   }
 
   Future<void> init() async {
@@ -129,14 +135,19 @@ class ShareStore extends ChangeNotifier {
     _syncSessions();
   }
 
-  Future<void> startAndroid() async {
+  Future<void> startMobile({bool ios = false}) async {
     if (_started) return;
     _started = true;
+    _iosInbox = ios;
     _channel.setMethodCallHandler((MethodCall call) async {
       if (call.method != 'incoming') return;
       await receive((call.arguments as Map).cast<String, Object?>());
     });
     await _publishTargets();
+    if (ios) {
+      await resumeIOS();
+      return;
+    }
     try {
       final Map<Object?, Object?>? initial = await _channel
           .invokeMapMethod<Object?, Object?>('takeInitial');
@@ -144,8 +155,42 @@ class ShareStore extends ChangeNotifier {
         await receive(initial.cast<String, Object?>());
       }
     } on MissingPluginException {
-      // Non-Android test or embedder.
+      // Test or unsupported embedder.
     }
+  }
+
+  /// Import one queued iOS share at a time so later shares cannot overwrite
+  /// the floating file. Called at launch, resume, attach, and dismiss.
+  Future<void> resumeIOS() async {
+    if (!_iosInbox ||
+        _readingInbox ||
+        _pending != null ||
+        _creating ||
+        _error != null ||
+        data.isDisposed) {
+      return;
+    }
+    _readingInbox = true;
+    bool received = false;
+    try {
+      final Map<Object?, Object?>? payload = await _channel
+          .invokeMapMethod<Object?, Object?>('takeInitial');
+      if (data.isDisposed) return;
+      if (payload != null) {
+        received = true;
+        await receive(payload.cast<String, Object?>());
+      }
+    } on MissingPluginException {
+      // Test or unsupported embedder.
+    } on PlatformException catch (error) {
+      if (!data.isDisposed) {
+        _error = 'Could not read shared file: ${error.message}';
+        notifyListeners();
+      }
+    } finally {
+      _readingInbox = false;
+    }
+    if (received && _pending == null) unawaited(resumeIOS());
   }
 
   Future<void> receive(Map<String, Object?> payload) async {
@@ -406,9 +451,9 @@ class ShareStore extends ChangeNotifier {
         ],
       });
     } on MissingPluginException {
-      // Non-Android test or embedder.
+      // Test or unsupported embedder.
     } on PlatformException catch (error) {
-      _error = 'Could not update Android share targets: ${error.message}';
+      _error = 'Could not update share targets: ${error.message}';
       notifyListeners();
     }
   }

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,6 +30,93 @@ void main() {
     await data.sessions.refresh('fake');
     return (data, fake);
   }
+
+  testWidgets(
+    'iOS imports one share at launch and advances after dismiss or attach',
+    (tester) async {
+      final (data, fake) = await setup();
+      final session = (await fake.listSessions()).first;
+      final queue = <Map<String, Object?>>[
+        {
+          'name': 'first.txt',
+          'data': base64Encode([1]),
+        },
+        {
+          'name': 'second.txt',
+          'data': base64Encode([2]),
+        },
+        {
+          'name': 'third.txt',
+          'data': base64Encode([3]),
+        },
+      ];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel(ShareStore.channelName);
+      int reads = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'takeInitial') {
+          reads++;
+          return queue.isEmpty ? null : queue.removeAt(0);
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      await data.shares.startMobile(ios: true);
+      expect(data.shares.pending?.name, 'first.txt');
+      await data.shares.resumeIOS();
+      expect(reads, 1);
+      data.shares.cancel();
+      await tester.pump();
+      expect(data.shares.pending?.name, 'second.txt');
+      data.shares.attachTo('fake', session.id);
+      await tester.pump();
+      expect(
+        data.shares.stagedFor('fake', session.id).single.name,
+        'second.txt',
+      );
+      expect(data.shares.pending?.name, 'third.txt');
+      data.shares.cancel();
+      await tester.pump();
+      queue.add({
+        'name': 'resumed.txt',
+        'data': base64Encode([4]),
+      });
+      await data.shares.resumeIOS();
+      expect(data.shares.pending?.name, 'resumed.txt');
+    },
+  );
+
+  testWidgets('iOS native failure is visible and can be dismissed to retry', (
+    tester,
+  ) async {
+    final (data, _) = await setup();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const channel = MethodChannel(ShareStore.channelName);
+    bool fail = true;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'takeInitial') return null;
+      if (fail) {
+        throw PlatformException(
+          code: 'share_read',
+          message: 'File unavailable',
+        );
+      }
+      return {
+        'name': 'recovered.txt',
+        'data': base64Encode([1]),
+      };
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await data.shares.startMobile(ios: true);
+    expect(data.shares.error, contains('File unavailable'));
+    fail = false;
+    data.shares.cancel();
+    await tester.pump();
+    expect(data.shares.pending?.name, 'recovered.txt');
+    expect(data.shares.error, isNull);
+  });
 
   testWidgets('generic share floats, can be dismissed or staged in a session', (
     WidgetTester tester,
