@@ -41,6 +41,9 @@ class _SessionBuffer {
   /// Composite key backing the store's maps ([_scopedKey]).
   final String key;
   final List<SessionEvent> events = <SessionEvent>[];
+  late final List<SessionEvent> eventView = UnmodifiableListView(events);
+  final Map<String, PermissionRequest> permissions =
+      <String, PermissionRequest>{};
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
   bool historyLoaded = false;
@@ -87,6 +90,7 @@ class _ChunkRun {
   /// other.
   final bool isMessage;
   final StringBuffer buffer;
+  bool dirty = true;
   final String? messageId;
 
   /// Seq/timestamp of the newest delta in the run; the merged event carries
@@ -180,6 +184,22 @@ class ChatStore extends StoreBase {
     if (buffer == null) return const <SessionEvent>[];
     _materializeChunkRun(buffer);
     return List<SessionEvent>.unmodifiable(buffer.events);
+  }
+
+  /// Read-only live view for synchronous UI projection. Unlike [eventsFor],
+  /// this does not copy the whole history on every streamed update. Do not
+  /// retain it as an immutable snapshot across store mutations.
+  List<SessionEvent> eventViewFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer == null) return const <SessionEvent>[];
+    _materializeChunkRun(buffer);
+    return buffer.eventView;
+  }
+
+  PermissionRequest? pendingPermissionFor(String sessionId) {
+    final _SessionBuffer? buffer = _bufferFor(sessionId);
+    if (buffer == null || buffer.permissions.isEmpty) return null;
+    return buffer.permissions.values.last;
   }
 
   /// Latest derived status; default idle for unknown sessions.
@@ -673,6 +693,7 @@ class ChatStore extends StoreBase {
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     buffer.events.clear();
+    buffer.permissions.clear();
     buffer.chunkRun = null;
     buffer.maxSeq = 0;
     buffer.oldestSeq = null;
@@ -725,6 +746,10 @@ class ChatStore extends StoreBase {
   void _prependHistoryPage(_SessionBuffer buffer, List<SessionEvent> page) {
     if (page.isEmpty) return;
     buffer.events.insertAll(0, page);
+    buffer.permissions.clear();
+    for (final SessionEvent event in buffer.events) {
+      _notePermission(buffer, event);
+    }
     _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + page.length;
     _scheduleNotify();
   }
@@ -733,6 +758,7 @@ class ChatStore extends StoreBase {
   /// one buffered event, and records any derived state it carries. Every
   /// call is a buffer mutation, so it bumps the session's revision.
   void _append(_SessionBuffer buffer, SessionEvent event) {
+    _notePermission(buffer, event);
     _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + 1;
 
     // A switch over the sealed type reaches the chunk getters via pattern
@@ -793,6 +819,7 @@ class ChatStore extends StoreBase {
         run.messageId == messageId) {
       // Same-kind run continues: accumulate in the scratch buffer only.
       run.buffer.write(text);
+      run.dirty = true;
       run.seq = seq;
       run.timestamp = timestamp;
       return;
@@ -816,7 +843,8 @@ class ChatStore extends StoreBase {
   /// more same-kind chunks can keep accumulating.
   void _materializeChunkRun(_SessionBuffer buffer) {
     final _ChunkRun? run = buffer.chunkRun;
-    if (run == null) return;
+    if (run == null || !run.dirty) return;
+    run.dirty = false;
     final List<SessionEvent> events = buffer.events;
     if (events.isEmpty) {
       buffer.chunkRun = null;
@@ -843,6 +871,18 @@ class ChatStore extends StoreBase {
     if (buffer.chunkRun == null) return;
     _materializeChunkRun(buffer);
     buffer.chunkRun = null;
+  }
+
+  void _notePermission(_SessionBuffer buffer, SessionEvent event) {
+    switch (event) {
+      case PermissionRequestEvent(:final request):
+        buffer.permissions.remove(request.requestId);
+        buffer.permissions[request.requestId] = request;
+      case PermissionResolvedEvent(:final requestId):
+        buffer.permissions.remove(requestId);
+      default:
+        break;
+    }
   }
 
   void _noteEvent(_SessionBuffer buffer, SessionEvent event) {

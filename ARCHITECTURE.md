@@ -232,6 +232,16 @@ errors, and shutdown signals with that worker; regular requests still use WebSoc
 JSON-RPC. Shutdown waits for daemon cleanup and worker exit, including when startup
 is still in progress. Synchronous daemon work must never run on the UI isolate.
 
+Chat and Wear timelines cache completed turns and rederive only the mutable tail.
+They read a read-only live event view instead of copying loaded history on each
+update; permission requests are tracked incrementally in `ChatStore`. Paging or
+refetching history invalidates the turn cache. Streamed Markdown refreshes at most
+every 100 ms and flushes the final text immediately when the turn stops. Code
+highlighting waits until streaming stops, runs in serialized background batches on
+native platforms, and uses a bounded shared cache. Large code blocks remain fully
+visible as plain text (8,000-character native / 2,000-character web highlight limit;
+32,000 characters per batch). Web highlighting uses the main thread.
+
 Package name `speeddial_app`. No third-party state management: plain `ChangeNotifier`
 stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context)`
 (lib/src/scope.dart) exposing the store graph. Deps: `web_socket_channel`,

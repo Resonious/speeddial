@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/chat_store.dart';
+import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
 import 'composer.dart';
 import 'downloaded_file_opener.dart';
@@ -126,9 +127,8 @@ class _ChatPaneState extends State<ChatPane> {
 }
 
 /// Renders the selected session's live surface. Stateful so the timeline
-/// derivation and the latest-permission scan are cached per (session,
-/// revision) instead of re-running over the whole event list on every chunk
-/// notification, and so send/cancel/setMode failures can surface a SnackBar.
+/// completed turns are cached while the live tail updates, and so
+/// send/cancel/setMode failures can surface a SnackBar.
 class _SessionSurface extends StatefulWidget {
   const _SessionSurface({
     super.key,
@@ -151,6 +151,9 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   /// Revision of the buffered events underlying [_items]/[_pending]. Starts
   /// at -1 so the first build always derives.
   int _revision = -1;
+  final TurnCache<TimelineItem> _timeline = TurnCache<TimelineItem>(
+    (events, running) => deriveTimelineItems(events, running: running),
+  );
 
   /// Session-running flag underlying [_items]; a turn start/stop can change
   /// the derived active-thought marker without adding events.
@@ -244,19 +247,19 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[chat, data.sessions]),
       builder: (BuildContext context, Widget? _) {
-        final List<SessionEvent> events = chat.eventsFor(sessionId);
+        final List<SessionEvent> events = chat.eventViewFor(sessionId);
         final SessionStatus status = chat.statusOf(sessionId);
         final bool running = status == SessionStatus.running;
         // ChatStore bumps a per-session counter on every buffer mutation,
         // so the cached derivation is skipped for rebuilds that carry no
         // new content (unrelated sessions' notifications, status/usage-only
-        // updates) instead of re-scanning the whole event list per chunk.
+        // updates). Completed turns are reused when new content arrives.
         final int revision = chat.revisionFor(sessionId);
         if (revision != _revision || running != _running) {
           _revision = revision;
           _running = running;
-          _items = deriveTimelineItems(events, running: running);
-          _pending = _resolveLatest(events);
+          _items = _timeline.update(events, running: running);
+          _pending = chat.pendingPermissionFor(sessionId);
         }
         final SessionMode mode = chat.modeOf(sessionId);
         final UsageInfo? usage = chat.usageOf(sessionId);
@@ -604,21 +607,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   Future<void> _showMessage(String text) async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-  }
-
-  static PermissionRequest? _resolveLatest(List<SessionEvent> events) {
-    final Set<String> resolved = <String>{};
-    for (int i = events.length - 1; i >= 0; i--) {
-      switch (events[i]) {
-        case PermissionRequestEvent e:
-          if (!resolved.contains(e.request.requestId)) return e.request;
-        case PermissionResolvedEvent e:
-          resolved.add(e.requestId);
-        default:
-          break;
-      }
-    }
-    return null;
   }
 }
 

@@ -6,6 +6,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
+import '../../state/turn_cache.dart';
 import '../chat/question_banner.dart';
 import 'wear_scaffold.dart';
 
@@ -30,6 +31,9 @@ class _WearChatPageState extends State<WearChatPage> {
   late final TextEditingController _composer;
   final FocusNode _composerFocus = FocusNode();
   int _revision = -1;
+  final TurnCache<_WearTimelineItem> _timeline = TurnCache<_WearTimelineItem>(
+    (events, _) => _deriveWearTimeline(events),
+  );
   List<_WearTimelineItem> _items = const <_WearTimelineItem>[];
   PermissionRequest? _permission;
   bool _sending = false;
@@ -123,12 +127,12 @@ class _WearChatPageState extends State<WearChatPage> {
       builder: (BuildContext context, Widget? _) {
         final Session? session = widget.data.sessions.byId(widget.sessionId);
         final SessionStatus status = chat.statusOf(widget.sessionId);
-        final List<SessionEvent> events = chat.eventsFor(widget.sessionId);
+        final List<SessionEvent> events = chat.eventViewFor(widget.sessionId);
         final int revision = chat.revisionFor(widget.sessionId);
         if (_revision != revision) {
           _revision = revision;
-          _items = _deriveWearTimeline(events);
-          _permission = _latestPermission(events);
+          _items = _timeline.update(events);
+          _permission = chat.pendingPermissionFor(widget.sessionId);
         }
         return WearScaffold(
           title: session?.title ?? 'Session',
@@ -273,21 +277,6 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
     }
   }
   return result;
-}
-
-PermissionRequest? _latestPermission(List<SessionEvent> events) {
-  final Set<String> resolved = <String>{};
-  for (int index = events.length - 1; index >= 0; index--) {
-    switch (events[index]) {
-      case PermissionRequestEvent(:final request):
-        if (!resolved.contains(request.requestId)) return request;
-      case PermissionResolvedEvent(:final requestId):
-        resolved.add(requestId);
-      default:
-        break;
-    }
-  }
-  return null;
 }
 
 class _WearTimeline extends StatefulWidget {

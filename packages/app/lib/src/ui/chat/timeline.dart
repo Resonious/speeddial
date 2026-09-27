@@ -40,7 +40,12 @@ class DisplayedImageItem extends TimelineItem {
 
 /// One logical agent message assembled from its identified chunks.
 class AgentMessageItem extends TimelineItem {
-  const AgentMessageItem({required this.text, this.forkSeq});
+  const AgentMessageItem({
+    required this.text,
+    this.forkSeq,
+    this.streaming = false,
+  });
+  final bool streaming;
   final String text;
 
   /// Last chunk sequence in this rendered agent message.
@@ -239,7 +244,9 @@ List<TimelineItem> deriveTimelineItems(
     final FoldedSessionEntry entry = folded[index];
     switch (entry) {
       case FoldedAgentMessage e:
-        items.add(AgentMessageItem(text: e.text, forkSeq: e.seq));
+        items.add(
+          AgentMessageItem(text: e.text, forkSeq: e.seq, streaming: running),
+        );
       case FoldedAgentThought e:
         items.add(
           AgentThoughtItem(
@@ -538,7 +545,11 @@ class _TimelineRow extends StatelessWidget {
         text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
-        child: AgentMessageView(text: i.text, openLocalFile: openLocalFile),
+        child: AgentMessageView(
+          text: i.text,
+          streaming: i.streaming,
+          openLocalFile: openLocalFile,
+        ),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(

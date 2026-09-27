@@ -2,11 +2,69 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 
 void main() {
+  testWidgets(
+    'streaming batches Markdown updates and completion flushes immediately',
+    (tester) async {
+      Future<void> show(String text, {bool streaming = true}) =>
+          tester.pumpWidget(
+            MaterialApp(
+              theme: buildSpeedDialTheme(),
+              home: Scaffold(
+                body: AgentMessageView(text: text, streaming: streaming),
+              ),
+            ),
+          );
+      String rendered() =>
+          tester.widget<MarkdownBody>(find.byType(MarkdownBody)).data;
+      await show('a');
+      await show('ab');
+      expect(rendered(), 'a');
+      await tester.pump(const Duration(milliseconds: 50));
+      await show('abc');
+      expect(rendered(), 'a');
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(rendered(), 'abc');
+      await show('replacement');
+      expect(rendered(), 'replacement');
+      await show('abcd');
+      await show('final **answer**', streaming: false);
+      expect(rendered(), 'final **answer**');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'streaming pauses do not trigger highlighting or remount Markdown',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: AgentMessageView(
+              text: '```dart\nvoid main() {}\n```',
+              streaming: true,
+            ),
+          ),
+        ),
+      );
+      final Element body = tester.element(find.byType(MarkdownBody));
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+        identical(body, tester.element(find.byType(MarkdownBody))),
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('drag selection crosses inline code and list items', (
     WidgetTester tester,
   ) async {

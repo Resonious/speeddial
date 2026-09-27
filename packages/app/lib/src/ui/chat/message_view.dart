@@ -7,34 +7,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
-import 'package:syntax_highlight/syntax_highlight.dart';
 
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
-
-/// Grammars bundled with syntax_highlight 0.4.x; requested via
-/// [Highlighter.initialize] and matched by [detectCodeLanguage].
-const List<String> _supportedGrammars = <String>['dart', 'json', 'sql', 'yaml'];
-
-Future<bool>? _highlighterInit;
-HighlighterTheme? _highlighterTheme;
-
-/// One-time async grammar/theme load, shared by every message view. Returns
-/// true when highlighting is usable; never throws.
-Future<bool> _ensureHighlighter() {
-  return _highlighterInit ??= _load();
-}
-
-Future<bool> _load() async {
-  try {
-    await Highlighter.initialize(_supportedGrammars);
-    _highlighterTheme = await HighlighterTheme.loadDarkTheme();
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
+import 'message_highlighter.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
 /// grammars bundled with syntax_highlight. Returns null for anything
@@ -365,18 +342,22 @@ String? localFilePathFromHref(String href) {
 ///
 /// While text is still streaming (chunk deltas arriving), code blocks render
 /// as plain monospace; once the text has been stable for
-/// [settleDelay], each block is highlighted once (via [Highlighter]) and the
-/// resulting [TextSpan] cached in this State, keyed by the exact code text.
+/// [settleDelay] after streaming ends, bounded code blocks are highlighted
+/// off the UI isolate on native platforms and cached across message views.
 class AgentMessageView extends StatefulWidget {
   const AgentMessageView({
     super.key,
     required this.text,
+    this.streaming = false,
     this.launchExternal = _launchExternal,
     this.openLocalFile,
   });
 
   /// Combined (chunk-merged) markdown body text.
   final String text;
+
+  /// Whether the containing turn is still producing output.
+  final bool streaming;
 
   /// Opens an external URI when a markdown link is activated.
   ///
@@ -388,6 +369,8 @@ class AgentMessageView extends StatefulWidget {
   final Future<void> Function(String path)? openLocalFile;
 
   /// How long the text must stop changing before highlighting kicks in.
+  static const Duration streamRenderInterval = Duration(milliseconds: 100);
+
   static const Duration settleDelay = Duration(milliseconds: 300);
 
   @override
@@ -396,19 +379,20 @@ class AgentMessageView extends StatefulWidget {
 
 class _AgentMessageViewState extends State<AgentMessageView> {
   final Map<String, TextSpan> _highlightCache = <String, TextSpan>{};
-  final Map<String, String?> _languageCache = <String, String?>{};
+  final Set<String> _codeBlocks = <String>{};
+  late String _renderedText;
+  Timer? _renderTimer;
+  int _highlightRevision = 0;
   final _MessageSelectionDelegate _selectionDelegate =
       _MessageSelectionDelegate();
   late final Map<String, MarkdownElementBuilder> _elementBuilders;
 
   Timer? _settleTimer;
-  bool _settled = false;
-  bool _highlighterReady = false;
-  bool _initStarted = false;
 
   @override
   void initState() {
     super.initState();
+    _renderedText = widget.text;
     _elementBuilders = <String, MarkdownElementBuilder>{
       'a': _LinkElementBuilder(onActivate: _activateLink),
     };
@@ -418,7 +402,20 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   @override
   void didUpdateWidget(AgentMessageView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) {
+    if (oldWidget.text != widget.text ||
+        oldWidget.streaming != widget.streaming) {
+      if (!widget.streaming ||
+          !oldWidget.streaming ||
+          !widget.text.startsWith(oldWidget.text)) {
+        _renderTimer?.cancel();
+        _renderTimer = null;
+        _setRenderedText();
+      } else if (_renderedText != widget.text) {
+        _renderTimer ??= Timer(AgentMessageView.streamRenderInterval, () {
+          _renderTimer = null;
+          if (mounted) setState(_setRenderedText);
+        });
+      }
       _restartSettleTimer();
     }
   }
@@ -426,56 +423,59 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   @override
   void dispose() {
     _settleTimer?.cancel();
+    _renderTimer?.cancel();
     _selectionDelegate.dispose();
     super.dispose();
   }
 
+  void _setRenderedText() {
+    if (_renderedText == widget.text) return;
+    _renderedText = widget.text;
+    _codeBlocks.clear();
+    _highlightCache.clear();
+  }
+
   void _restartSettleTimer() {
     _settleTimer?.cancel();
-    _settled = false;
-    _settleTimer = Timer(AgentMessageView.settleDelay, _onSettled);
+    if (widget.streaming) return;
+    _settleTimer = Timer(AgentMessageView.settleDelay, _highlight);
   }
 
-  void _onSettled() {
-    _settled = true;
-    _kickHighlighter();
-    if (mounted) setState(() {});
-  }
-
-  void _kickHighlighter() {
-    if (_initStarted) return;
-    _initStarted = true;
-    unawaited(
-      _ensureHighlighter().then((bool ready) {
-        if (!mounted) return;
-        _highlighterReady = ready;
-        // Re-parse the body so code blocks pick up the fresh highlighter.
-        setState(() {});
-      }),
-    );
-  }
-
-  /// Cached highlighted span for [code], or null while the block must stay
-  /// plain (still streaming, or no usable grammar).
-  TextSpan? _spanFor(String code) {
-    final TextSpan? cached = _highlightCache[code];
-    if (cached != null) return cached;
-    if (!_settled || !_highlighterReady) return null;
-    final String? language = _languageCache.putIfAbsent(
-      code,
-      () => detectCodeLanguage(code),
-    );
-    if (language == null) return null;
-    try {
-      final TextSpan span = Highlighter(
-        language: language,
-        theme: _highlighterTheme!,
-      ).highlight(code);
-      _highlightCache[code] = span;
-      return span;
-    } catch (_) {
-      return null;
+  Future<void> _highlight() async {
+    final String text = _renderedText;
+    final Map<String, String> languages = <String, String>{};
+    for (final String code in _codeBlocks) {
+      if (code.length > MessageHighlighter.maxBlockLength) continue;
+      final String? language = detectCodeLanguage(code);
+      if (language != null) languages[code] = language;
     }
+    if (languages.isEmpty) return;
+    try {
+      final Map<String, TextSpan> spans = await MessageHighlighter.instance
+          .highlight(
+            languages,
+            isCurrent: () =>
+                mounted && !widget.streaming && widget.text == text,
+          );
+      if (!mounted ||
+          widget.streaming ||
+          widget.text != text ||
+          spans.isEmpty) {
+        return;
+      }
+      setState(() {
+        _highlightCache.addAll(spans);
+        _highlightRevision++;
+      });
+    } on Object {
+      // Highlighting is optional; the full selectable code stays visible.
+    }
+  }
+
+  /// Markdown's synchronous hook only collects blocks and reads cached spans.
+  TextSpan? _spanFor(String code) {
+    _codeBlocks.add(code);
+    return _highlightCache[code];
   }
 
   void _activateLink(String href) {
@@ -524,11 +524,9 @@ class _AgentMessageViewState extends State<AgentMessageView> {
         child: SelectionContainer(
           delegate: _selectionDelegate,
           child: MarkdownBody(
-            // Bump the key when highlight availability changes so the body
-            // re-parses and re-runs the (cached) highlighter; data changes
-            // re-parse natively.
-            key: ValueKey<String>('agent-message-$_settled-$_highlighterReady'),
-            data: widget.text,
+            // Reparse once when an asynchronous highlight batch is ready.
+            key: ValueKey<int>(_highlightRevision),
+            data: _renderedText,
             styleSheet: _styleSheetFor(context, bodyStyle),
             syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
             builders: _elementBuilders,
@@ -691,11 +689,7 @@ class _MarkdownLink extends StatelessWidget {
   }
 }
 
-/// Bridges this State into flutter_markdown_plus's `pre` hook. Created fresh
-/// per build; [format] consults the State's settle flag + span cache. A new
-/// instance per build alone does not re-parse (the body keys off data), so
-/// [AgentMessageViewState] bumps the MarkdownBody key when settle/ready
-/// flips.
+/// Markdown's code hook never performs tokenization during build.
 class _CachingSyntaxHighlighter implements SyntaxHighlighter {
   _CachingSyntaxHighlighter(this._state, this._plain);
 

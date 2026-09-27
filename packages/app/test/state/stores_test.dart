@@ -641,6 +641,43 @@ void main() {
       },
     );
 
+    test(
+      'live event view reuses storage and permission paging stays resolved',
+      () async {
+        const PermissionRequest old = PermissionRequest(
+          requestId: 'old',
+          toolCallId: null,
+          title: 'Old request',
+          options: <PermissionOption>[],
+        );
+        const PermissionRequest pending = PermissionRequest(
+          requestId: 'pending',
+          toolCallId: null,
+          title: 'Pending request',
+          options: <PermissionOption>[],
+        );
+        fake.seedHistory('sess-1', <SessionEvent>[
+          const PermissionRequestEvent(request: old),
+          for (int i = 0; i < 501; i++) UserMessageEvent(text: 'message $i'),
+          const PermissionResolvedEvent(requestId: 'old', optionId: 'allow'),
+          const PermissionRequestEvent(request: pending),
+        ]);
+        app.chat.watchSession('fake', 'sess-1');
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
+        final List<SessionEvent> view = app.chat.eventViewFor('sess-1');
+        final List<SessionEvent> snapshot = app.chat.eventsFor('sess-1');
+        expect(identical(view, app.chat.eventViewFor('sess-1')), isTrue);
+        expect(() => view.clear(), throwsUnsupportedError);
+        expect(app.chat.pendingPermissionFor('sess-1')?.requestId, 'pending');
+        await app.chat.loadOlderHistory('fake', 'sess-1');
+        expect(view.length, 504);
+        expect(snapshot.length, 500);
+        expect(app.chat.pendingPermissionFor('sess-1')?.requestId, 'pending');
+      },
+    );
+
     test('permission flow via the store parks then resolves', () async {
       final String sessionId = (await fake.listSessions()).first.id;
       app.chat.watchSession('fake', sessionId);
@@ -653,6 +690,7 @@ void main() {
       );
 
       expect(app.chat.statusOf(sessionId), SessionStatus.waitingPermission);
+      expect(app.chat.pendingPermissionFor(sessionId), isNotNull);
       expect(
         app.chat
             .eventsFor(sessionId)
@@ -678,6 +716,7 @@ void main() {
             .any((SessionEvent e) => e is TurnCompleteEvent),
       );
       expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+      expect(app.chat.pendingPermissionFor(sessionId), isNull);
       expect(
         app.chat
             .eventsFor(sessionId)
