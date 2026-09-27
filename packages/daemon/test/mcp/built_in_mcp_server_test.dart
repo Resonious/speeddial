@@ -263,7 +263,7 @@ void main() {
     });
   });
 
-  test('display_image reads a confined file and returns MCP image content', () async {
+  test('display_image reads a session-relative file and returns MCP image content', () async {
     const String png =
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     final File image = File(p.join(tempDir.path, 'pixel.png'))
@@ -289,30 +289,51 @@ void main() {
     expect(calls.single.params['data'], png);
   });
 
-  test('display_image rejects paths outside the session cwd', () async {
-    final Directory cwd = Directory(p.join(tempDir.path, 'cwd'))..createSync();
-    final File outside = File(p.join(tempDir.path, 'outside.png'))
-      ..writeAsBytesSync(const <int>[1, 2, 3]);
-    server = BuiltInMcpServer(
-      sessionId: 'current-session',
-      cwd: cwd.path,
-      daemonCall: (String method, Map<String, Object?> params) async =>
-          <String, Object?>{},
-    );
+  for (final String pathKind in <String>['absolute', 'relative', 'symlink']) {
+    test(
+      'display_image accepts $pathKind paths outside the session cwd',
+      () async {
+        final Directory cwd = Directory(p.join(tempDir.path, 'cwd'))
+          ..createSync();
+        final File outside = File(p.join(tempDir.path, 'outside.png'))
+          ..writeAsBytesSync(const <int>[1, 2, 3]);
+        final String imagePath;
+        if (pathKind == 'symlink') {
+          final Link link = Link(p.join(cwd.path, 'linked.png'))
+            ..createSync(outside.path);
+          imagePath = p.basename(link.path);
+        } else {
+          imagePath = pathKind == 'absolute'
+              ? outside.path
+              : p.relative(outside.path, from: cwd.path);
+        }
+        server = BuiltInMcpServer(
+          sessionId: 'current-session',
+          cwd: cwd.path,
+          daemonCall: (String method, Map<String, Object?> params) async {
+            calls.add((method: method, params: params));
+            return <String, Object?>{};
+          },
+        );
 
-    final Map<String, Object?> response = await request(
-      1,
-      'tools/call',
-      <String, Object?>{
-        'name': 'display_image',
-        'arguments': <String, Object?>{'path': outside.path},
+        final Map<String, Object?> response = await request(
+          1,
+          'tools/call',
+          <String, Object?>{
+            'name': 'display_image',
+            'arguments': <String, Object?>{'path': imagePath},
+          },
+        );
+        final result = (response['result'] as Map).cast<String, Object?>();
+        expect(result['isError'], isFalse);
+        final content = (result['content'] as List<Object?>)
+            .cast<Map<String, Object?>>();
+        expect(content.first['type'], 'image');
+        expect(content.first['data'], 'AQID');
+        expect(content.first['mimeType'], 'image/png');
+        expect(calls.single.method, 'internal.mcpDisplayImage');
+        expect(calls.single.params['data'], 'AQID');
       },
     );
-    final result = (response['result'] as Map).cast<String, Object?>();
-    expect(result['isError'], isTrue);
-    expect(
-      jsonEncode(result),
-      contains('escapes the session working directory'),
-    );
-  });
+  }
 }

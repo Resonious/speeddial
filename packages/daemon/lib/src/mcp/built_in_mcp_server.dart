@@ -321,7 +321,7 @@ class BuiltInMcpServer {
     final String name;
     final String mimeType;
     if (path != null) {
-      final File file = _confinedFile(path);
+      final File file = _imageFile(path);
       final List<int> bytes = file.readAsBytesSync();
       if (bytes.length > kMaxAttachmentBytes) {
         throw ArgumentError('image exceeds $kMaxAttachmentBytes bytes');
@@ -374,7 +374,7 @@ class BuiltInMcpServer {
     };
   }
 
-  File _confinedFile(String requestedPath) {
+  File _imageFile(String requestedPath) {
     final String candidate = p.isAbsolute(requestedPath)
         ? p.normalize(requestedPath)
         : p.normalize(p.join(_cwd, requestedPath));
@@ -382,15 +382,7 @@ class BuiltInMcpServer {
     if (!file.existsSync()) {
       throw ArgumentError('image file not found: $requestedPath');
     }
-    final String realRoot = Directory(_cwd).resolveSymbolicLinksSync();
-    final String realFile = file.resolveSymbolicLinksSync();
-    final String prefix = realRoot.endsWith(p.separator)
-        ? realRoot
-        : '$realRoot${p.separator}';
-    if (realFile != realRoot && !realFile.startsWith(prefix)) {
-      throw ArgumentError('image path escapes the session working directory');
-    }
-    return File(realFile);
+    return file;
   }
 
   static String? _optionalString(Map<String, Object?> arguments, String name) {
@@ -547,14 +539,13 @@ class BuiltInMcpServer {
     <String, Object?>{
       'name': 'display_image',
       'title': 'Display an image',
-      'description': 'Display an image in the user\'s SpeedDial timeline and return it to the model. Provide a session-relative path or base64 data.',
+      'description': 'Display an image in the user\'s SpeedDial timeline and return it to the model. Provide an absolute or session-relative path, or base64 data.',
       'inputSchema': <String, Object?>{
         'type': 'object',
         'properties': <String, Object?>{
           'path': <String, Object?>{
             'type': 'string',
-            'description':
-                'Image path inside the current session working directory.',
+            'description': 'Image path on the daemon host. Relative paths resolve from the current session working directory.',
           },
           'data': <String, Object?>{
             'type': 'string',

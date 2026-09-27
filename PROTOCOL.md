@@ -652,9 +652,10 @@ home described above. It exposes:
 - `unarchive_session {sessionId: string}` — revives an archived session so it returns to default
   session lists and `search_sessions`; the calling session cannot unarchive itself.
 - `display_image {path?: string, data?: string, mimeType?: string, name?: string}` — requires
-  exactly one of a path confined to the session cwd or a base64 payload. The decoded image is capped
-  at 8 MiB, persisted as an attachment, and emitted as an `image` event; clients fetch it through
-  `attachments.read`. The MCP result also includes MCP image content for the model.
+  exactly one of a filesystem path on the daemon host or a base64 payload. Absolute paths and
+  symlinks may point anywhere; relative paths resolve from the session cwd, including `..`.
+  The decoded image is capped at 8 MiB, persisted as an attachment, and emitted as an `image`
+  event; clients fetch it through `attachments.read`. The MCP result also includes MCP image content for the model.
 
 The subprocess connects to `/ws` over loopback and must first call
 `internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret and the
