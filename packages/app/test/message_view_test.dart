@@ -1,5 +1,8 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -8,6 +11,70 @@ import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 
 void main() {
+  testWidgets('code block selection has a visible highlight', (
+    WidgetTester tester,
+  ) async {
+    SelectedContent? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: SelectionArea(
+            onSelectionChanged: (SelectedContent? value) => selected = value,
+            child: const RepaintBoundary(
+              key: Key('code-selection'),
+              child: AgentMessageView(text: '```\nalpha beta gamma\n```'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump();
+
+    final Finder code = find.textContaining('alpha beta', findRichText: true);
+    final Finder boundaryFinder = find.byKey(const Key('code-selection'));
+    final RenderRepaintBoundary boundary = tester.renderObject(boundaryFinder);
+    final Rect codeRect = tester
+        .getRect(code.first)
+        .shift(-tester.getTopLeft(boundaryFinder));
+    Future<Uint8List> pixels() async {
+      final ui.Image image = await boundary.toImage();
+      final ByteData data = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      image.dispose();
+      return data.buffer.asUint8List();
+    }
+
+    final Uint8List before = (await tester.runAsync(pixels))!;
+    final Offset start = tester.getTopLeft(code.first) + const Offset(4, 10);
+    final TestGesture gesture = await tester.startGesture(
+      start,
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveTo(start + const Offset(90, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+    expect(selected?.plainText, contains('alpha'));
+
+    final Uint8List after = (await tester.runAsync(pixels))!;
+    final int width = boundary.size.width.toInt();
+    int changedTextPixels = 0;
+    for (int y = codeRect.top.ceil(); y < codeRect.bottom.floor(); y++) {
+      for (int x = codeRect.left.ceil(); x < codeRect.right.floor(); x++) {
+        final int blue = (y * width + x) * 4 + 2;
+        if (before[blue] > 150 &&
+            (after[blue - 2] - before[blue - 2]).abs() > 20) {
+          changedTextPixels++;
+        }
+      }
+    }
+    // A selection painted only behind the glyphs leaves these pixels unchanged.
+    expect(changedTextPixels, greaterThan(100));
+  });
+
   testWidgets(
     'streaming batches Markdown updates and completion flushes immediately',
     (tester) async {
@@ -100,11 +167,33 @@ void main() {
       MaterialApp(
         theme: buildSpeedDialTheme(),
         home: const Scaffold(
-          body: SelectionArea(child: AgentMessageView(text: message)),
+          body: SelectionArea(
+            child: RepaintBoundary(
+              key: Key('cross-selection'),
+              child: AgentMessageView(text: message),
+            ),
+          ),
         ),
       ),
     );
+    await tester.pump(const Duration(milliseconds: 500));
     await tester.pump();
+
+    final Finder boundaryFinder = find.byKey(const Key('cross-selection'));
+    final RenderRepaintBoundary boundary = tester.renderObject(boundaryFinder);
+    Future<Uint8List> pixels() async {
+      final ui.Image image = await boundary.toImage();
+      final ByteData data = (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!;
+      image.dispose();
+      return data.buffer.asUint8List();
+    }
+
+    final Rect codeRect = tester
+        .getRect(find.textContaining('void main()', findRichText: true).first)
+        .shift(-tester.getTopLeft(boundaryFinder));
+    final Uint8List before = (await tester.runAsync(pixels))!;
 
     final Offset start =
         tester.getTopLeft(
@@ -124,6 +213,20 @@ void main() {
     }
     await gesture.up();
     await tester.pump();
+
+    final Uint8List after = (await tester.runAsync(pixels))!;
+    final int width = boundary.size.width.toInt();
+    int changedTextPixels = 0;
+    for (int y = codeRect.top.ceil(); y < codeRect.bottom.floor(); y++) {
+      for (int x = codeRect.left.ceil(); x < codeRect.right.floor(); x++) {
+        final int blue = (y * width + x) * 4 + 2;
+        if (before[blue] > 150 &&
+            (after[blue - 2] - before[blue - 2]).abs() > 20) {
+          changedTextPixels++;
+        }
+      }
+    }
+    expect(changedTextPixels, greaterThan(100));
 
     final BuildContext context = tester.element(
       find.textContaining('Start of message', findRichText: true).first,
