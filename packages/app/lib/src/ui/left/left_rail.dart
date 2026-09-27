@@ -3,8 +3,8 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/projects_store.dart';
-import '../../state/sessions_store.dart';
 import '../connection_status_indicator.dart';
+import 'inbox_tab.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
 import 'session_search_dialog.dart';
@@ -13,11 +13,46 @@ import '../settings/embedded_daemon_page.dart';
 import '../settings/harnesses_page.dart';
 import '../settings/mcp_settings_page.dart';
 
-/// Daemon rail: configured endpoints, then the project/session tree of the
-/// selected daemon, plus an "Add daemon" action. Rendered inside the
-/// wide-layout rail slot or a drawer on narrow screens.
+/// Sessions and Inbox tabs inside the wide-layout rail or narrow drawer.
 class LeftRail extends StatelessWidget {
   const LeftRail({super.key, this.onSessionCreated});
+
+  final VoidCallback? onSessionCreated;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: scheme.surfaceContainer,
+      child: DefaultTabController(
+        length: 2,
+        child: Column(
+          children: <Widget>[
+            const TabBar(
+              tabs: <Widget>[
+                Tab(key: Key('rail-tab-sessions'), text: 'Sessions'),
+                Tab(key: Key('rail-tab-inbox'), text: 'Inbox'),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                children: <Widget>[
+                  _SessionsTab(onSessionCreated: onSessionCreated),
+                  InboxTab(onSessionCreated: onSessionCreated),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Configured daemons and the selected daemon's project/session hierarchy.
+class _SessionsTab extends StatelessWidget {
+  const _SessionsTab({this.onSessionCreated});
 
   final VoidCallback? onSessionCreated;
 
@@ -26,98 +61,93 @@ class LeftRail extends StatelessWidget {
     final AppData data = AppScope.of(context);
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    return Material(
-      color: scheme.surfaceContainer,
-      child: ListenableBuilder(
-        listenable: Listenable.merge(<Listenable>[
-          data.connections,
-          data.selection,
-        ]),
-        builder: (BuildContext context, Widget? _) {
-          final List<DaemonEndpoint> endpoints = data.connections.endpoints;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        'Daemons',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: scheme.onSurfaceVariant),
-                      ),
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[
+        data.connections,
+        data.selection,
+      ]),
+      builder: (BuildContext context, Widget? _) {
+        final List<DaemonEndpoint> endpoints = data.connections.endpoints;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 8),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      'Daemons',
+                      style: Theme.of(context).textTheme.labelMedium
+                          ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
-                    // Embedded in-process daemon settings (desktop). Lives
-                    // here, not on the endpoint tile, so it stays reachable
-                    // even when the daemon failed to start at boot.
-                    if (data.localDaemon != null)
-                      IconButton(
-                        key: const Key('embedded-daemon-settings'),
-                        tooltip: 'Built-in daemon settings',
-                        icon: const Icon(Icons.settings_outlined, size: 18),
-                        onPressed: () => _showEmbeddedSettings(context),
-                      ),
-                  ],
-                ),
+                  ),
+                  // Embedded in-process daemon settings (desktop). Lives
+                  // here, not on the endpoint tile, so it stays reachable
+                  // even when the daemon failed to start at boot.
+                  if (data.localDaemon != null)
+                    IconButton(
+                      key: const Key('embedded-daemon-settings'),
+                      tooltip: 'Built-in daemon settings',
+                      icon: const Icon(Icons.settings_outlined, size: 18),
+                      onPressed: () => _showEmbeddedSettings(context),
+                    ),
+                ],
               ),
-              if (endpoints.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Text(
-                    'No daemons yet',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                )
-              else
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 232),
-                  child: ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    shrinkWrap: true,
-                    itemCount: endpoints.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      final DaemonEndpoint endpoint = endpoints[index];
-                      return _EndpointTile(
-                        endpoint: endpoint,
-                        status: data.connections.statusOf(endpoint.id),
-                        selected:
-                            data.selection.selectedDaemonId == endpoint.id,
-                        onTap: () => _selectDaemon(context, endpoint),
-                        onRetry: () => data.reconnect(endpoint.id),
-                        onMcpServers: () => _showMcpServers(context, endpoint),
-                        onHarnesses: () => _showHarnesses(context, endpoint),
-                        onEnvironment: () =>
-                            _showEnvironment(context, endpoint),
-                        onEdit: () => _showDaemonDialog(context, endpoint),
-                        onRemove: () => _removeDaemon(context, endpoint),
-                      );
-                    },
-                  ),
-                ),
-              const Divider(height: 1),
-              Expanded(child: _ProjectTree(onSessionCreated: onSessionCreated)),
+            ),
+            if (endpoints.isEmpty)
               Padding(
-                // Keep the button above the system navigation area on
-                // edge-to-edge Android; the rail surface extends behind it.
-                padding: EdgeInsets.fromLTRB(
-                  12,
-                  12,
-                  12,
-                  12 + MediaQuery.viewPaddingOf(context).bottom,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(
+                  'No daemons yet',
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: scheme.onSurfaceVariant),
                 ),
-                child: OutlinedButton.icon(
-                  onPressed: () => _showAddDaemonDialog(context),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add daemon'),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 232),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  shrinkWrap: true,
+                  itemCount: endpoints.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    final DaemonEndpoint endpoint = endpoints[index];
+                    return _EndpointTile(
+                      endpoint: endpoint,
+                      status: data.connections.statusOf(endpoint.id),
+                      selected: data.selection.selectedDaemonId == endpoint.id,
+                      onTap: () => _selectDaemon(context, endpoint),
+                      onRetry: () => data.reconnect(endpoint.id),
+                      onMcpServers: () => _showMcpServers(context, endpoint),
+                      onHarnesses: () => _showHarnesses(context, endpoint),
+                      onEnvironment: () => _showEnvironment(context, endpoint),
+                      onEdit: () => _showDaemonDialog(context, endpoint),
+                      onRemove: () => _removeDaemon(context, endpoint),
+                    );
+                  },
                 ),
               ),
-            ],
-          );
-        },
-      ),
+            const Divider(height: 1),
+            Expanded(child: _ProjectTree(onSessionCreated: onSessionCreated)),
+            Padding(
+              // Keep the button above the system navigation area on
+              // edge-to-edge Android; the rail surface extends behind it.
+              padding: EdgeInsets.fromLTRB(
+                12,
+                12,
+                12,
+                12 + MediaQuery.viewPaddingOf(context).bottom,
+              ),
+              child: OutlinedButton.icon(
+                onPressed: () => _showAddDaemonDialog(context),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add daemon'),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -129,9 +159,7 @@ class LeftRail extends StatelessWidget {
     DaemonEndpoint endpoint,
   ) async {
     final AppData data = AppScope.of(context);
-    data.selection.selectedDaemonId = endpoint.id;
-    data.selection.selectedProjectId = null;
-    data.selection.selectedSessionId = null;
+    data.selection.selectDaemon(endpoint.id);
     try {
       await data.projects.refresh(endpoint.id);
       await data.sessions.refresh(endpoint.id);
@@ -278,7 +306,6 @@ class _ProjectTree extends StatelessWidget {
         data.selection,
         data.projects,
         data.sessions,
-        data.settings,
       ]),
       builder: (BuildContext context, Widget? _) {
         final String? daemonId = data.selection.selectedDaemonId;
@@ -294,7 +321,6 @@ class _ProjectTree extends StatelessWidget {
         }
 
         final List<Project> projects = data.projects.projectsFor(daemonId);
-        final bool grouped = data.settings.groupSessionsByProject;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -304,7 +330,7 @@ class _ProjectTree extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: Text(
-                      grouped ? 'Projects' : 'Sessions',
+                      'Projects',
                       style: textTheme.labelMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -317,21 +343,6 @@ class _ProjectTree extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                     onPressed: () =>
                         _showSessionSearch(context, data, daemonId),
-                  ),
-                  IconButton(
-                    key: const Key('toggle-session-grouping'),
-                    tooltip: grouped
-                        ? 'Show all sessions by activity'
-                        : 'Group sessions by project',
-                    icon: Icon(
-                      grouped
-                          ? Icons.format_list_bulleted
-                          : Icons.account_tree_outlined,
-                      size: 18,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () =>
-                        _setSessionGrouping(context, data, grouped: !grouped),
                   ),
                   IconButton(
                     key: const Key('add-project'),
@@ -377,28 +388,14 @@ class _ProjectTree extends StatelessWidget {
                 child: ListView(
                   padding: const EdgeInsets.only(bottom: 8),
                   children: <Widget>[
-                    if (grouped)
-                      for (final Project project in projects)
-                        _ProjectTile(
-                          key: ValueKey<String>('project-${project.id}'),
-                          project: project,
-                          daemonId: daemonId,
-                          onSessionCreated: onSessionCreated,
-                        )
-                    else
-                      SessionList(
-                        sessions: <Session>[
-                          for (final RecentSession recent
-                              in data.sessions.recentSessions(
-                                daemonIds: <String>{daemonId},
-                              ))
-                            recent.session,
-                        ],
+                    for (final Project project in projects)
+                      _ProjectTile(
+                        key: ValueKey<String>(
+                          'project-$daemonId-${project.id}',
+                        ),
+                        project: project,
                         daemonId: daemonId,
-                        projectNames: <String, String>{
-                          for (final Project project in projects)
-                            project.id: project.name,
-                        },
+                        onSessionCreated: onSessionCreated,
                       ),
                   ],
                 ),
@@ -429,28 +426,13 @@ class _ProjectTree extends StatelessWidget {
     );
     if (result == null || !context.mounted) return;
     data.sessions.rememberSearchResult(daemonId, result.session);
-    data.selection.selectedDaemonId = daemonId;
-    data.selection.selectedProjectId = result.session.projectId;
-    data.selection.selectedSessionId = result.session.id;
+    data.selection.selectSession(
+      daemonId: daemonId,
+      projectId: result.session.projectId,
+      sessionId: result.session.id,
+    );
     final ScaffoldState? scaffold = Scaffold.maybeOf(context);
     if (scaffold != null && scaffold.isDrawerOpen) scaffold.closeDrawer();
-  }
-
-  Future<void> _setSessionGrouping(
-    BuildContext context,
-    AppData data, {
-    required bool grouped,
-  }) async {
-    try {
-      await data.settings.setGroupSessionsByProject(grouped);
-    } on Object {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('Could not save session view')),
-        );
-    }
   }
 }
 
@@ -592,10 +574,13 @@ class _ProjectTileState extends State<_ProjectTile> {
     final AppData data = AppScope.of(context);
     final TextTheme textTheme = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final List<Session> sessions = data.sessions.sessionsFor(project.id);
+    final List<Session> sessions = data.sessions.sessionsFor(
+      project.id,
+      daemonId: daemonId,
+    );
 
     return ExpansionTile(
-      key: ValueKey<String>('project-${project.id}'),
+      key: ValueKey<String>('project-$daemonId-${project.id}'),
       controller: _controller,
       tilePadding: const EdgeInsets.only(left: 8, right: 4),
       childrenPadding: const EdgeInsets.only(bottom: 4),

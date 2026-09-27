@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../../state/sessions_store.dart';
 import '../../theme.dart';
 
 /// Palette color for a session lifecycle status.
@@ -85,9 +86,14 @@ class ProviderBadge extends StatelessWidget {
 /// the whole rail. Renders nothing until the first summary for the session
 /// arrives, and nothing ever for a session whose git state is all-unknown.
 class SessionGitBadges extends StatelessWidget {
-  const SessionGitBadges({super.key, required this.session});
+  const SessionGitBadges({
+    super.key,
+    required this.session,
+    required this.daemonId,
+  });
 
   final Session session;
+  final String daemonId;
 
   @override
   Widget build(BuildContext context) {
@@ -97,6 +103,7 @@ class SessionGitBadges extends StatelessWidget {
       builder: (BuildContext context, Widget? _) {
         final SessionGitSummary? summary = data.git.sessionSummaryFor(
           session.id,
+          daemonId: daemonId,
         );
         if (summary == null) return const SizedBox.shrink();
         final SpeedDialColors colors = context.speedDialColors;
@@ -186,6 +193,7 @@ class SessionRow extends StatelessWidget {
     required this.daemonId,
     required this.projectId,
     this.projectName,
+    this.daemonName,
   });
 
   final Session session;
@@ -193,6 +201,7 @@ class SessionRow extends StatelessWidget {
   final String daemonId;
   final String projectId;
   final String? projectName;
+  final String? daemonName;
 
   Future<void> _rename(BuildContext context, AppData data) async {
     final String? title = await showDialog<String>(
@@ -245,7 +254,8 @@ class SessionRow extends StatelessWidget {
         false;
     if (!confirmed) return;
     await data.sessions.delete(daemonId, session.id);
-    if (data.selection.selectedSessionId == session.id) {
+    if (data.selection.selectedDaemonId == daemonId &&
+        data.selection.selectedSessionId == session.id) {
       // Unpin the chat pane from the dead session (same pattern as the
       // project-removal clearing in left_rail).
       data.selection.selectedSessionId = null;
@@ -313,6 +323,15 @@ class SessionRow extends StatelessWidget {
         spacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
+          if (daemonName != null)
+            Text(
+              daemonName!,
+              style: textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                fontSize: 10,
+              ),
+            ),
           if (projectName != null)
             Text(
               projectName!,
@@ -336,7 +355,7 @@ class SessionRow extends StatelessWidget {
             ),
           ),
           SessionStatusChip(status: session.status, done: done),
-          SessionGitBadges(session: session),
+          SessionGitBadges(session: session, daemonId: daemonId),
         ],
       ),
       trailing: PopupMenuButton<_SessionAction>(
@@ -374,8 +393,11 @@ class SessionRow extends StatelessWidget {
         ],
       ),
       onTap: () {
-        data.selection.selectedProjectId = projectId;
-        data.selection.selectedSessionId = session.id;
+        data.selection.selectSession(
+          daemonId: daemonId,
+          projectId: projectId,
+          sessionId: session.id,
+        );
         // On narrow layouts the rail lives in a drawer; selecting a session
         // should dismiss it so the chat is immediately visible. The wide
         // layout has no open drawer, so this is a no-op there.
@@ -498,13 +520,90 @@ class SessionList extends StatelessWidget {
           SessionRow(
             key: ValueKey<String>('session-${sessions[index].id}'),
             session: sessions[index],
-            selected: data.selection.selectedSessionId == sessions[index].id,
+            selected:
+                data.selection.selectedDaemonId == daemonId &&
+                data.selection.selectedSessionId == sessions[index].id,
             daemonId: daemonId,
             projectId: projectId ?? sessions[index].projectId,
             projectName: projectNames[sessions[index].projectId],
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Activity-sorted sessions from every daemon. Each row keeps its daemon
+/// identity for actions and selection, since session and project ids are only
+/// unique within a daemon.
+class InboxSessionList extends StatelessWidget {
+  const InboxSessionList({
+    super.key,
+    required this.sessions,
+    required this.daemonNames,
+    required this.projectNames,
+    this.now,
+  });
+
+  final List<RecentSession> sessions;
+  final Map<String, String> daemonNames;
+  final Map<String, Map<String, String>> projectNames;
+  final DateTime? now;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    if (sessions.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 8, 12),
+        child: Text(
+          'No sessions',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    final DateTime localNow = (now ?? DateTime.now()).toLocal();
+    final DateTime startOfToday = DateTime(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+    );
+    final int firstPreviousDay = sessions.indexWhere(
+      (RecentSession recent) =>
+          !recent.session.pinned &&
+          recent.session.lastActivityAt.toLocal().isBefore(startOfToday),
+    );
+    final bool showPreviousDaysDivider = firstPreviousDay > 0;
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: sessions.length + (showPreviousDaysDivider ? 1 : 0),
+      itemBuilder: (BuildContext context, int index) {
+        if (showPreviousDaysDivider && index == firstPreviousDay) {
+          return const _SessionDateDivider(label: 'Previous days');
+        }
+        final int sessionIndex =
+            showPreviousDaysDivider && index > firstPreviousDay
+            ? index - 1
+            : index;
+        return _row(data, sessions[sessionIndex]);
+      },
+    );
+  }
+
+  SessionRow _row(AppData data, RecentSession recent) {
+    final String daemonId = recent.daemonId;
+    final Session session = recent.session;
+    return SessionRow(
+      key: ValueKey<String>('inbox-session-$daemonId-${session.id}'),
+      session: session,
+      selected:
+          data.selection.selectedDaemonId == daemonId &&
+          data.selection.selectedSessionId == session.id,
+      daemonId: daemonId,
+      projectId: session.projectId,
+      projectName: projectNames[daemonId]?[session.projectId],
+      daemonName: daemonNames[daemonId],
     );
   }
 }

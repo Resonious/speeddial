@@ -605,6 +605,7 @@ class _WearSessionListPageState extends State<_WearSessionListPage> {
         builder: (BuildContext context, Widget? _) {
           final List<Session> sessions = widget.data.sessions.sessionsFor(
             widget.project.id,
+            daemonId: widget.daemonId,
           );
           if (_loading && sessions.isEmpty) {
             return const Center(
@@ -646,7 +647,10 @@ class _WearSessionListPageState extends State<_WearSessionListPage> {
                       '${session.providerId} · ${_statusLabel(session.status)}',
                   details: _WearGitState(
                     session: session,
-                    summary: widget.data.git.sessionSummaryFor(session.id),
+                    summary: widget.data.git.sessionSummaryFor(
+                      session.id,
+                      daemonId: widget.daemonId,
+                    ),
                   ),
                   leading: _SessionStatusIcon(status: session.status),
                   onTap: () => _openSession(session),

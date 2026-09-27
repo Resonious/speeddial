@@ -96,11 +96,13 @@ class SessionsStore extends StoreBase {
   final Map<String, StreamSubscription<void>> _resyncSubs =
       <String, StreamSubscription<void>>{};
 
-  /// Active (non-archived) sessions for [projectId] on the most recently
-  /// used daemon; empty until the first refresh. Archived sessions stay
-  /// available via [byId] (the by-id index is always the complete picture).
-  List<Session> sessionsFor(String projectId) {
-    final List<Session>? bucket = _bucketFor(projectId);
+  /// Active (non-archived) sessions for [projectId] on [daemonId], or the most
+  /// recently used daemon when omitted. Empty until the first refresh.
+  /// Archived sessions stay available via [byId].
+  List<Session> sessionsFor(String projectId, {String? daemonId}) {
+    final List<Session>? bucket = daemonId == null
+        ? _bucketFor(projectId)
+        : _sessionsByProject[_scopedKey(daemonId, projectId)];
     return List<Session>.unmodifiable(
       bucket?.where((Session s) => !s.archived) ?? const <Session>[],
     );

@@ -5,7 +5,6 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
-import 'package:speeddial_app/src/state/settings_store.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/session_list.dart';
@@ -51,6 +50,26 @@ Future<AppData> selectFakeDaemon(WidgetTester tester, AppData app) async {
   return app;
 }
 
+/// Adds a second fake endpoint with the same seeded protocol IDs as the
+/// first. Inbox rows must keep the daemon identity attached to each session.
+Future<FakeDaemonClient> addOtherDaemon(AppData app, {bool load = true}) async {
+  final FakeDaemonClient other = FakeDaemonClient(
+    eventDelay: const Duration(milliseconds: 1),
+  );
+  app.registerClient('other', other);
+  await app.connections.addEndpoint(
+    id: 'other',
+    name: 'Other daemon',
+    url: 'fake://other',
+    token: '',
+  );
+  if (load) {
+    await app.projects.refresh('other');
+    await app.sessions.refresh('other');
+  }
+  return other;
+}
+
 Session testSession({
   required String id,
   required String title,
@@ -73,18 +92,14 @@ Session testSession({
 );
 
 void main() {
-  testWidgets('search beside grouping selects the session and its project', (
+  testWidgets('search from Sessions selects the session and its project', (
     WidgetTester tester,
   ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
     final Finder search = find.byKey(const Key('search-sessions'));
-    expect(
-      tester.getCenter(search).dx,
-      lessThan(
-        tester.getCenter(find.byKey(const Key('toggle-session-grouping'))).dx,
-      ),
-    );
+    expect(search, findsOneWidget);
+    expect(find.byKey(const Key('toggle-session-grouping')), findsNothing);
     await tester.tap(search);
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -136,6 +151,8 @@ void main() {
   ) async {
     final AppData app = await pumpRail(tester);
 
+    expect(find.byKey(const Key('rail-tab-sessions')), findsOneWidget);
+    expect(find.byKey(const Key('rail-tab-inbox')), findsOneWidget);
     expect(find.text('Daemons'), findsOneWidget);
     expect(find.text('Fake daemon'), findsOneWidget);
     expect(find.text('Add daemon'), findsOneWidget);
@@ -221,50 +238,210 @@ void main() {
     },
   );
 
-  testWidgets('session grouping toggle shows one cross-project activity list', (
+  testWidgets('Sessions keeps the project tree and Inbox lists all daemons', (
     WidgetTester tester,
   ) async {
     final AppData app = await pumpRail(tester);
     await selectFakeDaemon(tester, app);
-    final Project other = await app.projects.add(
-      'fake',
+    await addOtherDaemon(app);
+    final Project otherProject = await app.projects.add(
+      'other',
       '/other',
       name: 'Other Project',
     );
     final Session newest = await app.sessions.create(
-      'fake',
-      projectId: other.id,
+      'other',
+      projectId: otherProject.id,
       providerId: 'omp',
       title: 'Newest other session',
     );
     await tester.pumpAndSettle();
 
-    expect(app.settings.groupSessionsByProject, isTrue);
     expect(find.text('Projects'), findsOneWidget);
+    expect(find.text('Demo Project'), findsOneWidget);
     expect(find.text('Newest other session'), findsNothing);
+    expect(find.byKey(const Key('toggle-session-grouping')), findsNothing);
 
-    await tester.tap(find.byKey(const Key('toggle-session-grouping')));
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
     await tester.pumpAndSettle();
 
-    expect(app.settings.groupSessionsByProject, isFalse);
-    expect(find.text('Sessions'), findsOneWidget);
     expect(find.byType(ExpansionTile), findsNothing);
     expect(find.text('Newest other session'), findsOneWidget);
-    expect(find.text('Build the feature'), findsOneWidget);
-    expect(find.text('Plan the refactor'), findsOneWidget);
+    expect(find.text('Build the feature'), findsNWidgets(2));
+    expect(find.text('Plan the refactor'), findsNWidgets(2));
     expect(find.text('Other Project'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Newest other session')).dy,
-      lessThan(tester.getTopLeft(find.text('Build the feature')).dy),
+      lessThan(tester.getTopLeft(find.text('Build the feature').first).dy),
     );
 
+    await tester.ensureVisible(find.text('Newest other session'));
     await tester.tap(find.text('Newest other session'));
     await tester.pump();
-    expect(app.selection.selectedProjectId, other.id);
+    expect(app.selection.selectedDaemonId, 'other');
+    expect(app.selection.selectedProjectId, otherProject.id);
     expect(app.selection.selectedSessionId, newest.id);
 
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    expect(prefs.getBool(SettingsStore.groupSessionsStorageKey), isFalse);
+    await tester.tap(find.byKey(const Key('rail-tab-sessions')));
+    await tester.pumpAndSettle();
+    expect(find.text('Daemons'), findsOneWidget);
+    expect(find.text('Other daemon'), findsOneWidget);
+    expect(find.text('Other Project'), findsOneWidget);
+  });
+
+  testWidgets('Inbox loads sessions from a daemon never selected', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    final FakeDaemonClient other = await addOtherDaemon(app, load: false);
+    final Project project = (await other.listProjects()).single;
+    await other.createSession(
+      projectId: project.id,
+      providerId: 'omp',
+      title: 'Session from unopened daemon',
+    );
+
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Session from unopened daemon'), findsOneWidget);
+    expect(app.projects.projectsFor('other'), contains(project));
+    expect(
+      app.sessions.recentSessions(daemonIds: <String>{'other'}),
+      isNotEmpty,
+    );
+  });
+
+  testWidgets('Inbox loads a daemon after its connection becomes ready', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    final FakeDaemonClient other = await addOtherDaemon(app, load: false);
+    final Project project = (await other.listProjects()).single;
+    await other.createSession(
+      projectId: project.id,
+      providerId: 'omp',
+      title: 'Session after connection',
+    );
+    app.connections.setStatus('other', ConnectionStatus.connecting);
+
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.text('Session after connection'), findsNothing);
+
+    app.connections.setStatus('other', ConnectionStatus.connected);
+    await tester.pumpAndSettle();
+    expect(find.text('Session after connection'), findsOneWidget);
+  });
+
+  testWidgets('both rail tabs fit the desktop rail width', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    tester.view.physicalSize = const Size(280, 900);
+    await tester.pump();
+    await selectFakeDaemon(tester, app);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Build the feature'), findsOneWidget);
+  });
+
+  testWidgets('Inbox selects the correct daemon when session IDs overlap', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await addOtherDaemon(app);
+
+    final Project firstProject = app.projects.projectsFor('fake').single;
+    final Session fromFirst = await app.sessions.create(
+      'fake',
+      projectId: firstProject.id,
+      providerId: 'omp',
+      title: 'From first daemon',
+    );
+    final Session fromOther = await app.sessions.create(
+      'other',
+      projectId: app.projects.projectsFor('other').single.id,
+      providerId: 'omp',
+      title: 'From other daemon',
+    );
+    expect(fromFirst.id, fromOther.id);
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('From first daemon'), findsOneWidget);
+    expect(find.text('From other daemon'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('From other daemon')).dy,
+      lessThan(tester.getTopLeft(find.text('From first daemon')).dy),
+    );
+
+    await tester.ensureVisible(find.text('From other daemon'));
+    await tester.tap(find.text('From other daemon'));
+    await tester.pump();
+    expect(app.selection.selectedDaemonId, 'other');
+    expect(app.selection.selectedSessionId, fromOther.id);
+
+    await tester.ensureVisible(find.text('From first daemon'));
+    await tester.tap(find.text('From first daemon'));
+    await tester.pump();
+    expect(app.selection.selectedDaemonId, 'fake');
+    expect(app.selection.selectedProjectId, firstProject.id);
+    expect(app.selection.selectedSessionId, fromFirst.id);
+  });
+
+  testWidgets('Inbox new session chooses its daemon and project', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pump();
+    await selectFakeDaemon(tester, app);
+    await addOtherDaemon(app);
+    final Project target = await app.projects.add(
+      'other',
+      '/target',
+      name: 'Target Project',
+    );
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('inbox-new-session')));
+    await tester.pumpAndSettle();
+    final Rect dialog = tester.getRect(find.byType(AlertDialog));
+    expect(dialog.left, greaterThanOrEqualTo(0));
+    expect(dialog.right, lessThanOrEqualTo(390));
+    expect(find.byKey(const Key('inbox-new-session-daemon')), findsOneWidget);
+    expect(find.byKey(const Key('inbox-new-session-project')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('inbox-new-session-daemon')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Other daemon').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('inbox-new-session-project')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Target Project').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('inbox-new-session-continue')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('new-session-submit')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+
+    final List<Session> targetSessions = app.sessions.sessionsFor(target.id);
+    expect(targetSessions, hasLength(1));
+    final Session created = targetSessions.single;
+    expect(created.title, 'New session');
+    expect(app.selection.selectedDaemonId, 'other');
+    expect(app.selection.selectedProjectId, target.id);
+    expect(app.selection.selectedSessionId, created.id);
   });
 
   testWidgets('unacknowledged completed session shows Done until selected', (

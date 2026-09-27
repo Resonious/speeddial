@@ -28,8 +28,8 @@ class GitStore extends StoreBase {
   final Map<String, Object> _errors = <String, Object>{};
   final Set<String> _busy = <String>{};
 
-  /// Left-rail badges: sessionId → summary. Session ids are globally unique
-  /// (uuid), so the flat map cannot collide across daemons/projects.
+  /// Left-rail badges: daemonId/sessionId → summary. Protocol ids are scoped
+  /// to one daemon, so summaries from separate endpoints must stay separate.
   final Map<String, SessionGitSummary> _summaryBySession =
       <String, SessionGitSummary>{};
 
@@ -66,10 +66,17 @@ class GitStore extends StoreBase {
   Object? errorFor(String projectId, {String? sessionId}) =>
       _errors[_key(projectId, sessionId)];
 
-  /// The last known git summary (left-rail badges) for [sessionId]; null
-  /// until the first [refreshSessionSummaries] for its project.
-  SessionGitSummary? sessionSummaryFor(String sessionId) =>
-      _summaryBySession[sessionId];
+  /// The last known git summary for [sessionId] on [daemonId]. When the
+  /// daemon is omitted, returns the first match for older single-daemon
+  /// callers. Null until the first [refreshSessionSummaries] for its project.
+  SessionGitSummary? sessionSummaryFor(String sessionId, {String? daemonId}) {
+    if (daemonId != null) return _summaryBySession['$daemonId/$sessionId'];
+    for (final MapEntry<String, SessionGitSummary> entry
+        in _summaryBySession.entries) {
+      if (entry.value.sessionId == sessionId) return entry.value;
+    }
+    return null;
+  }
 
   /// Refetches the per-session git summaries for [projectId], replacing the
   /// project's previous set wholesale (sessions that dropped out — archived,
@@ -86,11 +93,11 @@ class GitStore extends StoreBase {
       final Set<String> previous =
           _summarySessionIds[projectKey] ?? const <String>{};
       for (final String id in previous) {
-        _summaryBySession.remove(id);
+        _summaryBySession.remove('$daemonId/$id');
       }
       final Set<String> next = <String>{};
       for (final SessionGitSummary summary in summaries) {
-        _summaryBySession[summary.sessionId] = summary;
+        _summaryBySession['$daemonId/${summary.sessionId}'] = summary;
         next.add(summary.sessionId);
       }
       _summarySessionIds[projectKey] = next;

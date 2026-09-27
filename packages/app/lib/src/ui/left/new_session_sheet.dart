@@ -182,8 +182,11 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             ? _customModel
             : _modelId,
       );
-      data.selection.selectedProjectId = session.projectId;
-      data.selection.selectedSessionId = session.id;
+      data.selection.selectSession(
+        daemonId: widget.daemonId,
+        projectId: session.projectId,
+        sessionId: session.id,
+      );
       widget.onCreated?.call();
       if (mounted) Navigator.of(context).pop();
     } on DaemonError catch (e) {

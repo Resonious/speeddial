@@ -288,10 +288,12 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
                              chat flexible, right 360, both collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
-lib/src/ui/left/             daemon/project/session rail: connection status dot, toggleable
-                             project groups or cross-project session list (pinned first, then activity),
-                             session rows (title, status chip, provider badge),
-                             new-session sheet (provider, worktree branch, yolo,
+lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
+                             hierarchy and connection controls; Inbox lists sessions across
+                             every configured daemon (pinned first, then activity), with
+                             a daemon/project chooser for new sessions. Session rows show
+                             title, status chip, provider badge, and daemon/project in Inbox.
+                             New-session sheet (provider, worktree branch, yolo,
                              and short prompt —
                              model/thinking are picked in the
                              composer on the live session), pin/unpin/rename/archive/delete menus

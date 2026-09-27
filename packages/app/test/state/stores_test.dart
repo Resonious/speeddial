@@ -557,6 +557,29 @@ void main() {
         expect(app.sessions.byId('sess-1')!.title, 'From fake2');
       },
     );
+
+    test('project session lists stay scoped to their daemon', () async {
+      final FakeDaemonClient other = FakeDaemonClient();
+      app.registerClient('other', other);
+      await other.renameSession('sess-1', 'Other daemon session');
+      await app.sessions.refresh('fake');
+      await app.sessions.refresh('other');
+
+      expect(
+        app.sessions
+            .sessionsFor('proj-demo', daemonId: 'fake')
+            .firstWhere((Session session) => session.id == 'sess-1')
+            .title,
+        'Build the feature',
+      );
+      expect(
+        app.sessions
+            .sessionsFor('proj-demo', daemonId: 'other')
+            .firstWhere((Session session) => session.id == 'sess-1')
+            .title,
+        'Other daemon session',
+      );
+    });
   });
 
   group('chat', () {
@@ -1471,6 +1494,35 @@ void main() {
         expect(merged.mergedIntoBase, isTrue);
       },
     );
+
+    test('git summary badges stay scoped to their daemon', () async {
+      final FakeDaemonClient other = FakeDaemonClient();
+      app.registerClient('other', other);
+      await other.listProjects();
+      other.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+        sessionId: 'sess-1',
+        dirty: false,
+        aheadOfBase: 0,
+        behindBase: 3,
+        mergedIntoBase: false,
+      );
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.git.refreshSessionSummaries('fake', projectId);
+      await app.git.refreshSessionSummaries('other', projectId);
+
+      expect(
+        app.git.sessionSummaryFor('sess-1', daemonId: 'fake')!.aheadOfBase,
+        2,
+      );
+      expect(
+        app.git.sessionSummaryFor('sess-1', daemonId: 'other')!.behindBase,
+        3,
+      );
+      await other.archiveSession('sess-1', true);
+      await app.git.refreshSessionSummaries('other', projectId);
+      expect(app.git.sessionSummaryFor('sess-1', daemonId: 'other'), isNull);
+      expect(app.git.sessionSummaryFor('sess-1', daemonId: 'fake'), isNotNull);
+    });
 
     test('refreshSessionSummaries records failures without throwing', () async {
       await app.git.refreshSessionSummaries('fake', 'nope');

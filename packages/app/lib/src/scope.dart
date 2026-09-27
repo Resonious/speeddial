@@ -290,6 +290,37 @@ class SelectionStore extends ChangeNotifier {
     _selectedSessionId = value;
     notifyListeners();
   }
+
+  /// Switches to a session in one notification. Daemon-scoped session ids can
+  /// overlap, so listeners must never see a new daemon with the old id.
+  void selectSession({
+    required String daemonId,
+    required String projectId,
+    required String sessionId,
+  }) {
+    if (_selectedDaemonId == daemonId &&
+        _selectedProjectId == projectId &&
+        _selectedSessionId == sessionId) {
+      return;
+    }
+    _selectedDaemonId = daemonId;
+    _selectedProjectId = projectId;
+    _selectedSessionId = sessionId;
+    notifyListeners();
+  }
+
+  /// Selects a daemon without retaining a project/session from another one.
+  void selectDaemon(String daemonId) {
+    if (_selectedDaemonId == daemonId &&
+        _selectedProjectId == null &&
+        _selectedSessionId == null) {
+      return;
+    }
+    _selectedDaemonId = daemonId;
+    _selectedProjectId = null;
+    _selectedSessionId = null;
+    notifyListeners();
+  }
 }
 
 /// Store graph handed to [AppScope]. The domain stores are constructed
@@ -725,7 +756,7 @@ AppData buildDemoAppData() {
     if (projects.isEmpty) return;
     final project = projects.first;
     data.selection.selectedProjectId = project.id;
-    final sessions = data.sessions.sessionsFor(project.id);
+    final sessions = data.sessions.sessionsFor(project.id, daemonId: 'demo');
     if (sessions.isEmpty) return;
     final session = sessions.first;
     data.selection.selectedSessionId = session.id;
