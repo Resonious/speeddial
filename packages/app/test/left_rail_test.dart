@@ -6,6 +6,8 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/state/settings_store.dart';
+import 'package:speeddial_app/src/ui/shell.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/left/session_list.dart';
 
@@ -92,6 +94,69 @@ Session testSession({
 );
 
 void main() {
+  testWidgets('mobile rail remembers taps and swipes after closing', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: AppScope(data: app, child: const SpeedDialShell()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<void> openRail() async {
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> closeRail() async {
+      tester.state<ScaffoldState>(find.byType(Scaffold)).closeDrawer();
+      await tester.pumpAndSettle();
+      expect(find.byType(LeftRail), findsNothing);
+    }
+
+    await openRail();
+    expect(find.text('Daemons'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    await closeRail();
+    await openRail();
+    expect(find.byKey(const Key('inbox-new-session')), findsOneWidget);
+    expect(app.settings.leftRailTab, LeftRailTab.inbox);
+
+    await tester.drag(find.byType(TabBarView), const Offset(300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Daemons'), findsOneWidget);
+    await closeRail();
+    await openRail();
+    expect(find.text('Daemons'), findsOneWidget);
+    expect(app.settings.leftRailTab, LeftRailTab.sessions);
+  });
+
+  testWidgets('rail restores the tab from client preferences', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      SettingsStore.leftRailTabStorageKey: 'inbox',
+    });
+    final AppData app = AppData();
+    addTearDown(app.dispose);
+    await app.settings.init();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          data: app,
+          child: const Scaffold(body: LeftRail()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('inbox-new-session')), findsOneWidget);
+    expect(find.text('Daemons'), findsNothing);
+  });
+
   testWidgets('search from Sessions selects the session and its project', (
     WidgetTester tester,
   ) async {

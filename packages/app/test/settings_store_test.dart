@@ -6,6 +6,25 @@ import 'package:speeddial_app/src/state/settings_store.dart';
 
 void main() {
   group('SettingsStore', () {
+    test('rail tab survives a new store and ignores unknown values', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        SettingsStore.leftRailTabStorageKey: 'removed-tab',
+      });
+      final SettingsStore store = SettingsStore();
+      final SettingsStore restored = SettingsStore();
+      addTearDown(store.dispose);
+      addTearDown(restored.dispose);
+      await store.init();
+      expect(store.leftRailTab, LeftRailTab.sessions);
+      int notifications = 0;
+      store.addListener(() => notifications++);
+      await store.setLeftRailTab(LeftRailTab.inbox);
+      await store.setLeftRailTab(LeftRailTab.inbox);
+      expect(notifications, 1);
+      await restored.init();
+      expect(restored.leftRailTab, LeftRailTab.inbox);
+    });
+
     test('loads a persisted theme mode', () async {
       SharedPreferences.setMockInitialValues(<String, Object>{
         SettingsStore.storageKey: 'light',

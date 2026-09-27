@@ -3,6 +3,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/projects_store.dart';
+import '../../state/settings_store.dart';
 import '../connection_status_indicator.dart';
 import 'inbox_tab.dart';
 import 'new_session_sheet.dart';
@@ -14,10 +15,52 @@ import '../settings/harnesses_page.dart';
 import '../settings/mcp_settings_page.dart';
 
 /// Sessions and Inbox tabs inside the wide-layout rail or narrow drawer.
-class LeftRail extends StatelessWidget {
+class LeftRail extends StatefulWidget {
   const LeftRail({super.key, this.onSessionCreated});
 
   final VoidCallback? onSessionCreated;
+
+  @override
+  State<LeftRail> createState() => _LeftRailState();
+}
+
+class _LeftRailState extends State<LeftRail>
+    with SingleTickerProviderStateMixin {
+  late final TabController _controller;
+  SettingsStore? _settings;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final SettingsStore settings = AppScope.of(context).settings;
+    if (_settings == null) {
+      _controller = TabController(
+        length: LeftRailTab.values.length,
+        initialIndex: settings.leftRailTab.index,
+        vsync: this,
+      )..addListener(_rememberTab);
+    }
+    _settings = settings;
+  }
+
+  Future<void> _rememberTab() async {
+    final LeftRailTab tab = LeftRailTab.values[_controller.index];
+    if (tab == _settings!.leftRailTab) return;
+    try {
+      await _settings!.setLeftRailTab(tab);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save rail tab preference')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,26 +68,25 @@ class LeftRail extends StatelessWidget {
 
     return Material(
       color: scheme.surfaceContainer,
-      child: DefaultTabController(
-        length: 2,
-        child: Column(
-          children: <Widget>[
-            const TabBar(
-              tabs: <Widget>[
-                Tab(key: Key('rail-tab-sessions'), text: 'Sessions'),
-                Tab(key: Key('rail-tab-inbox'), text: 'Inbox'),
+      child: Column(
+        children: <Widget>[
+          TabBar(
+            controller: _controller,
+            tabs: const <Widget>[
+              Tab(key: Key('rail-tab-sessions'), text: 'Sessions'),
+              Tab(key: Key('rail-tab-inbox'), text: 'Inbox'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _controller,
+              children: <Widget>[
+                _SessionsTab(onSessionCreated: widget.onSessionCreated),
+                InboxTab(onSessionCreated: widget.onSessionCreated),
               ],
             ),
-            Expanded(
-              child: TabBarView(
-                children: <Widget>[
-                  _SessionsTab(onSessionCreated: onSessionCreated),
-                  InboxTab(onSessionCreated: onSessionCreated),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
