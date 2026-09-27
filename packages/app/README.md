@@ -1,17 +1,25 @@
-# speeddial_app
+# SpeedDial app
 
-A new Flutter project.
+See the repository README for daemon setup and desktop development.
 
-## Getting Started
+## iPad and iPhone
 
-This project is a starting point for a Flutter application.
+With Flutter on PATH, run `flutter pub get` at the repository root, then from
+`packages/app`:
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+flutter build ios --release
+flutter install --release -d <device-id>
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Open `ios/Runner.xcworkspace` to configure signing. The Runner target uses bundle
+identifier `sh.speeddial.speeddialApp` and Nigel's personal team (`38MKN9SGLK`).
+Xcode needs the corresponding Apple account signed in and a provisioning profile
+that includes the target device. An unsigned compilation check is available with
+`flutter build ios --release --no-codesign`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Mobile clients connect to an external daemon. Add its reachable hostname or IP
+address and token in the app, and allow local-network access when prompted.
+
+On macOS, run daemon tests with `TMPDIR=/private/tmp dart test` from
+`packages/daemon` to avoid `/var` versus `/private/var` temporary-path aliases.
