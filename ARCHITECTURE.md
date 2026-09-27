@@ -285,8 +285,9 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              interface/port/token of the built-in daemon; restart
                              errors surfaced for its settings page). Stores NEVER hold
                              BuildContext.
-lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 280,
-                             chat flexible, right 360, both collapsible); <1000px →
+lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left rail
+                             draggable from 240–480px, chat flexible, right 360;
+                             side panes collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
                              hierarchy and connection controls; Inbox lists sessions across

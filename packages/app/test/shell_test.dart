@@ -6,7 +6,9 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:speeddial_app/main.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
 import 'package:speeddial_app/src/ui/connection_status_indicator.dart';
+import 'package:speeddial_app/src/ui/left/left_rail.dart';
 
 void main() {
   /// Pumps the real app with real stores over an empty shared_preferences
@@ -120,6 +122,65 @@ void main() {
     expect(find.text('Git'), findsOneWidget);
   });
 
+  testWidgets('desktop: dragging the rail divider resizes within limits', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester);
+    final Finder handle = find.byKey(const Key('left-rail-resize-handle'));
+    final Finder rail = find.byType(LeftRail);
+
+    expect(handle, findsOneWidget);
+    expect(tester.getSize(rail).width, 280);
+
+    await tester.drag(handle, const Offset(100, 0));
+    await tester.pump();
+    expect(tester.getSize(rail).width, greaterThan(320));
+
+    await tester.drag(handle, const Offset(-1000, 0));
+    await tester.pump();
+    expect(tester.getSize(rail).width, 240);
+
+    await tester.drag(handle, const Offset(1000, 0));
+    await tester.pump();
+    expect(tester.getSize(rail).width, 480);
+  });
+
+  testWidgets('desktop: rail width survives hiding and reopening', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester);
+    final Finder handle = find.byKey(const Key('left-rail-resize-handle'));
+    final Finder rail = find.byType(LeftRail);
+
+    await tester.drag(handle, const Offset(100, 0));
+    await tester.pump();
+    final double resizedWidth = tester.getSize(rail).width;
+    expect(resizedWidth, greaterThan(280));
+
+    await tester.tap(find.byTooltip('Toggle left rail'));
+    await tester.pump();
+    expect(rail, findsNothing);
+    expect(handle, findsNothing);
+
+    await tester.tap(find.byTooltip('Toggle left rail'));
+    await tester.pump();
+    expect(tester.getSize(rail).width, resizedWidth);
+    expect(handle, findsOneWidget);
+  });
+
+  testWidgets('desktop: rail resizing leaves room for the chat at 1000px', (
+    WidgetTester tester,
+  ) async {
+    await pumpApp(tester, size: const Size(1000, 900));
+    final Finder handle = find.byKey(const Key('left-rail-resize-handle'));
+
+    await tester.drag(handle, const Offset(1000, 0));
+    await tester.pump();
+
+    expect(tester.getSize(find.byType(LeftRail)).width, lessThanOrEqualTo(320));
+    expect(tester.getSize(find.byType(ChatPane)).width, greaterThanOrEqualTo(320));
+  });
+
   testWidgets('theme button cycles mode and updates MaterialApp',
       (WidgetTester tester) async {
     final AppData data = await pumpApp(tester);
@@ -145,12 +206,14 @@ void main() {
   testWidgets('mobile: chat-only body, drawer reveals left rail', (WidgetTester tester) async {
     await pumpApp(tester, size: const Size(390, 844));
 
+    expect(find.byKey(const Key('left-rail-resize-handle')), findsNothing);
     expect(find.text('Select or create a session'), findsOneWidget);
     expect(find.text('Daemons'), findsNothing);
     expect(find.text('Files'), findsNothing);
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('left-rail-resize-handle')), findsNothing);
     expect(find.text('Daemons'), findsOneWidget);
     expect(find.text('Add daemon'), findsOneWidget);
   });

@@ -12,6 +12,12 @@ import 'right/right_panel.dart';
 
 /// Width at which the three-column desktop layout kicks in.
 const double kDesktopBreakpoint = 1000;
+const double _initialLeftRailWidth = 280;
+const double _minimumLeftRailWidth = 240;
+const double _maximumLeftRailWidth = 480;
+const double _leftRailHandleWidth = 8;
+const double _rightPanelWidth = 360;
+const double _minimumChatWidth = 320;
 
 /// SpeedDial shell: three-column responsive control surface. Wide layouts get
 /// left rail + chat + right panel in a row; narrow layouts get chat
@@ -149,6 +155,9 @@ class _Shell extends StatefulWidget {
 class _ShellState extends State<_Shell> {
   bool _leftOpen = true;
   bool _rightOpen = true;
+  double _leftRailWidth = _initialLeftRailWidth;
+  double? _resizeStartX;
+  double? _resizeStartWidth;
   final GlobalKey<ScaffoldState> _narrowScaffoldKey =
       GlobalKey<ScaffoldState>();
   final FocusNode _composerFocusNode = FocusNode();
@@ -174,6 +183,41 @@ class _ShellState extends State<_Shell> {
     _composerFocusNode.requestFocus();
   }
 
+  double _constrainLeftRailWidth(double width, double availableWidth) {
+    final double rightWidth = _rightOpen ? _rightPanelWidth + 1 : 0;
+    final double maximumForLayout =
+        (availableWidth - rightWidth - _leftRailHandleWidth - _minimumChatWidth)
+            .clamp(_minimumLeftRailWidth, _maximumLeftRailWidth);
+    return width.clamp(_minimumLeftRailWidth, maximumForLayout);
+  }
+
+  void _startLeftRailResize(DragDownDetails details, double availableWidth) {
+    _resizeStartX = details.globalPosition.dx;
+    _resizeStartWidth = _constrainLeftRailWidth(_leftRailWidth, availableWidth);
+  }
+
+  void _updateLeftRailResize(DragUpdateDetails details, double availableWidth) {
+    final double? startX = _resizeStartX;
+    final double? startWidth = _resizeStartWidth;
+    if (startX == null || startWidth == null) return;
+    final double direction = Directionality.of(context) == TextDirection.ltr
+        ? 1
+        : -1;
+    final double proposedWidth =
+        startWidth + (details.globalPosition.dx - startX) * direction;
+    setState(
+      () => _leftRailWidth = _constrainLeftRailWidth(
+        proposedWidth,
+        availableWidth,
+      ),
+    );
+  }
+
+  void _endLeftRailResize() {
+    _resizeStartX = null;
+    _resizeStartWidth = null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -195,29 +239,67 @@ class _ShellState extends State<_Shell> {
                   child: SafeArea(
                     top: false,
                     bottom: false,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        if (_leftOpen)
-                          SizedBox(
-                            width: 280,
-                            child: LeftRail(
-                              onSessionCreated: _onSessionCreated,
-                            ),
-                          ),
-                        if (_leftOpen)
-                          const VerticalDivider(width: 1, thickness: 1),
-                        Expanded(
-                          child: ChatPane(
-                            key: _chatPaneKey,
-                            composerFocusNode: _composerFocusNode,
-                          ),
-                        ),
-                        if (_rightOpen)
-                          const VerticalDivider(width: 1, thickness: 1),
-                        if (_rightOpen)
-                          const SizedBox(width: 360, child: RightPanel()),
-                      ],
+                    child: LayoutBuilder(
+                      builder:
+                          (BuildContext context, BoxConstraints paneBounds) {
+                            final double availableWidth = paneBounds.maxWidth;
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: <Widget>[
+                                if (_leftOpen)
+                                  SizedBox(
+                                    width: _constrainLeftRailWidth(
+                                      _leftRailWidth,
+                                      availableWidth,
+                                    ),
+                                    child: LeftRail(
+                                      onSessionCreated: _onSessionCreated,
+                                    ),
+                                  ),
+                                if (_leftOpen)
+                                  MouseRegion(
+                                    cursor: SystemMouseCursors.resizeColumn,
+                                    child: GestureDetector(
+                                      key: const Key('left-rail-resize-handle'),
+                                      behavior: HitTestBehavior.opaque,
+                                      onHorizontalDragDown:
+                                          (DragDownDetails details) =>
+                                              _startLeftRailResize(
+                                                details,
+                                                availableWidth,
+                                              ),
+                                      onHorizontalDragUpdate:
+                                          (DragUpdateDetails details) =>
+                                              _updateLeftRailResize(
+                                                details,
+                                                availableWidth,
+                                              ),
+                                      onHorizontalDragEnd: (DragEndDetails _) =>
+                                          _endLeftRailResize(),
+                                      onHorizontalDragCancel:
+                                          _endLeftRailResize,
+                                      child: const VerticalDivider(
+                                        width: _leftRailHandleWidth,
+                                        thickness: 1,
+                                      ),
+                                    ),
+                                  ),
+                                Expanded(
+                                  child: ChatPane(
+                                    key: _chatPaneKey,
+                                    composerFocusNode: _composerFocusNode,
+                                  ),
+                                ),
+                                if (_rightOpen)
+                                  const VerticalDivider(width: 1, thickness: 1),
+                                if (_rightOpen)
+                                  const SizedBox(
+                                    width: _rightPanelWidth,
+                                    child: RightPanel(),
+                                  ),
+                              ],
+                            );
+                          },
                     ),
                   ),
                 ),
