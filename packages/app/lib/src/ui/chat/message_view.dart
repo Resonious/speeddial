@@ -12,6 +12,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
+import 'history_expansion.dart';
 import 'message_highlighter.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
@@ -859,6 +860,9 @@ class AgentThoughtView extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: ExpansionTile(
+        expansionAnimationStyle: animateHistoryText(text)
+            ? null
+            : AnimationStyle.noAnimation,
         tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         dense: true,

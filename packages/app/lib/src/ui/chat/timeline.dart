@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
+import 'history_expansion.dart';
 import 'message_view.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
@@ -758,6 +759,9 @@ class _ActivityCard extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: ExpansionTile(
+          expansionAnimationStyle: animateHistoryDetails(activity.details)
+              ? null
+              : AnimationStyle.noAnimation,
           key: ValueKey<String>('activity-${activity.id}'),
           leading: ActivePulse(
             active: activity.status == AgentActivityStatus.running,
