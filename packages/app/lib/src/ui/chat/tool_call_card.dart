@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
 import 'active_pulse.dart';
+import 'history_expansion.dart';
 import 'message_view.dart';
 import 'tool_call_edit_diff.dart';
 
@@ -74,7 +75,9 @@ class ToolCallCard extends StatefulWidget {
 class _ToolCallCardState extends State<ToolCallCard> {
   static final RegExp _commandLineBreak = RegExp(r'[\r\n]+');
 
+  final GlobalKey _detailsKey = GlobalKey();
   late bool _expanded = _shouldDefaultExpand(widget.toolCall.status);
+  bool _collapseImmediately = false;
   late String _title = _displayTitle(widget.toolCall);
 
   static bool _shouldDefaultExpand(ToolCallStatus status) =>
@@ -98,14 +101,57 @@ class _ToolCallCardState extends State<ToolCallCard> {
     _ => '',
   };
 
+  bool _detailsAreLarge() {
+    final RenderBox? box =
+        _detailsKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return true;
+    final double viewportHeight =
+        Scrollable.maybeOf(context)?.position.viewportDimension ??
+        MediaQuery.sizeOf(context).height;
+    return box.size.height > viewportHeight * 0.5;
+  }
+
+  bool _newDetailsAreLarge(ToolCall toolCall) {
+    final List<String> details = <String>[
+      if (toolCall.rawInput != null) _formatRawValue(toolCall.rawInput!),
+      for (final ToolCallContent content in toolCall.content)
+        ...switch (content) {
+          ToolCallText e => <String>[e.text],
+          ToolCallDiff e => <String>[
+            if (e.oldText != null) e.oldText!,
+            e.newText,
+          ],
+          ToolCallPatch e => <String>[e.diff],
+          ToolCallTerminal e => <String>[e.output],
+          ToolCallImage _ => const <String>[],
+        },
+      if (toolCall.rawOutput != null) _formatRawValue(toolCall.rawOutput!),
+    ];
+    return !animateHistoryDetails(details);
+  }
+
+  void _toggleExpanded() {
+    final bool expanding = !_expanded;
+    final bool collapseImmediately = !expanding && _detailsAreLarge();
+    setState(() {
+      _expanded = expanding;
+      _collapseImmediately = collapseImmediately;
+    });
+  }
+
   @override
   void didUpdateWidget(ToolCallCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     _title = _displayTitle(widget.toolCall);
     if (oldWidget.toolCall.status != widget.toolCall.status) {
-      // Track the agent's lifecycle: jump open while running, collapse when
-      // the call settles.
-      _expanded = _shouldDefaultExpand(widget.toolCall.status);
+      // Track the agent's lifecycle, keeping short calls animated when they
+      // settle and releasing large output in one frame.
+      final bool nextExpanded = _shouldDefaultExpand(widget.toolCall.status);
+      _collapseImmediately =
+          _expanded &&
+          !nextExpanded &&
+          (_detailsAreLarge() || _newDetailsAreLarge(widget.toolCall));
+      _expanded = nextExpanded;
     }
   }
 
@@ -134,7 +180,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: _toggleExpanded,
             child: Container(
               decoration: BoxDecoration(border: Border(left: kindBorder)),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -190,18 +236,22 @@ class _ToolCallCardState extends State<ToolCallCard> {
               ),
             ),
           ),
-          AnimatedCrossFade(
-            duration: const Duration(milliseconds: 150),
-            crossFadeState: _expanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            firstChild: const SizedBox(width: double.infinity, height: 0),
-            secondChild: _ToolCallContentList(
-              toolCall: toolCall,
-              kindColor: kindBorder,
-              attachmentLoader: _expanded ? widget.attachmentLoader : null,
+          if (!_expanded && _collapseImmediately)
+            const SizedBox.shrink()
+          else
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 150),
+              crossFadeState: _expanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              firstChild: const SizedBox(width: double.infinity, height: 0),
+              secondChild: _ToolCallContentList(
+                key: _detailsKey,
+                toolCall: toolCall,
+                kindColor: kindBorder,
+                attachmentLoader: _expanded ? widget.attachmentLoader : null,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -210,6 +260,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
 
 class _ToolCallContentList extends StatelessWidget {
   const _ToolCallContentList({
+    super.key,
     required this.toolCall,
     required this.kindColor,
     required this.attachmentLoader,

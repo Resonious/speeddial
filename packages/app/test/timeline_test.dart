@@ -569,6 +569,252 @@ void main() {
     });
   });
 
+  testWidgets('collapsing a large history item keeps the timeline visible', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              AgentThoughtItem(
+                text: List<String>.filled(500, 'long thought').join('\n'),
+              ),
+              const UserMessageItem(text: 'Latest message'),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Thought'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(AgentThoughtView)).height,
+      greaterThan(500),
+    );
+    final ScrollController controller = tester
+        .widget<ListView>(find.byKey(const Key('chat-timeline')))
+        .controller!;
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.tap(find.text('Thought'));
+    await tester.pump();
+    expect(tester.getSize(find.byType(AgentThoughtView)).height, lessThan(100));
+    await tester.pumpAndSettle();
+
+    expect(
+      controller.position.pixels,
+      lessThanOrEqualTo(controller.position.maxScrollExtent),
+    );
+    expect(
+      tester
+          .getRect(find.text('Thought'))
+          .overlaps(tester.getRect(find.byKey(const Key('chat-timeline')))),
+      isTrue,
+    );
+  });
+
+  testWidgets('collapsing a large tool call removes its height immediately', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              ToolCallTimelineItem(
+                toolCall: ToolCall(
+                  id: 'large-output',
+                  title: 'Long command',
+                  kind: 'execute',
+                  status: ToolCallStatus.completed,
+                  content: <ToolCallContent>[
+                    ToolCallText(
+                      text: List<String>.filled(500, 'output line').join('\n'),
+                    ),
+                  ],
+                  locations: const <String>[],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Long command'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(ToolCallCard)).height, greaterThan(500));
+    await tester.ensureVisible(find.text('Long command'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Long command'));
+    await tester.pump();
+    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('collapsing a large activity removes its height immediately', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              AgentActivityItem(
+                activity: AgentActivity(
+                  id: 'large-activity',
+                  kind: 'info',
+                  title: 'Long activity',
+                  status: AgentActivityStatus.completed,
+                  details: <String>[
+                    List<String>.filled(500, 'activity detail').join('\n'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Long activity'));
+    await tester.pumpAndSettle();
+    final Finder tile = find.byKey(
+      const ValueKey<String>('activity-large-activity'),
+    );
+    expect(tester.getSize(tile).height, greaterThan(500));
+    await tester.ensureVisible(find.text('Long activity'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Long activity'));
+    await tester.pump();
+    expect(tester.getSize(tile).height, lessThan(100));
+  });
+
+  testWidgets('short thought and tool details still collapse with animation', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              AgentThoughtItem(
+                text: List<String>.filled(10, 'short thought').join('\n'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Thought'));
+    await tester.pumpAndSettle();
+    final double expandedThought = tester
+        .getSize(find.byType(AgentThoughtView))
+        .height;
+    await tester.tap(find.text('Thought'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      tester.getSize(find.byType(AgentThoughtView)).height,
+      inInclusiveRange(100, expandedThought),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(AgentThoughtView)).height, lessThan(100));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              ToolCallTimelineItem(
+                toolCall: ToolCall(
+                  id: 'short-output',
+                  title: 'Short command',
+                  kind: 'execute',
+                  status: ToolCallStatus.completed,
+                  content: <ToolCallContent>[
+                    ToolCallText(
+                      text: List<String>.filled(8, 'output line').join('\n'),
+                    ),
+                  ],
+                  locations: const <String>[],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Short command'));
+    await tester.pumpAndSettle();
+    final double expandedTool = tester
+        .getSize(find.byType(ToolCallCard))
+        .height;
+    await tester.tap(find.text('Short command'));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      tester.getSize(find.byType(ToolCallCard)).height,
+      inInclusiveRange(100, expandedTool),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
+  });
+
+  testWidgets('a large running tool releases its height when it completes', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final String output = List<String>.filled(500, 'output line').join('\n');
+    Widget card(ToolCallStatus status, String text) => MaterialApp(
+      theme: buildSpeedDialTheme(),
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: ToolCallCard(
+            toolCall: ToolCall(
+              id: 'running-output',
+              title: 'Long command',
+              kind: 'execute',
+              status: status,
+              content: <ToolCallContent>[ToolCallText(text: text)],
+              locations: const <String>[],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(card(ToolCallStatus.running, output));
+    expect(tester.getSize(find.byType(ToolCallCard)).height, greaterThan(500));
+    await tester.pumpWidget(card(ToolCallStatus.completed, output));
+    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
+
+    await tester.pumpWidget(card(ToolCallStatus.running, 'Working'));
+    await tester.pumpWidget(card(ToolCallStatus.completed, output));
+    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
+  });
+
   group('tool call details', () {
     testWidgets(
       'uses the execute command as the heading and renders raw details',
@@ -769,7 +1015,8 @@ void main() {
                 content: <ToolCallContent>[],
                 locations: <String>['crates/agent-host/src/config.rs'],
                 rawInput: <String, Object?>{
-                  'file_path': '/home/nigel/r/project/crates/agent-host/src/config.rs',
+                  'file_path':
+                      '/home/nigel/r/project/crates/agent-host/src/config.rs',
                 },
                 rawOutput: <String, Object?>{
                   'patch': <String, Object?>{

@@ -12,6 +12,7 @@ import 'package:syntax_highlight/syntax_highlight.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
+import 'history_expansion.dart';
 
 /// Grammars bundled with syntax_highlight 0.4.x; requested via
 /// [Highlighter.initialize] and matched by [detectCodeLanguage].
@@ -760,6 +761,9 @@ class AgentThoughtView extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: ExpansionTile(
+        expansionAnimationStyle: animateHistoryText(text)
+            ? null
+            : AnimationStyle.noAnimation,
         tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         dense: true,
