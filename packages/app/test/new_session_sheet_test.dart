@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -100,7 +102,53 @@ class CountingInfoDaemon extends FakeDaemonClient {
   }
 }
 
+class DelayedBranchesDaemon extends FakeDaemonClient {
+  final Completer<List<Branch>> branches = Completer<List<Branch>>();
+
+  @override
+  Future<List<Branch>> gitBranches(String projectId, {String? sessionId}) =>
+      branches.future;
+}
+
 void main() {
+  for (final bool hasBranches in <bool>[true, false]) {
+    testWidgets('slow worktree options show progress until loaded '
+        '(has branches: $hasBranches)', (WidgetTester tester) async {
+      final DelayedBranchesDaemon fake = DelayedBranchesDaemon();
+      await pumpSheet(tester, fake: fake, settle: false);
+      await tester.pump(const Duration(seconds: 3));
+
+      expect(find.byKey(const Key('new-session-provider')), findsOneWidget);
+      expect(find.text('Loading session options…'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.byKey(const Key('new-session-worktree')), findsNothing);
+      final Finder submit = find.byKey(const Key('new-session-submit'));
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+      // Already available controls remain usable while branches load.
+      await tester.tap(find.byKey(const Key('new-session-yolo')));
+      await tester.pump();
+      fake.branches.complete(<Branch>[
+        if (hasBranches) const Branch(name: 'main', isCurrent: true),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Loading session options…'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+      expect(
+        find.byKey(const Key('new-session-worktree')),
+        hasBranches ? findsOneWidget : findsNothing,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(find.byKey(const Key('new-session-yolo')))
+            .value,
+        isTrue,
+      );
+    });
+  }
+
   testWidgets('a cold catalog blocks the form until the first fetch lands', (
     WidgetTester tester,
   ) async {
@@ -197,8 +245,9 @@ void main() {
     );
   });
 
-  testWidgets('picking an Ante provider pins it and uses its default model',
-      (WidgetTester tester) async {
+  testWidgets('picking an Ante provider pins it and uses its default model', (
+    WidgetTester tester,
+  ) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
     await tester.tap(find.byKey(const Key('new-session-provider')));
@@ -228,8 +277,9 @@ void main() {
     expect(created.models, <String>['gemma-4-31b']);
   });
 
-  testWidgets('a custom model id reaches the Ante provider provider-pinned',
-      (WidgetTester tester) async {
+  testWidgets('a custom model id reaches the Ante provider provider-pinned', (
+    WidgetTester tester,
+  ) async {
     final (:app, :projectId) = await pumpSheet(tester);
 
     await tester.tap(find.byKey(const Key('new-session-provider')));
@@ -361,9 +411,11 @@ void main() {
     // Submitting sends the flag.
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
-    final Session created = app.sessions.sessionsFor(projectId).singleWhere(
-      (Session s) => s.id != 'sess-1' && s.id != 'sess-2' && s.shortPrompt,
-    );
+    final Session created = app.sessions
+        .sessionsFor(projectId)
+        .singleWhere(
+          (Session s) => s.id != 'sess-1' && s.id != 'sess-2' && s.shortPrompt,
+        );
     expect(created.shortPrompt, isTrue);
 
     // Unchecking sticks the same way.

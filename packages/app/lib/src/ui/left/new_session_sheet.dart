@@ -215,8 +215,8 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final List<Branch> branches =
         data.git.branchesFor(widget.projectId) ?? const <Branch>[];
 
-    // Only a cold cache blocks the form: with anything cached the sheet paints
-    // immediately and the refresh updates it in place.
+    // Show available controls immediately, but keep indicating the first load
+    // until both providers and worktree options have arrived.
     if (_loading && providers.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
@@ -412,6 +412,14 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
                     widget.data.newSessionShortPrompt = _shortPrompt;
                   }),
           ),
+        if (_loading) ...<Widget>[
+          const SizedBox(height: 12),
+          const LinearProgressIndicator(
+            semanticsLabel: 'Loading session options',
+          ),
+          const SizedBox(height: 8),
+          const Text('Loading session options…'),
+        ],
         if (branches.isNotEmpty) ...<Widget>[
           const SizedBox(height: 4),
           CheckboxListTile(
@@ -473,7 +481,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             const SizedBox(width: 8),
             FilledButton(
               key: const Key('new-session-submit'),
-              onPressed: _submitting || _providerId == null ? null : _submit,
+              onPressed: _loading || _submitting || _providerId == null
+                  ? null
+                  : _submit,
               child: const Text('Create session'),
             ),
           ],
