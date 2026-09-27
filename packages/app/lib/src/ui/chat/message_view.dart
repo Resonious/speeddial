@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -411,6 +412,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     super.initState();
     _elementBuilders = <String, MarkdownElementBuilder>{
       'a': _LinkElementBuilder(onActivate: _activateLink),
+      'pre': _CodeBlockBuilder(this),
     };
     _restartSettleTimer();
   }
@@ -507,8 +509,6 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   @override
   Widget build(BuildContext context) {
     final TextStyle? bodyStyle = Theme.of(context).textTheme.bodyMedium;
-    TextSpan plain(String code) =>
-        TextSpan(style: context.speedDialColors.mono, text: code);
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -530,13 +530,132 @@ class _AgentMessageViewState extends State<AgentMessageView> {
             key: ValueKey<String>('agent-message-$_settled-$_highlighterReady'),
             data: widget.text,
             styleSheet: _styleSheetFor(context, bodyStyle),
-            syntaxHighlighter: _CachingSyntaxHighlighter(this, plain),
             builders: _elementBuilders,
           ),
         ),
       ),
     );
   }
+}
+
+/// Keeps code scrolling while making the selected characters visible over
+/// syntax-colored text. Markdown's default code block only paints the
+/// selection behind that text.
+class _CodeBlockBuilder extends MarkdownElementBuilder {
+  _CodeBlockBuilder(this._message);
+
+  final _AgentMessageViewState _message;
+
+  @override
+  Widget visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final String code = element.textContent.replaceFirst(RegExp(r'\n$'), '');
+    final MarkdownStyleSheet styleSheet = _styleSheetFor(
+      context,
+      Theme.of(context).textTheme.bodyMedium,
+    );
+    return _CodeBlock(
+      span: _message._spanFor(code) ?? TextSpan(text: code),
+      padding: styleSheet.codeblockPadding ?? EdgeInsets.zero,
+      textStyle: styleSheet.code ?? context.speedDialColors.mono,
+    );
+  }
+}
+
+class _CodeBlock extends StatefulWidget {
+  const _CodeBlock({
+    required this.span,
+    required this.padding,
+    required this.textStyle,
+  });
+
+  final TextSpan span;
+  final EdgeInsetsGeometry padding;
+  final TextStyle textStyle;
+
+  @override
+  State<_CodeBlock> createState() => _CodeBlockState();
+}
+
+class _CodeBlockState extends State<_CodeBlock> {
+  final SelectionListenerNotifier _selection = SelectionListenerNotifier();
+  final GlobalKey _paragraphKey = GlobalKey();
+
+  @override
+  void dispose() {
+    _selection.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    return SelectionListener(
+      selectionNotifier: _selection,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: widget.padding,
+        child: Builder(
+          builder: (BuildContext context) => CustomPaint(
+            foregroundPainter: _CodeSelectionPainter(
+              notifier: _selection,
+              paragraphKey: _paragraphKey,
+              color: accent.withValues(alpha: 0.35),
+            ),
+            child: RichText(
+              key: _paragraphKey,
+              text: TextSpan(
+                style: widget.textStyle,
+                children: <InlineSpan>[widget.span],
+              ),
+              selectionRegistrar: SelectionContainer.maybeOf(context),
+              selectionColor: accent.withValues(alpha: 0.65),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CodeSelectionPainter extends CustomPainter {
+  _CodeSelectionPainter({
+    required this.notifier,
+    required this.paragraphKey,
+    required this.color,
+  }) : super(repaint: notifier);
+
+  final SelectionListenerNotifier notifier;
+  final GlobalKey paragraphKey;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!notifier.registered) return;
+    final SelectedContentRange? range = notifier.selection.range;
+    if (range == null || range.startOffset == range.endOffset) return;
+    final RenderObject? object = paragraphKey.currentContext
+        ?.findRenderObject();
+    if (object is! RenderParagraph) return;
+    final Paint paint = Paint()..color = color;
+    final TextSelection selection = TextSelection(
+      baseOffset: range.startOffset,
+      extentOffset: range.endOffset,
+    );
+    for (final ui.TextBox box in object.getBoxesForSelection(selection)) {
+      canvas.drawRect(box.toRect(), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CodeSelectionPainter oldDelegate) =>
+      oldDelegate.notifier != notifier ||
+      oldDelegate.paragraphKey != paragraphKey ||
+      oldDelegate.color != color;
 }
 
 /// Markdown lays list markers in a separate gutter. During a mobile handle
@@ -688,24 +807,6 @@ class _MarkdownLink extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: href));
     if (messenger == null || !messenger.mounted) return;
     messenger.showSnackBar(const SnackBar(content: Text('URL copied')));
-  }
-}
-
-/// Bridges this State into flutter_markdown_plus's `pre` hook. Created fresh
-/// per build; [format] consults the State's settle flag + span cache. A new
-/// instance per build alone does not re-parse (the body keys off data), so
-/// [AgentMessageViewState] bumps the MarkdownBody key when settle/ready
-/// flips.
-class _CachingSyntaxHighlighter implements SyntaxHighlighter {
-  _CachingSyntaxHighlighter(this._state, this._plain);
-
-  final _AgentMessageViewState _state;
-  final TextSpan Function(String code) _plain;
-
-  @override
-  TextSpan format(String source) {
-    if (source.isEmpty) return const TextSpan(text: '');
-    return _state._spanFor(source) ?? _plain(source);
   }
 }
 
