@@ -750,6 +750,65 @@ void main() {
   });
 
   group('tool call native patches', () {
+    testWidgets('renders an Ante Edit result as a diff on a narrow screen', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: ToolCallCard(
+              toolCall: ToolCall(
+                id: 'ante-edit',
+                title: 'Edit',
+                kind: 'edit',
+                status: ToolCallStatus.completed,
+                content: <ToolCallContent>[],
+                locations: <String>['crates/agent-host/src/config.rs'],
+                rawInput: <String, Object?>{
+                  'file_path': '/home/nigel/r/project/crates/agent-host/src/config.rs',
+                },
+                rawOutput: <String, Object?>{
+                  'patch': <String, Object?>{
+                    'hunks': <Object?>[
+                      <String, Object?>{
+                        'old_start': 30,
+                        'new_start': 30,
+                        'lines': <String>[
+                          ' /// Existing comment',
+                          '-let old_value = 1;',
+                          '+let new_value = 2;',
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Input'), findsNothing);
+      expect(find.text('Output'), findsNothing);
+      expect(find.textContaining('+1 -1', findRichText: true), findsOneWidget);
+      expect(
+        find.textContaining('- let old_value = 1;', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('+ let new_value = 2;', findRichText: true),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('renders a provider-native unified diff', (
       WidgetTester tester,
     ) async {
