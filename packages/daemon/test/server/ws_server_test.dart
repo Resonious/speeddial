@@ -3898,7 +3898,7 @@ void main() {
         expect(huge['truncated'], isTrue);
 
         // Chat-link downloads are session-scoped, binary-safe, and accept
-        // absolute paths only when they remain inside that session's cwd.
+        // paths outside the session cwd as well.
         final created = j(
           await client.peer.call('sessions.create', <String, Object?>{
             'projectId': project.id,
@@ -3947,13 +3947,33 @@ void main() {
           0x00,
           0x01,
         ]);
-        await expectLater(
-          client.peer.call('fs.download', <String, Object?>{
-            'sessionId': session.id,
-            'path': p.join(dir.parent.path, 'outside.bin'),
-          }),
-          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        final Directory artifacts = Directory.systemTemp.createTempSync(
+          'artifacts_',
         );
+        addTearDown(() => artifacts.deleteSync(recursive: true));
+        final File artifact = File(p.join(artifacts.path, 'result.bin'))
+          ..writeAsBytesSync(<int>[0, 255, 1]);
+        Link(p.join(dir.path, 'result.bin')).createSync(artifact.path);
+        for (final String path in <String>[
+          artifact.path,
+          p.relative(artifact.path, from: session.cwd),
+          'result.bin',
+        ]) {
+          for (final String method in <String>[
+            'fs.download',
+            'fs.downloadChunk',
+          ]) {
+            final result = j(
+              await client.peer.call(method, <String, Object?>{
+                'sessionId': session.id,
+                'path': path,
+                if (method == 'fs.downloadChunk') 'offset': 0,
+              }),
+            );
+            expect(base64Decode(result['data']! as String), <int>[0, 255, 1]);
+            expect(result['size'], 3);
+          }
+        }
 
         // Missing files/dirs are invalid params.
         await expectLater(
