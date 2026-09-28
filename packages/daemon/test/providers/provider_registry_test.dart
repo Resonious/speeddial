@@ -94,7 +94,7 @@ void main() {
     expect(claude.command, <String>[
       'npx',
       '-y',
-      '@zed-industries/claude-code-acp',
+      '@agentclientprotocol/claude-agent-acp',
     ]);
     final codex = registry.byId('codex')!;
     expect(codex.command, <String>['codex', 'app-server', '--stdio']);

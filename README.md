@@ -19,8 +19,14 @@ The daemon talks to agent CLIs over [ACP](https://agentclientprotocol.com)
 (newline-delimited JSON-RPC over stdio):
 
 - `omp` → `omp acp` (native)
-- `claude` → `npx -y @zed-industries/claude-code-acp`
+- `claude` → `npx -y @agentclientprotocol/claude-agent-acp`
 - `codex` → `npx -y @zed-industries/codex-acp`
+
+Claude uses the [Claude Agent ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp),
+which requires Node.js 22+ and npm (`npx`) on the daemon host. Sign in with
+`claude /login` on that host before creating a session (or configure the
+provider credentials in the daemon environment settings). The adapter is fetched
+by `npx` on first use; no separate wrapper needs to be installed.
 
 Add or override providers in `~/.speeddial/config.json`:
 

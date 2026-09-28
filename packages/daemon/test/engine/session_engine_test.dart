@@ -195,6 +195,34 @@ void main() {
     }
   }
 
+  test(
+    'terminal login advertisement does not block creation or resume',
+    () async {
+      File(p.join(tempDir.path, 'agent.terminal_auth'))
+          .writeAsStringSync('true');
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        yolo: true,
+      );
+      expect(session.status, SessionStatus.idle);
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeProviders());
+      await engine.restore();
+      await engine.sendMessage(session.id, 'busy-once');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      expect(
+        File(p.join(tempDir.path, 'agent.authenticate_called')).existsSync(),
+        isFalse,
+      );
+      final history = store.listEvents(session.id).events;
+      expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+      expect(history.whereType<SessionErrorEvent>(), isEmpty);
+    },
+  );
+
   test('busy ACP rejection recovers within one visible turn', () async {
     final session = await engine.createSession(
       projectId: project.id,

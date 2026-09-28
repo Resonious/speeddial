@@ -549,9 +549,10 @@ class SessionEngine {
     ({String configId, String? current, List<String> levels})? thinking;
     try {
       final info = await client.initialized;
-      if (info.authMethods.isNotEmpty) {
-        await client.authenticate(info.authMethods.first);
-      }
+      // Advertised login methods do not mean authentication is required.
+      // Use the agent's existing credentials; terminal login methods (Claude)
+      // cannot be invoked through the ACP authenticate RPC.
+
       if (info.agentCapabilities['mcpServers'] != false) {
         await _prepareMcpServers?.call();
       }
@@ -1160,9 +1161,10 @@ class SessionEngine {
     final List<AcpConfigOption> configOptions;
     try {
       final InitializeResult info = await client.initialized;
-      if (info.authMethods.isNotEmpty) {
-        await client.authenticate(info.authMethods.first);
-      }
+      // Advertised login methods do not mean authentication is required.
+      // Use the agent's existing credentials; terminal login methods (Claude)
+      // cannot be invoked through the ACP authenticate RPC.
+
       if (!startNewThread && info.agentCapabilities['loadSession'] != true) {
         throw DaemonError(
           kErrConflict,

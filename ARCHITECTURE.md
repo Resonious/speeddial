@@ -48,6 +48,8 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+                    Session creation/resume uses existing provider credentials; advertised
+                    login methods are not automatically invoked (Claude uses terminal login).
                     Explicit busy prompt rejections (the agent is running its own
                     background turn — OMP continues subagent-driven work after
                     yielding) are retried with backoff until the agent accepts or
@@ -126,7 +128,7 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     retryable without repeatedly parking the project's agent sessions.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]                              (ACP)
-                      claude → ["npx", "-y", "@zed-industries/claude-code-acp"] (ACP)
+                      claude → ["npx", "-y", "@agentclientprotocol/claude-agent-acp"] (ACP)
                       codex  → ["codex", "app-server", "--stdio"]          (Codex)
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
                     OMP also defines a native yolo launch command selected per session; provider

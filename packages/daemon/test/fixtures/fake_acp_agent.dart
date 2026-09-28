@@ -239,7 +239,15 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
           'sessionCapabilities': <String, Object?>{},
           'auth': <String, Object?>{},
         },
-        'authMethods': <Object?>[],
+        'authMethods': <Object?>[
+          if (File('${Directory.current.path}/agent.terminal_auth')
+              .existsSync())
+            <String, Object?>{
+              'id': 'claude-login',
+              'name': 'Log in with Claude Code',
+              'description': 'Run claude /login in the terminal',
+            },
+        ],
         'agentInfo': <String, Object?>{
           'name': 'fake-acp-agent',
           'title': 'Fake ACP Agent',
@@ -247,7 +255,13 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
         },
       });
     case 'authenticate':
-      await _sendResponse(id!, const <String, Object?>{});
+      if (File('${Directory.current.path}/agent.terminal_auth').existsSync()) {
+        File('${Directory.current.path}/agent.authenticate_called')
+            .writeAsStringSync('true');
+        await _sendError(id!, -32603, 'Internal error');
+      } else {
+        await _sendResponse(id!, const <String, Object?>{});
+      }
     case 'session/new':
       _captureMcpServers(params(message));
       await _sendResponse(id!, <String, Object?>{

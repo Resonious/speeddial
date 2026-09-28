@@ -2,7 +2,7 @@
 ///
 /// Built-in providers:
 ///   * `omp`    → `omp acp` (ACP)
-///   * `claude` → `npx -y @zed-industries/claude-code-acp` (ACP)
+///   * `claude` → `npx -y @agentclientprotocol/claude-agent-acp` (ACP)
 ///   * `codex`  → `codex app-server --stdio` (Codex app-server)
 ///   * `ante`   → `ante serve --stdio` (Ante)
 ///
@@ -150,7 +150,7 @@ class ProviderRegistry {
       'claude': const ProviderSpec(
         id: 'claude',
         name: 'Claude Code',
-        command: <String>['npx', '-y', '@zed-industries/claude-code-acp'],
+        command: <String>['npx', '-y', '@agentclientprotocol/claude-agent-acp'],
       ),
       'codex': const ProviderSpec(
         id: 'codex',
