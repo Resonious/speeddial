@@ -303,31 +303,37 @@ void main() {
   });
 
   group('models', () {
-    test('probes for every provider run concurrently, not one after another',
-        () async {
-      // Each probe blocks on a latch the others also wait on: a serial list()
-      // would deadlock (or at best time out), while a concurrent one lets all
-      // of them finish. Two providers probe (omp, ante); the rest are static.
-      final Completer<void> release = Completer<void>();
-      var started = 0;
-      Future<List<String>> probe(List<String> command) async {
-        started++;
-        await release.future;
-        return <String>['m1'];
-      }
+    test(
+      'probes for every provider run concurrently, not one after another',
+      () async {
+        // Each probe blocks on a latch the others also wait on: a serial list()
+        // would deadlock (or at best time out), while a concurrent one lets all
+        // of them finish. Two providers probe (omp, ante); the rest are static.
+        final Completer<void> release = Completer<void>();
+        var started = 0;
+        Future<List<String>> probe(List<String> command) async {
+          started++;
+          await release.future;
+          return <String>['m1'];
+        }
 
-      final registry = ProviderRegistry(
-        configOverrides: spawnableOmp(),
-        modelsProbe: probe,
-        catalogProbe: probe,
-      );
-      final Future<List<ProviderInfo>> listing = registry.list();
-      // Let every probe reach its await before releasing them.
-      await Future<void>.delayed(Duration.zero);
-      expect(started, greaterThan(1));
-      release.complete();
-      expect((await listing).map((p) => p.id), contains('omp'));
-    });
+        final Map<String, Object?> overrides = spawnableOmp();
+        (overrides['providers']! as Map<String, Object?>).addAll(
+          spawnableAnte()['providers']! as Map<String, Object?>,
+        );
+        final registry = ProviderRegistry(
+          configOverrides: overrides,
+          modelsProbe: probe,
+          catalogProbe: probe,
+        );
+        final Future<List<ProviderInfo>> listing = registry.list();
+        // Let every probe reach its await before releasing them.
+        await Future<void>.delayed(Duration.zero);
+        expect(started, greaterThan(1));
+        release.complete();
+        expect((await listing).map((p) => p.id), contains('omp'));
+      },
+    );
 
     test('probed models populate ProviderInfo via modelsCommand', () async {
       var probedWith = <String>[];
