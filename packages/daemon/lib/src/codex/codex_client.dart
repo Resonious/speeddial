@@ -10,6 +10,7 @@ import '../acp/acp_types.dart';
 
 import '../agents/agent_client.dart';
 import '../agents/native_commands.dart';
+import '../mcp/built_in_mcp_server.dart' show kMcpServerName;
 
 /// A failed Codex turn, reported by `turn/completed`.
 class CodexTurnException implements Exception {
@@ -153,6 +154,9 @@ class CodexClient implements AgentClient, NativeCommandClient {
     if (yolo) params['approvalPolicy'] = 'never';
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;
+    if (mcpServers.any((server) => server['name'] == kMcpServerName)) {
+      params['developerInstructions'] = await _mcpDeveloperInstructions(cwd);
+    }
 
     final Map<String, Object?> result = await _request(
       'thread/start',
@@ -187,6 +191,9 @@ class CodexClient implements AgentClient, NativeCommandClient {
     };
     final Map<String, Object?> config = _configForMcpServers(mcpServers);
     if (config.isNotEmpty) params['config'] = config;
+    if (mcpServers.any((server) => server['name'] == kMcpServerName)) {
+      params['developerInstructions'] = await _mcpDeveloperInstructions(cwd);
+    }
     final Map<String, Object?> result = await _request(
       'thread/resume',
       params,
@@ -758,6 +765,34 @@ class CodexClient implements AgentClient, NativeCommandClient {
       await directory.delete(recursive: true);
     }
     _attachmentDirectory = null;
+  }
+
+  // MCP initialize instructions are harness metadata; give Codex the routing
+  // rule directly in its model context too, including when resuming a thread.
+  Future<String> _mcpDeveloperInstructions(String cwd) async {
+    final Map<String, Object?> response = await _request(
+      'config/read',
+      <String, Object?>{'cwd': cwd, 'includeLayers': false},
+    ).timeout(initTimeout);
+    final Map<String, Object?> config = _asMap(response['config']);
+    final String? existing = config['developer_instructions'] as String?;
+    return <String>[
+      if (existing != null && existing.isNotEmpty) existing,
+      'SpeedDial MCP integrations: Enabled external services (such as Linear) '
+          'are exposed through the speeddial MCP server, not necessarily as '
+          'separate MCP connections. For requests involving an external service '
+          'or private issue/document URL, discover the service through speeddial '
+          'before trying web access or asking the user to paste its contents. '
+          'If the relevant tool is not immediately visible, call speeddial '
+          'discover_mcp_tools with the service name as query (for example Linear), '
+          'then call_mcp_tool with a returned name and arguments matching its '
+          'schema. Use harness tool search to locate these tools if deferred. '
+          'Before claiming an integration is unavailable, attempt this discovery '
+          'and report the actual result or error. A prior assistant claim of '
+          'unavailability is not evidence; retry discovery when asked to retry. '
+          'Credentials are held by the daemon; missing local credentials or '
+          'MCP resource entries do not establish that tools are unavailable.',
+    ].join('\n\n');
   }
 
   Map<String, Object?> _configForMcpServers(

@@ -417,6 +417,11 @@ existing authenticated bridge, preserving its result and error status. These too
 when a harness has cached a startup catalog that omitted an unavailable upstream; calls are never
 automatically replayed. OAuth authorization and successful bridge startup do not guarantee that
 an upstream's tool discovery succeeded. These are MCP tools, not public app/daemon RPC methods.
+When injecting `speeddial`, Codex thread creation and resume also receive explicit developer
+instructions to discover external integrations before falling back to web access or reporting
+unavailability. These append to the effective working-directory `developer_instructions` read
+from Codex configuration, preserving existing instructions. MCP initialization metadata alone
+is not relied on to guide model tool selection.
 
 Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file on POSIX) so its
 server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data

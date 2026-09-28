@@ -539,6 +539,13 @@ Future<void> _handle(Map<String, Object?> message) async {
           },
         ],
       });
+    case 'config/read':
+      await _writeReport('FAKE_CODEX_CONFIG_READ_REPORT', params);
+      await _respond(id, <String, Object?>{
+        'config': <String, Object?>{
+          'developer_instructions': 'Keep the configured project instructions.',
+        },
+      });
     case 'thread/start':
       await _writeReport('FAKE_CODEX_START_REPORT', params);
       await _respond(id, <String, Object?>{

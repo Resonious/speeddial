@@ -115,9 +115,11 @@ void main() {
       final File startReport = File(p.join(tempDir.path, 'start.json'));
       final File resumeReport = File(p.join(tempDir.path, 'resume.json'));
       final File turnReport = File(p.join(tempDir.path, 'turn.json'));
+      final File configReport = File(p.join(tempDir.path, 'config.json'));
       final CodexClient client = spawnCodex(
         environment: <String, String>{
           'FAKE_CODEX_START_REPORT': startReport.path,
+          'FAKE_CODEX_CONFIG_READ_REPORT': configReport.path,
         },
       );
       addTearDown(client.dispose);
@@ -161,9 +163,22 @@ void main() {
         <String>['low', 'medium', 'high'],
       );
 
+      expect(await readJsonMap(configReport), <String, Object?>{
+        'cwd': Directory.current.path,
+        'includeLayers': false,
+      });
       final Map<String, Object?> start = await readJsonMap(startReport);
       expect(start['sandbox'], 'danger-full-access');
       expect(start['approvalPolicy'], 'never');
+      final String instructions = start['developerInstructions']! as String;
+      expect(
+        instructions,
+        startsWith('Keep the configured project instructions.'),
+      );
+      expect(instructions, contains('discover_mcp_tools'));
+      expect(instructions, contains('call_mcp_tool'));
+      expect(instructions, contains('before trying web access'));
+      expect(instructions, isNot(contains('secret')));
       final Map<String, Object?> config = Map<String, Object?>.from(
         start['config']! as Map,
       );
@@ -219,6 +234,7 @@ void main() {
       expect(resume['sandbox'], 'danger-full-access');
       expect(resume['approvalPolicy'], 'never');
       expect(resume['config'], config);
+      expect(resume['developerInstructions'], instructions);
 
       await resumed.prompt(created.sessionId, textBlocks('resumed yolo turn'));
       final Map<String, Object?> turn = await readJsonMap(turnReport);
@@ -244,7 +260,9 @@ void main() {
       cwd: Directory.current.path,
       sandboxMode: SessionSandboxMode.workspaceWrite,
     );
-    expect((await readJsonMap(startReport))['sandbox'], 'danger-full-access');
+    final Map<String, Object?> start = await readJsonMap(startReport);
+    expect(start['sandbox'], 'danger-full-access');
+    expect(start, isNot(contains('developerInstructions')));
 
     await client.dispose();
     final CodexClient resumed = spawnCodex(

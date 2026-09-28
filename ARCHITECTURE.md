@@ -63,6 +63,8 @@ lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. I
                     settings, resolves command and patch approvals, injects MCP server
                     configuration as required (30-second startup budget) on both start and
                     resume so Codex does not omit a pending bridge from the model's tools,
+                    appends explicit SpeedDial tool-discovery guidance to the effective Codex
+                    developer instructions on start/resume,
                     and maps native message, reasoning, command, file-change,
                     MCP, collaboration, web-search, image, plan, review, usage, compaction,
                     and lifecycle notifications into the shared agent update stream.
