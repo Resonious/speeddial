@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -641,18 +642,9 @@ class _MessageWithActions extends StatelessWidget {
       );
     }
     if (buttons.isEmpty) return child;
-    final Widget actions = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: buttons,
-    );
-    return Row(
-      mainAxisAlignment: isUser
-          ? MainAxisAlignment.end
-          : MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: isUser
-          ? <Widget>[actions, Flexible(child: child)]
-          : <Widget>[Flexible(child: child), actions],
+    return _MessageActionsLayout(
+      isUser: isUser,
+      children: <Widget>[child, ...buttons],
     );
   }
 
@@ -666,6 +658,130 @@ class _MessageWithActions extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Measures the actual bubble, including Markdown and attachments, so short
+/// messages do not acquire the height of a stacked action column.
+class _MessageActionsLayout extends MultiChildRenderObjectWidget {
+  const _MessageActionsLayout({required this.isUser, required super.children});
+
+  final bool isUser;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMessageActions(isUser);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderMessageActions renderObject,
+  ) {
+    renderObject.isUser = isUser;
+  }
+}
+
+class _MessageActionsParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderMessageActions extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _MessageActionsParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _MessageActionsParentData> {
+  _RenderMessageActions(this._isUser);
+
+  bool _isUser;
+  set isUser(bool value) {
+    if (_isUser == value) return;
+    _isUser = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _MessageActionsParentData) {
+      child.parentData = _MessageActionsParentData();
+    }
+  }
+
+  @override
+  void performLayout() {
+    final RenderBox bubble = firstChild!;
+    double rowWidth = 0;
+    double rowHeight = 0;
+    double columnWidth = 0;
+    double columnHeight = 0;
+    for (
+      RenderBox? action = childAfter(bubble);
+      action != null;
+      action = childAfter(action)
+    ) {
+      action.layout(constraints.loosen(), parentUsesSize: true);
+      rowWidth += action.size.width;
+      rowHeight = rowHeight > action.size.height
+          ? rowHeight
+          : action.size.height;
+      columnWidth = columnWidth > action.size.width
+          ? columnWidth
+          : action.size.width;
+      columnHeight += action.size.height;
+    }
+    final BoxConstraints stackedBubbleConstraints = BoxConstraints(
+      maxWidth: (constraints.maxWidth - columnWidth).clamp(0, double.infinity),
+    );
+    bubble.layout(stackedBubbleConstraints, parentUsesSize: true);
+    bool horizontal = bubble.size.height < columnHeight;
+    if (horizontal) {
+      // Reserve space for both buttons, then account for any extra wrapping.
+      // Tall messages only need the initial layout above.
+      bubble.layout(
+        BoxConstraints(
+          maxWidth: (constraints.maxWidth - rowWidth).clamp(0, double.infinity),
+        ),
+        parentUsesSize: true,
+      );
+      horizontal = bubble.size.height < columnHeight;
+      if (!horizontal) {
+        bubble.layout(stackedBubbleConstraints, parentUsesSize: true);
+      }
+    }
+    final double actionsWidth = horizontal ? rowWidth : columnWidth;
+    final double actionsHeight = horizontal ? rowHeight : columnHeight;
+    final double height = bubble.size.height > actionsHeight
+        ? bubble.size.height
+        : actionsHeight;
+    size = constraints.constrain(Size(constraints.maxWidth, height));
+    final double left = _isUser
+        ? size.width - bubble.size.width - actionsWidth
+        : 0;
+    (bubble.parentData! as _MessageActionsParentData).offset = Offset(
+      left + (_isUser ? actionsWidth : 0),
+      size.height - bubble.size.height,
+    );
+    double x = _isUser ? left : bubble.size.width;
+    double y = size.height - actionsHeight;
+    for (
+      RenderBox? action = childAfter(bubble);
+      action != null;
+      action = childAfter(action)
+    ) {
+      (action.parentData! as _MessageActionsParentData).offset = Offset(
+        x + (horizontal ? 0 : (actionsWidth - action.size.width) / 2),
+        y + (horizontal ? (actionsHeight - action.size.height) / 2 : 0),
+      );
+      if (horizontal) {
+        x += action.size.width;
+      } else {
+        y += action.size.height;
+      }
+    }
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }
 
 class _InlinePermissionRecord extends StatelessWidget {

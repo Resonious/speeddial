@@ -54,11 +54,65 @@ void main() {
       // either bubble from its speaker's conventional outer edge.
       expect(userCopy.center.dx, lessThan(userMessage.left));
       expect(agentCopy.center.dx, greaterThan(agentMessage.right));
-      expect(userCopy.center.dx, closeTo(userFork.center.dx, 0.1));
-      expect(agentCopy.center.dx, closeTo(agentFork.center.dx, 0.1));
-      expect(userFork.top, greaterThanOrEqualTo(userCopy.bottom));
-      expect(agentFork.top, greaterThanOrEqualTo(agentCopy.bottom));
+      expect(userCopy.center.dy, closeTo(userFork.center.dy, 0.1));
+      expect(agentCopy.center.dy, closeTo(agentFork.center.dy, 0.1));
+      expect(userFork.left, greaterThanOrEqualTo(userCopy.right));
+      expect(agentFork.left, greaterThanOrEqualTo(agentCopy.right));
     });
+  });
+
+  testWidgets('actions adapt as bubbles wrap and grow', (
+    WidgetTester tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final double width in <double>[240, 1440]) {
+      tester.view.physicalSize = Size(width, 900);
+      for (final String text in <String>[
+        'Short message',
+        'A message that wraps on the phone.',
+        'First line\n\nSecond line\n\nThird line\n\nFourth line',
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildSpeedDialTheme(),
+            home: Scaffold(
+              body: Timeline(
+                items: <TimelineItem>[
+                  UserMessageItem(text: text, forkSeq: 1),
+                  AgentMessageItem(text: text, forkSeq: 2),
+                ],
+                onFork: (_) {},
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (final int seq in <int>[1, 2]) {
+          final Rect copy = tester.getRect(
+            find.byKey(ValueKey<String>('copy-message-$seq')),
+          );
+          final Rect fork = tester.getRect(
+            find.byKey(ValueKey<String>('fork-message-$seq')),
+          );
+          final bool short =
+              text == 'Short message' ||
+              (!text.contains('\n') && width == 1440);
+          if (short) {
+            expect(
+              copy.center.dy,
+              closeTo(fork.center.dy, 0.1),
+              reason: '$width / $seq / $text',
+            );
+            expect(fork.left, greaterThanOrEqualTo(copy.right));
+          } else {
+            expect(copy.center.dx, closeTo(fork.center.dx, 0.1));
+            expect(fork.top, greaterThanOrEqualTo(copy.bottom));
+          }
+        }
+        expect(tester.takeException(), isNull);
+      }
+    }
   });
 
   group('deriveTimelineItems active thought', () {
