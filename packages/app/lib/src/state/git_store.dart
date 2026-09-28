@@ -28,6 +28,22 @@ class GitStore extends StoreBase {
   final Map<String, Object> _errors = <String, Object>{};
   final Set<String> _busy = <String>{};
 
+  Future<void> prefetch(
+    String daemonId,
+    String projectId,
+    String branch,
+  ) async {
+    try {
+      await _clientFor(daemonId).gitPrefetch(projectId, branch);
+      _errors.remove(projectId);
+    } catch (error) {
+      _errors[projectId] = error;
+      notifyListeners();
+      rethrow;
+    }
+    notifyListeners();
+  }
+
   /// Left-rail badges: daemonId/sessionId → summary. Protocol ids are scoped
   /// to one daemon, so summaries from separate endpoints must stay separate.
   final Map<String, SessionGitSummary> _summaryBySession =

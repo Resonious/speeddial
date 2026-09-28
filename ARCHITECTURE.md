@@ -439,3 +439,13 @@ picker and an App Group inbox; the app imports one file on launch or resume,
 then advances after attach or dismiss. The extension has no daemon credentials
 and does not send messages. Its immutable inbox entries are published atomically
 and consumed by a serial native worker.
+
+### Session preparation
+
+The wire create operation persists and publishes a session with `preparing: true` before
+Git or harness I/O. SessionEngine owns background preparation and one accepted queued turn;
+the user message and attachments are persisted before acknowledgement. Cancellation drops
+the queued turn, deletion/shutdown drain preparation, and errors remain in session history.
+Interrupted preparation is retryable by sending again, without automatically replaying an
+old queued message. The new-session sheet warms the selected base branch fetch, sharing its
+in-flight result with worktree creation (30-second freshness, consumed on use).

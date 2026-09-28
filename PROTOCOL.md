@@ -128,6 +128,8 @@ Session = {
   providerId: string,
   title: string,
   status: SessionStatus,
+  preparing: boolean,        // default false when absent; worktree/provider not ready
+                             // true + error means preparation failed; send retries
   model: string | null,       // current model id — agent-reported when the provider
                               // advertises a model config option, else a local preference
                               // (for Ante: the bare id; the upstream provider is fixed
@@ -488,6 +490,12 @@ Agent task-progress `plan` events remain supported.
   legacy chunks without message IDs join only adjacent chunks of the same type. Separate
   messages and turns never concatenate. The public search includes the selected session.
 - `sessions.create {projectId: string, providerId: string, model?: string, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean, shortPrompt?: boolean}` → `{session: Session}`
+  - Returns and publishes `session.created` immediately after local validation and persistence,
+    with `preparing: true`. Git/worktree and provider initialization run in the background.
+    `cwd` is the planned path and may not exist yet. `session.updated` clears `preparing`
+    when ready and supplies advertised model/thinking options. Preparation failures retain
+    the session with `preparing: true`, status `error`, and a `sessionError` event.
+    Sending again retries preparation. Published worktrees are retained on provider failure.
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as
   `openai-compatible/<model>`); the daemon pins that upstream provider in
@@ -503,7 +511,7 @@ Agent task-progress `plan` events remain supported.
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is
     based on `origin/<baseBranch>` when the remote is strictly ahead, on the local branch
     otherwise (local ahead, equal, or diverged). `baseBranch` and `cwd` are mutually exclusive
-    (`-32602`); fetch/worktree failures are `-32020`. Deleting the session never touches the
+    (`-32602`); fetch/worktree failures appear as preparation errors in the chat. Deleting the session never touches the
     worktree on disk.
   — with `yolo: true` (default `false`), supported built-in harnesses receive their native
     no-prompt mode: OMP runs with `--approval-mode=yolo`, Ante receives
@@ -525,14 +533,14 @@ Agent task-progress `plan` events remain supported.
     `danger-full-access` mode disables the filesystem and network sandbox. Permission approvals
     remain independent and continue to follow `yolo`.
   — the daemon adopts the agent's configurable model and effort/thinking options at
-    creation: `models`/`thinkingLevels` carry the advertised options and
+    preparation completion: `models`/`thinkingLevels` carry the advertised options and
     `model`/`thinkingLevel` the agent-reported current values. ACP providers use
     `configOptions`; Codex uses `model/list` plus thread settings; Ante uses its
     catalog plus `SessionStart`/`SessionUpdated`, advertises only the selected
     model's effort options, and represents no explicit effort as `default`. A
     `model` argument is applied
     best-effort through the provider transport when a model option exists (the
-    returned session reflects the provider-reported model, which may differ when
+    updated session reflects the provider-reported model, which may differ when
     the provider rejects it); when the provider advertises none, `model` stays a
     local label as before.
   — without `title`, the session starts as `New session`; the first user message sent to it
@@ -554,6 +562,14 @@ Agent task-progress `plan` events remain supported.
   must be recreated from the original session.
   The source session and its agent remain unchanged.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+  While `preparing`, accepts one queued message (including attachments), persists it, sets
+  status `running`, and acknowledges immediately. A second send returns `-32003`. The queued
+  message is delivered once preparation succeeds, without a second `userMessage` event.
+  `sessions.cancel` removes the queued turn while preparation continues; it emits a cancelled
+  `turnComplete`. Startup failure or daemon restart preserves the queued message in history
+  but does not replay it automatically; the error event explains that it was not sent.
+  Native commands return an empty list until ready; command execution and model changes
+  during preparation return `-32003`.
 - `sessions.commands {sessionId: string}` → `{commands: NativeCommand[]}` — lists native operations available on the live provider session. Codex exposes `compact`, `review`, and enabled skills from `skills/list`; Ante exposes `compact`, `context`, and discovered skills. Other providers return an empty list.
 - `sessions.command {sessionId: string, name: string, arguments?: string}` → `{}` — starts the named native operation. It persists `/name arguments` as the user event and streams provider activity and completion through the normal session event channel. Codex `compact` calls `thread/compact/start`, `review` calls `review/start` (uncommitted changes by default, custom instructions when provided), and skills use structured `skill` input in `turn/start`. Ante `compact`, `context`, and skills use its `Compact`, `ContextReport`, and `SlashCommand` operations. Unknown commands and unsupported providers fail with `-32602`; an active turn fails with `-32003`. Attachments are not accepted.
   An agent busy with its own background work (OMP keeps running subagent-driven turns
@@ -719,6 +735,10 @@ and committed, since their worktree lives outside the project directory. The
 session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `git.status {projectId: string, sessionId?: string}` → `{status: GitStatus}`
 - `git.diff {projectId: string, sessionId?: string, path?: string, staged?: boolean}` → `{diffs: GitDiff[]}` — patches are unified diffs for that file only
+- `git.prefetch {projectId: string, branch: string}` → `{}` — warms the origin fetch for
+  a new worktree session. Shares in-flight work per project path/branch; a successful result
+  is reused for up to 30 seconds and consumed by worktree creation. Failure is returned and
+  is not cached, so creation retries. Base-ref selection still checks current local refs.
 - `git.branches {projectId: string, sessionId?: string}` → `{branches: Branch[]}`
 - `git.checkout {projectId: string, sessionId?: string, branch: string}` → `{}`
 - `git.createBranch {projectId: string, sessionId?: string, name: string, checkout?: boolean}` → `{}`

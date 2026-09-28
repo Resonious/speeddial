@@ -232,6 +232,7 @@ void main() {
         'updatedAt': '2026-08-18T10:01:00Z',
       };
       final session = Session.fromJson(json);
+      expect(session.preparing, isFalse);
       expect(session.id, 'sess_abcdefghijklmno');
       expect(session.status, SessionStatus.waitingPermission);
       expect(session.toJson(), isNot(contains('mode')));
@@ -295,6 +296,7 @@ void main() {
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
         shortPrompt: true,
+        preparing: true,
         pinned: true,
         completionRevision: 7,
         done: true,
@@ -319,6 +321,7 @@ void main() {
       expect(decoded.sandboxMode, SessionSandboxMode.unrestricted);
       expect(decoded.yolo, isTrue);
       expect(decoded.shortPrompt, isTrue);
+      expect(decoded.preparing, isTrue);
       expect(decoded.pinned, isTrue);
       expect(decoded.completionRevision, 7);
       expect(decoded.done, isTrue);

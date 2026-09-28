@@ -12,6 +12,46 @@ class GitService {
 
   final String gitPath;
 
+  final Map<(String, String), Future<bool>> _baseFetches = {};
+  final Map<(String, String), ({DateTime at, bool hasRemote})> _fetchedBases =
+      {};
+
+  /// Warms the same fetch used by worktree creation. In-flight work is shared;
+  /// successful results (including local-only branches) are fresh for 30s.
+  Future<void> prefetchWorktreeBase(String repoPath, String branch) async {
+    await _fetchWorktreeBase(repoPath, branch);
+  }
+
+  Future<bool> _fetchWorktreeBase(String repoPath, String branch) {
+    _validateBranchName(branch);
+    final now = DateTime.now();
+    _fetchedBases.removeWhere(
+      (_, value) => now.difference(value.at) >= const Duration(seconds: 30),
+    );
+    final key = (repoPath, branch);
+    final cached = _fetchedBases[key];
+    if (cached != null) return Future<bool>.value(cached.hasRemote);
+    return _baseFetches.putIfAbsent(key, () async {
+      try {
+        var hasRemote = true;
+        try {
+          await fetch(repoPath, branch);
+        } on DaemonError catch (error) {
+          if (!error.message.toLowerCase().contains(
+            "couldn't find remote ref",
+          )) {
+            rethrow;
+          }
+          hasRemote = false;
+        }
+        _fetchedBases[key] = (at: DateTime.now(), hasRemote: hasRemote);
+        return hasRemote;
+      } finally {
+        _baseFetches.remove(key);
+      }
+    });
+  }
+
   /// Parsed working-tree / index status via `--porcelain=v2`.
   Future<GitStatus> status(String repoPath) async {
     final result = await _run(
@@ -215,17 +255,8 @@ class GitService {
   /// that exists; one that exists on neither throws [DaemonError] `kErrGit`.
   Future<String> worktreeBaseRef(String repoPath, String branch) async {
     _validateBranchName(branch);
-    var hasRemote = false;
-    try {
-      await fetch(repoPath, branch);
-      hasRemote = true;
-    } on DaemonError catch (e) {
-      // A missing remote branch is fine: the local branch stands alone.
-      // Anything else (network, auth) still fails the create.
-      if (!e.message.toLowerCase().contains("couldn't find remote ref")) {
-        rethrow;
-      }
-    }
+    final bool hasRemote = await _fetchWorktreeBase(repoPath, branch);
+    _fetchedBases.remove((repoPath, branch));
     final bool hasLocal =
         await _refExists(repoPath, 'refs/heads/$branch');
     if (!hasLocal && !hasRemote) {

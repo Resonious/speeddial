@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/git/git_service.dart';
@@ -37,6 +38,24 @@ Future<void> _write(Directory repo, String name, String content) async {
 Future<void> _commitAll(Directory repo, String message) async {
   await _git(repo, ['add', '-A']);
   await _git(repo, ['commit', '-m', message]);
+}
+
+class _CountingFetchGit extends GitService {
+  int fetches = 0;
+  Completer<void>? gate;
+  bool failFetch = false;
+
+  @override
+  Future<void> fetch(
+    String repoPath,
+    String branch, {
+    String remote = 'origin',
+  }) async {
+    fetches++;
+    await gate?.future;
+    if (failFetch) throw StateError('fetch unavailable');
+    await super.fetch(repoPath, branch, remote: remote);
+  }
 }
 
 void main() {
@@ -405,6 +424,51 @@ void main() {
         );
       }
     });
+  });
+
+  test(
+    'worktree creation shares an in-flight warmup and consumes a cached warmup',
+    () async {
+      final repos = await _initRepoWithOrigin();
+      addTearDown(() => repos.origin.parent.delete(recursive: true));
+      await _write(repos.repo, 'a.txt', 'initial');
+      await _commitAll(repos.repo, 'init');
+      await _git(repos.repo, ['push', '-u', 'origin', 'main']);
+      final git = _CountingFetchGit()..gate = Completer<void>();
+      final warmup = git.prefetchWorktreeBase(repos.repo.path, 'main');
+      final creating = git.worktreeBaseRef(repos.repo.path, 'main');
+      expect(git.fetches, 1);
+      git.gate!.complete();
+      await warmup;
+      expect(await creating, 'main');
+      expect(git.fetches, 1);
+      await git.prefetchWorktreeBase(repos.repo.path, 'main');
+      expect(git.fetches, 2);
+      expect(await git.worktreeBaseRef(repos.repo.path, 'main'), 'main');
+      expect(git.fetches, 2);
+      await git.worktreeBaseRef(repos.repo.path, 'main');
+      expect(
+        git.fetches,
+        3,
+        reason: 'a consumed warmup must not stale later creations',
+      );
+    },
+  );
+
+  test('failed warmup is not cached and creation retries', () async {
+    final repos = await _initRepoWithOrigin();
+    addTearDown(() => repos.origin.parent.delete(recursive: true));
+    await _write(repos.repo, 'a.txt', 'initial');
+    await _commitAll(repos.repo, 'init');
+    await _git(repos.repo, ['push', '-u', 'origin', 'main']);
+    final git = _CountingFetchGit()..failFetch = true;
+    await expectLater(
+      git.prefetchWorktreeBase(repos.repo.path, 'main'),
+      throwsStateError,
+    );
+    git.failFetch = false;
+    expect(await git.worktreeBaseRef(repos.repo.path, 'main'), 'main');
+    expect(git.fetches, 2);
   });
 
   group('worktreeBaseRef', () {

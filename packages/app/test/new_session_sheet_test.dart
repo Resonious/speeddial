@@ -110,7 +110,36 @@ class DelayedBranchesDaemon extends FakeDaemonClient {
       branches.future;
 }
 
+class WarmingDaemon extends FakeDaemonClient {
+  final Completer<void> warmup = Completer<void>();
+  final List<String> fetchedBranches = [];
+
+  @override
+  Future<void> gitPrefetch(String projectId, String branch) {
+    fetchedBranches.add(branch);
+    return warmup.future;
+  }
+}
+
 void main() {
+  testWidgets('opening the card warms Git without blocking create', (
+    tester,
+  ) async {
+    final fake = WarmingDaemon();
+    final result = await pumpSheet(tester, fake: fake);
+    expect(fake.fetchedBranches, ['main']);
+    expect(fake.warmup.isCompleted, isFalse);
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    expect(
+      result.app.selection.selectedSessionId,
+      createdSession(result.app, result.projectId).id,
+    );
+    expect(find.byType(NewSessionSheet), findsNothing);
+    fake.warmup.complete();
+    await tester.pump();
+  });
+
   for (final bool hasBranches in <bool>[true, false]) {
     testWidgets('slow worktree options show progress until loaded '
         '(has branches: $hasBranches)', (WidgetTester tester) async {

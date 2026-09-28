@@ -43,6 +43,12 @@ class GitTab extends StatelessWidget {
         final String? sessionId = app.selection.selectedSessionId;
         final Session? session =
             sessionId == null ? null : app.sessions.byId(sessionId);
+        if (session?.preparing == true) {
+          return const _EmptyHint(
+            icon: Icons.hourglass_empty,
+            message: 'Preparing workspace…',
+          );
+        }
         return _GitPane(
           daemonId: daemonId,
           projectId: projectId,

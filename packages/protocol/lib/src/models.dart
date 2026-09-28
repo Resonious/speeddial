@@ -627,6 +627,7 @@ class Session {
     this.sandboxMode,
     required this.yolo,
     this.shortPrompt = false,
+    this.preparing = false,
     this.completionRevision = 0,
     this.done = false,
     this.pinned = false,
@@ -676,6 +677,9 @@ class Session {
   /// built-in tool descriptions. Other providers ignore it.
   final bool shortPrompt;
 
+  /// Worktree/provider preparation is pending; sends are queued by the daemon.
+  final bool preparing;
+
   /// Monotonically increases whenever a turn reaches a successful terminal
   /// state. Clients include the observed revision when acknowledging [done]
   /// so a delayed acknowledgement cannot clear a newer completion.
@@ -720,6 +724,7 @@ class Session {
     yolo: json['yolo'] as bool? ?? false,
     // Absent on pre-short-prompt daemons.
     shortPrompt: json['shortPrompt'] as bool? ?? false,
+    preparing: json['preparing'] as bool? ?? false,
     // Absent on pre-daemon-owned-completion daemons.
     completionRevision: json['completionRevision'] as int? ?? 0,
     done: json['done'] as bool? ?? false,
@@ -747,6 +752,7 @@ class Session {
     'sandboxMode': sandboxMode?.wire,
     'yolo': yolo,
     'shortPrompt': shortPrompt,
+    'preparing': preparing,
     'completionRevision': completionRevision,
     'done': done,
     'pinned': pinned,

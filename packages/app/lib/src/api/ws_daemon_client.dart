@@ -1112,6 +1112,14 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<void> gitPrefetch(String projectId, String branch) async {
+    await _requirePeer().call('git.prefetch', <String, Object?>{
+      'projectId': projectId,
+      'branch': branch,
+    });
+  }
+
+  @override
   Future<List<Branch>> gitBranches(
     String projectId, {
     String? sessionId,

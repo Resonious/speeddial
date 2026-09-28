@@ -49,6 +49,14 @@ ProviderRegistry fakeProviders() => ProviderRegistry(
   modelsProbe: (command) async => const <String>[],
 );
 
+class _PrefetchGit extends GitService {
+  final List<(String, String)> requests = [];
+  @override
+  Future<void> prefetchWorktreeBase(String repoPath, String branch) async {
+    requests.add((repoPath, branch));
+  }
+}
+
 class TestMcpConnection implements McpUpstreamConnection {
   TestMcpConnection(this.serverName);
 
@@ -110,10 +118,11 @@ class WsClient {
   final List<RpcNotification> notifications = <RpcNotification>[];
   late final RpcPeer peer;
   late final StreamSubscription<RpcNotification> _notificationsSub;
+  late final StreamSubscription<Object?> _socketSub;
 
   /// Attaches the socket listener; called before any request is issued.
   void start() {
-    socket.listen((data) {
+    _socketSub = socket.listen((data) {
       if (data is! String) return; // Binary frames carry no JSON-RPC.
       Object? decoded;
       try {
@@ -128,7 +137,30 @@ class WsClient {
   List<RpcNotification> of(String method) =>
       notifications.where((n) => n.method == method).toList();
 
+  /// Existing lifecycle tests operate on a ready harness/worktree. Creation
+  /// itself is asynchronous; the dedicated preparation test exercises its ack.
+  Future<Object?> createReady(Map<String, Object?> params) async {
+    final result = j(await peer.call('sessions.create', params));
+    final id = (result['session']! as Map)['id'];
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline)) {
+      for (final notification in of('session.updated').reversed) {
+        final session = (notification.params['session']! as Map)
+            .cast<String, Object?>();
+        if (session['id'] == id && session['preparing'] == false) {
+          return <String, Object?>{'session': session};
+        }
+        if (session['id'] == id && session['status'] == 'error') {
+          throw StateError('Session preparation failed: $id');
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    throw TimeoutException('Session preparation did not finish: $id');
+  }
+
   Future<void> close() async {
+    await _socketSub.cancel();
     await _notificationsSub.cancel();
     peer.close();
     if (!_incoming.isClosed) await _incoming.close();
@@ -250,12 +282,10 @@ void main() {
     Duration gitFetchInterval = const Duration(minutes: 2),
     McpUpstreamConnector? mcpConnector,
     HarnessService? harnesses,
+    GitService? gitService,
   }) async {
-    engine = SessionEngine(
-      store: store,
-      providers: providers,
-      git: GitService(),
-    );
+    final git = gitService ?? GitService();
+    engine = SessionEngine(store: store, providers: providers, git: git);
     await engine!.restore();
     server = await SpeedDialServer.bind(
       host: '127.0.0.1',
@@ -264,6 +294,7 @@ void main() {
       store: store,
       providers: providers,
       authToken: authToken,
+      git: git,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
       mcpConnector: mcpConnector,
@@ -271,6 +302,84 @@ void main() {
     );
     return server!;
   }
+
+  test('git.prefetch warms the requested project and branch', () async {
+    final git = _PrefetchGit();
+    await startServer(gitService: git);
+    final client = await connect(server!.port);
+    addTearDown(client.close);
+    final project =
+        j(
+              await client.peer.call('projects.add', <String, Object?>{
+                'path': tempDir.path,
+              }),
+            )['project']!
+            as Map;
+    await client.peer.call('git.prefetch', <String, Object?>{
+      'projectId': project['id'],
+      'branch': 'main',
+    });
+    expect(git.requests, [(tempDir.path, 'main')]);
+    await expectLater(
+      client.peer.call('git.prefetch', <String, Object?>{
+        'projectId': 'missing',
+        'branch': 'main',
+      }),
+      throwsA(isA<DaemonError>()),
+    );
+    expect(git.requests, hasLength(1));
+  });
+
+  test(
+    'create and send acknowledge while provider preparation is blocked',
+    () async {
+      await startServer();
+      final gate = Completer<void>();
+      engine!.configureMcpAuth(prepare: () => gate.future);
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      final client = await connect(server!.port);
+      addTearDown(client.close);
+      final project =
+          j(
+                await client.peer.call('projects.add', <String, Object?>{
+                  'path': tempDir.path,
+                }),
+              )['project']!
+              as Map;
+      final result = j(
+        await client.peer.call('sessions.create', <String, Object?>{
+          'projectId': project['id'],
+          'providerId': 'fake',
+          'yolo': true,
+        }),
+      );
+      final session = Session.fromJson(
+        (result['session']! as Map).cast<String, Object?>(),
+      );
+      expect(session.preparing, isTrue);
+      await client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': session.id,
+        'text': 'queued over websocket',
+      });
+      expect(gate.isCompleted, isFalse);
+      expect(store.getSession(session.id)!.status, SessionStatus.running);
+      expect(store.hasUserMessage(session.id), isTrue);
+      final complete = waitForEvent(
+        client,
+        (event) => event is TurnCompleteEvent,
+      );
+      gate.complete();
+      await complete;
+      expect(store.getSession(session.id)!.preparing, isFalse);
+      final lifecycle = client.notifications.where(
+        (n) => n.method == 'session.created' || n.method == 'session.updated',
+      );
+      expect(lifecycle.first.method, 'session.created');
+      expect(client.of('session.created'), hasLength(1));
+    },
+  );
 
   test('native command RPC discovers and runs Codex review', () async {
     final String fixture = <String>[
@@ -315,7 +424,7 @@ void main() {
     );
     final Session session = Session.fromJson(
       (j(
-                await client.peer.call('sessions.create', <String, Object?>{
+                await client.createReady(<String, Object?>{
                   'projectId': project.id,
                   'providerId': 'codex',
                 }),
@@ -713,7 +822,7 @@ void main() {
 
         // Create spawns an idle session and announces session.created.
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
             'title': 'Lifecycle',
@@ -1015,7 +1124,7 @@ void main() {
       );
       final source = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                     'title': 'Source',
@@ -1130,7 +1239,7 @@ void main() {
         final String projectId = (project['project']! as Map)['id']! as String;
         final Session owner = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': projectId,
                       'providerId': 'fake',
                     }),
@@ -1314,7 +1423,7 @@ void main() {
 
       final Session first = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': firstProjectId,
                     'providerId': 'fake',
                   }),
@@ -1324,7 +1433,7 @@ void main() {
       );
       final Session second = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': secondProjectId,
                     'providerId': 'fake',
                   }),
@@ -1419,7 +1528,7 @@ void main() {
                 as String;
         final Session first = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': firstProjectId,
                       'providerId': 'fake',
                     }),
@@ -1429,7 +1538,7 @@ void main() {
         );
         final Session second = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': secondProjectId,
                       'providerId': 'fake',
                     }),
@@ -1718,7 +1827,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 2100));
       final Session owner = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': projectId,
                     'providerId': 'fake',
                   }),
@@ -1962,7 +2071,7 @@ void main() {
       );
       final Session owner = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                     'title': 'Owning session',
@@ -1980,7 +2089,7 @@ void main() {
 
       final Session other = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                     'title': 'Searchable release notes',
@@ -2107,9 +2216,9 @@ void main() {
         }),
       );
       expect((archiveResult['session']! as Map)['archived'], isTrue);
-      await untilRecorded(client, 'session.updated', 1);
+      await untilRecorded(client, 'session.updated', 3);
       expect(
-        (client.of('session.updated').single.params['session']! as Map)['id'],
+        (client.of('session.updated').last.params['session']! as Map)['id'],
         other.id,
       );
       final Map<String, Object?> afterArchive = j(
@@ -2212,7 +2321,7 @@ void main() {
                   as Map)
               .cast<String, Object?>(),
         );
-        await client.peer.call('sessions.create', <String, Object?>{
+        await client.createReady(<String, Object?>{
           'projectId': project.id,
           'providerId': 'fake',
         });
@@ -2305,7 +2414,7 @@ void main() {
 
       for (final Object? sandboxMode in <Object?>['not-a-mode', 42]) {
         await expectLater(
-          client.peer.call('sessions.create', <String, Object?>{
+          client.createReady(<String, Object?>{
             'projectId': 'missing',
             'providerId': 'fake',
             'sandboxMode': sandboxMode,
@@ -2314,7 +2423,7 @@ void main() {
         );
       }
       await expectLater(
-        client.peer.call('sessions.create', <String, Object?>{
+        client.createReady(<String, Object?>{
           'projectId': 'missing',
           'providerId': 'fake',
           'sandboxMode': 'unrestricted',
@@ -2351,7 +2460,7 @@ void main() {
         );
 
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
             'yolo': true,
@@ -2413,7 +2522,7 @@ void main() {
       );
 
       final created = j(
-        await client.peer.call('sessions.create', <String, Object?>{
+        await client.createReady(<String, Object?>{
           'projectId': project.id,
           'providerId': 'fake',
           'shortPrompt': true,
@@ -2425,7 +2534,7 @@ void main() {
       expect(session.shortPrompt, isTrue);
 
       final defaultCreated = j(
-        await client.peer.call('sessions.create', <String, Object?>{
+        await client.createReady(<String, Object?>{
           'projectId': project.id,
           'providerId': 'fake',
         }),
@@ -2497,7 +2606,7 @@ void main() {
         );
 
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
             'title': 'Worktree session',
@@ -2520,7 +2629,7 @@ void main() {
 
         // baseBranch and cwd conflict over the wire too.
         await expectLater(
-          client.peer.call('sessions.create', <String, Object?>{
+          client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
             'cwd': repoPath,
@@ -2573,7 +2682,7 @@ void main() {
       );
       final session = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                     'title': 'Worktree git',
@@ -2673,7 +2782,7 @@ void main() {
       );
       final otherSession = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': otherProject.id,
                     'providerId': 'fake',
                   }),
@@ -2732,7 +2841,7 @@ void main() {
       );
       final session = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                     'title': 'Merge me',
@@ -2805,7 +2914,7 @@ void main() {
       );
       final plain = Session.fromJson(
         (j(
-                  await client.peer.call('sessions.create', <String, Object?>{
+                  await client.createReady(<String, Object?>{
                     'projectId': project.id,
                     'providerId': 'fake',
                   }),
@@ -2875,7 +2984,7 @@ void main() {
         );
         final worktree = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                       'title': 'Worktree session',
@@ -2887,7 +2996,7 @@ void main() {
         );
         final plain = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                       'title': 'Plain session',
@@ -3042,7 +3151,7 @@ void main() {
         );
         Future<Session> mkWorktree(String title) async => Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                       'title': title,
@@ -3143,7 +3252,7 @@ void main() {
         );
         final worktree = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                       'title': 'Worktree session',
@@ -3259,7 +3368,7 @@ void main() {
         );
         final session = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                       'title': 'Rebase me',
@@ -3350,7 +3459,7 @@ void main() {
         );
         final plain = Session.fromJson(
           (j(
-                    await client.peer.call('sessions.create', <String, Object?>{
+                    await client.createReady(<String, Object?>{
                       'projectId': project.id,
                       'providerId': 'fake',
                     }),
@@ -3396,7 +3505,7 @@ void main() {
               .cast<String, Object?>(),
         );
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
           }),
@@ -3587,7 +3696,7 @@ void main() {
               .cast<String, Object?>(),
         );
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
           }),
@@ -3719,7 +3828,7 @@ void main() {
               .cast<String, Object?>(),
         );
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
           }),
@@ -3887,7 +3996,7 @@ void main() {
         // Chat-link downloads are session-scoped, binary-safe, and accept
         // paths outside the session cwd as well.
         final created = j(
-          await client.peer.call('sessions.create', <String, Object?>{
+          await client.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
           }),
@@ -4146,7 +4255,7 @@ void main() {
         );
 
         final created = j(
-          await a.peer.call('sessions.create', <String, Object?>{
+          await a.createReady(<String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
           }),
@@ -4238,7 +4347,7 @@ void main() {
       );
 
       final created = j(
-        await a.peer.call('sessions.create', <String, Object?>{
+        await a.createReady(<String, Object?>{
           'projectId': project.id,
           'providerId': 'fake',
         }),
@@ -4252,7 +4361,7 @@ void main() {
         'sessionId': sessionId,
         'title': 'Renamed',
       });
-      await untilRecorded(fresh, 'session.updated', 1);
+      await untilRecorded(fresh, 'session.updated', 2);
 
       final order = fresh.notifications
           .where(
@@ -4297,7 +4406,7 @@ void main() {
             .cast<String, Object?>(),
       );
       final created = j(
-        await a.peer.call('sessions.create', <String, Object?>{
+        await a.createReady(<String, Object?>{
           'projectId': project.id,
           'providerId': 'fake',
         }),

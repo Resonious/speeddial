@@ -193,6 +193,8 @@ void main() {
   Future<void> pumpComposer(
     WidgetTester tester, {
     required AttachmentPicker picker,
+    bool preparing = false,
+    SessionStatus status = SessionStatus.idle,
     List<NativeCommand> commands = const <NativeCommand>[],
     ClipboardImageReader? clipboardImageReader,
     Future<void> Function(String text, List<OutgoingAttachment> attachments)?
@@ -206,7 +208,8 @@ void main() {
         theme: buildSpeedDialTheme(),
         home: Scaffold(
           body: Composer(
-            status: SessionStatus.idle,
+            status: status,
+            preparing: preparing,
             commands: commands,
             attachmentPicker: picker,
             clipboardImageReader: clipboardImageReader,
@@ -219,6 +222,46 @@ void main() {
       ),
     );
   }
+
+  testWidgets(
+    'preparing composer accepts a message and shows the queued state',
+    (tester) async {
+      final sent = <String>[];
+      await pumpComposer(
+        tester,
+        picker: () async => [],
+        preparing: true,
+        onSend: (text, _) async {
+          sent.add(text);
+        },
+      );
+      expect(
+        find.text('Preparing session… You can send a message now.'),
+        findsOneWidget,
+      );
+      await tester.enterText(find.byType(TextField), 'Start when ready');
+      await tester.pump();
+      await tester.tap(find.byTooltip('Send'));
+      await tester.pump();
+      expect(sent, ['Start when ready']);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      await pumpComposer(
+        tester,
+        picker: () async => [],
+        preparing: true,
+        status: SessionStatus.running,
+      );
+      expect(
+        find.text('Preparing session… Your message is queued.'),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Stop'), findsOneWidget);
+      expect(find.byTooltip('Send'), findsNothing);
+    },
+  );
 
   testWidgets('slash menu filters native commands and keyboard selection', (
     WidgetTester tester,

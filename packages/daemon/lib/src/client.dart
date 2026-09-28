@@ -539,6 +539,14 @@ class DaemonClient {
     return [for (final item in raw) GitDiff.fromJson(_asMap(item, 'git.diff'))];
   }
 
+  /// Warms the Git fetch for an upcoming worktree session.
+  Future<void> gitPrefetch(String projectId, String branch) async {
+    await _peer.call('git.prefetch', <String, Object?>{
+      'projectId': projectId,
+      'branch': branch,
+    });
+  }
+
   /// `git.branches` — local branches with upstream info.
   Future<List<Branch>> gitBranches(String projectId) async {
     final result = await _peer.call('git.branches', <String, Object?>{

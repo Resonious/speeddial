@@ -133,6 +133,7 @@ abstract class DaemonClient {
   /// Creates a session and returns it; also surfaces on [sessionUpdates].
   /// When [baseBranch] is given the daemon fetches `origin/<baseBranch>` and
   /// runs the agent in a fresh worktree branched off the remote tip.
+  /// Returns while [Session.preparing]; the daemon queues the first send until ready.
   /// [sandboxMode] selects provider isolation when advertised. [yolo] selects
   /// native no-prompt behavior where supported, with daemon auto-approval as
   /// a fallback. [shortPrompt] runs the Ante agent with its compact prompt
@@ -261,6 +262,10 @@ abstract class DaemonClient {
     String? path,
     bool staged = false,
   });
+
+  /// Starts a shared, short-lived fetch for an upcoming worktree session.
+  Future<void> gitPrefetch(String projectId, String branch);
+
   Future<List<Branch>> gitBranches(String projectId, {String? sessionId});
   Future<void> gitCheckout(
     String projectId,

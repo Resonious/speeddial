@@ -72,6 +72,7 @@ class Composer extends StatefulWidget {
     super.key,
     this.focusNode,
     required this.status,
+    this.preparing = false,
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
     this.usage,
@@ -98,6 +99,7 @@ class Composer extends StatefulWidget {
 
   /// Current session status; drives the send/stop switch.
   final SessionStatus status;
+  final bool preparing;
 
   /// Native commands advertised by the active harness session.
   final List<NativeCommand> commands;
@@ -550,6 +552,18 @@ class _ComposerState extends State<Composer> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const Divider(height: 1),
+          if (widget.preparing)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Text(
+                widget.status == SessionStatus.error
+                    ? 'Preparation failed. Send a message to retry.'
+                    : _running
+                    ? 'Preparing session… Your message is queued.'
+                    : 'Preparing session… You can send a message now.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           _ControlsRow(
             model: widget.model,
             models: widget.models,

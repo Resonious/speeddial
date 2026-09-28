@@ -137,6 +137,14 @@ typedef _BuiltInMcpConfig = ({
   List<String> args,
 });
 
+/// Owns one background startup and its optional accepted first turn.
+class _SessionPreparation {
+  late Future<void> task;
+  AgentClient? client;
+  bool cancelled = false;
+  ({String text, List<_PreparedAttachment> attachments})? queued;
+}
+
 /// Orchestrates agent transports and the project session lifecycle.
 class SessionEngine {
   SessionEngine({
@@ -156,11 +164,13 @@ class SessionEngine {
   final Uuid _uuid = const Uuid();
 
   final Map<String, _LiveSession> _live = {};
+  final Map<String, _SessionPreparation> _preparations = {};
   int _pendingOperations = 0;
   bool _restarting = false;
 
   bool get hasActiveSessions =>
       _pendingOperations > 0 ||
+      _preparations.isNotEmpty ||
       _resuming.isNotEmpty ||
       _live.values.any(
         (live) =>
@@ -314,7 +324,8 @@ class SessionEngine {
   Future<void> restore() async {
     for (final session in _store.listSessions(includeArchived: true)) {
       if (session.status != SessionStatus.running &&
-          session.status != SessionStatus.waitingPermission) {
+          session.status != SessionStatus.waitingPermission &&
+          !session.preparing) {
         continue;
       }
       final updated = _withStatus(session, SessionStatus.error);
@@ -324,7 +335,9 @@ class SessionEngine {
         session.id,
         seq,
         SessionErrorEvent(
-          message: 'Daemon restarted before the turn completed',
+          message: session.preparing
+              ? 'Daemon restarted during preparation. Send a message to retry; queued messages were not sent.'
+              : 'Daemon restarted before the turn completed',
         ),
       );
       if (!_eventsController.isClosed) {
@@ -353,6 +366,8 @@ class SessionEngine {
   ///
   /// With [shortPrompt], Ante runs its compact prompt set; other providers
   /// ignore the flag.
+  /// [prepareInBackground] returns a persisted placeholder before Git/provider
+  /// I/O. The wire server uses this; internal callers may await readiness.
   Future<Session> createSession({
     required String projectId,
     required String providerId,
@@ -363,6 +378,7 @@ class SessionEngine {
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
     bool shortPrompt = false,
+    bool prepareInBackground = false,
   }) => _withSessionOperation(() async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
@@ -425,21 +441,23 @@ class SessionEngine {
       if (git == null) {
         throw DaemonError(kErrGit, 'worktree sessions are not supported');
       }
-      final String baseRef = await git.worktreeBaseRef(
-        project.path,
-        baseBranch,
-      );
       worktreePath = p.join(
         p.dirname(project.path),
         '.speeddial-worktrees',
         '${p.basename(project.path)}-$shortId',
       );
-      await git.addWorktree(
-        project.path,
-        path: worktreePath,
-        branch: 'speeddial/${_branchSlug(title) ?? 'session'}-$shortId',
-        baseRef: baseRef,
-      );
+      if (!prepareInBackground) {
+        final String baseRef = await git.worktreeBaseRef(
+          project.path,
+          baseBranch,
+        );
+        await git.addWorktree(
+          project.path,
+          path: worktreePath,
+          branch: 'speeddial/${_branchSlug(title) ?? 'session'}-$shortId',
+          baseRef: baseRef,
+        );
+      }
       workingDir = worktreePath;
     } else {
       workingDir = cwd ?? project.path;
@@ -457,11 +475,17 @@ class SessionEngine {
       sandboxMode: effectiveSandboxMode,
       yolo: yolo,
       shortPrompt: shortPrompt,
+      preparing: prepareInBackground,
       archived: false,
       createdAt: now,
       lastActivityAt: now,
       updatedAt: now,
     );
+    if (prepareInBackground) {
+      _store.insertSession(baseSession);
+      _startPreparation(baseSession);
+      return baseSession;
+    }
     return _createPreparedSession(
       baseSession,
       requestedModel: model,
@@ -469,6 +493,80 @@ class SessionEngine {
       rollbackWorktreePath: worktreePath,
     );
   });
+
+  // Defer the work until after sessions.create has published session.created.
+  // Every accepted message is already in SQLite before its RPC is acknowledged.
+  _SessionPreparation _startPreparation(Session session) {
+    return _preparations.putIfAbsent(session.id, () {
+      final preparation = _SessionPreparation();
+      preparation.task = Future<void>(() async {
+        try {
+          if (preparation.cancelled) return;
+          if (session.baseBranch != null &&
+              !File(p.join(session.cwd, '.git')).existsSync()) {
+            final project = _store.getProject(session.projectId);
+            if (project == null) throw StateError('Project was removed');
+            final String baseRef = await _git!.worktreeBaseRef(
+              project.path,
+              session.baseBranch!,
+            );
+            if (preparation.cancelled) return;
+            await _git.addWorktree(
+              project.path,
+              path: session.cwd,
+              branch:
+                  'speeddial/${session.title == kDefaultSessionTitle ? 'session' : _branchSlug(session.title) ?? 'session'}-${session.id.substring(0, 8)}',
+              baseRef: baseRef,
+            );
+          }
+          if (preparation.cancelled) return;
+          await _createPreparedSession(
+            _store.getSession(session.id)!,
+            requestedModel: session.model,
+            preparation: preparation,
+          );
+          if (preparation.cancelled) return;
+          final queued = preparation.queued;
+          final live = _live[session.id]!;
+          if (queued != null) {
+            _beginTurn(
+              live,
+              queued.text,
+              queued.attachments,
+              alreadyPersisted: true,
+            );
+            live.turn =
+                _driveTurn(
+                  live,
+                  () => live.client.prompt(
+                    live.providerSessionId,
+                    _promptBlocks(queued.text, queued.attachments),
+                  ),
+                ).whenComplete(() {
+                  live.turn = null;
+                });
+          }
+        } on Object catch (error) {
+          if (!preparation.cancelled && _store.getSession(session.id) != null) {
+            _emitForSession(
+              session.id,
+              SessionErrorEvent(
+                message:
+                    'Session preparation failed: $error. Send a message to retry; queued messages were not sent.',
+              ),
+            );
+            await _updateSession(
+              session.id,
+              (current) => _withStatus(current, SessionStatus.error),
+            );
+          }
+        } finally {
+          _preparations.remove(session.id);
+        }
+      });
+      return preparation;
+    });
+  }
 
   /// Creates a fresh provider session whose visible history is copied from
   /// [sourceSessionId] through the user/agent message event [throughSeq].
@@ -483,6 +581,12 @@ class SessionEngine {
     final Session? source = _store.getSession(sourceSessionId);
     if (source == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sourceSessionId');
+    }
+    if (source.preparing) {
+      throw DaemonError(
+        kErrConflict,
+        'Wait for preparation before forking this session',
+      );
     }
     final SessionEvent? boundary = _store.eventAt(sourceSessionId, throughSeq);
     if (boundary is! UserMessageEvent && boundary is! AgentMessageChunkEvent) {
@@ -556,6 +660,7 @@ class SessionEngine {
     String? requestedModel,
     String? rollbackProjectPath,
     String? rollbackWorktreePath,
+    _SessionPreparation? preparation,
   }) async {
     // Ante model ids are provider-qualified (`cerebras/gemma-4-31b`) when
     // they come from the catalog picker: model ids collide across upstream
@@ -572,6 +677,7 @@ class SessionEngine {
       }
     }
     final client = _spawnAgent(baseSession);
+    if (preparation != null) preparation.client = client;
     final String providerSessionId;
     final Session session;
     ({String configId, String? current, List<String> levels})? modelOption;
@@ -635,13 +741,35 @@ class SessionEngine {
         'Failed to start provider "${baseSession.providerId}": $error',
       );
     }
-    _store.insertSession(session);
+    if (preparation != null) {
+      if (preparation.cancelled) {
+        await client.dispose();
+        return session;
+      }
+      final current = _store.getSession(session.id)!;
+      final updated = _withConfigOptions(
+        current,
+        (
+          model: session.model,
+          models: session.models,
+          thinkingLevel: session.thinkingLevel,
+          thinkingLevels: session.thinkingLevels,
+        ),
+        preparing: false,
+        status: preparation.queued == null
+            ? SessionStatus.idle
+            : SessionStatus.running,
+      );
+      _store.updateSession(updated);
+    } else {
+      _store.insertSession(session);
+    }
     _store.setProviderSessionId(session.id, providerSessionId);
     if (client is AnteClient) {
       _store.setAnteProvider(session.id, client.upstreamProvider);
     }
     final _LiveSession live = _LiveSession(
-      session: session,
+      session: _store.getSession(session.id)!,
       client: client,
       providerSessionId: providerSessionId,
       modelConfigId: modelOption?.configId,
@@ -650,9 +778,9 @@ class SessionEngine {
     _live[session.id] = live;
     _subscribeToUpdates(live);
     if (!_sessionChangesController.isClosed) {
-      _sessionChangesController.add(session);
+      _sessionChangesController.add(live.session);
     }
-    return session;
+    return live.session;
   }
 
   /// Copies visible history and attachment payloads into a fork. Event
@@ -845,6 +973,39 @@ class SessionEngine {
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
   }) => _withSessionOperation(() async {
+    final stored = _store.getSession(sessionId);
+    if (stored?.preparing == true) {
+      final preparation = _startPreparation(stored!);
+      if (preparation.cancelled) {
+        throw DaemonError(
+          kErrConflict,
+          'Session is being deleted or shut down',
+        );
+      }
+      if (preparation.queued != null) {
+        throw DaemonError(
+          kErrConflict,
+          'A message is already queued for this session',
+        );
+      }
+      final prepared = _prepareAttachments(sessionId, attachments);
+      preparation.queued = (text: text, attachments: prepared);
+      _emitForSession(
+        sessionId,
+        UserMessageEvent(
+          text: text,
+          attachments: [for (final item in prepared) item.data],
+        ),
+      );
+      await _updateSession(sessionId, (current) {
+        final title = _titleFromMessage(text);
+        if (current.title == kDefaultSessionTitle && title.isNotEmpty) {
+          current = _withTitle(current, title);
+        }
+        return _withStatus(current, SessionStatus.running, activity: true);
+      });
+      return;
+    }
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
     if (live != null && live.client.isClosed && live.turn == null) {
@@ -884,6 +1045,34 @@ class SessionEngine {
     // via `attachments.read`. The wire handler has already validated the
     // base64 and the size caps; the defensive decoding here turns a malformed
     // payload into a clean -32602 instead of an internal error.
+    final prepared = _prepareAttachments(sessionId, attachments);
+    // Persist the user message, name the session if needed, and flip to
+    // running synchronously — every failure mode below happens before any
+    // agent I/O, so the caller learns it from this future rather than after
+    // a socket drop mid-turn.
+    _beginTurn(live, text, prepared);
+    // The agent prompt runs detached; its completion clears the turn slot.
+    // Errors are emitted as session events (not rethrown to the caller): a
+    // turn that dies after it started is the session's problem, not the
+    // sender's, and the client already cleared its draft on ack.
+    final active = live;
+    active.turn =
+        _driveTurn(
+          active,
+          () => active.client.prompt(
+            active.providerSessionId,
+            _promptBlocks(text, prepared, forkContext: forkContext),
+          ),
+          forkContext: forkContext,
+        ).whenComplete(() {
+          active.turn = null;
+        });
+  });
+
+  List<_PreparedAttachment> _prepareAttachments(
+    String sessionId,
+    List<OutgoingAttachment> attachments,
+  ) {
     final prepared = <_PreparedAttachment>[];
     for (final attachment in attachments) {
       final List<int> bytes;
@@ -916,30 +1105,13 @@ class SessionEngine {
       _store.insertAttachment(sessionId, data);
       prepared.add(_PreparedAttachment(data: data, text: attachmentText));
     }
-    // Persist the user message, name the session if needed, and flip to
-    // running synchronously — every failure mode below happens before any
-    // agent I/O, so the caller learns it from this future rather than after
-    // a socket drop mid-turn.
-    _beginTurn(live, text, prepared);
-    // The agent prompt runs detached; its completion clears the turn slot.
-    // Errors are emitted as session events (not rethrown to the caller): a
-    // turn that dies after it started is the session's problem, not the
-    // sender's, and the client already cleared its draft on ack.
-    final active = live;
-    active.turn =
-        _driveTurn(
-          active,
-          () => active.client.prompt(
-            active.providerSessionId,
-            _promptBlocks(text, prepared, forkContext: forkContext),
-          ),
-          forkContext: forkContext,
-        ).whenComplete(() {
-          active.turn = null;
-        });
-  });
+    return prepared;
+  }
 
   Future<_LiveSession> _commandSession(String sessionId) async {
+    if (_store.getSession(sessionId)?.preparing == true) {
+      throw DaemonError(kErrConflict, 'Session is still preparing');
+    }
     final _LiveSession? current = _live[sessionId];
     if (current != null && !current.client.isClosed) return current;
     return _resuming.putIfAbsent(
@@ -953,6 +1125,7 @@ class SessionEngine {
   /// Discovers operations offered by the active native transport. Ante adds
   /// its current session skills; Codex exposes app-server operations.
   Future<List<NativeCommand>> availableCommands(String sessionId) async {
+    if (_store.getSession(sessionId)?.preparing == true) return const [];
     final _LiveSession live = await _commandSession(sessionId);
     final AgentClient client = live.client;
     if (client is! NativeCommandClient) return const <NativeCommand>[];
@@ -1332,6 +1505,18 @@ class SessionEngine {
   /// `respondPermission` afterwards correctly reports `kErrNotFound` instead
   /// of resurrecting the turn.
   Future<void> cancel(String sessionId) async {
+    final preparation = _preparations[sessionId];
+    if (preparation != null) {
+      if (preparation.queued != null) {
+        preparation.queued = null;
+        _emitForSession(sessionId, TurnCompleteEvent(stopReason: 'cancelled'));
+        await _updateSession(
+          sessionId,
+          (current) => _withStatus(current, SessionStatus.idle),
+        );
+      }
+      return;
+    }
     final live = _live[sessionId];
     if (live == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
@@ -1382,6 +1567,9 @@ class SessionEngine {
     final session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    if (session.preparing) {
+      throw DaemonError(kErrConflict, 'Session is still preparing');
     }
     final models = session.models;
     if (models.isNotEmpty && !models.contains(model)) {
@@ -1550,6 +1738,12 @@ class SessionEngine {
   /// Kills the agent (if alive), removes the session and its events, and
   /// emits a removal notification.
   Future<void> delete(String sessionId) async {
+    final preparation = _preparations[sessionId];
+    if (preparation != null) {
+      preparation.cancelled = true;
+      await preparation.client?.dispose();
+      await preparation.task;
+    }
     final live = _live.remove(sessionId);
     if (live == null && _store.getSession(sessionId) == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
@@ -1572,6 +1766,13 @@ class SessionEngine {
 
   /// Kills every agent process and closes the broadcast streams.
   Future<void> dispose() async {
+    _restarting = true;
+    final preparations = _preparations.values.toList();
+    for (final preparation in preparations) {
+      preparation.cancelled = true;
+      await preparation.client?.dispose();
+    }
+    await Future.wait(preparations.map((preparation) => preparation.task));
     for (final live in _live.values) {
       live.closed = true;
       _expirePendingPermissions(live, 'Daemon shutting down');
@@ -1602,21 +1803,24 @@ class SessionEngine {
   void _beginTurn(
     _LiveSession live,
     String text,
-    List<_PreparedAttachment> attachments,
-  ) {
+    List<_PreparedAttachment> attachments, {
+    bool alreadyPersisted = false,
+  }) {
     final sessionId = live.sessionId;
     _toolCalls[sessionId] = <String, ToolCall>{};
     _toolCallImages[sessionId] = <String, Attachment>{};
     live.activityIds.clear();
     _breakSyntheticContent(live);
-    _emit(
-      live,
-      UserMessageEvent(
-        text: text,
-        // Event serialization keeps only metadata, even for AttachmentData.
-        attachments: [for (final prepared in attachments) prepared.data],
-      ),
-    );
+    if (!alreadyPersisted) {
+      _emit(
+        live,
+        UserMessageEvent(
+          text: text,
+          // Event serialization keeps only metadata, even for AttachmentData.
+          attachments: [for (final prepared in attachments) prepared.data],
+        ),
+      );
+    }
     // A session still carrying the default title is named from this, its
     // first user message (see PROTOCOL.md `sessions.send`). Explicit titles
     // — creation `title` or a prior `sessions.rename` — are never clobbered,
@@ -2390,6 +2594,7 @@ class SessionEngine {
       sandboxMode: session.sandboxMode,
       yolo: session.yolo,
       shortPrompt: session.shortPrompt,
+      preparing: session.preparing,
       completionRevision: completed
           ? session.completionRevision + 1
           : session.completionRevision,
@@ -2417,6 +2622,7 @@ class SessionEngine {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2443,6 +2649,7 @@ class SessionEngine {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2467,6 +2674,7 @@ class SessionEngine {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
     completionRevision: session.completionRevision,
     done: archived ? false : session.done,
     archived: archived,
@@ -2491,6 +2699,7 @@ class SessionEngine {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -2516,6 +2725,7 @@ class SessionEngine {
         sandboxMode: session.sandboxMode,
         yolo: session.yolo,
         shortPrompt: session.shortPrompt,
+        preparing: session.preparing,
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
@@ -2528,30 +2738,35 @@ class SessionEngine {
   /// Copies [session] adopting [snapshot]'s model/thinking state wholesale:
   /// a `session/set_config_option` response is authoritative for ALL
   /// config-backed fields (a model switch may carry new thinking levels).
-  Session _withConfigOptions(Session session, _ConfigSnapshot snapshot) =>
-      Session(
-        id: session.id,
-        projectId: session.projectId,
-        providerId: session.providerId,
-        title: session.title,
-        status: session.status,
-        model: snapshot.model,
-        models: snapshot.models,
-        cwd: session.cwd,
-        baseBranch: session.baseBranch,
-        thinkingLevel: snapshot.thinkingLevel,
-        thinkingLevels: snapshot.thinkingLevels,
-        sandboxMode: session.sandboxMode,
-        yolo: session.yolo,
-        shortPrompt: session.shortPrompt,
-        completionRevision: session.completionRevision,
-        done: session.done,
-        archived: session.archived,
-        pinned: session.pinned,
-        createdAt: session.createdAt,
-        lastActivityAt: session.lastActivityAt,
-        updatedAt: DateTime.now().toUtc(),
-      );
+  Session _withConfigOptions(
+    Session session,
+    _ConfigSnapshot snapshot, {
+    bool? preparing,
+    SessionStatus? status,
+  }) => Session(
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: status ?? session.status,
+    model: snapshot.model,
+    models: snapshot.models,
+    cwd: session.cwd,
+    baseBranch: session.baseBranch,
+    thinkingLevel: snapshot.thinkingLevel,
+    thinkingLevels: snapshot.thinkingLevels,
+    sandboxMode: session.sandboxMode,
+    yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
+    preparing: preparing ?? session.preparing,
+    completionRevision: session.completionRevision,
+    done: session.done,
+    archived: session.archived,
+    pinned: session.pinned,
+    createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withDone(Session session, bool done) => Session(
     id: session.id,
@@ -2568,6 +2783,7 @@ class SessionEngine {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
     completionRevision: session.completionRevision,
     done: done,
     archived: session.archived,

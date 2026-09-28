@@ -374,6 +374,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               child: Composer(
                 focusNode: widget.composerFocusNode,
                 status: status,
+                preparing: session?.preparing ?? false,
                 commands: _commands,
                 onSlashStarted: () => unawaited(_loadCommands()),
                 usage: usage,

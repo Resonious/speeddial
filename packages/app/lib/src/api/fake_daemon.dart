@@ -905,6 +905,7 @@ class FakeDaemonClient implements DaemonClient {
       sandboxMode: source.sandboxMode,
       yolo: source.yolo,
       shortPrompt: source.shortPrompt,
+      preparing: source.preparing,
       archived: false,
       createdAt: now,
       updatedAt: now,
@@ -1145,6 +1146,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
@@ -1177,6 +1179,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
@@ -1211,6 +1214,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: archived ? false : s.done,
         archived: archived,
@@ -1251,6 +1255,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: false,
         archived: s.archived,
@@ -1297,6 +1302,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
@@ -1338,6 +1344,7 @@ class FakeDaemonClient implements DaemonClient {
         sandboxMode: s.sandboxMode,
         yolo: s.yolo,
         shortPrompt: s.shortPrompt,
+        preparing: s.preparing,
         completionRevision: s.completionRevision,
         done: s.done,
         archived: s.archived,
@@ -1543,6 +1550,9 @@ class FakeDaemonClient implements DaemonClient {
       diffs.where((GitDiff d) => d.path == path),
     );
   }
+
+  @override
+  Future<void> gitPrefetch(String projectId, String branch) async {}
 
   @override
   Future<List<Branch>> gitBranches(
@@ -1978,6 +1988,7 @@ class FakeDaemonClient implements DaemonClient {
       sandboxMode: current.sandboxMode,
       yolo: current.yolo,
       shortPrompt: current.shortPrompt,
+      preparing: current.preparing,
       completionRevision: current.completionRevision,
       done: current.done,
       archived: current.archived,
@@ -2030,6 +2041,7 @@ class FakeDaemonClient implements DaemonClient {
       sandboxMode: current.sandboxMode,
       yolo: current.yolo,
       shortPrompt: current.shortPrompt,
+      preparing: current.preparing,
       completionRevision: completed
           ? current.completionRevision + 1
           : current.completionRevision,

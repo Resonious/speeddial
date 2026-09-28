@@ -84,6 +84,7 @@ const List<String> _kProtocolMethods = <String>[
   'git.status',
   'git.diff',
   'git.branches',
+  'git.prefetch',
   'git.checkout',
   'git.createBranch',
   'git.commit',
@@ -540,6 +541,7 @@ class SpeedDialServer {
       'git.status' => _gitStatus(params),
       'git.diff' => _gitDiff(params),
       'git.branches' => _gitBranches(params),
+      'git.prefetch' => _gitPrefetch(params),
       'git.checkout' => _gitCheckout(params),
       'git.createBranch' => _gitCreateBranch(params),
       'git.commit' => _gitCommit(params),
@@ -1322,6 +1324,7 @@ class SpeedDialServer {
     final rawYolo = params['yolo'];
     final rawShortPrompt = params['shortPrompt'];
     final session = await _engine.createSession(
+      prepareInBackground: true,
       projectId: projectId,
       providerId: providerId,
       model: rawModel is String && rawModel.isNotEmpty ? rawModel : null,
@@ -1768,6 +1771,19 @@ class SpeedDialServer {
     return <String, Object?>{
       'diffs': diffs.map((diff) => diff.toJson()).toList(growable: false),
     };
+  }
+
+  Future<Object?> _gitPrefetch(Map<String, Object?> params) async {
+    final projectId = _requiredString(params, 'projectId');
+    final project = _store.getProject(projectId);
+    if (project == null) {
+      throw DaemonError(kErrNotFound, 'Unknown project: $projectId');
+    }
+    await _git.prefetchWorktreeBase(
+      project.path,
+      _requiredString(params, 'branch'),
+    );
+    return <String, Object?>{};
   }
 
   Future<Object?> _gitBranches(Map<String, Object?> params) async {

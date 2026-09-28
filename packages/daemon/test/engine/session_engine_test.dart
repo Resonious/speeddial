@@ -111,6 +111,31 @@ void configureTestMcp(SessionEngine engine) {
   );
 }
 
+class _GatedWorktreeGit extends GitService {
+  final Completer<String> base = Completer<String>();
+  final Completer<void> started = Completer<void>();
+  int worktrees = 0;
+
+  @override
+  Future<String> worktreeBaseRef(String repoPath, String branch) {
+    started.complete();
+    return base.future;
+  }
+
+  @override
+  Future<void> addWorktree(
+    String repoPath, {
+    required String path,
+    required String branch,
+    required String baseRef,
+  }) async {
+    worktrees++;
+    await Directory(path).create(recursive: true);
+    await File(p.join(path, '.git')).writeAsString('test worktree');
+    await File(p.join(path, 'example.txt')).writeAsString('hello');
+  }
+}
+
 void main() {
   late Directory tempDir;
   late DaemonStore store;
@@ -194,6 +219,213 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
+
+  group('background preparation', () {
+    test('worktree fetch does not block creation or send', () async {
+      await engine.dispose();
+      final git = _GatedWorktreeGit();
+      engine = SessionEngine(
+        store: store,
+        providers: fakeProviders(),
+        git: git,
+      );
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        baseBranch: 'main',
+        yolo: true,
+        prepareInBackground: true,
+      );
+      addTearDown(() async {
+        if (!git.base.isCompleted) git.base.complete('main');
+        if (Directory(session.cwd).existsSync()) {
+          await Directory(session.cwd).delete(recursive: true);
+        }
+      });
+      expect(Directory(session.cwd).existsSync(), isFalse);
+      await git.started.future;
+      await engine.sendMessage(session.id, 'run after fetch');
+      expect(git.worktrees, 0);
+      expect(store.hasUserMessage(session.id), isTrue);
+      git.base.complete('main');
+      await waitFor(
+        () => store.getSession(session.id)!.completionRevision == 1,
+      );
+      expect(git.worktrees, 1);
+      expect(store.getSession(session.id)!.preparing, isFalse);
+    });
+
+    test(
+      'delete drains an in-flight fetch without creating the worktree',
+      () async {
+        await engine.dispose();
+        final git = _GatedWorktreeGit();
+        engine = SessionEngine(
+          store: store,
+          providers: fakeProviders(),
+          git: git,
+        );
+        final session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+          baseBranch: 'main',
+          prepareInBackground: true,
+        );
+        await git.started.future;
+        final deleting = engine.delete(session.id);
+        git.base.complete('main');
+        await deleting;
+        expect(git.worktrees, 0);
+        expect(store.getSession(session.id), isNull);
+      },
+    );
+
+    test('opens immediately, persists a queued message and attachments, sends once', () async {
+      final gate = Completer<void>();
+      engine.configureMcpAuth(prepare: () => gate.future);
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        yolo: true,
+        prepareInBackground: true,
+      );
+      expect(session.preparing, isTrue);
+      expect(engine.hasActiveSessions, isTrue);
+      await engine.sendMessage(
+        session.id,
+        'queued hello',
+        attachments: [
+          OutgoingAttachment(
+            name: 'note.txt',
+            mimeType: 'text/plain',
+            data: base64Encode(utf8.encode('note')),
+          ),
+        ],
+      );
+      expect(store.getSession(session.id)!.status, SessionStatus.running);
+      expect(store.getSession(session.id)!.title, 'queued hello');
+      final messages = events
+          .map((e) => e.event)
+          .whereType<UserMessageEvent>()
+          .toList();
+      expect(messages, hasLength(1));
+      expect(
+        store
+            .getAttachment(session.id, messages.single.attachments.single.id)!
+            .data,
+        base64Encode(utf8.encode('note')),
+      );
+      await expectLater(
+        engine.sendMessage(session.id, 'duplicate'),
+        throwsA(isA<DaemonError>()),
+      );
+      await engine.rename(session.id, 'Keep this title');
+      gate.complete();
+      await waitFor(() => events.any((e) => e.event is TurnCompleteEvent));
+      expect(store.getSession(session.id)!.preparing, isFalse);
+      expect(store.getSession(session.id)!.title, 'Keep this title');
+      expect(events.where((e) => e.event is UserMessageEvent), hasLength(1));
+      expect(events.where((e) => e.event is TurnCompleteEvent), hasLength(1));
+    });
+
+    test(
+      'cancel removes the queued turn without cancelling preparation',
+      () async {
+        final gate = Completer<void>();
+        engine.configureMcpAuth(prepare: () => gate.future);
+        addTearDown(() {
+          if (!gate.isCompleted) gate.complete();
+        });
+        final session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+          prepareInBackground: true,
+        );
+        await engine.sendMessage(session.id, 'do not send');
+        await engine.cancel(session.id);
+        expect(store.getSession(session.id)!.status, SessionStatus.idle);
+        gate.complete();
+        await waitFor(() => !store.getSession(session.id)!.preparing);
+        expect(events.where((e) => e.event is AgentMessageChunkEvent), isEmpty);
+        expect(
+          events
+              .map((e) => e.event)
+              .whereType<TurnCompleteEvent>()
+              .single
+              .stopReason,
+          'cancelled',
+        );
+      },
+    );
+
+    test(
+      'startup failure is visible and retry does not replay the failed queue',
+      () async {
+        engine.configureMcpAuth(
+          prepare: () async {
+            throw StateError('startup unavailable');
+          },
+        );
+        final session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+          yolo: true,
+          prepareInBackground: true,
+        );
+        await engine.sendMessage(session.id, 'old message');
+        await waitFor(
+          () => store.getSession(session.id)!.status == SessionStatus.error,
+        );
+        expect(
+          events
+              .map((e) => e.event)
+              .whereType<SessionErrorEvent>()
+              .single
+              .message,
+          contains('startup unavailable'),
+        );
+        expect(store.getSession(session.id)!.preparing, isTrue);
+        engine.configureMcpAuth(prepare: () async {});
+        await engine.sendMessage(session.id, 'retry message');
+        await waitFor(() => events.any((e) => e.event is TurnCompleteEvent));
+        expect(events.where((e) => e.event is UserMessageEvent), hasLength(2));
+        expect(events.where((e) => e.event is TurnCompleteEvent), hasLength(1));
+        expect(store.getSession(session.id)!.preparing, isFalse);
+      },
+    );
+
+    test('delete before startup cannot recreate a session', () async {
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        prepareInBackground: true,
+      );
+      await engine.delete(session.id);
+      expect(store.getSession(session.id), isNull);
+      expect(engine.hasActiveSessions, isFalse);
+      expect(changes.where((s) => s.id == session.id), isEmpty);
+    });
+
+    test(
+      'restart marks preparation interrupted and preserves the queued message',
+      () async {
+        final session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+          prepareInBackground: true,
+        );
+        await engine.sendMessage(session.id, 'saved before shutdown');
+        await engine.dispose();
+        await engine.restore();
+        expect(store.getSession(session.id)!.status, SessionStatus.error);
+        expect(store.getSession(session.id)!.preparing, isTrue);
+        expect(store.hasUserMessage(session.id), isTrue);
+      },
+    );
+  });
 
   test(
     'restart waits for session startup and permission-blocked turns',

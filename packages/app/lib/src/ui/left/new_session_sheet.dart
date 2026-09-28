@@ -76,6 +76,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   // types `openai-compatible/<model>` and the daemon pins that provider.
   String? _customModel;
   String? _baseBranch;
+  String? _prefetchedBranch;
   bool _useWorktree = true;
   bool _yolo = false;
   bool _shortPrompt = false;
@@ -130,6 +131,25 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   void _onFirstLoad() {
     if (!mounted) return;
     setState(() => _loading = false);
+  }
+
+  void _prefetchBase() {
+    final branch = _baseBranch;
+    if (!_useWorktree || branch == null || branch == _prefetchedBranch) return;
+    _prefetchedBranch = branch;
+    scheduleMicrotask(() async {
+      if (!mounted) return;
+      try {
+        await widget.data.git.prefetch(
+          widget.daemonId,
+          widget.projectId,
+          branch,
+        );
+      } on Object {
+        // GitStore retains the error. Creation retries a failed warmup and
+        // reports any persistent failure in the new chat.
+      }
+    });
   }
 
   Future<void> _selectProvider(String providerId) async {
@@ -215,6 +235,20 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     final List<Branch> branches =
         data.git.branchesFor(widget.projectId) ?? const <Branch>[];
 
+    if (branches.isNotEmpty && _baseBranch == null) {
+      // Prefer the checked-out branch, then main, then the first listed.
+      _baseBranch = branches
+          .firstWhere(
+            (Branch b) => b.isCurrent,
+            orElse: () => branches.firstWhere(
+              (Branch b) => b.name == 'main',
+              orElse: () => branches.first,
+            ),
+          )
+          .name;
+    }
+    _prefetchBase();
+
     // Show available controls immediately, but keep indicating the first load
     // until both providers and worktree options have arrived.
     if (_loading && providers.isEmpty) {
@@ -252,19 +286,6 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     _selectedProvider = providers.firstWhere(
       (ProviderInfo provider) => provider.id == _providerId,
     );
-    if (branches.isNotEmpty && _baseBranch == null) {
-      // Prefer the checked-out branch, then main, then the first listed.
-      _baseBranch = branches
-          .firstWhere(
-            (Branch b) => b.isCurrent,
-            orElse: () => branches.firstWhere(
-              (Branch b) => b.name == 'main',
-              orElse: () => branches.first,
-            ),
-          )
-          .name;
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
