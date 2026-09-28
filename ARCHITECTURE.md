@@ -199,8 +199,9 @@ lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porc
                     absolute repo path.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing. FsService
-                    confines project browsing and binary session-cwd link downloads, including
-                    symlink resolution, before any bytes cross the wire.
+                    confines project browsing, including symlink resolution. Binary chat-link
+                    downloads accept any readable daemon-host file, resolving relative paths
+                    from the session cwd.
 lib/src/client.dart DaemonClient: Dart client for the same protocol (used by the CLI
                     subcommands to talk to a running daemon).
 lib/src/local_daemon.dart  LocalDaemon: in-process daemon (same engine/store/server as

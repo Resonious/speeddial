@@ -238,10 +238,11 @@ abstract class DaemonClient {
   });
 
   /// Downloads a complete binary-safe file referenced by an agent message.
-  /// Relative paths resolve from the session's cwd; absolute paths must stay
-  /// inside it.
+  /// Relative paths resolve from the session's cwd, including `..`; absolute
+  /// paths and symlinks may point to any readable file on the daemon host.
   Future<FileDownload> downloadFile(String sessionId, String path);
 
+  /// Downloads a bounded chunk using the same path rules as [downloadFile].
   Future<FileDownloadChunk> downloadFileChunk(
     String sessionId,
     String path, {

@@ -673,13 +673,13 @@ clients cannot use the internal methods without the MCP secret.
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending
 - `fs.read {projectId: string, path: string, maxBytes?: int}` → `{content: string, truncated: boolean, isBinary: boolean}` — default maxBytes 512 KiB, hard cap 4 MiB; binary files return `isBinary: true` with empty content
 - `fs.download {sessionId: string, path: string}` → `FileDownload` — fetches a complete
-  binary-safe file for a chat link. Relative paths resolve from the session's `cwd`; absolute paths
-  are accepted only when they resolve inside that `cwd`. Symlink escapes, directories, missing
-  files, and files larger than 64 MiB are rejected with `-32602`.
+  binary-safe file for a chat link. Relative paths resolve from the session's `cwd`, including `..`;
+  absolute paths and symlinks may point to any readable file on the daemon host. Directories,
+  missing files, and files larger than 64 MiB are rejected with `-32602`.
 
 - `fs.downloadChunk {sessionId: string, path: string, offset: int, revision?: string}`
-  → `FileDownloadChunk`. Preferred download API, with no total file size cap. Same cwd
-  and symlink confinement as `fs.download`. Each response contains at most 256 KiB
+  → `FileDownloadChunk`. Preferred download API, with no total file size cap. Same path
+  resolution as `fs.download`. Each response contains at most 256 KiB
   of decoded bytes; `size` is the total file size, `offset` echoes the requested
   byte offset, and `name` is the basename. Start at offset 0 without a revision;
   subsequent calls must send the returned opaque revision and advance the offset

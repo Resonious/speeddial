@@ -188,6 +188,36 @@ void main() {
     });
   });
 
+  test('both download APIs read files outside the session cwd', () async {
+    final Directory outside = Directory.systemTemp.createTempSync('downloads_');
+    addTearDown(() => outside.deleteSync(recursive: true));
+    final File file = File(p.join(outside.path, 'artifact.bin'))
+      ..writeAsBytesSync(<int>[0, 1, 2, 255]);
+    Link(p.join(tempDir.path, 'artifact.bin')).createSync(file.path);
+    Link(p.join(tempDir.path, 'artifacts')).createSync(outside.path);
+    for (final String path in <String>[
+      file.path,
+      p.relative(file.path, from: tempDir.path),
+      'artifact.bin',
+      'artifacts/artifact.bin',
+    ]) {
+      final FileDownload complete = fs.download(
+        rootPath: tempDir.path,
+        path: path,
+      );
+      expect(complete.name, 'artifact.bin');
+      expect(complete.size, 4);
+      expect(base64Decode(complete.data), <int>[0, 1, 2, 255]);
+      final FileDownloadChunk chunk = await fs.downloadChunk(
+        rootPath: tempDir.path,
+        path: path,
+        offset: 0,
+      );
+      expect(chunk.data, complete.data);
+      expect(chunk.size, complete.size);
+    }
+  });
+
   group('downloadChunk', () {
     test(
       'reads a file over 64 MiB with bounded payloads and a final tail',
@@ -258,7 +288,7 @@ void main() {
     });
 
     test(
-      'handles empty files and rejects directories and symlink escapes',
+      'handles empty files and rejects directories and missing files',
       () async {
         write('empty', '');
         expect(
@@ -306,35 +336,13 @@ void main() {
       expect(absolute.toJson(), relative.toJson());
     });
 
-    test('rejects files outside the session cwd and directories', () {
-      final File outside = File(p.join(tempDir.parent.path, 'outside.bin'))
-        ..writeAsBytesSync(<int>[1]);
-      addTearDown(() {
-        if (outside.existsSync()) outside.deleteSync();
-      });
-
-      expect(
-        () => fs.download(rootPath: tempDir.path, path: outside.path),
-        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
-      );
-      expect(
-        () => fs.download(rootPath: tempDir.path, path: '.'),
-        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
-      );
-    });
-
-    test('rejects a symlinked file escape', () {
-      final File outside = File(p.join(tempDir.parent.path, 'outside.bin'))
-        ..writeAsBytesSync(<int>[1, 2, 3]);
-      addTearDown(() {
-        if (outside.existsSync()) outside.deleteSync();
-      });
-      Link(p.join(tempDir.path, 'escape.bin')).createSync(outside.path);
-
-      expect(
-        () => fs.download(rootPath: tempDir.path, path: 'escape.bin'),
-        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
-      );
+    test('rejects directories and missing files', () {
+      for (final String path in <String>['.', 'missing']) {
+        expect(
+          () => fs.download(rootPath: tempDir.path, path: path),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+      }
     });
 
     test('rejects payloads above the 64 MiB wire cap', () {

@@ -1,9 +1,8 @@
-/// Filesystem access for UI clients, confined to a project root.
+/// Filesystem browsing and chat-link downloads for UI clients.
 ///
 /// Implements PROTOCOL.md `fs.list` / `fs.read` / `fs.download`. Browsing
-/// paths are relative to the project root; downloads may use absolute paths
-/// inside a session cwd. Anything resolving outside its root is an
-/// invalid-params error (`-32602`) — never a path traversal.
+/// paths are confined to the project root. Downloads may access any readable
+/// file on the daemon host, with relative paths resolved from the session cwd.
 library;
 
 import 'dart:convert';
@@ -124,10 +123,10 @@ class FsService {
 
   /// Reads a complete file for a chat-link download.
   ///
-  /// Unlike [read], this is binary-safe and accepts an absolute [path] when
-  /// it remains inside [rootPath]. Relative paths resolve from [rootPath].
+  /// Unlike [read], this is binary-safe and accepts paths outside [rootPath],
+  /// including symlinks. Relative paths resolve from the session cwd [rootPath].
   FileDownload download({required String rootPath, required String path}) {
-    final target = resolveInRoot(rootPath, path, allowAbsolute: true);
+    final target = p.isAbsolute(path) ? path : p.join(rootPath, path);
     final type = FileSystemEntity.typeSync(target, followLinks: true);
     if (type == FileSystemEntityType.notFound) {
       throw DaemonError(_kErrInvalidParams, 'No such file: $path');
@@ -163,7 +162,7 @@ class FsService {
         'Invalid download offset or missing revision',
       );
     }
-    final String target = resolveInRoot(rootPath, path, allowAbsolute: true);
+    final String target = p.isAbsolute(path) ? path : p.join(rootPath, path);
     final File file = File(target);
     final FileStat before = await file.stat();
     if (before.type != FileSystemEntityType.file) {
