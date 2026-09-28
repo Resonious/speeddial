@@ -196,6 +196,37 @@ void main() {
   }
 
   test(
+    'restart waits for session startup and permission-blocked turns',
+    () async {
+      expect(engine.hasActiveSessions, isFalse);
+      final creating = engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      expect(engine.hasActiveSessions, isTrue);
+      expect(engine.prepareForRestart(), isFalse);
+      final session = await creating;
+      expect(engine.hasActiveSessions, isFalse);
+      final permission = waitForPermissionRequest();
+      await engine.sendMessage(session.id, 'hello');
+      await permission;
+      expect(engine.hasActiveSessions, isTrue);
+      expect(engine.prepareForRestart(), isFalse);
+      await engine.cancel(session.id);
+      await waitFor(() => !engine.hasActiveSessions);
+      expect(engine.prepareForRestart(), isTrue);
+      await expectLater(
+        engine.sendMessage(session.id, 'too late'),
+        throwsA(isA<DaemonError>()),
+      );
+      await expectLater(
+        engine.createSession(projectId: project.id, providerId: 'fake'),
+        throwsA(isA<DaemonError>()),
+      );
+    },
+  );
+
+  test(
     'terminal login advertisement does not block creation or resume',
     () async {
       File(p.join(tempDir.path, 'agent.terminal_auth'))

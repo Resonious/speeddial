@@ -37,6 +37,16 @@ Pub workspace: root `pubspec.yaml` lists all three in `workspace:`; every packag
 
 Entrypoint `bin/speeddial.dart`, package name `speeddial_daemon`.
 
+When `serve` starts inside the SpeedDial workspace on `main`, the CLI supervises
+an updatable source worker (requires Dart on PATH for compiled CLI launches).
+The worker records HEAD at boot, checks on idle transitions and every minute
+while idle, and runs noninteractive `git pull --ff-only`. A changed HEAD triggers
+a graceful worker restart after all turns, permission waits, and session startup
+operations finish. The supervisor preserves arguments, working directory, and
+credentials and forwards termination signals. Git failures are logged and retried
+on the next idle check. Other repositories, branches, and embedded daemons do not
+auto-update. No wire API changes are involved.
+
 ```
 lib/src/agents/     AgentClient transport boundary shared by the session engine.
 lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JSON-RPC

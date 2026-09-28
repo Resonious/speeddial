@@ -17,6 +17,7 @@ import 'package:speeddial_daemon/src/server/ws_server.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
 
 import 'cli_runner.dart';
+import 'auto_update.dart';
 
 /// `speeddial serve` — runs the daemon until SIGINT/SIGTERM.
 class ServeCommand extends Command<int> {
@@ -69,12 +70,25 @@ class ServeCommand extends Command<int> {
         p.join(speeddialHomeDir(), 'speeddial.db');
     Directory(p.dirname(dbPath)).createSync(recursive: true);
 
+    final cwd = Directory.current.path;
+    late final SessionEngine engine;
+    late Future<void> Function() restart;
+    final updater = DaemonAutoUpdate(
+      git: (args) => runUpdateGit(cwd, args),
+      isIdle: () => !engine.hasActiveSessions,
+      restart: () => restart(),
+      log: stderr.writeln,
+      isSpeedDial: isSpeedDialRepository,
+    );
+    if (Platform.environment[daemonWorkerEnvironment] == '1') {
+      await updater.initialize();
+    }
     final store = DaemonStore(dbPath);
     final providers = ProviderRegistry(
       environmentProvider: store.daemonEnvironment,
     );
     final git = GitService();
-    final engine = SessionEngine(store: store, providers: providers, git: git);
+    engine = SessionEngine(store: store, providers: providers, git: git);
     final pr = PrService();
     await engine.restore();
 
@@ -125,25 +139,59 @@ class ServeCommand extends Command<int> {
     );
 
     final done = Completer<void>();
+    var stopping = false;
+    var restarting = false;
     Future<void> shutdown() async {
-      if (done.isCompleted) return;
-      await engine.dispose();
+      if (stopping) return;
+      stopping = true;
+      updater.stop();
       await server.close();
+      await engine.dispose();
       store.dispose();
       _deleteDiscoveryFile();
       stdout.writeln('speeddial daemon stopped');
       done.complete();
     }
 
+    restart = () async {
+      if (stopping || !engine.prepareForRestart()) return;
+      restarting = true;
+      await shutdown();
+    };
+    var wasActive = engine.hasActiveSessions;
+    void sessionActivityChanged() {
+      if (engine.hasActiveSessions) wasActive = true;
+      // Wait until the engine clears its turn future after terminal events.
+      Timer.run(() {
+        final active = engine.hasActiveSessions;
+        if (wasActive && !active) unawaited(updater.check());
+        wasActive = active;
+      });
+    }
+
+    final changes = engine.sessionChanges.listen(
+      (_) => sessionActivityChanged(),
+    );
+    final removals = engine.sessionRemovals.listen(
+      (_) => sessionActivityChanged(),
+    );
+    final timer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => unawaited(updater.check()),
+    );
+    unawaited(updater.check());
     final subscriptions = <StreamSubscription<ProcessSignal>>[
       for (final signal in [ProcessSignal.sigint, ProcessSignal.sigterm])
         signal.watch().listen((_) => shutdown()),
     ];
     await done.future;
+    timer.cancel();
+    await changes.cancel();
+    await removals.cancel();
     for (final subscription in subscriptions) {
       await subscription.cancel();
     }
-    return Exit.ok;
+    return restarting ? daemonRestartExitCode : Exit.ok;
   }
 }
 

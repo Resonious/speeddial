@@ -156,6 +156,35 @@ class SessionEngine {
   final Uuid _uuid = const Uuid();
 
   final Map<String, _LiveSession> _live = {};
+  int _pendingOperations = 0;
+  bool _restarting = false;
+
+  bool get hasActiveSessions =>
+      _pendingOperations > 0 ||
+      _resuming.isNotEmpty ||
+      _live.values.any(
+        (live) =>
+            live.turn != null ||
+            live.session.status == SessionStatus.running ||
+            live.session.status == SessionStatus.waitingPermission,
+      );
+
+  Future<T> _withSessionOperation<T>(Future<T> Function() operation) async {
+    if (_restarting) throw DaemonError(kErrConflict, 'Daemon restarting');
+    _pendingOperations++;
+    try {
+      return await operation();
+    } finally {
+      _pendingOperations--;
+    }
+  }
+
+  bool prepareForRestart() {
+    if (hasActiveSessions) return false;
+    _restarting = true;
+    return true;
+  }
+
   _BuiltInMcpConfig? _builtInMcp;
   Future<void> Function()? _prepareMcpServers;
 
@@ -334,7 +363,7 @@ class SessionEngine {
     SessionSandboxMode? sandboxMode,
     bool yolo = false,
     bool shortPrompt = false,
-  }) async {
+  }) => _withSessionOperation(() async {
     final spec = _providers.byId(providerId);
     if (spec == null) {
       throw DaemonError(
@@ -439,7 +468,7 @@ class SessionEngine {
       rollbackProjectPath: project.path,
       rollbackWorktreePath: worktreePath,
     );
-  }
+  });
 
   /// Creates a fresh provider session whose visible history is copied from
   /// [sourceSessionId] through the user/agent message event [throughSeq].
@@ -450,7 +479,7 @@ class SessionEngine {
   Future<Session> forkSession({
     required String sourceSessionId,
     required int throughSeq,
-  }) async {
+  }) => _withSessionOperation(() async {
     final Session? source = _store.getSession(sourceSessionId);
     if (source == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sourceSessionId');
@@ -518,7 +547,7 @@ class SessionEngine {
       _sessionChangesController.add(baseSession);
     }
     return baseSession;
-  }
+  });
 
   /// Starts the ACP side of an already validated protocol session, adopts its
   /// config options, persists both ids, and publishes the created session.
@@ -815,7 +844,7 @@ class SessionEngine {
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
-  }) async {
+  }) => _withSessionOperation(() async {
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
     if (live != null && live.client.isClosed && live.turn == null) {
@@ -908,7 +937,7 @@ class SessionEngine {
         ).whenComplete(() {
           active.turn = null;
         });
-  }
+  });
 
   Future<_LiveSession> _commandSession(String sessionId) async {
     final _LiveSession? current = _live[sessionId];
@@ -939,7 +968,7 @@ class SessionEngine {
     String sessionId,
     String name, {
     String arguments = '',
-  }) async {
+  }) => _withSessionOperation(() async {
     final _LiveSession live = await _commandSession(sessionId);
     if (live.turn != null) {
       throw DaemonError(
@@ -990,7 +1019,7 @@ class SessionEngine {
         arguments,
       ),
     ).whenComplete(() => live.turn = null);
-  }
+  });
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
   /// [sendMessage] calls from each spawning their own agent process.
