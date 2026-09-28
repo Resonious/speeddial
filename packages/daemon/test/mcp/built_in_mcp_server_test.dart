@@ -118,6 +118,8 @@ void main() {
     final tools = (listedResult['tools'] as List<Object?>)
         .cast<Map<String, Object?>>();
     expect(tools.map((Map<String, Object?> tool) => tool['name']), <String>[
+      'discover_mcp_tools',
+      'call_mcp_tool',
       'search_projects',
       'search_sessions',
       'read_session_transcript',
@@ -136,6 +138,123 @@ void main() {
       'offline: connection refused',
     );
   });
+
+  test('discovery returns filtered schemas and visible warnings', () async {
+    final Map<String, Object?> response = await request(1, 'tools/call', {
+      'name': 'discover_mcp_tools',
+      'arguments': {'query': 'WORKSPACE'},
+    });
+    final Map result = response['result'] as Map;
+    final Map discovered =
+        jsonDecode((result['content'] as List).single['text'] as String) as Map;
+    expect((discovered['tools'] as List).single['name'], 'workspace__read');
+    expect((discovered['tools'] as List).single['inputSchema'], {
+      'type': 'object',
+    });
+    expect(discovered['warnings'], ['offline: connection refused']);
+    expect(calls.single.method, 'internal.mcpListTools');
+  });
+
+  test(
+    'discovery retries after startup failure and recovered tools are callable',
+    () async {
+      int listings = 0;
+      server = BuiltInMcpServer(
+        sessionId: 'current-session',
+        cwd: tempDir.path,
+        daemonCall: (String method, Map<String, Object?> params) async {
+          if (method == 'internal.mcpListTools') {
+            if (++listings == 1) throw StateError('Linear discovery timed out');
+            return {
+              'tools': [
+                {
+                  'name': 'Linear__get_issue',
+                  'inputSchema': {'type': 'object'},
+                },
+              ],
+              'warnings': <String>[],
+            };
+          }
+          expect(method, 'internal.mcpCallTool');
+          expect(params, {
+            'name': 'Linear__get_issue',
+            'arguments': {'id': 'VPT-1354'},
+          });
+          return {
+            'content': [
+              {'type': 'text', 'text': 'Issue details'},
+            ],
+            'isError': false,
+          };
+        },
+      );
+      final Map startup = (await request(1, 'tools/list'))['result'] as Map;
+      expect(
+        (startup['tools'] as List).map((tool) => tool['name']),
+        contains('discover_mcp_tools'),
+      );
+      expect(
+        (startup['tools'] as List).map((tool) => tool['name']),
+        isNot(contains('Linear__get_issue')),
+      );
+      final Map discovered =
+          (await request(2, 'tools/call', {
+                'name': 'discover_mcp_tools',
+                'arguments': {'query': 'Linear'},
+              }))['result']
+              as Map;
+      expect(jsonEncode(discovered), contains('Linear__get_issue'));
+      expect(listings, 2);
+      final Map called =
+          (await request(3, 'tools/call', {
+                'name': 'call_mcp_tool',
+                'arguments': {
+                  'name': 'Linear__get_issue',
+                  'arguments': {'id': 'VPT-1354'},
+                },
+              }))['result']
+              as Map;
+      expect(called['isError'], false);
+      expect(jsonEncode(called), contains('Issue details'));
+    },
+  );
+
+  test('discovery exposes bridge failures in tool content', () async {
+    server = BuiltInMcpServer(
+      sessionId: 'current-session',
+      cwd: tempDir.path,
+      daemonCall: (_, _) async => throw StateError('bridge disconnected'),
+    );
+    final Map result =
+        (await request(1, 'tools/call', {
+              'name': 'discover_mcp_tools',
+            }))['result']
+            as Map;
+    final Map discovered =
+        jsonDecode((result['content'] as List).single['text'] as String) as Map;
+    expect(discovered['tools'], isEmpty);
+    expect(
+      (discovered['warnings'] as List).single,
+      contains('bridge disconnected'),
+    );
+  });
+
+  test(
+    'call_mcp_tool rejects malformed arguments without forwarding',
+    () async {
+      final Map result =
+          (await request(1, 'tools/call', {
+                'name': 'call_mcp_tool',
+                'arguments': {
+                  'name': 'workspace__read',
+                  'arguments': 'invalid',
+                },
+              }))['result']
+              as Map;
+      expect(result['isError'], true);
+      expect(calls, isEmpty);
+    },
+  );
 
   test('search tools forward filters and return daemon results', () async {
     final Map<String, Object?> projects = await request(

@@ -411,6 +411,14 @@ The bridge's MCP initialization instructions describe managed tool discovery und
 `speeddial`, including the qualified naming scheme. Agents must inspect available tools
 (using their harness's tool discovery when needed) before reporting an integration unavailable;
 MCP resource listings and local environment credentials do not indicate tool availability.
+The always-advertised `discover_mcp_tools {query?: string}` MCP tool retries managed discovery
+and returns matching descriptors (case-insensitive name/description substring) plus all discovery
+warnings in model-visible text. Omit `query` to list all managed tools. The companion
+`call_mcp_tool {name: string, arguments: object}` invokes a discovered managed tool through the
+existing authenticated bridge, preserving its result and error status. These tools allow recovery
+when a harness has cached a startup catalog that omitted an unavailable upstream; calls are never
+automatically replayed. OAuth authorization and successful bridge startup do not guarantee that
+an upstream's tool discovery succeeded. These are MCP tools, not public app/daemon RPC methods.
 
 Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file on POSIX) so its
 server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data

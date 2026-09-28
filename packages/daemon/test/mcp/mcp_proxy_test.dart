@@ -10,6 +10,25 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('discovery warnings redact configured credentials', () async {
+    final McpProxySession proxy = McpProxySession(
+      servers: [
+        _stored(
+          id: 'linear',
+          name: 'Linear',
+          transport: McpTransport.http,
+          secrets: {'Authorization': 'Bearer private-token'},
+        ),
+      ],
+      cwd: Directory.current.path,
+      connector: (_, _) async =>
+          throw StateError('Rejected Bearer private-token'),
+    );
+    addTearDown(proxy.close);
+    final McpProxyListResult result = await proxy.listTools();
+    expect(result.warnings, ['Linear: Rejected [redacted]']);
+  });
+
   for (final bool stallConnection in <bool>[true, false]) {
     test(
       'stalled ${stallConnection ? 'connection' : 'listing'} preserves healthy '
@@ -52,6 +71,12 @@ void main() {
           sessionId: 'session',
           cwd: Directory.current.path,
           daemonCall: (String method, Map<String, Object?> params) async {
+            if (method == 'internal.mcpCallTool') {
+              return proxy.callTool(
+                params['name']! as String,
+                params['arguments']! as Map<String, Object?>,
+              );
+            }
             final McpProxyListResult result = await proxy.listTools();
             return <String, Object?>{
               'tools': result.tools,
@@ -83,9 +108,18 @@ void main() {
 
         // Retry before the original operation finishes: its late completion
         // must neither evict the recovered connection nor restore old routes.
-        final McpProxyListResult retried = await proxy.listTools();
-        expect(retried.warnings, isEmpty);
-        expect(retried.tools.map((tool) => tool['name']), <String>[
+        final Map<String, Object?>? discovered = await bridge.handle({
+          'jsonrpc': '2.0',
+          'id': 2,
+          'method': 'tools/call',
+          'params': {'name': 'discover_mcp_tools'},
+        });
+        final Map discoveryResult = discovered!['result']! as Map;
+        final Map retried = jsonDecode(
+          (discoveryResult['content'] as List).single['text'] as String,
+        ) as Map;
+        expect(retried['warnings'], isEmpty);
+        expect((retried['tools'] as List).map((tool) => tool['name']), <String>[
           'Linear__save_issue',
           'Slow__new',
         ]);
@@ -94,10 +128,19 @@ void main() {
         await Future<void>.delayed(Duration.zero);
         expect(slow.closed, isTrue);
         expect(recovered.closed, isFalse);
-        expect(
-          await proxy.callTool('Slow__new', <String, Object?>{}),
-          containsPair('server', 'recovered'),
-        );
+        final Map<String, Object?>? called = await bridge.handle({
+          'jsonrpc': '2.0',
+          'id': 3,
+          'method': 'tools/call',
+          'params': {
+            'name': 'call_mcp_tool',
+            'arguments': {
+              'name': 'Slow__new',
+              'arguments': <String, Object?>{},
+            },
+          },
+        });
+        expect(called!['result'], containsPair('server', 'recovered'));
         await proxy.listTools();
         expect(attempts, 2);
       },

@@ -68,7 +68,10 @@ class McpProxySession {
     for (final _ServerTools server in listed) {
       final Object? error = server.error;
       if (error != null) {
-        warnings.add('${server.stored.profile.name}: ${_errorMessage(error)}');
+        warnings.add(
+          '${server.stored.profile.name}: '
+          '${_redactError(error, server.stored.secrets.values)}',
+        );
         continue;
       }
       final Set<String> allocated = routes.keys.toSet();
@@ -201,13 +204,7 @@ class McpProxySession {
     } on Object catch (error) {
       // Preserve transport failures as MCP tool errors before JSON-RPC's
       // generic exception handler replaces them with "Internal error".
-      String message = _errorMessage(error);
-      final List<String> secrets =
-          route.secrets.where((String secret) => secret.isNotEmpty).toList()
-            ..sort((String a, String b) => b.length.compareTo(a.length));
-      for (final String secret in secrets) {
-        message = message.replaceAll(secret, '[redacted]');
-      }
+      final String message = _redactError(error, route.secrets);
       return <String, Object?>{
         'isError': true,
         'content': <Object?>[
@@ -260,6 +257,17 @@ String _toolComponent(String value) {
   }
   final String result = buffer.toString().replaceFirst(RegExp(r'_+$'), '');
   return result.isEmpty ? 'unnamed' : result;
+}
+
+String _redactError(Object error, Iterable<String> secrets) {
+  String message = _errorMessage(error);
+  final List<String> values =
+      secrets.where((value) => value.isNotEmpty).toList()
+        ..sort((a, b) => b.length.compareTo(a.length));
+  for (final String secret in values) {
+    message = message.replaceAll(secret, '[redacted]');
+  }
+  return message;
 }
 
 String _errorMessage(Object error) => switch (error) {

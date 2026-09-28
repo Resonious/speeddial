@@ -108,7 +108,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     15-second total connection/initialization/tool-listing budget so a slow
                     server cannot exhaust the agent's 30-second bridge startup deadline.
                     Healthy tools survive with named warnings for failed upstreams; late
-                    connections are closed and subsequent listings can retry.
+                    connections are closed and subsequent listings can retry. Always-advertised
+                    discovery and invocation tools let agents retry missing upstreams, read
+                    discovery warnings, and invoke recovered tools despite a cached harness
+                    catalog.
                     OAuth callbacks can
                     terminate at the daemon or at a temporary native-app localhost listener;
                     app-received callbacks are validated and completed through authenticated RPC.

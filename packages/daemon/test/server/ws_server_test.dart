@@ -2290,7 +2290,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(6));
+        expect((listed['result']! as Map)['tools'], hasLength(8));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

@@ -127,7 +127,10 @@ class BuiltInMcpServer {
           'source server. Before reporting that an integration is unavailable, '
           'inspect the available speeddial tools and use tool discovery/search '
           'if your harness defers tool loading. Search by the integration name '
-          'and requested operation. MCP resource listings are not tool listings, '
+          'and requested operation. If managed tools are missing, call '
+          'discover_mcp_tools to retry discovery and inspect warnings, then '
+          'call_mcp_tool to invoke a discovered tool by name. '
+          'MCP resource listings are not tool listings, '
           'and managed servers do not appear as separate MCP connections. '
           'Credentials stay in the SpeedDial daemon, so missing environment '
           'variables or local credentials do not mean an integration is '
@@ -195,6 +198,8 @@ class BuiltInMcpServer {
         : (rawArguments as Map).cast<String, Object?>();
     try {
       return switch (rawName) {
+        'discover_mcp_tools' => await _discoverMcpTools(arguments),
+        'call_mcp_tool' => await _callDiscoveredTool(arguments),
         'search_projects' => await _searchProjects(arguments),
         'search_sessions' => await _searchSessions(arguments),
         'read_session_transcript' => await _readSessionTranscript(arguments),
@@ -211,6 +216,48 @@ class BuiltInMcpServer {
         'isError': true,
       };
     }
+  }
+
+  Future<Map<String, Object?>> _discoverMcpTools(
+    Map<String, Object?> arguments,
+  ) async {
+    final String query = (_optionalString(arguments, 'query') ?? '')
+        .toLowerCase();
+    final Map<String, Object?> listed = await _listTools();
+    final Set<Object?> builtInNames = _tools
+        .map((tool) => tool['name'])
+        .toSet();
+    final List<Map<String, Object?>> tools = (listed['tools']! as List)
+        .cast<Map<String, Object?>>()
+        .where((tool) => !builtInNames.contains(tool['name']))
+        .where(
+          (tool) =>
+              query.isEmpty ||
+              '${tool['name']} ${tool['description']}'.toLowerCase().contains(
+                query,
+              ),
+        )
+        .toList(growable: false);
+    final Map<String, Object?>? metadata =
+        listed['_meta'] as Map<String, Object?>?;
+    return _textResult(
+      _pretty(<String, Object?>{
+        'tools': tools,
+        'warnings': metadata?['speeddial/warnings'] ?? const <String>[],
+      }),
+    );
+  }
+
+  Future<Map<String, Object?>> _callDiscoveredTool(
+    Map<String, Object?> arguments,
+  ) async {
+    final String? name = _optionalString(arguments, 'name');
+    if (name == null) throw ArgumentError('name is required');
+    final Object? rawArguments = arguments['arguments'];
+    if (rawArguments is! Map) {
+      throw ArgumentError('arguments must be an object');
+    }
+    return _callManagedTool(name, rawArguments.cast<String, Object?>());
   }
 
   Future<Map<String, Object?>> _callManagedTool(
@@ -412,6 +459,43 @@ class BuiltInMcpServer {
       };
 
   static const List<Map<String, Object?>> _tools = <Map<String, Object?>>[
+    <String, Object?>{
+      'name': 'discover_mcp_tools',
+      'description': 'Discover or retry tools from enabled MCP integrations such as Linear. Use before reporting an integration unavailable. Returns tool names, input schemas, and discovery warnings. Invoke recovered tools with call_mcp_tool without restarting the session.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'query': <String, Object?>{
+            'type': 'string',
+            'description': 'Optional substring of the integration name or tool description. Omit to list all managed tools.',
+          },
+        },
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{'readOnlyHint': true},
+    },
+    <String, Object?>{
+      'name': 'call_mcp_tool',
+      'description': 'Invoke a managed MCP tool returned by discover_mcp_tools. Supply its exact name and arguments matching its input schema. The operation may modify external data depending on the selected tool.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'name': <String, Object?>{'type': 'string'},
+          'arguments': <String, Object?>{
+            'type': 'object',
+            'additionalProperties': true,
+          },
+        },
+        'required': <String>['name', 'arguments'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': true,
+        'idempotentHint': false,
+        'openWorldHint': true,
+      },
+    },
     <String, Object?>{
       'name': 'search_projects',
       'title': 'Search SpeedDial projects',
