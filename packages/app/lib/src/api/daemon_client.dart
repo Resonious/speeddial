@@ -141,7 +141,6 @@ abstract class DaemonClient {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
@@ -197,8 +196,6 @@ abstract class DaemonClient {
 
   /// Deletes a session and kills its agent process if alive.
   Future<void> deleteSession(String sessionId);
-
-  Future<Session> setMode(String sessionId, SessionMode mode);
   Future<Session> setModel(String sessionId, String model);
 
   /// Sets the session's thinking level. Valid levels come from

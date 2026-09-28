@@ -82,7 +82,6 @@ Session testSession({
   providerId: 'omp',
   title: title,
   status: SessionStatus.idle,
-  mode: SessionMode.build,
   model: null,
   cwd: '/project',
   baseBranch: null,
@@ -292,10 +291,10 @@ void main() {
       expect(find.text('Plan the refactor'), findsOneWidget);
       // Status chips for the two idle sessions.
       expect(find.text('idle'), findsNWidgets(2));
-      // Provider badge + mode label per session.
+      // Provider badges remain, without build/plan labels.
       expect(find.text('omp'), findsNWidgets(2));
-      expect(find.text('build'), findsOneWidget);
-      expect(find.text('plan'), findsOneWidget);
+      expect(find.text('build'), findsNothing);
+      expect(find.text('plan'), findsNothing);
       // Expanding selects the project.
       final Project demo = app.projects.projectsFor('fake').single;
       expect(demo.name, 'Demo Project');

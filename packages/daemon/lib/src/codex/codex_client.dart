@@ -468,14 +468,6 @@ class CodexClient implements AgentClient, NativeCommandClient {
   }
 
   @override
-  Future<void> setMode(String sessionId, String modeId) async {
-    _requireSession(sessionId).modeId = modeId;
-    // app-server 0.148 does not expose collaboration-mode mutation on its
-    // stable request surface. Retain SpeedDial's local mode without claiming
-    // that Codex changed its thread settings.
-  }
-
-  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
@@ -2132,7 +2124,6 @@ class _CodexSessionState {
   String? model;
   String? effort;
   final bool yolo;
-  String modeId = 'build';
   String? activeTurnId;
   Completer<PromptResult>? turnCompleter;
   Completer<String?>? turnStartCompleter;

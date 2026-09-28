@@ -119,7 +119,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: 'omp',
       title: 'Build the feature',
       status: SessionStatus.idle,
-      mode: SessionMode.build,
       model: 'omp-default',
       // omp advertises its selectable models; the current one is contained.
       models: const <String>['omp-default', 'kimi-k3', 'gpt-5.2'],
@@ -140,7 +139,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: 'omp',
       title: 'Plan the refactor',
       status: SessionStatus.idle,
-      mode: SessionMode.plan,
       model: null,
       cwd: project.path,
       baseBranch: null,
@@ -768,7 +766,6 @@ class FakeDaemonClient implements DaemonClient {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
@@ -827,7 +824,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: providerId,
       title: title ?? kDefaultSessionTitle,
       status: SessionStatus.idle,
-      mode: mode ?? SessionMode.build,
       model: resolvedModel,
       models: sessionModels,
       // No real git here: a base branch just moves the cwd to a plausible
@@ -900,7 +896,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: source.providerId,
       title: 'Fork of ${source.title}',
       status: SessionStatus.idle,
-      mode: source.mode,
       model: source.model,
       models: source.models,
       cwd: source.cwd,
@@ -1141,7 +1136,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: title,
         status: s.status,
-        mode: s.mode,
         model: s.model,
         models: s.models,
         cwd: s.cwd,
@@ -1174,7 +1168,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: s.title,
         status: s.status,
-        mode: s.mode,
         model: s.model,
         models: s.models,
         cwd: s.cwd,
@@ -1209,7 +1202,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: s.title,
         status: s.status,
-        mode: s.mode,
         model: s.model,
         models: s.models,
         cwd: s.cwd,
@@ -1250,7 +1242,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: s.title,
         status: s.status,
-        mode: s.mode,
         model: s.model,
         models: s.models,
         cwd: s.cwd,
@@ -1279,39 +1270,6 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<Session> setMode(String sessionId, SessionMode mode) async {
-    _ensureSeeded();
-    final Session session = _updateSession(
-      sessionId,
-      (Session s) => Session(
-        id: s.id,
-        projectId: s.projectId,
-        providerId: s.providerId,
-        title: s.title,
-        status: s.status,
-        mode: mode,
-        model: s.model,
-        models: s.models,
-        cwd: s.cwd,
-        baseBranch: s.baseBranch,
-        thinkingLevel: s.thinkingLevel,
-        thinkingLevels: s.thinkingLevels,
-        sandboxMode: s.sandboxMode,
-        yolo: s.yolo,
-        shortPrompt: s.shortPrompt,
-        completionRevision: s.completionRevision,
-        done: s.done,
-        archived: s.archived,
-        pinned: s.pinned,
-        createdAt: s.createdAt,
-        lastActivityAt: s.lastActivityAt,
-        updatedAt: s.updatedAt,
-      ),
-    );
-    return session;
-  }
-
-  @override
   Future<Session> setModel(String sessionId, String model) async {
     _ensureSeeded();
     _requireSession(sessionId);
@@ -1330,7 +1288,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: s.title,
         status: s.status,
-        mode: s.mode,
         model: model,
         models: s.models,
         cwd: s.cwd,
@@ -1372,7 +1329,6 @@ class FakeDaemonClient implements DaemonClient {
         providerId: s.providerId,
         title: s.title,
         status: s.status,
-        mode: s.mode,
         model: s.model,
         models: s.models,
         cwd: s.cwd,
@@ -2013,7 +1969,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: current.providerId,
       title: current.title,
       status: current.status,
-      mode: current.mode,
       model: current.model,
       models: current.models,
       cwd: current.cwd,
@@ -2066,7 +2021,6 @@ class FakeDaemonClient implements DaemonClient {
       providerId: current.providerId,
       title: current.title,
       status: status,
-      mode: current.mode,
       model: current.model,
       models: current.models,
       cwd: current.cwd,

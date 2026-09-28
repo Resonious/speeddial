@@ -390,13 +390,6 @@ class AnteClient implements AgentClient, NativeCommandClient {
   }
 
   @override
-  Future<void> setMode(String sessionId, String modeId) async {
-    _requireSession(sessionId);
-    // Ante has no build/plan operation. SpeedDial retains the local mode label
-    // without claiming a provider-side change.
-  }
-
-  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _expireQuestion();

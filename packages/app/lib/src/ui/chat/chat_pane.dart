@@ -128,7 +128,7 @@ class _ChatPaneState extends State<ChatPane> {
 
 /// Renders the selected session's live surface. Stateful so the timeline
 /// completed turns are cached while the live tail updates, and so
-/// send/cancel/setMode failures can surface a SnackBar.
+/// send/cancel failures can surface a SnackBar.
 class _SessionSurface extends StatefulWidget {
   const _SessionSurface({
     super.key,
@@ -261,7 +261,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
           _items = _timeline.update(events, running: running);
           _pending = chat.pendingPermissionFor(sessionId);
         }
-        final SessionMode mode = chat.modeOf(sessionId);
         final UsageInfo? usage = chat.usageOf(sessionId);
         final PermissionRequest? pending = _pending;
         final Session? session = data.sessions.byId(sessionId);
@@ -375,7 +374,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               child: Composer(
                 focusNode: widget.composerFocusNode,
                 status: status,
-                mode: mode,
                 commands: _commands,
                 onSlashStarted: () => unawaited(_loadCommands()),
                 usage: usage,
@@ -407,9 +405,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                   return _sendOrRunCommand(text, attachments);
                 },
                 onStop: () => unawaited(_cancelTurn()),
-                onModeChanged: (SessionMode next) {
-                  unawaited(_switchMode(next));
-                },
               ),
             ),
           ],
@@ -553,18 +548,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   Future<void> _cancelTurn() async {
     try {
       await widget.data.chat.cancel(widget.daemonId, widget.sessionId);
-    } on DaemonError catch (error) {
-      await _showError(error);
-    }
-  }
-
-  Future<void> _switchMode(SessionMode next) async {
-    try {
-      await widget.data.sessions.setMode(
-        widget.daemonId,
-        widget.sessionId,
-        next,
-      );
     } on DaemonError catch (error) {
       await _showError(error);
     }

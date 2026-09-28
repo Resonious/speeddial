@@ -815,7 +815,6 @@ class WsDaemonClient implements DaemonClient {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
@@ -828,7 +827,6 @@ class WsDaemonClient implements DaemonClient {
         'projectId': projectId,
         'providerId': providerId,
         'model': ?model,
-        'mode': ?mode?.wire,
         'title': ?title,
         'baseBranch': ?baseBranch,
         'sandboxMode': ?sandboxMode?.wire,
@@ -960,15 +958,6 @@ class WsDaemonClient implements DaemonClient {
     await _requirePeer().call('sessions.delete', <String, Object?>{
       'sessionId': sessionId,
     });
-  }
-
-  @override
-  Future<Session> setMode(String sessionId, SessionMode mode) async {
-    final Object? result = await _requirePeer().call(
-      'sessions.setMode',
-      <String, Object?>{'sessionId': sessionId, 'mode': mode.wire},
-    );
-    return Session.fromJson(_resultMap(_resultField(result, 'session')));
   }
 
   @override

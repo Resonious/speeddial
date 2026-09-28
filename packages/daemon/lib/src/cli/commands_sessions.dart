@@ -69,14 +69,13 @@ class SessionsListCommand extends Command<int> {
         });
       } else {
         output.table(
-          const ['ID', 'TITLE', 'STATUS', 'MODE', 'PROVIDER', 'ARCHIVED'],
+          const ['ID', 'TITLE', 'STATUS', 'PROVIDER', 'ARCHIVED'],
           [
             for (final session in sessions)
               [
                 session.id,
                 session.title,
                 session.status.wire,
-                session.mode.wire,
                 session.providerId,
                 session.archived ? 'yes' : 'no',
               ],
@@ -89,18 +88,13 @@ class SessionsListCommand extends Command<int> {
 }
 
 /// `speeddial sessions create --project <id> --provider <id>` plus optional
-/// `[--model m] [--mode plan] [--title t] [--base b] [--yolo] [--short-prompt]`
+/// `[--model m] [--title t] [--base b] [--yolo] [--short-prompt]`
 class SessionsCreateCommand extends Command<int> {
   SessionsCreateCommand() {
     argParser
       ..addOption('project', help: 'Project id (required).')
       ..addOption('provider', help: 'Provider id (required).')
       ..addOption('model', help: 'Model id.')
-      ..addOption(
-        'mode',
-        allowed: const ['build', 'plan'],
-        help: 'Session mode (default: build).',
-      )
       ..addOption('title', help: 'Session title.')
       ..addOption(
         'base',
@@ -135,7 +129,6 @@ class SessionsCreateCommand extends Command<int> {
     if (projectId == null || providerId == null) {
       throw UsageException('--project and --provider are required.', usage);
     }
-    final modeRaw = argResults!['mode'] as String?;
     final conn = resolveConnection(globalResults!);
     final output = Output(json: conn.json);
     return withDaemon(conn, (client) async {
@@ -143,7 +136,6 @@ class SessionsCreateCommand extends Command<int> {
         projectId: projectId,
         providerId: providerId,
         model: argResults!['model'] as String?,
-        mode: modeRaw == null ? null : SessionMode.parse(modeRaw),
         title: argResults!['title'] as String?,
         baseBranch: argResults!['base'] as String?,
         yolo: argResults!['yolo'] as bool,
@@ -438,7 +430,6 @@ Map<String, Object?> _sessionRecord(Session session) => <String, Object?>{
   'providerId': session.providerId,
   'title': session.title,
   'status': session.status.wire,
-  'mode': session.mode.wire,
   'model': session.model ?? '',
   'cwd': session.cwd,
   'archived': session.archived ? 'yes' : 'no',

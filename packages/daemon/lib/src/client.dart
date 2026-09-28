@@ -272,7 +272,6 @@ class DaemonClient {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? cwd,
     String? baseBranch,
@@ -284,7 +283,6 @@ class DaemonClient {
       'projectId': projectId,
       'providerId': providerId,
       'model': ?model,
-      'mode': ?mode?.wire,
       'title': ?title,
       'cwd': ?cwd,
       'baseBranch': ?baseBranch,
@@ -389,16 +387,6 @@ class DaemonClient {
     await _peer.call('sessions.delete', <String, Object?>{
       'sessionId': sessionId,
     });
-  }
-
-  /// `sessions.setMode` — switches the session mode.
-  Future<Session> setMode(String sessionId, SessionMode mode) async {
-    final result = await _peer.call('sessions.setMode', <String, Object?>{
-      'sessionId': sessionId,
-      'mode': mode.wire,
-    });
-    final map = _asMap(result, 'sessions.setMode');
-    return Session.fromJson(_asMap(map['session'], 'sessions.setMode'));
   }
 
   /// `sessions.setModel` — persists the selected model.

@@ -66,7 +66,5 @@ abstract interface class AgentClient {
 
   Future<void> cancel(String sessionId);
 
-  Future<void> setMode(String sessionId, String modeId);
-
   Future<void> dispose();
 }

@@ -144,7 +144,6 @@ class ChatStore extends StoreBase {
   final LinkedHashSet<String> _retainedKeys = LinkedHashSet<String>();
   final Map<String, Session> _sessionsById = <String, Session>{};
   final Map<String, SessionStatus> _statusById = <String, SessionStatus>{};
-  final Map<String, SessionMode> _modeById = <String, SessionMode>{};
   final Map<String, UsageInfo> _usageById = <String, UsageInfo>{};
 
   /// Memoized attachment payload futures, keyed by
@@ -214,14 +213,6 @@ class ChatStore extends StoreBase {
   UsageInfo? usageOf(String sessionId) {
     final String? key = _derivedKeyFor(sessionId);
     return key == null ? null : _usageById[key];
-  }
-
-  /// Latest known mode (from `session.updated`); default build.
-  SessionMode modeOf(String sessionId) {
-    final String? key = _derivedKeyFor(sessionId);
-    return key == null
-        ? SessionMode.build
-        : _modeById[key] ?? SessionMode.build;
   }
 
   /// How many times [sessionId]'s buffer was mutated (events appended or
@@ -365,7 +356,7 @@ class ChatStore extends StoreBase {
     _ensureDaemonSubscriptions(daemonId, client);
     // First watch: catch up on persisted events, then reconcile live ones.
     unawaited(_loadHistory(client, buffer));
-    // Cheap, once per watch: make statusOf/modeOf correct before the first
+    // Cheap, once per watch: make statusOf correct before the first
     // live event or session.updated notification arrives.
     unawaited(_seedSession(client, daemonId, sessionId));
   }
@@ -537,7 +528,6 @@ class ChatStore extends StoreBase {
     _lastDaemonBySession[session.id] = daemonId;
     _sessionsById[key] = session;
     _statusById[key] = session.status;
-    _modeById[key] = session.mode;
     _scheduleNotify();
   }
 
@@ -557,7 +547,6 @@ class ChatStore extends StoreBase {
     final String key = _scopedKey(daemonId, sessionId);
     _sessionsById.remove(key);
     _statusById.remove(key);
-    _modeById.remove(key);
     _usageById.remove(key);
     _revisions.remove(key);
   }

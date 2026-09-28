@@ -207,7 +207,6 @@ void main() {
         home: Scaffold(
           body: Composer(
             status: SessionStatus.idle,
-            mode: SessionMode.build,
             commands: commands,
             attachmentPicker: picker,
             clipboardImageReader: clipboardImageReader,
@@ -215,7 +214,6 @@ void main() {
                 onSend ??
                 (String text, List<OutgoingAttachment> attachments) async {},
             onStop: () {},
-            onModeChanged: (SessionMode _) {},
           ),
         ),
       ),
@@ -552,6 +550,13 @@ void main() {
       'Merged **agent** message',
     ]);
     expect(find.text('Message copied'), findsOneWidget);
+  });
+
+  testWidgets('composer has no build or plan mode selector', (tester) async {
+    await pumpChat(tester);
+    expect(find.text('Build'), findsNothing);
+    expect(find.text('Plan'), findsNothing);
+    expect(find.byType(Composer), findsOneWidget);
   });
 
   testWidgets('empty state shows the select-session placeholder', (

@@ -32,9 +32,20 @@ void main() {
       expect(await runCli(['git', 'checkout']), 1);
     });
 
-    test('invalid --mode exits 1', () async {
-      expect(await runCli(['sessions', 'create', '--project', 'p1',
-          '--provider', 'omp', '--mode', 'bogus']), 1);
+    test('removed --mode option exits 1', () async {
+      expect(
+        await runCli([
+          'sessions',
+          'create',
+          '--project',
+          'p1',
+          '--provider',
+          'omp',
+          '--mode',
+          'plan',
+        ]),
+        1,
+      );
     });
 
     test('--help exits 0', () async {

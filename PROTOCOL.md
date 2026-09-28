@@ -120,7 +120,6 @@ McpOAuthFlow = {
 
 
 SessionStatus = "idle" | "running" | "waitingPermission" | "error" | "closed"
-SessionMode   = "build" | "plan"
 SessionSandboxMode = "workspaceWrite" | "unrestricted"
 
 Session = {
@@ -129,7 +128,6 @@ Session = {
   providerId: string,
   title: string,
   status: SessionStatus,
-  mode: SessionMode,
   model: string | null,       // current model id — agent-reported when the provider
                               // advertises a model config option, else a local preference
                               // (for Ante: the bare id; the upstream provider is fixed
@@ -461,6 +459,11 @@ tokens before session creation/resume, and checks them periodically while runnin
 
 
 ### Sessions
+
+Build/plan session modes are no longer exposed. The legacy `mode` field is ignored
+on input and omitted from sessions; `sessions.setMode` returns method not found.
+Agent task-progress `plan` events remain supported.
+
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
 - `sessions.search {query: string, projectId?: string, includeArchived?: boolean,
   limit?: int, cursor?: SessionSearchCursor}` → `SessionSearchPage`
@@ -479,7 +482,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   survives daemon restarts. Identified streamed chunks match across interleaved events;
   legacy chunks without message IDs join only adjacent chunks of the same type. Separate
   messages and turns never concatenate. The public search includes the selected session.
-- `sessions.create {projectId: string, providerId: string, model?: string, mode?: SessionMode, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean, shortPrompt?: boolean}` → `{session: Session}`
+- `sessions.create {projectId: string, providerId: string, model?: string, title?: string, cwd?: string, baseBranch?: string, sandboxMode?: SessionSandboxMode, yolo?: boolean, shortPrompt?: boolean}` → `{session: Session}`
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as
   `openai-compatible/<model>`); the daemon pins that upstream provider in
@@ -533,7 +536,7 @@ tokens before session creation/resume, and checks them periodically while runnin
   session containing the source session's persisted history through `seq`. `seq` must identify a
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
   side of any visible exchange. The fork inherits the source provider (including Ante's pinned
-  upstream provider), project, cwd/worktree, base branch, mode, model, thinking level, sandbox
+  upstream provider), project, cwd/worktree, base branch, model, thinking level, sandbox
   mode, yolo setting, and short prompt setting; it is titled `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
   Creation copies history locally without starting an agent. On the first send, the daemon
@@ -610,7 +613,6 @@ tokens before session creation/resume, and checks them periodically while runnin
   the session's latest completion. A stale acknowledgement is a successful no-op returning the
   current session, so it cannot hide a newer completed turn.
 - `sessions.delete {sessionId: string}` → `{}` — kills the agent process if alive
-- `sessions.setMode {sessionId: string, mode: SessionMode}` → `{session: Session}`
 - `sessions.setModel {sessionId: string, model: string}` → `{session: Session}` — when the
   provider advertises selectable models (`Session.models`), the daemon validates against them
   (`-32602` when not listed) and forwards the change to a live idle agent through the provider

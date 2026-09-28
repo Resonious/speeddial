@@ -272,7 +272,6 @@ void main() {
         await app.sessions.refresh('fake', projectId: projectId);
         expect(app.sessions.sessionsFor(projectId), hasLength(2));
         expect(app.sessions.byId('sess-1')?.title, 'Build the feature');
-        expect(app.sessions.byId('sess-2')?.mode, SessionMode.plan);
 
         final Session created = await app.sessions.create(
           'fake',
@@ -280,15 +279,11 @@ void main() {
           providerId: 'omp',
           title: 'Fresh',
         );
-        expect(created.mode, SessionMode.build);
         expect(app.sessions.byId(created.id), isNotNull);
         expect(app.sessions.sessionsFor(projectId), hasLength(3));
 
         await app.sessions.rename('fake', created.id, 'Renamed');
         expect(app.sessions.byId(created.id)!.title, 'Renamed');
-
-        await app.sessions.setMode('fake', created.id, SessionMode.plan);
-        expect(app.sessions.byId(created.id)!.mode, SessionMode.plan);
 
         await app.sessions.archive('fake', created.id, true);
         expect(app.sessions.byId(created.id)!.archived, isTrue);
@@ -638,7 +633,6 @@ void main() {
 
         // Status: idle once the turn completed.
         expect(app.chat.statusOf(sessionId), SessionStatus.idle);
-        expect(app.chat.modeOf(sessionId), SessionMode.build);
       },
     );
 

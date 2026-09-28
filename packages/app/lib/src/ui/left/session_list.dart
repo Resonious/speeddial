@@ -347,13 +347,6 @@ class SessionRow extends StatelessWidget {
               child: Icon(Icons.push_pin, size: 12),
             ),
           ProviderBadge(providerId: session.providerId),
-          Text(
-            session.mode.name,
-            style: textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              fontSize: 10,
-            ),
-          ),
           SessionStatusChip(status: session.status, done: done),
           SessionGitBadges(session: session, daemonId: daemonId),
         ],

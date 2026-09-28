@@ -11,7 +11,7 @@ typedef RecentSession = ({String daemonId, Session session, bool done});
 /// Caches sessions bucketed by project and keyed by id.
 ///
 /// Mutating methods ([create], [fork], [rename], [archive], [delete],
-/// [setMode]) update both the by-project bucket and the by-id index
+/// [setModel]) update both the by-project bucket and the by-id index
 /// immediately and notify.
 /// Buckets keep the complete picture (archived included), ordered by last
 /// activity newest-first; the public [sessionsFor] view omits archived sessions.
@@ -247,7 +247,6 @@ class SessionsStore extends StoreBase {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? baseBranch,
     SessionSandboxMode? sandboxMode,
@@ -259,7 +258,6 @@ class SessionsStore extends StoreBase {
       projectId: projectId,
       providerId: providerId,
       model: model,
-      mode: mode,
       title: title,
       baseBranch: baseBranch,
       sandboxMode: sandboxMode,
@@ -338,15 +336,6 @@ class SessionsStore extends StoreBase {
       );
     }
     notifyListeners();
-  }
-
-  Future<void> setMode(
-    String daemonId,
-    String sessionId,
-    SessionMode mode,
-  ) async {
-    _ensureDaemonSubscriptions(daemonId);
-    _replace(daemonId, await _clientFor(daemonId).setMode(sessionId, mode));
   }
 
   Future<void> setThinkingLevel(

@@ -73,7 +73,6 @@ class _ScriptedWearChannel implements DaemonFrameChannel {
     providerId: 'codex',
     title: 'Build the feature',
     status: SessionStatus.idle,
-    mode: SessionMode.build,
     model: null,
     cwd: '/tmp/demo',
     baseBranch: null,

@@ -72,7 +72,6 @@ class Composer extends StatefulWidget {
     super.key,
     this.focusNode,
     required this.status,
-    required this.mode,
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
     this.usage,
@@ -91,7 +90,6 @@ class Composer extends StatefulWidget {
     this.onSharedAttachmentsSent,
     required this.onSend,
     required this.onStop,
-    required this.onModeChanged,
   });
 
   /// Optional focus node owned by the shell so session creation can move
@@ -100,9 +98,6 @@ class Composer extends StatefulWidget {
 
   /// Current session status; drives the send/stop switch.
   final SessionStatus status;
-
-  /// Session mode driving the build/plan selector.
-  final SessionMode mode;
 
   /// Native commands advertised by the active harness session.
   final List<NativeCommand> commands;
@@ -165,7 +160,6 @@ class Composer extends StatefulWidget {
   final Future<void> Function(String text, List<OutgoingAttachment> attachments)
   onSend;
   final VoidCallback onStop;
-  final ValueChanged<SessionMode> onModeChanged;
 
   @override
   State<Composer> createState() => _ComposerState();
@@ -557,14 +551,12 @@ class _ComposerState extends State<Composer> {
         children: <Widget>[
           const Divider(height: 1),
           _ControlsRow(
-            mode: widget.mode,
             model: widget.model,
             models: widget.models,
             onModelChanged: widget.onModelChanged,
             thinkingLevel: widget.thinkingLevel,
             thinkingLevels: widget.thinkingLevels,
             onThinkingChanged: widget.onThinkingChanged,
-            onModeChanged: widget.onModeChanged,
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
@@ -708,24 +700,20 @@ class _ComposerState extends State<Composer> {
 
 class _ControlsRow extends StatelessWidget {
   const _ControlsRow({
-    required this.mode,
     required this.model,
     required this.models,
     required this.onModelChanged,
     required this.thinkingLevel,
     required this.thinkingLevels,
     required this.onThinkingChanged,
-    required this.onModeChanged,
   });
 
-  final SessionMode mode;
   final String? model;
   final List<String> models;
   final ValueChanged<String>? onModelChanged;
   final String? thinkingLevel;
   final List<String> thinkingLevels;
   final ValueChanged<String>? onThinkingChanged;
-  final ValueChanged<SessionMode> onModeChanged;
 
   /// "auto" → "Auto"; any advertised level is labeled capitalized here.
   String _label(String level) =>
@@ -742,31 +730,6 @@ class _ControlsRow extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 2),
       child: Row(
         children: <Widget>[
-          SegmentedButton<SessionMode>(
-            showSelectedIcon: false,
-            style: ButtonStyle(
-              visualDensity: VisualDensity.compact,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              textStyle: WidgetStatePropertyAll<TextStyle?>(
-                theme.textTheme.labelMedium,
-              ),
-            ),
-            segments: const <ButtonSegment<SessionMode>>[
-              ButtonSegment<SessionMode>(
-                value: SessionMode.build,
-                label: Text('Build'),
-              ),
-              ButtonSegment<SessionMode>(
-                value: SessionMode.plan,
-                label: Text('Plan'),
-              ),
-            ],
-            selected: <SessionMode>{mode},
-            onSelectionChanged: (Set<SessionMode> selection) {
-              onModeChanged(selection.first);
-            },
-          ),
-          const SizedBox(width: 10),
           if (thinkingLevels.isNotEmpty && onThinking != null) ...<Widget>[
             Tooltip(
               message: 'Thinking level',

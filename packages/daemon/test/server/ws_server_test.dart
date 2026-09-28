@@ -716,7 +716,6 @@ void main() {
           await client.peer.call('sessions.create', <String, Object?>{
             'projectId': project.id,
             'providerId': 'fake',
-            'mode': 'build',
             'title': 'Lifecycle',
           }),
         );
@@ -725,7 +724,6 @@ void main() {
         );
         expect(session.status, SessionStatus.idle);
         expect(session.title, 'Lifecycle');
-        expect(session.mode, SessionMode.build);
         expect(session.yolo, isFalse, reason: 'yolo defaults off');
         await untilRecorded(client, 'session.created', 1);
         expect(client.of('session.created'), hasLength(1));
@@ -923,24 +921,13 @@ void main() {
         await untilRecorded(client, 'session.updated', 1);
         expect(client.of('session.updated'), isNotEmpty);
 
-        final modeChanged = j(
-          await client.peer.call('sessions.setMode', <String, Object?>{
-            'sessionId': session.id,
-            'mode': 'plan',
-          }),
-        );
-        expect(
-          Session.fromJson(
-            (modeChanged['session']! as Map).cast<String, Object?>(),
-          ).mode,
-          SessionMode.plan,
-        );
+        // Removed session-mode requests are no longer part of the API.
         await expectLater(
           client.peer.call('sessions.setMode', <String, Object?>{
             'sessionId': session.id,
-            'mode': 'bogus',
+            'mode': 'plan',
           }),
-          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32601)),
         );
 
         final thinkingChanged = j(

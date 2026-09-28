@@ -219,7 +219,6 @@ class ShareStore extends ChangeNotifier {
               : null,
           yolo: data.newSessionYolo,
           shortPrompt: data.newSessionShortPrompt,
-          mode: SessionMode.build,
           usedAt: DateTime.now().toUtc(),
         );
       }
@@ -250,7 +249,6 @@ class ShareStore extends ChangeNotifier {
         sandboxMode: saved.sandboxMode,
         yolo: saved.yolo,
         shortPrompt: saved.shortPrompt,
-        mode: saved.mode,
       );
       if (!_cancelledFiles.contains(file)) {
         _stage(file, target.daemonId, session.id);
@@ -464,7 +462,6 @@ class ShareSettings {
     required this.sandboxMode,
     required this.yolo,
     required this.shortPrompt,
-    required this.mode,
     required this.usedAt,
   });
   final String targetId;
@@ -474,7 +471,6 @@ class ShareSettings {
   final SessionSandboxMode? sandboxMode;
   final bool yolo;
   final bool shortPrompt;
-  final SessionMode mode;
   final DateTime usedAt;
 
   factory ShareSettings.fromSession(
@@ -490,7 +486,6 @@ class ShareSettings {
     sandboxMode: session.sandboxMode,
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
-    mode: session.mode,
     usedAt: usedAt ?? session.updatedAt,
   );
 
@@ -506,7 +501,6 @@ class ShareSettings {
     },
     yolo: json['yolo'] as bool? ?? false,
     shortPrompt: json['shortPrompt'] as bool? ?? false,
-    mode: json['mode'] == 'plan' ? SessionMode.plan : SessionMode.build,
     usedAt: DateTime.parse(json['usedAt']! as String),
   );
 
@@ -518,7 +512,6 @@ class ShareSettings {
     'sandboxMode': sandboxMode?.name,
     'yolo': yolo,
     'shortPrompt': shortPrompt,
-    'mode': mode.name,
     'usedAt': usedAt.toIso8601String(),
   };
 }

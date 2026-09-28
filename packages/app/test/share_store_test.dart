@@ -93,7 +93,6 @@ void main() {
         baseBranch: 'main',
         sandboxMode: SessionSandboxMode.unrestricted,
         yolo: true,
-        mode: SessionMode.plan,
       );
       data.shares.rememberSession('fake', previous);
       await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -129,7 +128,6 @@ void main() {
       expect(created.baseBranch, 'main');
       expect(created.sandboxMode, SessionSandboxMode.unrestricted);
       expect(created.yolo, isTrue);
-      expect(created.mode, SessionMode.plan);
       expect(reopened.shares.pending, isNull);
       expect(
         reopened.shares.stagedFor('fake', created.id).single.name,

@@ -168,10 +168,9 @@ class AcpClient implements AgentClient {
     // A process that exits before initialize can fail the stdin sink as well
     // as the pending request. Observe the sink failure; _onExit reports the
     // provider failure to callers through their pending request.
-    unawaited(process.stdin.done.then(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    ));
+    unawaited(
+      process.stdin.done.then((_) {}, onError: (Object _, StackTrace _) {}),
+    );
     unawaited(_readResponses(process));
     // Close the stderr controller (if still open) when stderr ends; the
     // broadcast sink keeps delivering to listeners added until then.
@@ -514,6 +513,12 @@ class AcpClient implements AgentClient {
       'mcpServers': mcpServers,
     });
     _rememberSessionModeIds(sessionId, result);
+    // Older SpeedDial sessions may have saved the provider's plan mode.
+    // The app no longer exposes mode switching; resume them writable.
+    final Object? modes = result['modes'];
+    if (modes is Map && modes['currentModeId'] == 'plan') {
+      await setMode(sessionId, 'build');
+    }
     return AcpConfigOption.listFrom(result['configOptions']);
   }
 
@@ -649,8 +654,7 @@ class AcpClient implements AgentClient {
     });
   }
 
-  /// Switches the session to the given mode id.
-  @override
+  /// Switches the native ACP mode, including normalization of older sessions.
   Future<void> setMode(String sessionId, String modeId) async {
     final Set<String>? advertisedModeIds = _sessionModeIds[sessionId];
     final String agentModeId =
@@ -667,7 +671,7 @@ class AcpClient implements AgentClient {
   }
 
   /// Records the agent-defined mode ids advertised by `session/new` or
-  /// `session/load`. SpeedDial calls its writable mode `build`, while agents
+  /// `session/load`. The legacy writable mode id is `build`, while agents
   /// such as OMP call the same mode `default`; [setMode] translates only when
   /// the agent explicitly advertises that vocabulary.
   void _rememberSessionModeIds(String sessionId, Map<String, Object?> result) {

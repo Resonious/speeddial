@@ -26,7 +26,6 @@ Session session({
   String projectId = 'p1',
   String providerId = 'fake',
   SessionStatus status = SessionStatus.idle,
-  SessionMode mode = SessionMode.build,
   String title = 'Test session',
   String? baseBranch,
   String? thinkingLevel,
@@ -44,7 +43,6 @@ Session session({
   providerId: providerId,
   title: title,
   status: status,
-  mode: mode,
   model: null,
   models: models,
   cwd: p.join(Directory.systemTemp.path, 'cwd'),
@@ -77,6 +75,25 @@ void main() {
     } on Object {
       // Cleanup failure is not a test failure.
     }
+  });
+
+  test('legacy plan rows load without exposing a session mode', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 'legacy'));
+    final Database db = sqlite3.open(p.join(tempDir.path, 'speeddial.db'));
+    try {
+      db.execute("UPDATE sessions SET mode = 'plan' WHERE id = 'legacy'");
+    } finally {
+      db.close();
+    }
+    store.dispose();
+    store = openStore(tempDir);
+
+    final Session loaded = store.getSession('legacy')!;
+    expect(loaded.title, 'Test session');
+    expect(loaded.toJson(), isNot(contains('mode')));
+    store.updateSession(loaded);
+    expect(store.getSession('legacy')!.toJson(), loaded.toJson());
   });
 
   test('database files are owner-readable only on POSIX', () {
@@ -408,7 +425,6 @@ void main() {
       providerId: 'fake',
       title: 'Renamed',
       status: SessionStatus.waitingPermission,
-      mode: SessionMode.plan,
       model: 'sonnet',
       models: const <String>['fake-fast', 'fake-smart'],
       cwd: '/cwd',
@@ -429,7 +445,6 @@ void main() {
     final reloaded = store.getSession('s1')!;
     expect(reloaded.title, 'Renamed');
     expect(reloaded.status, SessionStatus.waitingPermission);
-    expect(reloaded.mode, SessionMode.plan);
     expect(reloaded.model, 'sonnet');
     expect(reloaded.models, <String>['fake-fast', 'fake-smart']);
     expect(reloaded.baseBranch, 'main');

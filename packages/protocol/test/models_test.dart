@@ -53,14 +53,6 @@ void main() {
       expect(() => SessionStatus.parse('nope'), throwsFormatException);
     });
 
-    test('SessionMode is name-based', () {
-      expect(SessionMode.build.wire, 'build');
-      expect(SessionMode.plan.wire, 'plan');
-      expect(SessionMode.parse('build'), SessionMode.build);
-      expect(SessionMode.parse('plan'), SessionMode.plan);
-      expect(() => SessionMode.parse('builds'), throwsFormatException);
-    });
-
     test('NativeCommand preserves command metadata', () {
       const command = NativeCommand(
         name: 'commit',
@@ -242,7 +234,7 @@ void main() {
       final session = Session.fromJson(json);
       expect(session.id, 'sess_abcdefghijklmno');
       expect(session.status, SessionStatus.waitingPermission);
-      expect(session.mode, SessionMode.plan);
+      expect(session.toJson(), isNot(contains('mode')));
       expect(session.model, isNull);
       expect(session.cwd, '/home/nigel/p/speeddial');
       expect(
@@ -282,7 +274,6 @@ void main() {
 
       final roundtrip = Session.fromJson(session.toJson());
       expect(roundtrip.status, SessionStatus.waitingPermission);
-      expect(roundtrip.mode, SessionMode.plan);
       expect(roundtrip.createdAt, session.createdAt);
       expect(roundtrip.updatedAt, session.updatedAt);
       expect(roundtrip.toJson(), session.toJson());
@@ -295,7 +286,6 @@ void main() {
         providerId: 'codex',
         title: 'T',
         status: SessionStatus.running,
-        mode: SessionMode.build,
         model: 'gpt-5',
         models: const <String>['gpt-5', 'gpt-5-mini'],
         cwd: '/tmp/wt',
@@ -344,7 +334,6 @@ void main() {
         'providerId': 'claude',
         'title': 'T',
         'status': 'idle',
-        'mode': 'build',
         'model': null,
         'cwd': '/tmp',
         'baseBranch': null,

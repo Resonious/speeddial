@@ -63,8 +63,6 @@ void main() {
       'Build the feature',
       'Plan the refactor',
     ]);
-    expect(sessions[0].mode, SessionMode.build);
-    expect(sessions[1].mode, SessionMode.plan);
 
     // Files.
     final List<FileEntry> root = await client.listFiles(projects.single.id);
@@ -696,39 +694,34 @@ void main() {
     );
   });
 
-  test(
-    'create/rename/archive/setMode/setModel/delete mutate sessions',
-    () async {
-      final FakeDaemonClient fake = FakeDaemonClient();
-      final String projectId = (await fake.listProjects()).single.id;
+  test('create/rename/archive/setModel/delete mutate sessions', () async {
+    final FakeDaemonClient fake = FakeDaemonClient();
+    final String projectId = (await fake.listProjects()).single.id;
 
-      final Session created = await fake.createSession(
-        projectId: projectId,
-        providerId: 'omp',
-        title: 'Fresh',
-      );
-      expect(created.status, SessionStatus.idle);
-      expect(created.cwd, '/demo');
-      expect((await fake.listSessions()), hasLength(3));
+    final Session created = await fake.createSession(
+      projectId: projectId,
+      providerId: 'omp',
+      title: 'Fresh',
+    );
+    expect(created.status, SessionStatus.idle);
+    expect(created.cwd, '/demo');
+    expect((await fake.listSessions()), hasLength(3));
 
-      final Session renamed = await fake.renameSession(created.id, 'Renamed');
-      expect(renamed.title, 'Renamed');
+    final Session renamed = await fake.renameSession(created.id, 'Renamed');
+    expect(renamed.title, 'Renamed');
 
-      final Session planned = await fake.setMode(created.id, SessionMode.plan);
-      expect(planned.mode, SessionMode.plan);
-      // omp advertises its model list, so only listed ids are settable.
-      final Session modelled = await fake.setModel(created.id, 'kimi-k3');
-      expect(modelled.model, 'kimi-k3');
+    // omp advertises its model list, so only listed ids are settable.
+    final Session modelled = await fake.setModel(created.id, 'kimi-k3');
+    expect(modelled.model, 'kimi-k3');
 
-      final Session archived = await fake.archiveSession(created.id, true);
-      expect(archived.archived, isTrue);
-      expect(await fake.listSessions(), hasLength(2)); // archived hidden
-      expect(await fake.listSessions(includeArchived: true), hasLength(3));
+    final Session archived = await fake.archiveSession(created.id, true);
+    expect(archived.archived, isTrue);
+    expect(await fake.listSessions(), hasLength(2)); // archived hidden
+    expect(await fake.listSessions(includeArchived: true), hasLength(3));
 
-      await fake.deleteSession(created.id);
-      expect(await fake.listSessions(includeArchived: true), hasLength(2));
-    },
-  );
+    await fake.deleteSession(created.id);
+    expect(await fake.listSessions(includeArchived: true), hasLength(2));
+  });
 
   test('sendMessage auto-titles a default-titled session', () async {
     final FakeDaemonClient fake = FakeDaemonClient(

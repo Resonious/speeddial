@@ -363,7 +363,9 @@ Map<String, Object?> _modes() {
       ? 'build'
       : 'default';
   return <String, Object?>{
-    'currentModeId': writableModeId,
+    'currentModeId': File('${Directory.current.path}/agent.mode').existsSync()
+        ? File('${Directory.current.path}/agent.mode').readAsStringSync()
+        : writableModeId,
     'availableModes': <Object?>[
       <String, Object?>{'id': writableModeId, 'name': 'Build'},
       <String, Object?>{'id': 'plan', 'name': 'Plan'},

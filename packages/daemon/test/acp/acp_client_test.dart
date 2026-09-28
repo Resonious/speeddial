@@ -410,8 +410,7 @@ void main() {
     await client.setMode(sessionId, 'plan');
     expect(File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(), 'plan');
 
-    // OMP calls its writable ACP mode `default`, while SpeedDial's public
-    // protocol calls it `build`.
+    // OMP calls its writable ACP mode `default`; older agents use `build`.
     await client.setMode(sessionId, 'build');
     expect(
       File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(),
@@ -430,6 +429,20 @@ void main() {
     expect(
       File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(),
       'build',
+    );
+  });
+
+  test('loadSession leaves a legacy plan session writable', () async {
+    File(p.join(tempDir.path, 'agent.mode')).writeAsStringSync('plan');
+    final client = spawnClient(targetPath: targetPath, cwd: tempDir.path);
+    addTearDown(client.dispose);
+
+    await client.initialized;
+    await client.loadSession(sessionId: 'legacy', cwd: tempDir.path);
+
+    expect(
+      File(p.join(tempDir.path, 'agent.mode')).readAsStringSync(),
+      'default',
     );
   });
 

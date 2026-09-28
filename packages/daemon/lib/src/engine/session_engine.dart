@@ -328,7 +328,6 @@ class SessionEngine {
     required String projectId,
     required String providerId,
     String? model,
-    SessionMode? mode,
     String? title,
     String? cwd,
     String? baseBranch,
@@ -423,7 +422,6 @@ class SessionEngine {
       providerId: providerId,
       title: title ?? kDefaultSessionTitle,
       status: SessionStatus.idle,
-      mode: mode ?? SessionMode.build,
       model: model,
       cwd: workingDir,
       baseBranch: baseBranch,
@@ -482,7 +480,6 @@ class SessionEngine {
       providerId: source.providerId,
       title: 'Fork of ${source.title}',
       status: SessionStatus.idle,
-      mode: source.mode,
       model: source.model,
       models: source.models,
       thinkingLevel: source.thinkingLevel,
@@ -1246,16 +1243,6 @@ class SessionEngine {
     // Attached after the load: an agent replaying its transcript during
     // session/load must not duplicate the daemon's own persisted history.
     _subscribeToUpdates(live);
-    // A setMode only persisted the
-    // choice; reapply it now. Advisory: a rejecting agent must not fail the
-    // resume — the next explicit setMode tries again.
-    if (session.mode != SessionMode.build) {
-      try {
-        await client.setMode(providerSessionId, session.mode.wire);
-      } on Object {
-        // Best-effort; see comment above.
-      }
-    }
     // A setModel/setThinkingLevel only persisted the choice too; reconcile
     // both with the freshly loaded agent. Model first: a model switch may
     // change the thinking levels, so each step re-derives the snapshot from
@@ -1348,17 +1335,6 @@ class SessionEngine {
       return session;
     }
     return _updateSession(sessionId, (current) => _withDone(current, false));
-  }
-
-  /// Switches the agent's session mode and persists it. Sessions without a
-  /// live agent are persisted locally; [_resume] reapplies the persisted
-  /// mode when the agent is respawned.
-  Future<Session> setMode(String sessionId, SessionMode mode) async {
-    final live = _live[sessionId];
-    if (live != null && !live.client.isClosed && live.turn == null) {
-      await live.client.setMode(live.providerSessionId, mode.wire);
-    }
-    return _updateSession(sessionId, (session) => _withMode(session, mode));
   }
 
   /// Sets the session's model. When the provider advertises a model option
@@ -2374,7 +2350,6 @@ class SessionEngine {
       providerId: session.providerId,
       title: session.title,
       status: status,
-      mode: session.mode,
       model: session.model,
       models: session.models,
       cwd: session.cwd,
@@ -2402,7 +2377,6 @@ class SessionEngine {
     providerId: session.providerId,
     title: session.title,
     status: session.status,
-    mode: session.mode,
     model: session.model,
     models: session.models,
     cwd: session.cwd,
@@ -2429,7 +2403,6 @@ class SessionEngine {
     providerId: session.providerId,
     title: title,
     status: session.status,
-    mode: session.mode,
     model: session.model,
     models: session.models,
     cwd: session.cwd,
@@ -2454,7 +2427,6 @@ class SessionEngine {
     providerId: session.providerId,
     title: session.title,
     status: session.status,
-    mode: session.mode,
     model: session.model,
     models: session.models,
     cwd: session.cwd,
@@ -2473,38 +2445,12 @@ class SessionEngine {
     updatedAt: DateTime.now().toUtc(),
   );
 
-  Session _withMode(Session session, SessionMode mode) => Session(
-    id: session.id,
-    projectId: session.projectId,
-    providerId: session.providerId,
-    title: session.title,
-    status: session.status,
-    mode: mode,
-    model: session.model,
-    models: session.models,
-    cwd: session.cwd,
-    baseBranch: session.baseBranch,
-    thinkingLevel: session.thinkingLevel,
-    thinkingLevels: session.thinkingLevels,
-    sandboxMode: session.sandboxMode,
-    yolo: session.yolo,
-    shortPrompt: session.shortPrompt,
-    completionRevision: session.completionRevision,
-    done: session.done,
-    archived: session.archived,
-    pinned: session.pinned,
-    createdAt: session.createdAt,
-    lastActivityAt: session.lastActivityAt,
-    updatedAt: DateTime.now().toUtc(),
-  );
-
   Session _withModel(Session session, String model) => Session(
     id: session.id,
     projectId: session.projectId,
     providerId: session.providerId,
     title: session.title,
     status: session.status,
-    mode: session.mode,
     model: model,
     models: session.models,
     cwd: session.cwd,
@@ -2530,7 +2476,6 @@ class SessionEngine {
         providerId: session.providerId,
         title: session.title,
         status: session.status,
-        mode: session.mode,
         model: session.model,
         models: session.models,
         cwd: session.cwd,
@@ -2559,7 +2504,6 @@ class SessionEngine {
         providerId: session.providerId,
         title: session.title,
         status: session.status,
-        mode: session.mode,
         model: snapshot.model,
         models: snapshot.models,
         cwd: session.cwd,
@@ -2584,7 +2528,6 @@ class SessionEngine {
     providerId: session.providerId,
     title: session.title,
     status: session.status,
-    mode: session.mode,
     model: session.model,
     models: session.models,
     cwd: session.cwd,

@@ -211,35 +211,37 @@ void main() {
     expect(history.whereType<SessionErrorEvent>(), isEmpty);
   });
 
-  test('an agent-busy send waits as a visible activity instead of erroring',
-      () async {
-    final session = await engine.createSession(
-      projectId: project.id,
-      providerId: 'fake',
-    );
-    await engine.sendMessage(session.id, 'busy-once');
-    await waitFor(
-      () => store.getSession(session.id)!.status == SessionStatus.idle,
-    );
-    final history = store.listEvents(session.id).events;
-    expect(history.whereType<SessionErrorEvent>(), isEmpty);
-    expect(
-      history.whereType<TurnCompleteEvent>().single.stopReason,
-      'end_turn',
-    );
-    final activities = history
-        .whereType<AgentActivityEvent>()
-        .map((event) => event.activity)
-        .where((activity) => activity.id == 'agent-busy-wait')
-        .toList();
-    expect(
-      activities.map((activity) => activity.status),
-      <AgentActivityStatus>[
-        AgentActivityStatus.running,
-        AgentActivityStatus.completed,
-      ],
-    );
-  });
+  test(
+    'an agent-busy send waits as a visible activity instead of erroring',
+    () async {
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'busy-once');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final history = store.listEvents(session.id).events;
+      expect(history.whereType<SessionErrorEvent>(), isEmpty);
+      expect(
+        history.whereType<TurnCompleteEvent>().single.stopReason,
+        'end_turn',
+      );
+      final activities = history
+          .whereType<AgentActivityEvent>()
+          .map((event) => event.activity)
+          .where((activity) => activity.id == 'agent-busy-wait')
+          .toList();
+      expect(
+        activities.map((activity) => activity.status),
+        <AgentActivityStatus>[
+          AgentActivityStatus.running,
+          AgentActivityStatus.completed,
+        ],
+      );
+    },
+  );
 
   test('updates arriving after a turn ends are persisted', () async {
     final session = await engine.createSession(
@@ -1010,7 +1012,6 @@ void main() {
     // Settings remain editable while the transport is dead, and are reapplied.
     await engine.setThinkingLevel(session.id, 'high');
     await engine.setModel(session.id, 'fake-large');
-    await engine.setMode(session.id, SessionMode.plan);
 
     // A failed restart must reject before accepting the user's message and
     // leave the saved session available for another recovery attempt.
@@ -1059,7 +1060,6 @@ void main() {
     expect(resumed['short_prompt'], isTrue);
     expect(store.providerSessionIdOf(session.id), providerSessionId);
     expect(store.getSession(session.id)!.model, 'fake-large');
-    expect(store.getSession(session.id)!.mode, SessionMode.plan);
     final List<SessionEvent> history = store.listEvents(session.id).events;
     expect(
       history.take(failedHistory.length).map((event) => event.toJson()),
@@ -1374,7 +1374,6 @@ void main() {
 
     expect(session.title, 'New session');
     expect(session.status, SessionStatus.idle);
-    expect(session.mode, SessionMode.build);
     // The model is agent-reported: no explicit model was passed, so the
     // fake's current model is adopted.
     expect(session.model, 'fake-fast');
@@ -1827,7 +1826,6 @@ void main() {
     expect(fork.projectId, source.projectId);
     expect(fork.providerId, source.providerId);
     expect(fork.cwd, source.cwd);
-    expect(fork.mode, source.mode);
     expect(fork.model, source.model);
     expect(fork.yolo, isTrue);
     expect(store.providerSessionIdOf(fork.id), isNull);
@@ -2177,7 +2175,6 @@ void main() {
         providerId: 'fake',
         title: 'Legacy',
         status: SessionStatus.idle,
-        mode: SessionMode.build,
         model: null,
         cwd: tempDir.path,
         baseBranch: null,
@@ -2199,7 +2196,6 @@ void main() {
         providerId: closed.providerId,
         title: closed.title,
         status: SessionStatus.closed,
-        mode: closed.mode,
         model: closed.model,
         cwd: closed.cwd,
         baseBranch: closed.baseBranch,
@@ -2363,7 +2359,7 @@ void main() {
     );
   });
 
-  test('rename, archive, setMode and setModel persist and notify', () async {
+  test('rename, archive, setModel persist and notify', () async {
     final session = await engine.createSession(
       projectId: 'p1',
       providerId: 'fake',
@@ -2375,9 +2371,6 @@ void main() {
     final archived = await engine.archive(session.id, true);
     expect(archived.archived, isTrue);
 
-    final planned = await engine.setMode(session.id, SessionMode.plan);
-    expect(planned.mode, SessionMode.plan);
-
     // The fake advertises the model option; setModel validates against it.
     final withModel = await engine.setModel(session.id, 'fake-smart');
     expect(withModel.model, 'fake-smart');
@@ -2385,18 +2378,13 @@ void main() {
     final reloaded = store.getSession(session.id)!;
     expect(reloaded.title, 'My Session');
     expect(reloaded.archived, isTrue);
-    expect(reloaded.mode, SessionMode.plan);
     expect(reloaded.model, 'fake-smart');
     // The advertised models survive every copy helper (rename/archive/
-    // setMode/setModel) — the constructor default would silently wipe them.
+    // setModel) — the constructor default would silently wipe them.
     expect(reloaded.models, <String>['fake-fast', 'fake-smart']);
 
     // Metadata changes surfaced on sessionChanges.
     expect(changes.where((s) => s.id == session.id).last.title, 'My Session');
-    expect(
-      changes.where((s) => s.id == session.id).map((s) => s.mode),
-      contains(SessionMode.plan),
-    );
 
     // The session list honours the archived flag.
     expect(store.listSessions().map((s) => s.id), isNot(contains(session.id)));
@@ -2619,7 +2607,6 @@ void main() {
         providerId: stored.providerId,
         title: stored.title,
         status: stored.status,
-        mode: stored.mode,
         model: stored.model,
         cwd: stored.cwd,
         baseBranch: stored.baseBranch,
@@ -2905,17 +2892,15 @@ void main() {
     expect(store.listSessions(), isEmpty);
   });
 
-  test('createSession honours title, mode, model, and cwd overrides', () async {
+  test('createSession honours title, model, and cwd overrides', () async {
     final session = await engine.createSession(
       projectId: 'p1',
       providerId: 'fake',
       title: 'Plan the refactor',
-      mode: SessionMode.plan,
       model: 'sonnet',
       cwd: project.path,
     );
     expect(session.title, 'Plan the refactor');
-    expect(session.mode, SessionMode.plan);
     expect(session.model, 'sonnet');
     expect(session.cwd, project.path);
   });

@@ -73,7 +73,6 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.pin',
   'sessions.acknowledgeCompletion',
   'sessions.delete',
-  'sessions.setMode',
   'sessions.setModel',
   'sessions.setThinkingLevel',
   'sessions.history',
@@ -530,7 +529,6 @@ class SpeedDialServer {
         params,
       ),
       'sessions.delete' => _sessionsDelete(params),
-      'sessions.setMode' => _sessionsSetMode(params),
       'sessions.setModel' => _sessionsSetModel(params),
       'sessions.setThinkingLevel' => _sessionsSetThinkingLevel(params),
       'sessions.history' => _sessionsHistory(params),
@@ -680,7 +678,6 @@ class SpeedDialServer {
         'providerId': session.providerId,
         'title': session.title,
         'status': session.status.wire,
-        'mode': session.mode.wire,
         'archived': session.archived,
         'updatedAt': session.updatedAt.toIso8601String(),
       },
@@ -1318,7 +1315,6 @@ class SpeedDialServer {
     final projectId = _requiredString(params, 'projectId');
     final providerId = _requiredString(params, 'providerId');
     final rawModel = params['model'];
-    final rawMode = params['mode'];
     final rawTitle = params['title'];
     final rawCwd = params['cwd'];
     final rawBaseBranch = params['baseBranch'];
@@ -1329,7 +1325,6 @@ class SpeedDialServer {
       projectId: projectId,
       providerId: providerId,
       model: rawModel is String && rawModel.isNotEmpty ? rawModel : null,
-      mode: rawMode == null ? null : _parseMode(rawMode),
       title: rawTitle is String && rawTitle.isNotEmpty ? rawTitle : null,
       cwd: rawCwd is String && rawCwd.isNotEmpty ? rawCwd : null,
       baseBranch: rawBaseBranch is String && rawBaseBranch.isNotEmpty
@@ -1567,13 +1562,6 @@ class SpeedDialServer {
     final sessionId = _requiredString(params, 'sessionId');
     await _engine.delete(sessionId);
     return <String, Object?>{};
-  }
-
-  Future<Object?> _sessionsSetMode(Map<String, Object?> params) async {
-    final sessionId = _requiredString(params, 'sessionId');
-    final mode = _parseMode(params['mode']);
-    final session = await _engine.setMode(sessionId, mode);
-    return <String, Object?>{'session': session.toJson()};
   }
 
   Future<Object?> _sessionsSetModel(Map<String, Object?> params) async {
@@ -1924,20 +1912,6 @@ class SpeedDialServer {
     final value = params[key];
     if (value is String && value.isNotEmpty) return value;
     throw DaemonError(_kErrInvalidParams, 'Missing or invalid parameter: $key');
-  }
-
-  SessionMode _parseMode(Object? raw) {
-    if (raw is! String) {
-      throw DaemonError(
-        _kErrInvalidParams,
-        'Missing or invalid parameter: mode',
-      );
-    }
-    try {
-      return SessionMode.parse(raw);
-    } on FormatException {
-      throw DaemonError(_kErrInvalidParams, 'Invalid mode: $raw');
-    }
   }
 
   SessionSandboxMode _parseSandboxMode(Object? raw) {

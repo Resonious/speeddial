@@ -37,23 +37,6 @@ enum SessionStatus {
   };
 }
 
-/// What a session is doing: executing changes or planning only.
-enum SessionMode {
-  build,
-  plan;
-
-  String get wire => switch (this) {
-    SessionMode.build => 'build',
-    SessionMode.plan => 'plan',
-  };
-
-  static SessionMode parse(String value) => switch (value) {
-    'build' => SessionMode.build,
-    'plan' => SessionMode.plan,
-    _ => throw FormatException('Unknown SessionMode: "$value"'),
-  };
-}
-
 /// Filesystem/network isolation applied to a provider session.
 ///
 /// Providers advertise supported values through [ProviderInfo.sandboxModes].
@@ -635,7 +618,6 @@ class Session {
     required this.providerId,
     required this.title,
     required this.status,
-    required this.mode,
     required this.model,
     this.models = const <String>[],
     required this.cwd,
@@ -659,7 +641,6 @@ class Session {
   final String providerId;
   final String title;
   final SessionStatus status;
-  final SessionMode mode;
 
   /// Current model id — agent-reported when the provider advertises a model
   /// config option (ACP), otherwise a locally persisted preference; null
@@ -716,7 +697,6 @@ class Session {
     providerId: json['providerId']! as String,
     title: json['title']! as String,
     status: SessionStatus.parse(json['status']! as String),
-    mode: SessionMode.parse(json['mode']! as String),
     model: json['model'] as String?,
     // Absent on pre-config-option daemons.
     models:
@@ -758,7 +738,6 @@ class Session {
     'providerId': providerId,
     'title': title,
     'status': status.wire,
-    'mode': mode.wire,
     'model': model,
     'models': models,
     'cwd': cwd,
