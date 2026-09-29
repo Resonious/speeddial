@@ -74,6 +74,10 @@ class TestDaemonServer {
   /// but never gets a response.
   Duration daemonInfoDelay = Duration.zero;
 
+  /// Stops the periodic `session.event` pushes, so a stalled `daemon.info`
+  /// looks like a truly half-dead socket (no inbound frames at all).
+  bool silent = false;
+
   static Future<TestDaemonServer> start({
     String token = 'secret',
     int port = 0,
@@ -264,6 +268,7 @@ class TestDaemonServer {
       Timer _,
     ) {
       if (firstPush.elapsed < const Duration(milliseconds: 30)) return;
+      if (silent) return;
       pushEvent('sess-1');
     });
     timers.add(timer);
@@ -956,18 +961,47 @@ void main() {
     // The daemon stops answering while the socket stays open (device
     // suspend): the probe must not trust the `connected` state.
     server.daemonInfoDelay = const Duration(seconds: 5);
+    server.silent = true;
     await client.verifyLiveness();
     expect(client.connState.value, DaemonConnectionState.reconnecting);
 
     // The daemon answers again; the probe-triggered reconnect must land and
     // emit resynced so stores backfill what the dead socket swallowed.
     server.daemonInfoDelay = Duration.zero;
+    server.silent = false;
     await waitFor(
       () =>
           client.connState.value == DaemonConnectionState.connected &&
           resyncCount == 1,
     );
   });
+
+  test(
+    'verifyLiveness trusts other inbound traffic over a slow probe',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        livenessProbeTimeout: const Duration(milliseconds: 300),
+      );
+      addTearDown(client.dispose);
+      await client.connect();
+
+      // The probe's answer is stuck behind large responses (download chunks),
+      // but frames keep arriving: the socket is alive and must be kept.
+      server.daemonInfoDelay = const Duration(seconds: 5);
+      server.silent = true;
+      final Future<void> probe = client.verifyLiveness();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      server.pushEvent('sess-1');
+      await probe;
+      expect(client.connState.value, DaemonConnectionState.connected);
+      expect(server.connectionCount, 1);
+    },
+  );
 
   test('verifyLiveness keeps a healthy socket untouched', () async {
     final TestDaemonServer server = await TestDaemonServer.start();

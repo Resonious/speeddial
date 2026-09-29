@@ -133,6 +133,9 @@ class WsDaemonClient implements DaemonClient {
   StreamSubscription<RpcNotification>? _notificationSub;
   Timer? _reconnectTimer;
   Future<void>? _inFlightConnect;
+
+  /// Completed by the next inbound frame while [verifyLiveness] is probing.
+  Completer<void>? _inboundFrame;
   bool _establishing = false;
   int _reconnectAttempt = 0;
 
@@ -296,6 +299,8 @@ class WsDaemonClient implements DaemonClient {
     _notificationSub = peer.notifications.listen(_handleNotification);
     _socketSub = channel.stream.listen(
       (Object? data) {
+        final Completer<void>? inbound = _inboundFrame;
+        if (inbound != null && !inbound.isCompleted) inbound.complete();
         if (data is String) {
           try {
             incoming.add(jsonDecode(data));
@@ -407,14 +412,24 @@ class WsDaemonClient implements DaemonClient {
   /// merely slow answer is treated as dead too — the reconnect it triggers
   /// is cheap, unlike a stale socket. `daemon.info` is answered pre-auth,
   /// so the probe works even if the daemon forgot the authentication.
+  ///
+  /// Any inbound frame during the probe also proves the socket alive: the
+  /// probe's answer can queue behind large responses (e.g. download chunks
+  /// that resume when a native save dialog hands focus back), and tearing
+  /// that socket down would fail the healthy transfer with "peer closed".
   Future<void> verifyLiveness() async {
     if (_disposed || connState.value != DaemonConnectionState.connected) {
       return;
     }
     final RpcPeer? peer = _peer;
     if (peer == null || !_socketReady) return;
+    final Completer<void> inbound = Completer<void>();
+    _inboundFrame = inbound;
     try {
-      await peer.call('daemon.info').timeout(livenessProbeTimeout);
+      await Future.any<Object?>(<Future<Object?>>[
+        peer.call('daemon.info'),
+        inbound.future,
+      ]).timeout(livenessProbeTimeout);
     } on Object {
       // A genuine drop raced the probe: its close handler already tore the
       // socket down and armed its own reconnect; do not double up.
@@ -426,6 +441,8 @@ class WsDaemonClient implements DaemonClient {
       await _tearDownSocket();
       if (_disposed) return;
       _scheduleReconnect();
+    } finally {
+      if (identical(_inboundFrame, inbound)) _inboundFrame = null;
     }
   }
 
