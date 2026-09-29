@@ -337,6 +337,18 @@ Future<void> _finishTurn(Map<String, Object?> approvalResponse) async {
     'item': subAgentItem,
   });
 
+  for (final String? kind in <String?>['future-kind', null]) {
+    await _notify('item/completed', <String, Object?>{
+      'threadId': _threadId,
+      'turnId': _turnId,
+      'item': <String, Object?>{
+        'type': 'subAgentActivity',
+        'id': 'subagent-$kind',
+        'kind': ?kind,
+      },
+    });
+  }
+
   final Map<String, Object?> searchItem = <String, Object?>{
     'type': 'webSearch',
     'id': 'search-1',

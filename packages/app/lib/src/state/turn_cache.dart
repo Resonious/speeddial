@@ -14,6 +14,7 @@ class TurnCache<T> {
   int _scanned = 0;
   SessionEvent? _first;
   SessionEvent? _boundary;
+  final Map<String, int> _activityOrigins = <String, int>{};
 
   List<T> update(List<SessionEvent> events, {bool running = false}) {
     if (events.length < _scanned ||
@@ -22,11 +23,36 @@ class TurnCache<T> {
       _completed = <T>[];
       _tailStart = 0;
       _scanned = 0;
+      _activityOrigins.clear();
     }
     _first = events.firstOrNull;
+    // Activity ids are session-scoped. A late snapshot can invalidate a sealed
+    // turn, including when history arrives in one batch. Rebuild only on such
+    // updates; ordinary streaming still derives just the mutable tail.
+    bool lateActivity = false;
+    int boundary = _tailStart;
+    for (int i = _scanned; i < events.length; i++) {
+      final SessionEvent event = events[i];
+      if (event is UserMessageEvent) boundary = i;
+      if (event is AgentActivityEvent) {
+        final int origin = _activityOrigins.putIfAbsent(
+          event.activity.id,
+          () => i,
+        );
+        if (origin < boundary) lateActivity = true;
+      }
+      if (event is TurnCompleteEvent || event is SessionErrorEvent) {
+        boundary = i + 1;
+      }
+    }
+    if (lateActivity) {
+      _completed = <T>[];
+      _tailStart = 0;
+      _boundary = null;
+    }
     // A merged chunk at the previous tail can change, but cannot introduce a
     // turn boundary. Only newly appended events need boundary inspection.
-    for (int i = _scanned; i < events.length; i++) {
+    for (int i = _scanned; !lateActivity && i < events.length; i++) {
       final SessionEvent event = events[i];
       if (event is UserMessageEvent && i > _tailStart) {
         _seal(events, i);

@@ -458,6 +458,21 @@ void main() {
       final List<AcpAgentActivityUpdate> activities = updates
           .whereType<AcpAgentActivityUpdate>()
           .toList();
+      final List<AcpAgentActivityUpdate> subagents = activities
+          .where((AcpAgentActivityUpdate update) => update.kind == 'subagent')
+          .toList();
+      expect(subagents.map((e) => e.title), <String>[
+        'Sub-agent launch',
+        'Sub-agent launch',
+        'Sub-agent activity',
+        'Sub-agent activity',
+      ]);
+      expect(subagents.map((e) => e.status), <String>[
+        'running',
+        'completed',
+        'completed',
+        'completed',
+      ]);
       expect(
         activities.map((AcpAgentActivityUpdate update) => update.kind),
         containsAll(<String>['mcp', 'compaction', 'model', 'subagent']),

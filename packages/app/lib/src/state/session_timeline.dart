@@ -72,7 +72,9 @@ final class FoldedAgentActivity extends FoldedSessionEntry {
 /// chunks without identity merge while no newly inserted visible entry occurs;
 /// updates to an existing tool/activity are transparent. Tool snapshots update
 /// their first entry in place, while a provider reusing a terminal tool id for
-/// a new active call starts a new generation.
+/// a new active call starts a new generation. Activity snapshots retain their
+/// original position across turn boundaries because background work can outlive
+/// the parent turn.
 List<FoldedSessionEntry> foldSessionEvents(List<SessionEvent> events) {
   final List<_EntryBuilder> builders = <_EntryBuilder>[];
   final Map<(bool, String), _ChunkBuilder> identifiedChunks =
@@ -91,7 +93,6 @@ List<FoldedSessionEntry> foldSessionEvents(List<SessionEvent> events) {
     breakLegacyChunks();
     identifiedChunks.clear();
     tools.clear();
-    activities.clear();
   }
 
   void addVisible(_EntryBuilder builder) {

@@ -4,6 +4,79 @@ import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
+  for (final bool incremental in <bool>[false, true]) {
+    test('late activity updates original card (incremental: $incremental)', () {
+      final TurnCache<TimelineItem> cache = TurnCache<TimelineItem>(
+        (events, running) => deriveTimelineItems(events, running: running),
+      );
+      const AgentActivityEvent started = AgentActivityEvent(
+        activity: AgentActivity(
+          id: 'child',
+          kind: 'subagent',
+          title: 'Sub-agent launch',
+          status: AgentActivityStatus.running,
+        ),
+      );
+      const AgentActivityEvent completed = AgentActivityEvent(
+        activity: AgentActivity(
+          id: 'child',
+          kind: 'subagent',
+          title: 'Sub-agent launch',
+          status: AgentActivityStatus.completed,
+        ),
+      );
+      final List<SessionEvent> events = <SessionEvent>[
+        started,
+        const AgentMessageChunkEvent(text: 'answer', messageId: 'message'),
+        const TurnCompleteEvent(stopReason: 'end_turn'),
+      ];
+      if (incremental) cache.update(events);
+      events.add(completed);
+      List<TimelineItem> items = cache.update(events);
+      expect(items.whereType<AgentActivityItem>(), hasLength(1));
+      expect(
+        (items.first as AgentActivityItem).activity.status,
+        AgentActivityStatus.completed,
+      );
+      expect(items.length, 3);
+      expect(
+        deriveTimelineItems(events).whereType<AgentActivityItem>(),
+        hasLength(1),
+      );
+
+      // Seal the rebuilt history, then receive another old snapshot during a
+      // new turn. Message identities remain turn-scoped, activity ids do not.
+      events.addAll(<SessionEvent>[
+        const UserMessageEvent(text: 'next'),
+        const AgentMessageChunkEvent(text: 'new answer', messageId: 'message'),
+      ]);
+      cache.update(events, running: true);
+      events.add(completed);
+      items = cache.update(events, running: true);
+      expect(items.whereType<AgentActivityItem>(), hasLength(1));
+      expect(items.whereType<AgentMessageItem>().map((e) => e.text), <String>[
+        'answer',
+        'new answer',
+      ]);
+
+      // A genuinely new background activity still appears after turn end.
+      events.addAll(<SessionEvent>[
+        const TurnCompleteEvent(stopReason: 'end_turn'),
+        const AgentActivityEvent(
+          activity: AgentActivity(
+            id: 'other-child',
+            kind: 'subagent',
+            title: 'Sub-agent launch',
+            status: AgentActivityStatus.running,
+          ),
+        ),
+      ]);
+      items = cache.update(events);
+      expect(items.whereType<AgentActivityItem>(), hasLength(2));
+      expect((items.last as AgentActivityItem).activity.id, 'other-child');
+    });
+  }
+
   test('streaming does not revisit completed history', () {
     int visited = 0;
     final TurnCache<TimelineItem> cache = TurnCache<TimelineItem>((

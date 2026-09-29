@@ -1282,7 +1282,7 @@ class CodexClient implements AgentClient, NativeCommandClient {
           ),
         );
       case 'subAgentActivity':
-        final String activityKind = item['kind'] as String? ?? 'started';
+        final String activityKind = item['kind'] as String? ?? '';
         _emit(
           threadId,
           AcpAgentActivityUpdate(
@@ -1291,7 +1291,8 @@ class CodexClient implements AgentClient, NativeCommandClient {
             title: switch (activityKind) {
               'interacted' => 'Sub-agent interaction',
               'interrupted' => 'Sub-agent interrupted',
-              _ => 'Sub-agent started',
+              'started' => 'Sub-agent launch',
+              _ => 'Sub-agent activity',
             },
             status: activityKind == 'interrupted'
                 ? 'failed'

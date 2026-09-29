@@ -253,7 +253,8 @@ is still in progress. Synchronous daemon work must never run on the UI isolate.
 Chat and Wear timelines cache completed turns and rederive only the mutable tail.
 They read a read-only live event view instead of copying loaded history on each
 update; permission requests are tracked incrementally in `ChatStore`. Paging or
-refetching history invalidates the turn cache. Streamed Markdown refreshes at most
+refetching history invalidates the turn cache. Late snapshots of an activity
+from a sealed turn also invalidate it so the original card updates in place. Streamed Markdown refreshes at most
 every 100 ms and flushes the final text immediately when the turn stops. Code
 highlighting waits until streaming stops, runs in serialized background batches on
 native platforms, and uses a bounded shared cache. Large code blocks remain fully

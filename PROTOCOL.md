@@ -305,6 +305,10 @@ boundaries. The field remains optional only so history persisted by older daemon
 versions continues to decode; clients use adjacency-based grouping for those
 legacy events.
 
+Activity ids are session-scoped: later snapshots replace the original activity
+in place even across turn boundaries. A newly observed id remains a new row,
+including when first received after a turn ends.
+
 For a request with nonempty `questions`, respond with `optionId: "answer"` and
 one `answers` entry per question, in order, or `optionId: "dismiss"` without answers.
 Selections are exact option labels; a free-text answer has an empty selection and a note.
