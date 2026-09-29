@@ -381,10 +381,10 @@ class _ToolCallContentView extends StatelessWidget {
         );
       case ToolCallTerminal terminal:
         return _ScrollableMono(
-          background: const Color(0xFF000000),
+          background: colors.terminalBackground,
           child: Text(
             _boundedToolText(terminal.output),
-            style: colors.mono.copyWith(color: const Color(0xFFE6EDF3)),
+            style: colors.mono.copyWith(color: colors.terminalForeground),
           ),
         );
     }

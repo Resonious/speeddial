@@ -107,11 +107,15 @@ void main() {
     int changedTextPixels = 0;
     for (int y = codeRect.top.ceil(); y < codeRect.bottom.floor(); y++) {
       for (int x = codeRect.left.ceil(); x < codeRect.right.floor(); x++) {
-        final int blue = (y * width + x) * 4 + 2;
-        if (before[blue] > 150 &&
-            (after[blue - 2] - before[blue - 2]).abs() > 20) {
-          changedTextPixels++;
+        final int red = (y * width + x) * 4;
+        if (before[red + 2] <= 150) continue;
+        // Largest per-channel shift, so the check holds for any accent hue.
+        int delta = 0;
+        for (int channel = 0; channel < 3; channel++) {
+          final int d = (after[red + channel] - before[red + channel]).abs();
+          if (d > delta) delta = d;
         }
+        if (delta > 20) changedTextPixels++;
       }
     }
     // A selection painted only behind the glyphs leaves these pixels unchanged.
@@ -262,11 +266,15 @@ void main() {
     int changedTextPixels = 0;
     for (int y = codeRect.top.ceil(); y < codeRect.bottom.floor(); y++) {
       for (int x = codeRect.left.ceil(); x < codeRect.right.floor(); x++) {
-        final int blue = (y * width + x) * 4 + 2;
-        if (before[blue] > 150 &&
-            (after[blue - 2] - before[blue - 2]).abs() > 20) {
-          changedTextPixels++;
+        final int red = (y * width + x) * 4;
+        if (before[red + 2] <= 150) continue;
+        // Largest per-channel shift, so the check holds for any accent hue.
+        int delta = 0;
+        for (int channel = 0; channel < 3; channel++) {
+          final int d = (after[red + channel] - before[red + channel]).abs();
+          if (d > delta) delta = d;
         }
+        if (delta > 20) changedTextPixels++;
       }
     }
     expect(changedTextPixels, greaterThan(100));

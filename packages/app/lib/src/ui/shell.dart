@@ -441,9 +441,9 @@ class _ThemeModeButton extends StatelessWidget {
       builder: (BuildContext context, Widget? _) {
         final ThemeMode mode = settings.themeMode;
         final (IconData icon, String label) = switch (mode) {
-          ThemeMode.system => (Icons.brightness_auto, 'System'),
-          ThemeMode.light => (Icons.light_mode, 'Light'),
-          ThemeMode.dark => (Icons.dark_mode, 'Dark'),
+          ThemeMode.system => (Icons.contrast, 'System'),
+          ThemeMode.light => (Icons.light_mode_outlined, 'Light'),
+          ThemeMode.dark => (Icons.dark_mode_outlined, 'Dark'),
         };
         return IconButton(
           tooltip: 'Theme: $label',
@@ -528,19 +528,28 @@ class _DaemonStatusChip extends StatelessWidget {
         return Tooltip(
           message: id == null ? 'No daemon selected' : status.name,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                ConnectionStatusIndicator(status: status),
-                const SizedBox(width: 8),
-                Text(
-                  id == null ? 'Not connected' : status.name,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: const BorderRadius.all(Radius.circular(999)),
+                border: Border.all(color: context.speedDialColors.border),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(9, 3, 11, 3),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    ConnectionStatusIndicator(status: status, size: 7),
+                    const SizedBox(width: 7),
+                    Text(
+                      id == null ? 'Not connected' : status.name,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../segmented_tab_bar.dart';
 import 'files_tab.dart';
 import 'git_tab.dart';
 
@@ -23,13 +24,14 @@ class RightPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: const <Widget>[
-            TabBar(
-              tabs: <Widget>[Tab(text: 'Files'), Tab(text: 'Git')],
+            SegmentedTabBar(
+              tabs: <Widget>[
+                Tab(text: 'Files', height: kSegmentedTabHeight),
+                Tab(text: 'Git', height: kSegmentedTabHeight),
+              ],
             ),
             Expanded(
-              child: TabBarView(
-                children: <Widget>[FilesTab(), GitTab()],
-              ),
+              child: TabBarView(children: <Widget>[FilesTab(), GitTab()]),
             ),
           ],
         ),

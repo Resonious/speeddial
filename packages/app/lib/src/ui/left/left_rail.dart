@@ -5,6 +5,7 @@ import '../../scope.dart';
 import '../../state/projects_store.dart';
 import '../../state/settings_store.dart';
 import '../connection_status_indicator.dart';
+import '../segmented_tab_bar.dart';
 import 'inbox_tab.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
@@ -70,11 +71,19 @@ class _LeftRailState extends State<LeftRail>
       color: scheme.surfaceContainer,
       child: Column(
         children: <Widget>[
-          TabBar(
+          SegmentedTabBar(
             controller: _controller,
             tabs: const <Widget>[
-              Tab(key: Key('rail-tab-sessions'), text: 'Sessions'),
-              Tab(key: Key('rail-tab-inbox'), text: 'Inbox'),
+              Tab(
+                key: Key('rail-tab-sessions'),
+                text: 'Sessions',
+                height: kSegmentedTabHeight,
+              ),
+              Tab(
+                key: Key('rail-tab-inbox'),
+                text: 'Inbox',
+                height: kSegmentedTabHeight,
+              ),
             ],
           ),
           Expanded(
@@ -389,7 +398,10 @@ class _ProjectTree extends StatelessWidget {
                   IconButton(
                     key: const Key('add-project'),
                     tooltip: 'Add project',
-                    icon: const Icon(Icons.create_new_folder, size: 18),
+                    icon: const Icon(
+                      Icons.create_new_folder_outlined,
+                      size: 18,
+                    ),
                     visualDensity: VisualDensity.compact,
                     onPressed: () => _showAddProjectDialog(context, daemonId),
                   ),
@@ -643,7 +655,7 @@ class _ProjectTileState extends State<_ProjectTile> {
           IconButton(
             key: ValueKey<String>('new-session-${project.id}'),
             tooltip: 'New session',
-            icon: const Icon(Icons.add_comment, size: 18),
+            icon: const Icon(Icons.add_comment_outlined, size: 18),
             visualDensity: VisualDensity.compact,
             onPressed: () => _showNewSessionSheet(context),
           ),
