@@ -11,6 +11,49 @@ import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 
 void main() {
+  testWidgets('message colors settle after animated theme changes', (
+    WidgetTester tester,
+  ) async {
+    final ThemeData light = buildSpeedDialLightTheme();
+    final ThemeData dark = buildSpeedDialTheme();
+    Future<void> show(ThemeMode mode) => tester.pumpWidget(
+      MaterialApp(
+        theme: light,
+        darkTheme: dark,
+        themeMode: mode,
+        home: const Scaffold(
+          body: AgentMessageView(
+            text: 'Readable answer\n\n- List item\n\n```\nplain code\n```',
+            streaming: true,
+          ),
+        ),
+      ),
+    );
+
+    await show(ThemeMode.light);
+    for (final ThemeMode mode in [ThemeMode.dark, ThemeMode.light]) {
+      await show(mode);
+      // Render intermediate colors after brightness has already switched.
+      await tester.pump(const Duration(milliseconds: 120));
+      await tester.pumpAndSettle();
+      final ThemeData theme = mode == ThemeMode.dark ? dark : light;
+      final MarkdownStyleSheet styles = tester
+          .widget<MarkdownBody>(find.byType(MarkdownBody))
+          .styleSheet!;
+      expect(styles.p?.color, theme.colorScheme.onSurface);
+      expect(styles.listBullet?.color, theme.colorScheme.onSurface);
+      final Color background =
+          (styles.codeblockDecoration! as BoxDecoration).color!;
+      expect(background, theme.speedDialColors.codeBackground);
+      final double foregroundLuminance = styles.code!.color!.computeLuminance();
+      final double backgroundLuminance = background.computeLuminance();
+      final double contrast = foregroundLuminance > backgroundLuminance
+          ? (foregroundLuminance + 0.05) / (backgroundLuminance + 0.05)
+          : (backgroundLuminance + 0.05) / (foregroundLuminance + 0.05);
+      expect(contrast, greaterThanOrEqualTo(4.5));
+    }
+  });
+
   testWidgets('code block selection has a visible highlight', (
     WidgetTester tester,
   ) async {

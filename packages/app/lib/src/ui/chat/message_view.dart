@@ -810,28 +810,34 @@ class _MarkdownLink extends StatelessWidget {
 }
 
 MarkdownStyleSheet? _cachedStyleSheet;
+ThemeData? _cachedTheme;
+TextStyle? _cachedBodyStyle;
 
 MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? bodyStyle) {
-  // Static is safe only if the theme is fixed; refresh on color-scheme
-  // changes by keying the cache on brightness.
-  final Brightness brightness = Theme.of(context).brightness;
-  if (_cachedStyleSheet == null || _cachedBrightness != brightness) {
-    _cachedStyleSheet = MarkdownStyleSheet.fromTheme(Theme.of(context))
-        .copyWith(
-          p: bodyStyle,
-          code: context.speedDialColors.mono.copyWith(fontSize: 12.5),
-          codeblockPadding: const EdgeInsets.all(10),
-          blockquotePadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 4,
-          ),
-        );
-    _cachedBrightness = brightness;
+  // Brightness switches midway through AnimatedTheme; colors keep changing
+  // afterward. Never retain an intermediate frame's low-contrast palette.
+  final ThemeData theme = Theme.of(context);
+  if (_cachedStyleSheet == null ||
+      _cachedTheme != theme ||
+      _cachedBodyStyle != bodyStyle) {
+    _cachedStyleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
+      p: bodyStyle,
+      code: context.speedDialColors.mono.copyWith(fontSize: 12.5),
+      codeblockPadding: const EdgeInsets.all(10),
+      codeblockDecoration: BoxDecoration(
+        color: context.speedDialColors.codeBackground,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      blockquotePadding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 4,
+      ),
+    );
+    _cachedTheme = theme;
+    _cachedBodyStyle = bodyStyle;
   }
   return _cachedStyleSheet!;
 }
-
-Brightness? _cachedBrightness;
 
 /// Collapsed "Thinking…" expansion tile for agent reasoning deltas.
 ///
