@@ -156,7 +156,7 @@ class _InboxTabState extends State<InboxTab> {
                   IconButton(
                     key: const Key('inbox-new-session'),
                     tooltip: 'New session',
-                    icon: const Icon(Icons.add_comment, size: 18),
+                    icon: const Icon(Icons.add_comment_outlined, size: 18),
                     visualDensity: VisualDensity.compact,
                     onPressed: endpoints.isEmpty
                         ? null

@@ -73,7 +73,7 @@ class UserMessageBubble extends StatelessWidget {
         Text(
           text,
           style: Theme.of(context).textTheme.bodyMedium
-              ?.copyWith(color: scheme.onPrimary),
+              ?.copyWith(color: scheme.onPrimaryContainer),
         ),
       if (attachments.isNotEmpty) ...<Widget>[
         if (hasText) const SizedBox(height: 8),
@@ -89,8 +89,14 @@ class UserMessageBubble extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         constraints: const BoxConstraints(maxWidth: 560),
         decoration: BoxDecoration(
-          color: scheme.primary,
-          borderRadius: BorderRadius.circular(12),
+          color: scheme.primaryContainer,
+          // Squared corner toward the sender, like a speech tail.
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(14),
+            topRight: Radius.circular(14),
+            bottomLeft: Radius.circular(14),
+            bottomRight: Radius.circular(4),
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -162,7 +168,7 @@ class _AttachmentMetaRow extends StatelessWidget {
                 ? Icons.picture_as_pdf_outlined
                 : Icons.insert_drive_file_outlined,
             size: 16,
-            color: theme.colorScheme.onPrimary,
+            color: theme.colorScheme.onPrimaryContainer,
           ),
           const SizedBox(width: 6),
           Flexible(
@@ -171,7 +177,7 @@ class _AttachmentMetaRow extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onPrimary,
+                color: theme.colorScheme.onPrimaryContainer,
               ),
             ),
           ),
@@ -179,7 +185,7 @@ class _AttachmentMetaRow extends StatelessWidget {
           Text(
             _formatSize(attachment.size),
             style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onPrimary,
+              color: theme.colorScheme.onPrimaryContainer,
             ),
           ),
         ],
@@ -201,21 +207,24 @@ class _ImageThumbPlaceholder extends StatelessWidget {
       width: 160,
       height: 160,
       decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.9),
+        color: theme.colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Icon(Icons.image_outlined, color: theme.colorScheme.onPrimary),
+            Icon(
+              Icons.image_outlined,
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
             const SizedBox(height: 4),
             Text(
               attachment.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onPrimary,
+                color: theme.colorScheme.onPrimaryContainer,
               ),
             ),
           ],
@@ -520,7 +529,13 @@ class _AgentMessageViewState extends State<AgentMessageView> {
         constraints: const BoxConstraints(maxWidth: 720),
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(4),
+            topRight: Radius.circular(14),
+            bottomLeft: Radius.circular(14),
+            bottomRight: Radius.circular(14),
+          ),
+          border: Border.all(color: context.speedDialColors.border),
         ),
         child: SelectionContainer(
           delegate: _selectionDelegate,
@@ -826,7 +841,8 @@ MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? bodyStyle) {
       codeblockPadding: const EdgeInsets.all(10),
       codeblockDecoration: BoxDecoration(
         color: context.speedDialColors.codeBackground,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: context.speedDialColors.border),
       ),
       blockquotePadding: const EdgeInsets.symmetric(
         horizontal: 12,

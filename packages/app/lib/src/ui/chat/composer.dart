@@ -693,10 +693,18 @@ class _ComposerState extends State<Composer> {
                                 icon: const Icon(Icons.stop_circle_outlined),
                                 onPressed: widget.onStop,
                               )
-                            : IconButton(
-                                tooltip: 'Send',
-                                icon: const Icon(Icons.send),
-                                onPressed: _canSend ? _send : null,
+                            : Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: IconButton(
+                                  tooltip: 'Send',
+                                  icon: const Icon(Icons.send, size: 18),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: scheme.primary,
+                                    foregroundColor: scheme.onPrimary,
+                                    disabledBackgroundColor: Colors.transparent,
+                                  ),
+                                  onPressed: _canSend ? _send : null,
+                                ),
                               ),
                       ),
                     ),
