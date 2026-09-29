@@ -163,6 +163,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   PermissionRequest? _pending;
   bool _forking = false;
   bool _draftErrorShown = false;
+  final ValueNotifier<int> _followLatestRequest = ValueNotifier<int>(0);
   List<NativeCommand> _commands = const <NativeCommand>[];
   bool _loadingCommands = false;
   bool _refreshCommandsAfterLoad = false;
@@ -233,6 +234,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   @override
   void dispose() {
     _transfer?.cancelled = true;
+    _followLatestRequest.dispose();
     _downloadProgress.dispose();
     _downloading.dispose();
     super.dispose();
@@ -245,7 +247,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     final String sessionId = widget.sessionId;
     final ChatStore chat = data.chat;
     return ListenableBuilder(
-      listenable: Listenable.merge(<Listenable>[chat, data.sessions]),
+      listenable: Listenable.merge(<Listenable>[
+        chat,
+        data.sessions,
+        _followLatestRequest,
+      ]),
       builder: (BuildContext context, Widget? _) {
         final List<SessionEvent> events = chat.eventViewFor(sessionId);
         final SessionStatus status = chat.statusOf(sessionId);
@@ -283,6 +289,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         } else {
           surface = Timeline(
             items: _items,
+            followLatestRequest: _followLatestRequest.value,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),
             olderError: chat.olderHistoryErrorFor(sessionId),
@@ -399,12 +406,14 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     ),
                 onSharedAttachmentsSent: (List<OutgoingAttachment> files) =>
                     data.shares.removeStaged(daemonId, sessionId, files),
-                onSend: (String text, List<OutgoingAttachment> attachments) {
-                  if (status == SessionStatus.running) {
-                    return Future<void>.value();
-                  }
-                  return _sendOrRunCommand(text, attachments);
-                },
+                onSend:
+                    (String text, List<OutgoingAttachment> attachments) async {
+                      if (status == SessionStatus.running) {
+                        return;
+                      }
+                      await _sendOrRunCommand(text, attachments);
+                      if (mounted) _followLatestRequest.value++;
+                    },
                 onStop: () => unawaited(_cancelTurn()),
               ),
             ),

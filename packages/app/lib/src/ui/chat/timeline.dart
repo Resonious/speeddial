@@ -410,7 +410,11 @@ class Timeline extends StatefulWidget {
     this.loadingOlder = false,
     this.olderError,
     this.onLoadOlder,
+    this.followLatestRequest = 0,
   });
+
+  /// Increment after a successful local send to resume following the timeline.
+  final int followLatestRequest;
 
   final List<TimelineItem> items;
   final bool hasOlder;
@@ -474,6 +478,9 @@ class _TimelineState extends State<Timeline> {
   void didUpdateWidget(Timeline oldWidget) {
     super.didUpdateWidget(oldWidget);
     _initializeOrigin();
+    if (widget.followLatestRequest != oldWidget.followLatestRequest) {
+      _controller.followLatest = true;
+    }
     if (oldWidget.loadingOlder != widget.loadingOlder ||
         oldWidget.hasOlder != widget.hasOlder) {
       _requestedOlder = false;

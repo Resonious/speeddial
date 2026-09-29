@@ -878,6 +878,53 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  for (final bool useButton in <bool>[false, true]) {
+    testWidgets(
+      'sending with ${useButton ? 'button' : 'Enter'} resumes following from history',
+      (tester) async {
+        final FakeDaemonClient fake = FakeDaemonClient(
+          eventDelay: const Duration(milliseconds: 50),
+        );
+        final Session session = (await fake.listSessions()).first;
+        fake.seedHistory(session.id, <SessionEvent>[
+          for (int i = 0; i < 60; i++)
+            UserMessageEvent(text: 'Earlier message $i'),
+        ]);
+        final (AppData app, _) = await pumpChat(tester, fake: fake);
+        addTearDown(app.dispose);
+        await tester.pumpAndSettle();
+        final ScrollPosition position = tester
+            .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+            .controller!
+            .position;
+        await tester.drag(
+          find.byKey(const Key('chat-timeline')),
+          const Offset(0, 450),
+        );
+        await tester.pumpAndSettle();
+        expect(position.pixels - position.minScrollExtent, greaterThan(100));
+        await tester.enterText(find.byType(TextField), 'My new message');
+        await tester.pump();
+        if (useButton) {
+          await tester.tap(find.byIcon(Icons.send));
+        } else {
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        }
+        await tester.pump();
+        await pumpUntil(
+          tester,
+          () => find.text('My new message').hitTestable().evaluate().isNotEmpty,
+        );
+        expect(find.text('My new message').hitTestable(), findsOneWidget);
+        expect(position.pixels, closeTo(position.minScrollExtent, 0.1));
+        await tester.pump();
+        expect(find.byTooltip('Jump to latest event'), findsNothing);
+        await tester.pump(const Duration(seconds: 1));
+        expect(position.pixels, closeTo(position.minScrollExtent, 0.1));
+      },
+    );
+  }
+
   testWidgets('Shift+Enter inserts a newline instead of sending', (
     WidgetTester tester,
   ) async {
@@ -975,7 +1022,23 @@ void main() {
   testWidgets('send failure shows a SnackBar and restores the composer text', (
     WidgetTester tester,
   ) async {
-    await pumpChat(tester, fake: _FailingSendFake());
+    final FakeDaemonClient fake = _FailingSendFake();
+    final Session session = (await fake.listSessions()).first;
+    fake.seedHistory(session.id, <SessionEvent>[
+      for (int i = 0; i < 60; i++) UserMessageEvent(text: 'Earlier message $i'),
+    ]);
+    await pumpChat(tester, fake: fake);
+    await tester.pumpAndSettle();
+    final ScrollPosition position = tester
+        .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+        .controller!
+        .position;
+    await tester.drag(
+      find.byKey(const Key('chat-timeline')),
+      const Offset(0, 450),
+    );
+    await tester.pumpAndSettle();
+    final double readingOffset = position.pixels;
 
     await tester.enterText(find.byType(TextField), 'hello');
     await tester.pump();
@@ -985,6 +1048,7 @@ void main() {
     await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
     // DaemonError surfaced as a SnackBar...
     expect(find.text('a turn is already running'), findsOneWidget);
+    expect(position.pixels, closeTo(readingOffset, 0.1));
     // ...and the draft was restored into the field.
     final TextField field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller!.text, 'hello');

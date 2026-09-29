@@ -359,7 +359,8 @@ Performance rules for the app:
   connections in isolates so broad searches do not stall daemon/embedded-app event handling.
 - Timeline: a reversed `CustomScrollView` with history and live slivers growing on
   opposite sides of a fixed origin preserves the reading position. Stable row keys
-  and local page storage retain expansion; the down-arrow resumes following live events.
+  and local page storage retain expansion; the down-arrow or a successful local send
+  resumes following live events. Failed sends retain the reading position.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at
