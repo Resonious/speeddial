@@ -5,11 +5,12 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/chat_store.dart';
+import '../../state/file_transfer_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
 import 'composer.dart';
-import 'downloaded_file_opener.dart';
-import 'file_download_transfer.dart';
+import 'file_action_dialog.dart';
+import 'file_transfer_banner.dart';
 import 'permission_banner.dart';
 import 'question_banner.dart';
 import 'timeline.dart';
@@ -112,7 +113,12 @@ class _ChatPaneState extends State<ChatPane> {
         final String? daemonId = data.selection.selectedDaemonId;
         final String? sessionId = data.selection.selectedSessionId;
         if (daemonId == null || sessionId == null) {
-          return const _EmptyState();
+          return const Column(
+            children: <Widget>[
+              FileTransferBanner(),
+              Expanded(child: _EmptyState()),
+            ],
+          );
         }
         return _SessionSurface(
           key: ValueKey<String>('$daemonId/$sessionId'),
@@ -167,11 +173,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   List<NativeCommand> _commands = const <NativeCommand>[];
   bool _loadingCommands = false;
   bool _refreshCommandsAfterLoad = false;
-  FileDownloadTransfer? _transfer;
-  final ValueNotifier<String> _downloadProgress = ValueNotifier<String>(
-    'Preparing download…',
-  );
-  final ValueNotifier<bool> _downloading = ValueNotifier<bool>(false);
+  bool _choosingFile = false;
 
   @override
   void initState() {
@@ -233,10 +235,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   @override
   void dispose() {
-    _transfer?.cancelled = true;
     _followLatestRequest.dispose();
-    _downloadProgress.dispose();
-    _downloading.dispose();
     super.dispose();
   }
 
@@ -309,41 +308,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
         return Column(
           children: <Widget>[
-            ValueListenableBuilder<bool>(
-              valueListenable: _downloading,
-              builder: (
-                BuildContext context,
-                bool downloading,
-                Widget? child,
-              ) => downloading ? child! : const SizedBox.shrink(),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: ValueListenableBuilder<String>(
-                  valueListenable: _downloadProgress,
-                  builder: (context, value, child) => Row(
-                    children: <Widget>[
-                      const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(value)),
-                      TextButton(
-                        onPressed:
-                            _transfer?.completed == true ||
-                                _transfer?.cancelled == true
-                            ? null
-                            : () {
-                                _transfer?.cancelled = true;
-                                _downloadProgress.value = 'Cancelling…';
-                              },
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+            const FileTransferBanner(),
             Expanded(child: surface),
             if (catchingUp) const _CatchingUp(),
             if (pending != null && pending.questions.isNotEmpty)
@@ -443,48 +408,23 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   }
 
   Future<void> _openLocalFile(String path) async {
-    if (_downloading.value) return;
-    _downloading.value = true;
+    final FileTransferStore transfers = widget.data.fileTransfers;
+    if (_choosingFile || transfers.busy) return;
+    _choosingFile = true;
     try {
-      final FileDownloadTransfer transfer = FileDownloadTransfer(
+      final FileAction? action = await chooseFileAction(context, path);
+      if (action == null || !mounted) return;
+      await transfers.start(
         widget.data.clientFor(widget.daemonId),
         widget.sessionId,
         path,
+        action,
       );
-      _transfer = transfer;
-      _downloadProgress.value = 'Preparing download…';
-      await transfer.prepare();
-      if (!mounted) return;
-      final DownloadedFileResult result = await openDownloadedStream(
-        transfer.name,
-        transfer.bytes((received, total) {
-          if (mounted) {
-            _downloadProgress.value = received == total
-                ? 'Saving ${transfer.name}…'
-                : 'Downloading ${total == 0 ? 100 : (received * 100 / total).floor()}%'
-                      ' (${(received / 1048576).toStringAsFixed(1)} / '
-                      '${(total / 1048576).toStringAsFixed(1)} MiB)';
-          }
-        }),
-      );
-      switch (result) {
-        case DownloadedFileResult.saved:
-          await _showMessage('Saved ${transfer.name}');
-        case DownloadedFileResult.unsupported:
-          await _showMessage('Could not open ${transfer.name}');
-        case DownloadedFileResult.opened:
-        case DownloadedFileResult.cancelled:
-          break;
-      }
-    } on DownloadCancelled {
-      // The platform sink removes the partial file.
-    } on DaemonError catch (error) {
-      await _showError(error);
-    } on Object catch (error) {
-      await _showMessage('Could not download file: $error');
+    } on Object {
+      // The transfer store records the failure in its persistent banner.
+      if (transfers.lastError == null) rethrow;
     } finally {
-      _transfer = null;
-      if (mounted) _downloading.value = false;
+      _choosingFile = false;
     }
   }
 

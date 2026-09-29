@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
-import '../../api/daemon_client.dart';
+import '../api/daemon_client.dart';
 
 class DownloadCancelled implements Exception {
   const DownloadCancelled();

@@ -430,7 +430,7 @@ class Timeline extends StatefulWidget {
   /// Forks the selected session through the message event at [seq].
   final void Function(int seq)? onFork;
 
-  /// Downloads and opens a path linked from an agent markdown message.
+  /// Offers Download or Float for a path linked from an agent message.
   final Future<void> Function(String path)? openLocalFile;
 
   @override

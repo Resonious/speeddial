@@ -9,7 +9,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../scope.dart';
 import 'sessions_store.dart';
 
-/// A mobile share payload is held in memory until the user stages or cancels
+/// A shared or floated file is held in memory until the user stages or cancels
 /// it. Only project labels and session creation settings go to preferences.
 class ShareStore extends ChangeNotifier {
   ShareStore(this.data);
@@ -35,10 +35,24 @@ class ShareStore extends ChangeNotifier {
   Future<bool>? _persisting;
 
   OutgoingAttachment? get pending => _pending;
+  bool get canFloat => _pending == null && !_creating && !_readingInbox;
   String? get error => _error;
   bool get creating => _creating;
   List<ShareTarget> get targets =>
       List<ShareTarget>.unmodifiable(_targets.values);
+
+  /// A downloaded file uses the same floating card as an incoming OS share.
+  void floatFile(OutgoingAttachment file) {
+    if (!canFloat) {
+      _error =
+          'Attach or dismiss the current shared file before floating another.';
+      notifyListeners();
+      throw StateError(_error!);
+    }
+    _pending = file;
+    _error = null;
+    notifyListeners();
+  }
 
   static String targetId(String daemonId, String projectId) =>
       'project:${base64Url.encode(utf8.encode(daemonId))}:'

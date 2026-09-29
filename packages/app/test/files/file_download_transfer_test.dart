@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
-import 'package:speeddial_app/src/ui/chat/file_download_transfer.dart';
-import 'package:speeddial_app/src/ui/chat/downloaded_file_opener.dart';
+import 'package:speeddial_app/src/files/file_download_transfer.dart';
+import 'package:speeddial_app/src/files/downloaded_file_saver.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 class ChunkClient extends FakeDaemonClient {
@@ -143,8 +143,8 @@ void main() {
     }
 
     expect(
-      await openDownloadedStream('large.apk', content()),
-      DownloadedFileResult.saved,
+      (await saveDownloadedStream('large.apk', content())).status,
+      DownloadedFileStatus.saved,
     );
     expect(await File(stagedPath).parent.exists(), false);
   });
@@ -170,7 +170,7 @@ void main() {
               expect(await File(stagedPath).readAsBytes(), <int>[0, 1, 255, 2]);
               return saved;
             });
-        final result = await openDownloadedStream(
+        final result = await saveDownloadedStream(
           '../file.bin',
           Stream<Uint8List>.fromIterable(<Uint8List>[
             Uint8List.fromList(<int>[0, 1]),
@@ -178,8 +178,8 @@ void main() {
           ]),
         );
         expect(
-          result,
-          saved ? DownloadedFileResult.saved : DownloadedFileResult.cancelled,
+          result.status,
+          saved ? DownloadedFileStatus.saved : DownloadedFileStatus.cancelled,
         );
         expect(await File(stagedPath).parent.exists(), false);
       }

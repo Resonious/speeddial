@@ -282,6 +282,7 @@ lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PR
                                   liveness probe that catches half-dead sockets)
 lib/src/api/fake_daemon.dart      FakeDaemonClient: in-memory scripted implementation used
                                   by widget tests AND by --demo mode; simulates streaming
+lib/src/files/                    Chunked file transfers and platform save pickers/browser downloads.
 lib/src/oauth/                    Conditional native localhost OAuth callback listener; binds
                                   an ephemeral loopback port and forwards the callback URI to
                                   the daemon. Web builds expose an unsupported stub.
@@ -296,7 +297,8 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              append), and the shared presentation-neutral session timeline
                              fold used by both the full client and Wear (logical content
                              identity plus tool/activity snapshot replacement),
-                             FilesStore, GitStore, McpStore, DaemonConfigStore (installed
+                             FilesStore, FileTransferStore (active transfers and dismissible receipts),
+                             ShareStore (floating files and staged attachments), GitStore, McpStore, DaemonConfigStore (installed
                              harnesses + write-only environment names), DraftsStore
                              (per-daemon/session composer text persisted locally),
                              SettingsStore (theme mode persisted locally),
@@ -327,9 +329,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
-                             spool to disk on native platforms and export through the Android
-                             system picker without whole-file buffers, download through browser Blobs
-                             on web, and open a temporary local copy via the OS on desktop,
+                             offer Download (system save picker) or Float (the shared-file card).
+                             Transfers and dismissible completion/error receipts live in
+                             FileTransferStore across session changes. Native downloads spool to disk;
+                             desktop saves replace the chosen destination only after transfer success,
+                             Android exports through the system picker without whole-file buffers,
+                             and web hands browser Blobs to the browser with an explicit handoff receipt.
+                             Floated files use ShareStore and the protocol’s 8 MiB attachment cap,
                              collapsible
                              tool-call cards (status icon, title, expandable content/diff),
                              including lazily loaded image outputs,
