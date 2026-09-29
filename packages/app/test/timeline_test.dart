@@ -652,7 +652,7 @@ void main() {
       greaterThan(500),
     );
     final ScrollController controller = tester
-        .widget<ListView>(find.byKey(const Key('chat-timeline')))
+        .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
         .controller!;
     controller.jumpTo(controller.position.maxScrollExtent);
     await tester.pump();

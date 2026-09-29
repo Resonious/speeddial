@@ -51,7 +51,10 @@ final class FoldedAgentThought extends FoldedSessionEntry {
 /// Most surfaces render only [latest]. The full client also consumes the
 /// snapshots of legacy Ante `Agent` calls to preserve their progress steps.
 final class FoldedToolCall extends FoldedSessionEntry {
-  const FoldedToolCall(this.snapshots);
+  const FoldedToolCall(this.snapshots, {this.firstSeq});
+
+  /// First event of this tool generation, stable across snapshot updates.
+  final int? firstSeq;
 
   final List<ToolCall> snapshots;
 
@@ -199,7 +202,7 @@ List<FoldedSessionEntry> foldSessionEvents(List<SessionEvent> events) {
         if (existing != null && !reused) {
           existing.snapshots.add(toolCall);
         } else {
-          final _ToolBuilder created = _ToolBuilder(toolCall);
+          final _ToolBuilder created = _ToolBuilder(toolCall, event.seq);
           addVisible(created);
           tools[toolCall.id] = created;
         }
@@ -292,15 +295,19 @@ final class _ChunkBuilder implements _EntryBuilder {
 }
 
 final class _ToolBuilder implements _EntryBuilder {
-  _ToolBuilder(ToolCall initial) : snapshots = <ToolCall>[initial];
+  _ToolBuilder(ToolCall initial, this.firstSeq)
+    : snapshots = <ToolCall>[initial];
 
   final List<ToolCall> snapshots;
+  final int? firstSeq;
 
   ToolCall get latest => snapshots.last;
 
   @override
-  FoldedSessionEntry build() =>
-      FoldedToolCall(List<ToolCall>.unmodifiable(snapshots));
+  FoldedSessionEntry build() => FoldedToolCall(
+    List<ToolCall>.unmodifiable(snapshots),
+    firstSeq: firstSeq,
+  );
 }
 
 final class _ActivityBuilder implements _EntryBuilder {

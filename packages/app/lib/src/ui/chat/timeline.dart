@@ -13,12 +13,17 @@ import 'tool_call_card.dart';
 
 /// A derived, display-ready row of the session timeline.
 sealed class TimelineItem {
-  const TimelineItem();
+  const TimelineItem({this.id});
+
+  /// Stable within a session, including across chunk and snapshot updates.
+  /// Optional for standalone/test rows without persisted events.
+  final Object? id;
 }
 
 /// A user message (already complete; not streamed).
 class UserMessageItem extends TimelineItem {
   const UserMessageItem({
+    super.id,
     required this.text,
     this.attachments = const <Attachment>[],
     this.forkSeq,
@@ -36,13 +41,14 @@ class UserMessageItem extends TimelineItem {
 
 /// An image the agent explicitly displayed for the user.
 class DisplayedImageItem extends TimelineItem {
-  const DisplayedImageItem({required this.attachment});
+  const DisplayedImageItem({super.id, required this.attachment});
   final Attachment attachment;
 }
 
 /// One logical agent message assembled from its identified chunks.
 class AgentMessageItem extends TimelineItem {
   const AgentMessageItem({
+    super.id,
     required this.text,
     this.forkSeq,
     this.streaming = false,
@@ -56,7 +62,7 @@ class AgentMessageItem extends TimelineItem {
 
 /// One logical agent thought assembled from its identified chunks.
 class AgentThoughtItem extends TimelineItem {
-  const AgentThoughtItem({required this.text, this.active = false});
+  const AgentThoughtItem({super.id, required this.text, this.active = false});
   final String text;
 
   /// True while this run is the session's live tail: the agent is still
@@ -66,19 +72,20 @@ class AgentThoughtItem extends TimelineItem {
 
 /// The latest snapshot of one tool call (later events update in place).
 class ToolCallTimelineItem extends TimelineItem {
-  const ToolCallTimelineItem({required this.toolCall});
+  const ToolCallTimelineItem({super.id, required this.toolCall});
   final ToolCall toolCall;
 }
 
 /// Latest snapshot of one provider-reported background activity.
 class AgentActivityItem extends TimelineItem {
-  const AgentActivityItem({required this.activity});
+  const AgentActivityItem({super.id, required this.activity});
   final AgentActivity activity;
 }
 
 class _LegacySubagentState {
   _LegacySubagentState({
     required this.activityId,
+    required this.identity,
     required this.headerIndex,
     required this.title,
     required this.type,
@@ -86,6 +93,7 @@ class _LegacySubagentState {
   });
 
   final String activityId;
+  final Object identity;
   final int headerIndex;
   final String title;
   final String type;
@@ -107,20 +115,21 @@ class _SubagentPresentation {
 
 /// A full-replacement plan view.
 class PlanTimelineItem extends TimelineItem {
-  const PlanTimelineItem({required this.entries});
+  const PlanTimelineItem({super.id, required this.entries});
   final List<PlanEntry> entries;
 }
 
 /// Compact inline record of a pending permission request; the actionable
 /// banner is rendered separately by the chat pane's PermissionBanner.
 class PermissionRequestItem extends TimelineItem {
-  const PermissionRequestItem({required this.request});
+  const PermissionRequestItem({super.id, required this.request});
   final PermissionRequest request;
 }
 
 /// A permission request was resolved with the given option.
 class PermissionResolvedItem extends TimelineItem {
   const PermissionResolvedItem({
+    super.id,
     required this.requestId,
     required this.optionId,
   });
@@ -130,13 +139,13 @@ class PermissionResolvedItem extends TimelineItem {
 
 /// The agent finished its turn.
 class TurnCompleteItem extends TimelineItem {
-  const TurnCompleteItem({required this.stopReason});
+  const TurnCompleteItem({super.id, required this.stopReason});
   final String stopReason;
 }
 
 /// The session hit an error.
 class SessionErrorItem extends TimelineItem {
-  const SessionErrorItem({required this.message});
+  const SessionErrorItem({super.id, required this.message});
   final String message;
 }
 
@@ -150,7 +159,7 @@ List<TimelineItem> deriveTimelineItems(
       <String, _LegacySubagentState>{};
   final Map<String, int> legacySubagentGenerations = <String, int>{};
 
-  void foldLegacySubagent(ToolCall toolCall) {
+  void foldLegacySubagent(ToolCall toolCall, int? firstSeq) {
     _LegacySubagentState? state = legacySubagents[toolCall.id];
     if (state == null ||
         (state.terminal && _isActiveToolStatus(toolCall.status))) {
@@ -169,6 +178,7 @@ List<TimelineItem> deriveTimelineItems(
       final String activityId = 'legacy-subagent-${toolCall.id}-$generation';
       state = _LegacySubagentState(
         activityId: activityId,
+        identity: (firstSeq, activityId),
         headerIndex: items.length,
         title: title,
         type: type,
@@ -177,6 +187,7 @@ List<TimelineItem> deriveTimelineItems(
       legacySubagents[toolCall.id] = state;
       items.add(
         AgentActivityItem(
+          id: state.identity,
           activity: AgentActivity(
             id: activityId,
             kind: 'subagent',
@@ -212,6 +223,7 @@ List<TimelineItem> deriveTimelineItems(
         );
         items.add(
           AgentActivityItem(
+            id: (state.identity, state.step),
             activity: AgentActivity(
               id: '${state.activityId}-step-${state.step++}',
               kind: 'subagent',
@@ -227,6 +239,7 @@ List<TimelineItem> deriveTimelineItems(
 
     final String? report = _legacySubagentReport(toolCall);
     items[state.headerIndex] = AgentActivityItem(
+      id: state.identity,
       activity: AgentActivity(
         id: state.activityId,
         kind: 'subagent',
@@ -241,17 +254,30 @@ List<TimelineItem> deriveTimelineItems(
     state.terminal = true;
   }
 
+  int? turnSeq;
+  int turnIndex = 0;
   final List<FoldedSessionEntry> folded = foldSessionEvents(events);
   for (int index = 0; index < folded.length; index++) {
     final FoldedSessionEntry entry = folded[index];
+    if (entry case FoldedSessionEvent(event: UserMessageEvent(:final seq))) {
+      turnSeq = seq;
+      turnIndex = 0;
+    }
+    final int rowInTurn = turnIndex++;
     switch (entry) {
       case FoldedAgentMessage e:
         items.add(
-          AgentMessageItem(text: e.text, forkSeq: e.seq, streaming: running),
+          AgentMessageItem(
+            id: (turnSeq, 'message', e.messageId ?? rowInTurn),
+            text: e.text,
+            forkSeq: e.seq,
+            streaming: running,
+          ),
         );
       case FoldedAgentThought e:
         items.add(
           AgentThoughtItem(
+            id: (turnSeq, 'thought', e.messageId ?? rowInTurn),
             text: e.text,
             active: running && index == folded.length - 1,
           ),
@@ -259,40 +285,42 @@ List<TimelineItem> deriveTimelineItems(
       case FoldedToolCall e:
         if (_isLegacySubagentTool(e.latest)) {
           for (final ToolCall snapshot in e.snapshots) {
-            foldLegacySubagent(snapshot);
+            foldLegacySubagent(snapshot, e.firstSeq);
           }
         } else {
-          items.add(ToolCallTimelineItem(toolCall: e.latest));
+          items.add(ToolCallTimelineItem(id: e.firstSeq, toolCall: e.latest));
         }
       case FoldedAgentActivity e:
-        items.add(AgentActivityItem(activity: e.activity));
+        items.add(AgentActivityItem(id: e.activity.id, activity: e.activity));
       case FoldedSessionEvent(:final event):
         switch (event) {
           case UserMessageEvent e:
             items.add(
               UserMessageItem(
+                id: e.seq,
                 text: e.text,
                 attachments: e.attachments,
                 forkSeq: e.seq,
               ),
             );
           case ImageEvent e:
-            items.add(DisplayedImageItem(attachment: e.attachment));
+            items.add(DisplayedImageItem(id: e.seq, attachment: e.attachment));
           case PlanEvent e:
-            items.add(PlanTimelineItem(entries: e.entries));
+            items.add(PlanTimelineItem(id: e.seq, entries: e.entries));
           case PermissionRequestEvent e:
-            items.add(PermissionRequestItem(request: e.request));
+            items.add(PermissionRequestItem(id: e.seq, request: e.request));
           case PermissionResolvedEvent e:
             items.add(
               PermissionResolvedItem(
+                id: e.seq,
                 requestId: e.requestId,
                 optionId: e.optionId,
               ),
             );
           case TurnCompleteEvent e:
-            items.add(TurnCompleteItem(stopReason: e.stopReason));
+            items.add(TurnCompleteItem(id: e.seq, stopReason: e.stopReason));
           case SessionErrorEvent e:
-            items.add(SessionErrorItem(message: e.message));
+            items.add(SessionErrorItem(id: e.seq, message: e.message));
           case UsageEvent _:
             break;
           case AgentMessageChunkEvent _ ||
@@ -366,7 +394,7 @@ final RegExp _subagentInvocation = RegExp(
   r'^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$',
 );
 
-/// Virtualized, bottom-anchored timeline of a session's derived items.
+/// Virtualized, bottom-following timeline of a session's derived items.
 ///
 /// [items] is the [deriveTimelineItems] output for the session; callers
 /// cache it per session revision so every chunk notification does not
@@ -407,36 +435,69 @@ class Timeline extends StatefulWidget {
 
 class _TimelineState extends State<Timeline> {
   static const double _loadThreshold = 320;
-  final ScrollController _controller = ScrollController();
+  static const Key _historyKey = ValueKey<String>('timeline-history');
+  final _TimelineScrollController _controller = _TimelineScrollController();
+  final ValueNotifier<bool> _showLatest = ValueNotifier<bool>(false);
+  Object? _liveStart;
+  bool _requestedOlder = false;
+  final PageStorageBucket _storage = PageStorageBucket();
+
+  Object _identity(TimelineItem item, int index) =>
+      item.id ??
+      switch (item) {
+        ToolCallTimelineItem i => ('tool', i.toolCall.id, index),
+        AgentActivityItem i => ('activity', i.activity.id),
+        UserMessageItem i when i.forkSeq != null => ('user', i.forkSeq),
+        _ => ('row', index),
+      };
 
   @override
   void initState() {
     super.initState();
+    // History grows upward from this fixed boundary, live events downward.
+    // Keeping that origin fixed prevents either end moving the reader.
+    _initializeOrigin();
     _controller.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+  }
+
+  void _initializeOrigin() {
+    if (_liveStart != null || widget.items.isEmpty) return;
+    int index = widget.items.lastIndexWhere(
+      (TimelineItem item) => item is UserMessageItem,
+    );
+    if (index < 0) index = widget.items.length - 1;
+    _liveStart = _identity(widget.items[index], index);
   }
 
   @override
   void didUpdateWidget(Timeline oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if ((!oldWidget.hasOlder && widget.hasOlder) ||
-        (oldWidget.loadingOlder && !widget.loadingOlder)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    _initializeOrigin();
+    if (oldWidget.loadingOlder != widget.loadingOlder ||
+        oldWidget.hasOlder != widget.hasOlder) {
+      _requestedOlder = false;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
   }
 
   void _onScroll() {
-    if (!mounted ||
-        !_controller.hasClients ||
-        !widget.hasOlder ||
-        widget.loadingOlder ||
-        widget.onLoadOlder == null) {
-      return;
-    }
+    if (!mounted || !_controller.hasClients) return;
     final ScrollPosition position = _controller.position;
-    if (position.maxScrollExtent - position.pixels <= _loadThreshold) {
+    _showLatest.value = position.pixels - position.minScrollExtent > 24;
+    if (!_requestedOlder &&
+        widget.hasOlder &&
+        !widget.loadingOlder &&
+        widget.onLoadOlder != null &&
+        position.maxScrollExtent - position.pixels <= _loadThreshold) {
+      _requestedOlder = true;
       widget.onLoadOlder!();
     }
+  }
+
+  void _jumpToLatest() {
+    _controller.followLatest = true;
+    _controller.jumpTo(_controller.position.minScrollExtent);
   }
 
   @override
@@ -444,39 +505,165 @@ class _TimelineState extends State<Timeline> {
     _controller
       ..removeListener(_onScroll)
       ..dispose();
+    _showLatest.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final int historyRows = widget.loadingOlder || widget.olderError != null
-        ? 1
-        : 0;
-    return SelectionArea(
-      child: ListView.builder(
-        key: const Key('chat-timeline'),
-        controller: _controller,
-        reverse: true,
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: widget.items.length + historyRows,
-        itemBuilder: (BuildContext context, int index) {
-          if (index == widget.items.length && historyRows == 1) {
+    final List<Object> identities = <Object>[
+      for (int i = 0; i < widget.items.length; i++)
+        _identity(widget.items[i], i),
+    ];
+    final int originIndex = _liveStart == null
+        ? -1
+        : identities.indexOf(_liveStart!);
+    final int split = originIndex < 0 ? 0 : originIndex;
+    final bool historyStatus = widget.loadingOlder || widget.olderError != null;
+
+    SliverChildBuilderDelegate rows(
+      int start,
+      int end, {
+      bool reverse = false,
+    }) {
+      final Map<Key, int> indices = <Key, int>{
+        for (int i = start; i < end; i++)
+          PageStorageKey<Object>(identities[i]): reverse
+              ? end - 1 - i
+              : i - start,
+      };
+      return SliverChildBuilderDelegate(
+        (BuildContext context, int index) {
+          if (index == end - start) {
             return _OlderHistoryStatus(
               loading: widget.loadingOlder,
               error: widget.olderError,
               onRetry: widget.onLoadOlder,
             );
           }
+          final int itemIndex = reverse ? end - 1 - index : start + index;
           return _TimelineRow(
-            item: widget.items[widget.items.length - 1 - index],
+            key: PageStorageKey<Object>(identities[itemIndex]),
+            item: widget.items[itemIndex],
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
             openLocalFile: widget.openLocalFile,
           );
         },
-      ),
+        childCount: end - start + (reverse && historyStatus ? 1 : 0),
+        findChildIndexCallback: (Key key) => indices[key],
+      );
+    }
+
+    return Stack(
+      children: <Widget>[
+        Positioned.fill(
+          child: Listener(
+            onPointerDown: (_) => _controller.followLatest = false,
+            onPointerSignal: (_) => _controller.followLatest = false,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (ScrollNotification notification) {
+                if (notification.depth != 0) return false;
+                if (notification is ScrollEndNotification) {
+                  _controller.followLatest =
+                      notification.metrics.pixels -
+                          notification.metrics.minScrollExtent <=
+                      1;
+                }
+                return false;
+              },
+              child: NotificationListener<ScrollMetricsNotification>(
+                onNotification: (ScrollMetricsNotification notification) {
+                  if (notification.depth == 0) _onScroll();
+                  return false;
+                },
+                child: PageStorage(
+                  bucket: _storage,
+                  child: SelectionArea(
+                    child: CustomScrollView(
+                      key: const Key('chat-timeline'),
+                      controller: _controller,
+                      reverse: true,
+                      center: _historyKey,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      slivers: <Widget>[
+                        SliverPadding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          sliver: SliverList(
+                            delegate: rows(split, widget.items.length),
+                          ),
+                        ),
+                        SliverPadding(
+                          key: _historyKey,
+                          padding: const EdgeInsets.only(top: 8),
+                          sliver: SliverList(
+                            delegate: rows(0, split, reverse: true),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 16,
+          bottom: 12,
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _showLatest,
+            builder: (BuildContext context, bool visible, Widget? child) =>
+                visible ? child! : const SizedBox.shrink(),
+            child: FloatingActionButton.small(
+              heroTag: null,
+              tooltip: 'Jump to latest event',
+              onPressed: _jumpToLatest,
+              child: const Icon(Icons.arrow_downward),
+            ),
+          ),
+        ),
+      ],
     );
+  }
+}
+
+/// Correct during layout so following streamed content never flashes an old
+/// offset. When reading, the two slivers keep the content origin stationary.
+class _TimelineScrollController extends ScrollController {
+  bool followLatest = true;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _TimelineScrollPosition(
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+    controller: this,
+  );
+}
+
+class _TimelineScrollPosition extends ScrollPositionWithSingleContext {
+  _TimelineScrollPosition({
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+    required this.controller,
+  });
+
+  final _TimelineScrollController controller;
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    if (controller.followLatest && pixels != minScrollExtent) {
+      correctPixels(minScrollExtent);
+      return false;
+    }
+    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
   }
 }
 
@@ -511,6 +698,7 @@ class _OlderHistoryStatus extends StatelessWidget {
 
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
+    super.key,
     required this.item,
     this.attachmentLoader,
     this.onFork,
@@ -555,6 +743,7 @@ class _TimelineRow extends StatelessWidget {
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
       ToolCallTimelineItem i => ToolCallCard(
+        key: ValueKey<Object>(i.id ?? i.toolCall.id),
         toolCall: i.toolCall,
         attachmentLoader: attachmentLoader,
       ),

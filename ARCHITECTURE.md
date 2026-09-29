@@ -323,7 +323,7 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              interface/port/token settings (apply restarts the
                              embedded daemon and repoints its endpoint); stored
                              secret values are never read back into Flutter.
-lib/src/ui/chat/             timeline (virtualized ListView, reversed), message bubbles,
+lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
@@ -357,7 +357,10 @@ Performance rules for the app:
   bounded tail of a message. Existing histories backfill without a startup transcript scan,
   and deletes cascade through the index. File-backed MATCH queries use separate read-only
   connections in isolates so broad searches do not stall daemon/embedded-app event handling.
-- Timeline: `ListView.builder(reverse: true)`; adjacent deltas with the same identity
+- Timeline: a reversed `CustomScrollView` with history and live slivers growing on
+  opposite sides of a fixed origin preserves the reading position. Stable row keys
+  and local page storage retain expansion; the down-arrow resumes following live events.
+  Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).

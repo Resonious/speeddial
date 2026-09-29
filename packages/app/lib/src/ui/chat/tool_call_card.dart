@@ -78,6 +78,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
   final GlobalKey _detailsKey = GlobalKey();
   late bool _expanded = _shouldDefaultExpand(widget.toolCall.status);
   bool _collapseImmediately = false;
+  bool _userToggled = false;
   late String _title = _displayTitle(widget.toolCall);
 
   static bool _shouldDefaultExpand(ToolCallStatus status) =>
@@ -130,11 +131,28 @@ class _ToolCallCardState extends State<ToolCallCard> {
     return !animateHistoryDetails(details);
   }
 
+  Object get _expansionStorageId =>
+      ('tool-expanded', widget.key ?? widget.toolCall.id);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Object? saved = PageStorage.maybeOf(context)
+        ?.readState(context, identifier: _expansionStorageId);
+    if (saved is bool) {
+      _expanded = saved;
+      _userToggled = true;
+    }
+  }
+
   void _toggleExpanded() {
     final bool expanding = !_expanded;
     final bool collapseImmediately = !expanding && _detailsAreLarge();
     setState(() {
+      _userToggled = true;
       _expanded = expanding;
+      PageStorage.maybeOf(context)
+          ?.writeState(context, expanding, identifier: _expansionStorageId);
       _collapseImmediately = collapseImmediately;
     });
   }
@@ -143,7 +161,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
   void didUpdateWidget(ToolCallCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     _title = _displayTitle(widget.toolCall);
-    if (oldWidget.toolCall.status != widget.toolCall.status) {
+    if (!_userToggled && oldWidget.toolCall.status != widget.toolCall.status) {
       // Track the agent's lifecycle, keeping short calls animated when they
       // settle and releasing large output in one frame.
       final bool nextExpanded = _shouldDefaultExpand(widget.toolCall.status);
