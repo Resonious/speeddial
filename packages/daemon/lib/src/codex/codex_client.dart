@@ -1881,6 +1881,10 @@ class CodexClient implements AgentClient, NativeCommandClient {
     return switch (item['status']) {
       'completed' => 'completed',
       'inProgress' => 'in_progress',
+      // These items have no native status field; item/completed is their
+      // completion signal. Keep explicit failures on the normal path.
+      null when item['type'] == 'webSearch' || item['type'] == 'imageView' =>
+        'completed',
       _ => 'cancelled',
     };
   }

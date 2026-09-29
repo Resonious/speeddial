@@ -364,6 +364,7 @@ Future<void> _finishTurn(Map<String, Object?> approvalResponse) async {
     'turnId': _turnId,
     'item': <String, Object?>{
       ...searchItem,
+      'status': ?Platform.environment['FAKE_CODEX_SEARCH_STATUS'],
       'results': <Object?>[
         <String, Object?>{'title': 'Codex', 'url': 'https://openai.com/codex'},
       ],

@@ -47,6 +47,31 @@ Future<Map<String, Object?>> readJsonMap(File file) async =>
     Map<String, Object?>.from(jsonDecode(await file.readAsString()) as Map);
 
 void main() {
+  for (final String status in <String>['failed', 'declined', 'cancelled']) {
+    test('preserves explicit web search $status status', () async {
+      final CodexClient client = spawnCodex(
+        environment: <String, String>{'FAKE_CODEX_SEARCH_STATUS': status},
+      );
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+      final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+      final StreamSubscription<AcpSessionUpdate> subscription = client
+          .sessionUpdates(created.sessionId)
+          .listen(updates.add);
+      addTearDown(subscription.cancel);
+
+      await client.prompt(
+        created.sessionId,
+        textBlocks('Exercise rich events'),
+      );
+
+      final AcpToolCallUpdate search = updates
+          .whereType<AcpToolCallUpdate>()
+          .singleWhere((update) => update.toolCallId == 'search-1');
+      expect(search.fields['status'], 'cancelled');
+    });
+  }
+
   test('native compact and review dispatch to Codex app-server', () async {
     final Directory tempDir = await Directory.systemTemp.createTemp(
       'codex_commands_',
@@ -411,6 +436,20 @@ void main() {
           );
       expect(commandProgress.fields['status'], 'in_progress');
       expect(commandProgress.fields, isNot(contains('content')));
+      for (final String id in <String>['search-1', 'image-1']) {
+        expect(
+          started
+              .singleWhere((update) => update.toolCall.id == id)
+              .toolCall
+              .status,
+          'in_progress',
+        );
+        final AcpToolCallUpdate finished = updates
+            .whereType<AcpToolCallUpdate>()
+            .singleWhere((update) => update.toolCallId == id);
+        expect(finished.fields['status'], 'completed', reason: id);
+        expect(finished.fields['content'], isNotEmpty);
+      }
       final AcpToolCallUpdate patch = updates
           .whereType<AcpToolCallUpdate>()
           .lastWhere(
