@@ -131,6 +131,9 @@ void main() {
     late String stagedPath;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getCacheDirectory') {
+            return Directory.systemTemp.path;
+          }
           stagedPath = (call.arguments as Map)['path'] as String;
           expect(await File(stagedPath).length(), 65 * 1024 * 1024);
           return true;
@@ -159,13 +162,19 @@ void main() {
         () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, null),
       );
+      final Directory cache = await Directory.systemTemp.createTemp(
+        'android-cache-',
+      );
+      addTearDown(() => cache.delete(recursive: true));
       for (final bool saved in <bool>[true, false]) {
         late String stagedPath;
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (call) async {
+              if (call.method == 'getCacheDirectory') return cache.path;
               expect(call.method, 'save');
               final args = call.arguments as Map;
               stagedPath = args['path'] as String;
+              expect(File(stagedPath).parent.parent.path, cache.path);
               expect(args['name'], 'file.bin');
               expect(await File(stagedPath).readAsBytes(), <int>[0, 1, 255, 2]);
               return saved;

@@ -333,7 +333,9 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              Transfers and dismissible completion/error receipts live in
                              FileTransferStore across session changes. Native downloads spool to disk;
                              desktop saves replace the chosen destination only after transfer success,
-                             Android exports through the system picker without whole-file buffers,
+                             Android stages in the cache directory returned by the native
+                             downloads channel (`getCacheDirectory`) and exports through the
+                             system picker without whole-file buffers,
                              and web hands browser Blobs to the browser with an explicit handoff receipt.
                              Floated files use ShareStore and the protocol’s 8 MiB attachment cap,
                              collapsible

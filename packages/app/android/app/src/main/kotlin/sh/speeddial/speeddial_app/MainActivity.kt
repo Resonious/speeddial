@@ -46,9 +46,11 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "sh.speeddial/downloads")
             .setMethodCallHandler { call, result ->
-                if (call.method == "save") {
-                    downloadSaver.save(call.argument<String>("path"), call.argument<String>("name"), result)
-                } else result.notImplemented()
+                when (call.method) {
+                    "getCacheDirectory" -> result.success(cacheDir.absolutePath)
+                    "save" -> downloadSaver.save(call.argument<String>("path"), call.argument<String>("name"), result)
+                    else -> result.notImplemented()
+                }
             }
         shareChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SHARE_CHANNEL)
         shareChannel?.setMethodCallHandler { call, result ->

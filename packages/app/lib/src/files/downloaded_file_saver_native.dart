@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 
 import 'downloaded_file_result.dart';
 
+const MethodChannel _downloads = MethodChannel('sh.speeddial/downloads');
+
 String _safeFileName(String name) {
   final String basename = name.split(RegExp(r'[/\\]')).last;
   final String sanitized = basename
@@ -43,9 +45,22 @@ Future<DownloadedFileResult> saveDownloadedStream(
   // Stage beside the destination on desktop so a completed transfer can be
   // renamed into place. Cancellation or an RPC error must not truncate an
   // existing file selected in the picker.
-  final Directory parent = destination == null
-      ? Directory.systemTemp
-      : File(destination).parent;
+  final Directory parent;
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    // Use the same cache root the native saver validates. Dart's system temp
+    // directory is not guaranteed to be Android's Context.cacheDir.
+    final String? cachePath = await _downloads.invokeMethod<String>(
+      'getCacheDirectory',
+    );
+    if (cachePath == null || cachePath.isEmpty) {
+      throw StateError('Android download cache directory is unavailable');
+    }
+    parent = Directory(cachePath);
+  } else {
+    parent = destination == null
+        ? Directory.systemTemp
+        : File(destination).parent;
+  }
   final Directory directory = await parent.createTemp('.speeddial-download-');
   final File file = File('${directory.path}${Platform.pathSeparator}$safeName');
   try {
@@ -59,11 +74,10 @@ Future<DownloadedFileResult> saveDownloadedStream(
       await output.close();
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
-      final bool? saved = await const MethodChannel('sh.speeddial/downloads')
-          .invokeMethod<bool>('save', <String, Object?>{
-            'path': file.path,
-            'name': safeName,
-          });
+      final bool? saved = await _downloads.invokeMethod<bool>(
+        'save',
+        <String, Object?>{'path': file.path, 'name': safeName},
+      );
       return DownloadedFileResult(
         saved == true
             ? DownloadedFileStatus.saved

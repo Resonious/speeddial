@@ -87,6 +87,9 @@ void main() {
         int saves = 0;
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (call) async {
+              if (call.method == 'getCacheDirectory') {
+                return Directory.systemTemp.path;
+              }
               saves++;
               expect(
                 await File((call.arguments as Map)['path'] as String)
@@ -288,7 +291,12 @@ void main() {
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
       const MethodChannel channel = MethodChannel('sh.speeddial/downloads');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (_) async => true);
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getCacheDirectory') {
+              return Directory.systemTemp.path;
+            }
+            return true;
+          });
       addTearDown(
         () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, null),
