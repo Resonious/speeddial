@@ -446,7 +446,10 @@ loopback-only networking (token auth + bind flag).
 ### Mobile incoming shares
 
 `ShareStore` consumes the `sh.speeddial/share` platform channel on Android and
-iOS. Both reuse floating attachments, composer staging, and project-specific
+iOS. Android uses `singleTask` with the default app task affinity so incoming
+shares return to the existing app and reach its Flutter engine through
+`MainActivity.onNewIntent`, preserving the selected chat and in-memory state.
+Both reuse floating attachments, composer staging, and project-specific
 session creation settings. iOS includes a native Share extension with a project
 picker and an App Group inbox; the app imports one file on launch or resume,
 then advances after attach or dismiss. The extension has no daemon credentials
