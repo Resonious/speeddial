@@ -203,6 +203,29 @@ void main() {
       // no remote, so no upstream
       expect(byName['main']!.upstream, isNull);
     });
+
+    test('a branch named like a remote is not reported as heads/<name>',
+        () async {
+      final (:origin, :repo) = await _initRepoWithOrigin();
+      await _write(repo, 'a.txt', 'x\n');
+      await _commitAll(repo, 'init');
+      await _git(repo, ['push', 'origin', 'main']);
+      // A remote named `komoju` with a HEAD makes the bare name `komoju`
+      // ambiguous, so `%(refname:short)` would yield `heads/komoju`.
+      await _git(repo, ['remote', 'add', 'komoju', origin.path]);
+      await _git(repo, ['fetch', 'komoju']);
+      await _git(repo, ['remote', 'set-head', 'komoju', 'main']);
+      await _git(repo, ['branch', 'komoju']);
+      await _git(repo, ['branch', '--set-upstream-to=komoju/main', 'komoju']);
+
+      final branches = await service.branches(repo.path);
+      final byName = {for (final b in branches) b.name: b};
+
+      expect(byName.keys, contains('komoju'));
+      expect(byName.keys, isNot(contains('heads/komoju')));
+      expect(byName['komoju']!.upstream, 'komoju/main');
+      expect(await service.worktreeBaseRef(repo.path, 'komoju'), 'komoju');
+    });
   });
 
   group('checkout / createBranch / commit', () {

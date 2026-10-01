@@ -167,10 +167,14 @@ class GitService {
   }
 
   /// Local branches with upstream info.
+  ///
+  /// Uses `lstrip=2` rather than `:short`: `:short` disambiguates, so a
+  /// branch sharing a remote's name (`komoju` vs `refs/remotes/komoju/HEAD`)
+  /// would come back as `heads/komoju`, which isn't a branch name.
   Future<List<Branch>> branches(String repoPath) async {
     final result = await _run(repoPath, [
       'branch',
-      '--format=%(refname:short)\t%(HEAD)\t%(upstream:short)',
+      '--format=%(refname:lstrip=2)\t%(HEAD)\t%(upstream:lstrip=2)',
     ]);
     final out = result.stdout as String;
     final branches = <Branch>[];
