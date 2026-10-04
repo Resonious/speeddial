@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/theme.dart';
@@ -94,6 +95,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Even newer').hitTestable(), findsOneWidget);
   });
+  testWidgets('trackpad can scroll up and keep reading an idle timeline', (
+    tester,
+  ) async {
+    final List<TimelineItem> items = <TimelineItem>[
+      for (int i = 0; i < 60; i++) UserMessageItem(id: i, text: 'Message $i'),
+    ];
+    await tester.pumpWidget(app(items));
+    await tester.pumpAndSettle();
+    final Finder timeline = find.byKey(const Key('chat-timeline'));
+    final ScrollableState scrollable = tester.state<ScrollableState>(
+      find.descendant(of: timeline, matching: find.byType(Scrollable)).first,
+    );
+    final ScrollPosition position = scrollable.position;
+    expect(position.pixels, position.minScrollExtent);
+    final TestGesture trackpad = await tester.createGesture(
+      pointer: 7,
+      kind: PointerDeviceKind.trackpad,
+    );
+    final Offset location = tester.getCenter(timeline);
+    await trackpad.panZoomStart(location);
+    await trackpad.panZoomUpdate(location, pan: const Offset(0, 40));
+    await tester.pump();
+    await trackpad.panZoomUpdate(location, pan: const Offset(0, 240));
+    await tester.pump();
+    expect(position.pixels, greaterThan(position.minScrollExtent + 100));
+    await trackpad.panZoomEnd();
+    await tester.pumpAndSettle();
+    final double readingOffset = position.pixels;
+    await tester.pumpWidget(app(List<TimelineItem>.of(items)));
+    await tester.pumpAndSettle();
+    expect(scrollable.position.pixels, readingOffset);
+    expect(find.byTooltip('Jump to latest event'), findsOneWidget);
+    await tester.tap(find.byTooltip('Jump to latest event'));
+    await tester.pumpAndSettle();
+    expect(scrollable.position.pixels, scrollable.position.minScrollExtent);
+  });
+
   testWidgets('thought stays expanded when merged chunks change sequence', (
     tester,
   ) async {

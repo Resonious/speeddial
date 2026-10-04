@@ -568,6 +568,8 @@ class _TimelineState extends State<Timeline> {
           child: Listener(
             onPointerDown: (_) => _controller.followLatest = false,
             onPointerSignal: (_) => _controller.followLatest = false,
+            // Trackpad pans do not emit pointer-down or wheel events.
+            onPointerPanZoomStart: (_) => _controller.followLatest = false,
             child: NotificationListener<ScrollNotification>(
               onNotification: (ScrollNotification notification) {
                 if (notification.depth != 0) return false;
