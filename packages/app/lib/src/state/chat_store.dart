@@ -880,10 +880,10 @@ class ChatStore extends StoreBase {
         _statusById[buffer.key] = SessionStatus.idle;
       case SessionErrorEvent():
         _statusById[buffer.key] = SessionStatus.error;
-      case PermissionRequestEvent():
-        _statusById[buffer.key] = SessionStatus.waitingPermission;
-      case PermissionResolvedEvent():
-        _statusById[buffer.key] = SessionStatus.running;
+      // Permission events do not imply a status: auto-approved requests and
+      // requests from the agent's own background work arrive outside a turn,
+      // and no turnComplete follows them. The daemon broadcasts the real
+      // waitingPermission/running transitions as session.updated.
       case UsageEvent(:final usage):
         _usageById[buffer.key] = usage;
       default:

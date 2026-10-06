@@ -1519,7 +1519,11 @@ class SessionEngine {
     }
     final live = _live[sessionId];
     if (live == null) {
-      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+      // A saved session without an agent process has no turn to cancel.
+      if (_store.getSession(sessionId) == null) {
+        throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+      }
+      return;
     }
     if (live.turn == null) return;
     await live.client.cancel(live.providerSessionId);

@@ -629,7 +629,8 @@ Agent task-progress `plan` events remain supported.
   broadcast as `session.updated`; explicitly set titles are never overwritten, and an
   attachment-only turn (empty `text`) skips the auto-title. A first line that is entirely a
   JWT-shaped bearer credential also skips auto-title so secrets do not enter navigation chrome.
-- `sessions.cancel {sessionId: string}` → `{}`
+- `sessions.cancel {sessionId: string}` → `{}` — no-op when no turn is running, including a saved
+  session with no agent process; errors not-found only for an unknown `sessionId`.
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.pin {sessionId: string, pinned: boolean}` → `{session: Session}` — persists pin state and broadcasts `session.updated`; changing pinned from true to false refreshes `lastActivityAt`. Clients sort pinned sessions first, then by activity within each group.
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`

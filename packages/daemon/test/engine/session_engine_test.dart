@@ -2616,6 +2616,24 @@ void main() {
     },
   );
 
+  test('cancel is a no-op for a saved session with no agent process', () async {
+    final session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+    );
+    await engine.dispose();
+    final restarted = SessionEngine(store: store, providers: fakeProviders());
+    await restarted.restore();
+
+    await restarted.cancel(session.id);
+    expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    await expectLater(
+      restarted.cancel('missing'),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+    await restarted.dispose();
+  });
+
   test(
     'cancel resolves a pending turn with the cancelled stop reason',
     () async {

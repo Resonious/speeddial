@@ -1417,6 +1417,7 @@ class FakeDaemonClient implements DaemonClient {
       sessionId,
       PermissionResolvedEvent(requestId: requestId, optionId: optionId),
     );
+    _setStatus(sessionId, SessionStatus.running);
     await _emitTurnTail(sessionId);
   }
 
@@ -2073,6 +2074,12 @@ class FakeDaemonClient implements DaemonClient {
       unawaited(controller.close());
     }
   }
+
+  /// Emits [event] outside any turn, like updates from an agent's own
+  /// background work (a finished subagent or task waking it up). The real
+  /// daemon forwards these without a status change or a turnComplete.
+  void emitBackgroundEvent(String sessionId, SessionEvent event) =>
+      _emit(sessionId, event);
 
   void _emit(String sessionId, SessionEvent event) {
     if (_disposed || !_sessions.containsKey(sessionId)) return;

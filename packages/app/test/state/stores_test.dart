@@ -695,6 +695,48 @@ void main() {
       },
     );
 
+    test(
+      'auto-approved permission outside a turn leaves the session idle',
+      () async {
+        final String sessionId = (await fake.listSessions()).first.id;
+        app.chat.watchSession('fake', sessionId);
+        await _flushMicrotasks();
+        expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+
+        fake.emitBackgroundEvent(
+          sessionId,
+          const PermissionRequestEvent(
+            request: PermissionRequest(
+              requestId: 'background',
+              toolCallId: 'tool-1',
+              title: 'Run command',
+              options: <PermissionOption>[
+                PermissionOption(
+                  optionId: 'allow',
+                  name: 'Allow',
+                  kind: PermissionKind.allowOnce,
+                ),
+              ],
+            ),
+          ),
+        );
+        fake.emitBackgroundEvent(
+          sessionId,
+          const PermissionResolvedEvent(
+            requestId: 'background',
+            optionId: 'allow',
+          ),
+        );
+        await _waitUntil(
+          () => app.chat
+              .eventsFor(sessionId)
+              .any((SessionEvent e) => e is PermissionResolvedEvent),
+        );
+
+        expect(app.chat.statusOf(sessionId), SessionStatus.idle);
+      },
+    );
+
     test('permission flow via the store parks then resolves', () async {
       final String sessionId = (await fake.listSessions()).first.id;
       app.chat.watchSession('fake', sessionId);
