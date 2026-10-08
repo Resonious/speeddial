@@ -626,4 +626,46 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  for (final bool reduceMotion in <bool>[false, true]) {
+    testWidgets(
+      'streamed text ${reduceMotion ? 'stays still under reduced motion' : 'writes with a sparking ember'}',
+      (WidgetTester tester) async {
+        if (reduceMotion) {
+          tester.platformDispatcher.accessibilityFeaturesTestValue =
+              const FakeAccessibilityFeatures(disableAnimations: true);
+          addTearDown(
+            tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+          );
+        }
+        final ThemeData theme = buildSpeedDialTheme();
+        Future<void> show(String text, {bool streaming = true}) =>
+            tester.pumpWidget(
+              MaterialApp(
+                theme: theme,
+                home: Scaffold(
+                  body: AgentMessageView(text: text, streaming: streaming),
+                ),
+              ),
+            );
+        final Finder sparks = find.byKey(const Key('writing-sparks'));
+
+        await show('The sync loop');
+        expect(sparks, paintsNothing);
+        await show('The sync loop gives up');
+        // Streamed text reaches the screen on the next render tick.
+        await tester.pump(AgentMessageView.streamRenderInterval);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(sparks, reduceMotion ? paintsNothing : (paints..circle()));
+
+        // Once writing stops the ember dies down and nothing keeps running.
+        await show('The sync loop gives up.', streaming: false);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+        expect(sparks, paintsNothing);
+        expect(tester.hasRunningAnimations, isFalse);
+      },
+    );
+  }
 }

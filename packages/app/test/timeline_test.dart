@@ -872,7 +872,7 @@ void main() {
 
   group('tool call details', () {
     testWidgets(
-      'uses the execute command as the heading and renders raw details',
+      "titles a shell call with the agent's description over its command",
       (WidgetTester tester) async {
         await tester.pumpWidget(
           MaterialApp(
@@ -905,6 +905,7 @@ void main() {
           ),
         );
 
+        expect(find.text('Shows working tree status'), findsOneWidget);
         expect(find.text('git status --short'), findsOneWidget);
         expect(find.text('Bash'), findsNothing);
 
@@ -1259,6 +1260,136 @@ void main() {
       await tester.pumpWidget(timeline(1));
       await tester.pump(const Duration(milliseconds: 80));
       expect(scale(), 1);
+    });
+  });
+
+  group('tool approvals', () {
+    const PermissionRequest request = PermissionRequest(
+      requestId: 'req-1',
+      toolCallId: 'tool-1',
+      title: 'git push',
+      options: <PermissionOption>[
+        PermissionOption(
+          optionId: 'allow-once',
+          name: 'Yes',
+          kind: PermissionKind.allowOnce,
+        ),
+        PermissionOption(
+          optionId: 'reject',
+          name: 'No',
+          kind: PermissionKind.rejectOnce,
+        ),
+      ],
+    );
+    const ToolCall push = ToolCall(
+      id: 'tool-1',
+      title: 'git push',
+      kind: 'execute',
+      status: ToolCallStatus.completed,
+      content: <ToolCallContent>[],
+      locations: <String>[],
+    );
+
+    test('a request settles into the tool call it gates', () {
+      final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+        const UserMessageEvent(text: 'Push it', seq: 1),
+        const ToolCallEvent(toolCall: push, seq: 2),
+        const PermissionRequestEvent(request: request, seq: 3),
+        const PermissionResolvedEvent(
+          requestId: 'req-1',
+          optionId: 'allow-once',
+          seq: 4,
+        ),
+      ]);
+      expect(items.whereType<PermissionRequestItem>(), isEmpty);
+      expect(items.whereType<PermissionResolvedItem>(), isEmpty);
+      final ToolApproval? approval = items
+          .whereType<ToolCallTimelineItem>()
+          .single
+          .approval;
+      expect(approval?.state, ToolApprovalState.allowed);
+      expect(approval?.choice, 'Yes');
+
+      final List<TimelineItem> waiting = deriveTimelineItems(<SessionEvent>[
+        const ToolCallEvent(toolCall: push, seq: 2),
+        const PermissionRequestEvent(request: request, seq: 3),
+      ]);
+      expect(waiting, hasLength(1));
+      expect(
+        (waiting.single as ToolCallTimelineItem).approval?.state,
+        ToolApprovalState.pending,
+      );
+    });
+
+    test('other requests keep one row that carries their answer', () {
+      final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+        const PermissionRequestEvent(
+          request: PermissionRequest(
+            requestId: 'req-2',
+            toolCallId: null,
+            title: 'Allow network access?',
+            options: <PermissionOption>[
+              PermissionOption(
+                optionId: 'allow-once',
+                name: 'Yes',
+                kind: PermissionKind.allowOnce,
+              ),
+            ],
+          ),
+          seq: 1,
+        ),
+        const PermissionResolvedEvent(
+          requestId: 'req-2',
+          optionId: 'allow-once',
+          seq: 2,
+        ),
+        // Its request is on an older page: the answer still shows.
+        const PermissionResolvedEvent(
+          requestId: 'older',
+          optionId: 'reject',
+          seq: 3,
+        ),
+      ]);
+      expect(
+        items.whereType<PermissionRequestItem>().single.answer,
+        'allow-once',
+      );
+      expect(
+        items.whereType<PermissionResolvedItem>().single.requestId,
+        'older',
+      );
+    });
+
+    testWidgets('the tool row flags what needs a glance', (tester) async {
+      Future<void> pump(ToolApproval approval) => tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(
+            body: ToolCallCard(toolCall: push, approval: approval),
+          ),
+        ),
+      );
+
+      await pump(const ToolApproval(ToolApprovalState.pending));
+      expect(find.text('Needs approval'), findsOneWidget);
+      await pump(const ToolApproval(ToolApprovalState.denied, choice: 'No'));
+      expect(find.text('Denied'), findsOneWidget);
+
+      // An approval goes unflagged on the row; its details tell the choice.
+      await pump(
+        const ToolApproval(
+          ToolApprovalState.allowed,
+          choice: "Yes, and don't ask again",
+        ),
+      );
+      expect(find.text('Denied'), findsNothing);
+      expect(find.text('Needs approval'), findsNothing);
+      await tester.tap(find.text('git push'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text("Approved · Yes, and don't ask again").hitTestable(),
+        findsOneWidget,
+      );
     });
   });
 }

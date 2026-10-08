@@ -312,6 +312,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             heat: turnHeatFor(status, _items, sending: sending),
             turnSeed: _turnSeed,
             activity: _activity,
+            cwd: session?.cwd,
             followLatestRequest: _followLatestRequest.value,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),

@@ -8,6 +8,7 @@ import 'active_pulse.dart';
 import 'history_expansion.dart';
 import 'message_view.dart';
 import 'tool_call_edit_diff.dart';
+import 'tool_call_summary.dart';
 
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
@@ -34,35 +35,81 @@ Color _kindColor(BuildContext context, String kind) {
   }
 }
 
-IconData _statusIcon(ToolCallStatus status) => switch (status) {
-  ToolCallStatus.pending => Icons.pause_circle_outline,
-  ToolCallStatus.running => Icons.play_circle_outline,
-  ToolCallStatus.completed => Icons.check_circle_outline,
-  ToolCallStatus.failed => Icons.cancel_outlined,
+IconData _kindIcon(String kind) => switch (kind) {
+  'execute' => Icons.terminal,
+  'read' => Icons.description_outlined,
+  'edit' => Icons.edit_outlined,
+  'delete' => Icons.delete_outline,
+  'move' => Icons.drive_file_move_outline,
+  'search' => Icons.search,
+  'fetch' => Icons.public,
+  'think' => Icons.psychology_outlined,
+  _ => Icons.extension_outlined,
 };
 
-Color _statusColor(BuildContext context, ToolCallStatus status) {
-  final SpeedDialColors c = context.speedDialColors;
-  return switch (status) {
-    ToolCallStatus.pending => c.idle,
-    ToolCallStatus.running => c.running,
-    ToolCallStatus.completed => c.success,
-    ToolCallStatus.failed => c.error,
-  };
+/// Where the permission request gating a tool call stands.
+enum ToolApprovalState {
+  /// Waiting for an answer (the permission banner asks for it).
+  pending,
+
+  /// Allowed, whether by the user or automatically.
+  allowed,
+
+  /// Rejected.
+  denied,
+
+  /// Settled without a choice, e.g. expired.
+  lapsed,
 }
 
-/// A collapsible record of one agent tool call: status icon, kind-colored
-/// left border, title, locations, and per-kind content (text / diff /
-/// terminal). Expanded by default while the call is running, collapsed once
-/// it completes; the user can toggle freely.
+/// The outcome of the permission request for one tool call, shown on the
+/// tool's own row instead of separate request/answer rows.
+class ToolApproval {
+  const ToolApproval(this.state, {this.choice});
+
+  /// Settles [request] with the chosen [optionId] (null while pending).
+  factory ToolApproval.of(PermissionRequest request, String? optionId) {
+    if (optionId == null) return const ToolApproval(ToolApprovalState.pending);
+    for (final PermissionOption option in request.options) {
+      if (option.optionId != optionId) continue;
+      return ToolApproval(switch (option.kind) {
+        PermissionKind.allowOnce ||
+        PermissionKind.allowAlways => ToolApprovalState.allowed,
+        PermissionKind.rejectOnce ||
+        PermissionKind.rejectAlways => ToolApprovalState.denied,
+      }, choice: option.name);
+    }
+    return ToolApproval(ToolApprovalState.lapsed, choice: optionId);
+  }
+
+  final ToolApprovalState state;
+
+  /// The chosen option as the agent phrased it ("Yes, and don't ask again
+  /// for …").
+  final String? choice;
+}
+
+/// A collapsible record of one agent tool call, read like a log line: a
+/// kind icon, what the call did, and the command or target beneath it, with
+/// per-kind content (text / diff / terminal) on expansion. Expanded by
+/// default while the call is running, collapsed once it completes; the user
+/// can toggle freely.
 class ToolCallCard extends StatefulWidget {
   const ToolCallCard({
     super.key,
     required this.toolCall,
+    this.approval,
+    this.cwd,
     this.attachmentLoader,
   });
 
   final ToolCall toolCall;
+
+  /// Outcome of the permission request gating this call, if there was one.
+  final ToolApproval? approval;
+
+  /// Session working directory; paths under it read as relative.
+  final String? cwd;
 
   /// Resolves image content through `attachments.read`. When absent, image
   /// content degrades to its attachment metadata.
@@ -73,34 +120,17 @@ class ToolCallCard extends StatefulWidget {
 }
 
 class _ToolCallCardState extends State<ToolCallCard> {
-  static final RegExp _commandLineBreak = RegExp(r'[\r\n]+');
-
   final GlobalKey _detailsKey = GlobalKey();
   late bool _expanded = _shouldDefaultExpand(widget.toolCall.status);
   bool _collapseImmediately = false;
   bool _userToggled = false;
-  late String _title = _displayTitle(widget.toolCall);
+  late ToolCallSummary _summary = summarizeToolCall(
+    widget.toolCall,
+    cwd: widget.cwd,
+  );
 
   static bool _shouldDefaultExpand(ToolCallStatus status) =>
       status == ToolCallStatus.running || status == ToolCallStatus.pending;
-
-  static String _displayTitle(ToolCall toolCall) {
-    if (toolCall.kind != 'execute') return toolCall.title;
-    final Object? rawInput = toolCall.rawInput;
-    if (rawInput is! Map<Object?, Object?>) return toolCall.title;
-
-    String command = _commandText(rawInput['command']);
-    if (command.trim().isEmpty) command = _commandText(rawInput['cmd']);
-    final String trimmed = command.trim();
-    if (trimmed.isEmpty) return toolCall.title;
-    return trimmed.replaceAll(_commandLineBreak, ' ');
-  }
-
-  static String _commandText(Object? rawCommand) => switch (rawCommand) {
-    final String value => value,
-    final List<Object?> values => values.whereType<String>().join(' '),
-    _ => '',
-  };
 
   bool _detailsAreLarge() {
     final RenderBox? box =
@@ -160,7 +190,10 @@ class _ToolCallCardState extends State<ToolCallCard> {
   @override
   void didUpdateWidget(ToolCallCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _title = _displayTitle(widget.toolCall);
+    if (!identical(oldWidget.toolCall, widget.toolCall) ||
+        oldWidget.cwd != widget.cwd) {
+      _summary = summarizeToolCall(widget.toolCall, cwd: widget.cwd);
+    }
     if (!_userToggled && oldWidget.toolCall.status != widget.toolCall.status) {
       // Track the agent's lifecycle, keeping short calls animated when they
       // settle and releasing large output in one frame.
@@ -177,70 +210,91 @@ class _ToolCallCardState extends State<ToolCallCard> {
   Widget build(BuildContext context) {
     final ToolCall toolCall = widget.toolCall;
     final ThemeData theme = Theme.of(context);
-    final BorderSide kindBorder = BorderSide(
-      color: _kindColor(context, toolCall.kind),
-      width: 3,
-    );
-    final Color statusColor = _statusColor(context, toolCall.status);
-    final TextStyle? titleStyle = theme.textTheme.bodyMedium?.copyWith(
-      fontWeight: FontWeight.w600,
-    );
+    final SpeedDialColors colors = context.speedDialColors;
+    final bool running = toolCall.status == ToolCallStatus.running;
+    final bool failed = toolCall.status == ToolCallStatus.failed;
+    final Color iconColor = switch (toolCall.status) {
+      ToolCallStatus.pending => colors.idle,
+      ToolCallStatus.running => colors.running,
+      ToolCallStatus.completed => _kindColor(context, toolCall.kind),
+      ToolCallStatus.failed => colors.error,
+    };
+    final ToolCallSummary summary = _summary;
+    final ToolApprovalState? approval = widget.approval?.state;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHigh,
+        color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: context.speedDialColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           InkWell(
             onTap: _toggleExpanded,
-            child: Container(
-              decoration: BoxDecoration(border: Border(left: kindBorder)),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
               child: Row(
                 children: <Widget>[
                   ActivePulse(
-                    active: toolCall.status == ToolCallStatus.running,
+                    active: running,
                     pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
                     child: Icon(
-                      _statusIcon(toolCall.status),
-                      size: 18,
-                      color: statusColor,
+                      _kindIcon(toolCall.kind),
+                      size: 16,
+                      color: iconColor,
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: ActivePulse(
-                      active: toolCall.status == ToolCallStatus.running,
+                      active: running,
                       pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
-                      child: Text(
-                        _title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: titleStyle,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(
+                            summary.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: summary.titleIsCommand
+                                ? colors.mono.copyWith(
+                                    fontSize: 12.5,
+                                    color: failed
+                                        ? colors.error
+                                        : theme.colorScheme.onSurface,
+                                  )
+                                : theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                    color: failed ? colors.error : null,
+                                  ),
+                          ),
+                          if (summary.detail != null)
+                            Text(
+                              summary.detail!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: colors.mono.copyWith(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  if (toolCall.locations.isNotEmpty)
-                    Flexible(
-                      child: Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: Text(
-                          toolCall.locations.join(', '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: context.speedDialColors.mono.copyWith(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ),
-                    ),
+                  if (approval == ToolApprovalState.pending)
+                    _StatusPill(
+                      label: 'Needs approval',
+                      color: colors.waitingPermission,
+                    )
+                  else if (approval == ToolApprovalState.denied)
+                    _StatusPill(label: 'Denied', color: colors.error)
+                  else if (failed)
+                    _StatusPill(label: 'Failed', color: colors.error),
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0,
                     duration: const Duration(milliseconds: 150),
@@ -266,7 +320,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
               secondChild: _ToolCallContentList(
                 key: _detailsKey,
                 toolCall: toolCall,
-                kindColor: kindBorder,
+                approval: widget.approval,
                 attachmentLoader: _expanded ? widget.attachmentLoader : null,
               ),
             ),
@@ -276,16 +330,42 @@ class _ToolCallCardState extends State<ToolCallCard> {
   }
 }
 
+/// A small tinted label at the end of a tool row for the states that need a
+/// glance: waiting for approval, denied, failed.
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(left: 6, right: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: color, fontSize: 10),
+      ),
+    );
+  }
+}
+
 class _ToolCallContentList extends StatelessWidget {
   const _ToolCallContentList({
     super.key,
     required this.toolCall,
-    required this.kindColor,
+    required this.approval,
     required this.attachmentLoader,
   });
 
   final ToolCall toolCall;
-  final BorderSide kindColor;
+  final ToolApproval? approval;
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
@@ -294,7 +374,9 @@ class _ToolCallContentList extends StatelessWidget {
     final bool hasTypedOutput = toolCall.content.isNotEmpty;
     final bool hasRawOutput = _hasRawValue(toolCall.rawOutput);
     final ToolEditDiff? editDiff = extractEditDiffFromToolCall(toolCall);
+    final ToolApproval? approval = this.approval;
     final List<Widget> children = <Widget>[
+      if (approval != null) _ApprovalLine(approval: approval),
       if (editDiff != null)
         _EditDiffView(diff: editDiff, fallbackPaths: toolCall.locations),
       if (hasInput && editDiff == null)
@@ -305,9 +387,7 @@ class _ToolCallContentList extends StatelessWidget {
           content: content,
           attachmentLoader: attachmentLoader,
         ),
-      if (!hasTypedOutput &&
-          hasRawOutput &&
-          editDiff?.absorbsRawOutput != true)
+      if (!hasTypedOutput && hasRawOutput && editDiff?.absorbsRawOutput != true)
         _RawToolDataView(label: 'Output', value: toolCall.rawOutput!),
       if (!hasTypedOutput && !hasRawOutput && editDiff == null)
         Padding(
@@ -322,15 +402,68 @@ class _ToolCallContentList extends StatelessWidget {
       if (toolCall.locations.isNotEmpty)
         _LocationChips(locations: toolCall.locations),
     ];
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(left: kindColor),
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-      ),
-      padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: children,
+      ),
+    );
+  }
+}
+
+/// How the permission request for this call was answered, in the agent's
+/// own words for the chosen option.
+class _ApprovalLine extends StatelessWidget {
+  const _ApprovalLine({required this.approval});
+
+  final ToolApproval approval;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final SpeedDialColors colors = context.speedDialColors;
+    final (
+      IconData icon,
+      Color color,
+      String verdict,
+    ) = switch (approval.state) {
+      ToolApprovalState.pending => (
+        Icons.shield_outlined,
+        colors.waitingPermission,
+        'Waiting for approval',
+      ),
+      ToolApprovalState.allowed => (
+        Icons.verified_user_outlined,
+        theme.colorScheme.onSurfaceVariant,
+        'Approved',
+      ),
+      ToolApprovalState.denied => (
+        Icons.gpp_bad_outlined,
+        colors.error,
+        'Denied',
+      ),
+      ToolApprovalState.lapsed => (
+        Icons.shield_outlined,
+        theme.colorScheme.onSurfaceVariant,
+        'Not approved',
+      ),
+    };
+    final String? choice = approval.choice;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              choice == null ? verdict : '$verdict · $choice',
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -599,15 +732,18 @@ class _EditDiffView extends StatelessWidget {
     final SpeedDialColors colors = context.speedDialColors;
     final ThemeData theme = Theme.of(context);
     final Color neutral = theme.colorScheme.onSurfaceVariant;
-    final String? path = diff.path ??
-        (fallbackPaths.length == 1 ? fallbackPaths.single : null);
+    final String? path =
+        diff.path ?? (fallbackPaths.length == 1 ? fallbackPaths.single : null);
 
     final List<InlineSpan> spans = <InlineSpan>[];
     if (path != null) {
       spans.add(
         TextSpan(
           text: '$path\n',
-          style: colors.mono.copyWith(color: neutral, fontWeight: FontWeight.w600),
+          style: colors.mono.copyWith(
+            color: neutral,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       );
     }
@@ -629,15 +765,17 @@ class _EditDiffView extends StatelessWidget {
       final Color? color = line.isHeader
           ? colors.purple
           : omission
-              ? null
-              : switch (line.sign) {
-                  '+' => colors.success,
-                  '-' => colors.diffRemove,
-                  _ => null,
-                };
+          ? null
+          : switch (line.sign) {
+              '+' => colors.success,
+              '-' => colors.diffRemove,
+              _ => null,
+            };
       spans.add(
         TextSpan(
-          text: line.isHeader ? '${line.text}\n' : '${line.sign} ${line.text}\n',
+          text: line.isHeader
+              ? '${line.text}\n'
+              : '${line.sign} ${line.text}\n',
           style: color == null ? null : colors.mono.copyWith(color: color),
         ),
       );

@@ -14,6 +14,7 @@ import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
+import 'tool_call_summary.dart';
 
 /// A derived, display-ready row of the session timeline.
 sealed class TimelineItem {
@@ -76,8 +77,12 @@ class AgentThoughtItem extends TimelineItem {
 
 /// The latest snapshot of one tool call (later events update in place).
 class ToolCallTimelineItem extends TimelineItem {
-  const ToolCallTimelineItem({super.id, required this.toolCall});
+  const ToolCallTimelineItem({super.id, required this.toolCall, this.approval});
   final ToolCall toolCall;
+
+  /// Outcome of the permission request that gated the call, if any; the
+  /// request and its answer get no rows of their own.
+  final ToolApproval? approval;
 }
 
 /// Latest snapshot of one provider-reported background activity.
@@ -123,14 +128,19 @@ class PlanTimelineItem extends TimelineItem {
   final List<PlanEntry> entries;
 }
 
-/// Compact inline record of a pending permission request; the actionable
-/// banner is rendered separately by the chat pane's PermissionBanner.
+/// One-line record of a permission request or question that gates no tool
+/// call in view, with its [answer] once given; the actionable banner is
+/// rendered separately by the chat pane.
 class PermissionRequestItem extends TimelineItem {
-  const PermissionRequestItem({super.id, required this.request});
+  const PermissionRequestItem({super.id, required this.request, this.answer});
   final PermissionRequest request;
+
+  /// The chosen option id, null while unanswered.
+  final String? answer;
 }
 
-/// A permission request was resolved with the given option.
+/// A permission request was resolved with the given option; only for
+/// requests outside the derived events (e.g. on an unloaded history page).
 class PermissionResolvedItem extends TimelineItem {
   const PermissionResolvedItem({
     super.id,
@@ -261,6 +271,39 @@ List<TimelineItem> deriveTimelineItems(
   int? turnSeq;
   int turnIndex = 0;
   final List<FoldedSessionEntry> folded = foldSessionEvents(events);
+
+  // A permission request settles into the tool call it gates: that row shows
+  // the outcome, so neither the request nor its answer gets a row of its
+  // own. (Auto-approved requests would otherwise repeat every command.)
+  final Map<String, PermissionRequest> requests = <String, PermissionRequest>{};
+  final Map<String, String> answers = <String, String>{};
+  final Set<String> toolIds = <String>{};
+  for (final FoldedSessionEntry entry in folded) {
+    switch (entry) {
+      case FoldedToolCall(:final ToolCall latest)
+          when !_isLegacySubagentTool(latest):
+        toolIds.add(latest.id);
+      case FoldedSessionEvent(event: PermissionRequestEvent(:final request)):
+        requests[request.requestId] = request;
+      case FoldedSessionEvent(
+        event: PermissionResolvedEvent(:final requestId, :final optionId),
+      ):
+        answers[requestId] = optionId;
+      default:
+        break;
+    }
+  }
+  bool gatesTool(PermissionRequest request) =>
+      request.questions.isEmpty && toolIds.contains(request.toolCallId);
+  final Map<String, ToolApproval> approvals = <String, ToolApproval>{
+    for (final PermissionRequest request in requests.values)
+      if (gatesTool(request))
+        request.toolCallId!: ToolApproval.of(
+          request,
+          answers[request.requestId],
+        ),
+  };
+
   for (int index = 0; index < folded.length; index++) {
     final FoldedSessionEntry entry = folded[index];
     if (entry case FoldedSessionEvent(event: UserMessageEvent(:final seq))) {
@@ -292,7 +335,13 @@ List<TimelineItem> deriveTimelineItems(
             foldLegacySubagent(snapshot, e.firstSeq);
           }
         } else {
-          items.add(ToolCallTimelineItem(id: e.firstSeq, toolCall: e.latest));
+          items.add(
+            ToolCallTimelineItem(
+              id: e.firstSeq,
+              toolCall: e.latest,
+              approval: approvals[e.latest.id],
+            ),
+          );
         }
       case FoldedAgentActivity e:
         items.add(AgentActivityItem(id: e.activity.id, activity: e.activity));
@@ -312,15 +361,26 @@ List<TimelineItem> deriveTimelineItems(
           case PlanEvent e:
             items.add(PlanTimelineItem(id: e.seq, entries: e.entries));
           case PermissionRequestEvent e:
-            items.add(PermissionRequestItem(id: e.seq, request: e.request));
+            if (!gatesTool(e.request)) {
+              items.add(
+                PermissionRequestItem(
+                  id: e.seq,
+                  request: e.request,
+                  answer: answers[e.request.requestId],
+                ),
+              );
+            }
           case PermissionResolvedEvent e:
-            items.add(
-              PermissionResolvedItem(
-                id: e.seq,
-                requestId: e.requestId,
-                optionId: e.optionId,
-              ),
-            );
+            // Answers to requests in view show with them.
+            if (!requests.containsKey(e.requestId)) {
+              items.add(
+                PermissionResolvedItem(
+                  id: e.seq,
+                  requestId: e.requestId,
+                  optionId: e.optionId,
+                ),
+              );
+            }
           case TurnCompleteEvent e:
             items.add(TurnCompleteItem(id: e.seq, stopReason: e.stopReason));
           case SessionErrorEvent e:
@@ -446,7 +506,12 @@ class Timeline extends StatefulWidget {
     this.heat = TurnHeat.off,
     this.turnSeed = 0,
     this.activity = 0,
+    this.cwd,
   });
+
+  /// The session's working directory: tool rows show paths under it as
+  /// relative ones.
+  final String? cwd;
 
   /// Increment after a successful local send to resume following the timeline.
   final int followLatestRequest;
@@ -655,6 +720,7 @@ class _TimelineState extends State<Timeline> {
             key: PageStorageKey<Object>(identities[itemIndex]),
             item: item,
             delivery: _deliveryOf(item),
+            cwd: widget.cwd,
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
             openLocalFile: widget.openLocalFile,
@@ -818,6 +884,7 @@ class _TimelineRow extends StatelessWidget {
     super.key,
     required this.item,
     this.delivery,
+    this.cwd,
     this.attachmentLoader,
     this.onFork,
     this.openLocalFile,
@@ -828,6 +895,9 @@ class _TimelineRow extends StatelessWidget {
   /// Non-null for a user message that confirmed a send from this client:
   /// true while its pop should still play (see [DeliveredPop]).
   final bool? delivery;
+
+  /// See [Timeline.cwd].
+  final String? cwd;
 
   /// See [Timeline.attachmentLoader].
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
@@ -869,11 +939,17 @@ class _TimelineRow extends StatelessWidget {
       ToolCallTimelineItem i => ToolCallCard(
         key: ValueKey<Object>(i.id ?? i.toolCall.id),
         toolCall: i.toolCall,
+        approval: i.approval,
+        cwd: cwd,
         attachmentLoader: attachmentLoader,
       ),
       AgentActivityItem i => _ActivityCard(activity: i.activity),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
-      PermissionRequestItem i => _InlinePermissionRecord(request: i.request),
+      PermissionRequestItem i => _PermissionRecord(
+        request: i.request,
+        answer: i.answer,
+        cwd: cwd,
+      ),
       PermissionResolvedItem i => _ResolvedRecord(optionId: i.optionId),
       TurnCompleteItem _ => _TurnDivider(),
       SessionErrorItem i => _ErrorBanner(message: i.message),
@@ -1224,21 +1300,88 @@ class _RenderMessageActions extends RenderBox
       defaultHitTestChildren(result, position: position);
 }
 
-class _InlinePermissionRecord extends StatelessWidget {
-  const _InlinePermissionRecord({required this.request});
+/// One line for a permission request or question outside any tool's row:
+/// where it stands, then what was asked.
+class _PermissionRecord extends StatelessWidget {
+  const _PermissionRecord({
+    required this.request,
+    required this.answer,
+    required this.cwd,
+  });
 
   final PermissionRequest request;
+  final String? answer;
+  final String? cwd;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final SpeedDialColors colors = context.speedDialColors;
+    final Color muted = theme.colorScheme.onSurfaceVariant;
+    final (
+      IconData icon,
+      Color color,
+      String verdict,
+    ) = request.questions.isNotEmpty
+        ? (
+            Icons.help_outline,
+            answer == null ? colors.waitingPermission : muted,
+            switch (answer) {
+              null => 'Waiting for your answer',
+              'answer' => 'Answered',
+              'dismiss' => 'Dismissed',
+              _ => 'Expired',
+            },
+          )
+        : switch (ToolApproval.of(request, answer).state) {
+            ToolApprovalState.pending => (
+              Icons.shield_outlined,
+              colors.waitingPermission,
+              'Needs approval',
+            ),
+            ToolApprovalState.allowed => (
+              Icons.verified_user_outlined,
+              muted,
+              'Approved',
+            ),
+            ToolApprovalState.denied => (
+              Icons.gpp_bad_outlined,
+              colors.error,
+              'Denied',
+            ),
+            ToolApprovalState.lapsed => (
+              Icons.shield_outlined,
+              muted,
+              'Not approved',
+            ),
+          };
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Text(
-        'Permission requested: ${request.title}',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(icon, size: 14, color: color),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: <InlineSpan>[
+                  TextSpan(
+                    text: '$verdict  ',
+                    style: TextStyle(color: color, fontWeight: FontWeight.w600),
+                  ),
+                  TextSpan(text: cleanCommand(request.title, cwd: cwd)),
+                ],
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            ),
+          ),
+        ],
       ),
     );
   }

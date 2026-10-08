@@ -348,9 +348,16 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              system picker without whole-file buffers,
                              and web hands browser Blobs to the browser with an explicit handoff receipt.
                              Floated files use ShareStore and the protocol’s 8 MiB attachment cap,
-                             collapsible
-                             tool-call cards (status icon, title, expandable content/diff),
-                             including lazily loaded image outputs,
+                             compact collapsible tool-call rows (kind icon; the agent's own words
+                             for the call — a shell tool's `description`, Codex `commandActions`,
+                             readable MCP names — over the command cleaned of login-shell
+                             wrappers, `cd <dir> &&`, env assignments and long paths
+                             (tool_call_summary.dart); expandable raw input/content/diff),
+                             including lazily loaded image outputs. A permission request gating a
+                             tool call in view folds into that row (pending/denied flagged, the
+                             chosen option in its details); other requests and questions take one
+                             line with their answer. Streaming agent text is written by a glowing
+                             ember throwing sparks (writing_sparks.dart),
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips,

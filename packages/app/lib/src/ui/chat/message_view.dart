@@ -16,6 +16,7 @@ import 'history_expansion.dart';
 import 'message_highlighter.dart';
 import 'mermaid/mermaid_diagram.dart';
 import 'mermaid/mermaid_parser.dart';
+import 'writing_sparks.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
 /// grammars bundled with syntax_highlight. Returns null for anything
@@ -407,6 +408,9 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   /// markdown rebuild that a highlight batch triggers.
   final Set<String> _mermaidSourceShown = <String>{};
   late String _renderedText;
+
+  /// Times streamed text grew on screen; each one lights [WritingSparks].
+  int _writes = 0;
   Timer? _renderTimer;
   int _highlightRevision = 0;
   final _MessageSelectionDelegate _selectionDelegate =
@@ -457,6 +461,9 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
   void _setRenderedText() {
     if (_renderedText == widget.text) return;
+    if (widget.streaming && widget.text.length > _renderedText.length) {
+      _writes++;
+    }
     _renderedText = widget.text;
     _codeBlocks.clear();
     _highlightCache.clear();
@@ -564,14 +571,17 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           ),
           border: Border.all(color: context.speedDialColors.border),
         ),
-        child: SelectionContainer(
-          delegate: _selectionDelegate,
-          child: MarkdownBody(
-            // Reparse once when an asynchronous highlight batch is ready.
-            key: ValueKey<int>(_highlightRevision),
-            data: _renderedText,
-            styleSheet: _styleSheetFor(context, bodyStyle),
-            builders: _elementBuilders,
+        child: WritingSparks(
+          writes: _writes,
+          child: SelectionContainer(
+            delegate: _selectionDelegate,
+            child: MarkdownBody(
+              // Reparse once when an asynchronous highlight batch is ready.
+              key: ValueKey<int>(_highlightRevision),
+              data: _renderedText,
+              styleSheet: _styleSheetFor(context, bodyStyle),
+              builders: _elementBuilders,
+            ),
           ),
         ),
       ),
