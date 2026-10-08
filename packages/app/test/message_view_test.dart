@@ -627,45 +627,126 @@ void main() {
     });
   });
 
-  for (final bool reduceMotion in <bool>[false, true]) {
-    testWidgets(
-      'streamed text ${reduceMotion ? 'stays still under reduced motion' : 'writes with a sparking ember'}',
-      (WidgetTester tester) async {
-        if (reduceMotion) {
-          tester.platformDispatcher.accessibilityFeaturesTestValue =
-              const FakeAccessibilityFeatures(disableAnimations: true);
-          addTearDown(
-            tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
-          );
-        }
-        final ThemeData theme = buildSpeedDialTheme();
-        Future<void> show(String text, {bool streaming = true}) =>
-            tester.pumpWidget(
-              MaterialApp(
-                theme: theme,
-                home: Scaffold(
-                  body: AgentMessageView(text: text, streaming: streaming),
-                ),
-              ),
-            );
-        final Finder sparks = find.byKey(const Key('writing-sparks'));
+  group('typewriter', () {
+    const String reply =
+        'First line of the reply.\n\n'
+        'A second paragraph follows it.\n\n'
+        'Then a third.\n\n'
+        'And a fourth to finish.';
+    final Finder typewriter = find.byKey(const Key('typewriter'));
+    final Finder body = find.byType(MarkdownBody);
+    double typed(WidgetTester tester) => tester.getSize(typewriter).height;
+    double whole(WidgetTester tester) => tester.getSize(body).height;
 
-        await show('The sync loop');
-        expect(sparks, paintsNothing);
-        await show('The sync loop gives up');
-        // Streamed text reaches the screen on the next render tick.
-        await tester.pump(AgentMessageView.streamRenderInterval);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 16));
-        expect(sparks, reduceMotion ? paintsNothing : (paints..circle()));
-
-        // Once writing stops the ember dies down and nothing keeps running.
-        await show('The sync loop gives up.', streaming: false);
-        await tester.pump(const Duration(seconds: 1));
-        await tester.pump(const Duration(seconds: 1));
-        expect(sparks, paintsNothing);
-        expect(tester.hasRunningAnimations, isFalse);
-      },
+    Widget view(String text, {required bool writing}) => MaterialApp(
+      theme: buildSpeedDialTheme(),
+      home: Scaffold(
+        body: AgentMessageView(text: text, streaming: true, writing: writing),
+      ),
     );
-  }
+
+    Future<void> frames(WidgetTester tester, int count) async {
+      for (int i = 0; i < count; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+    }
+
+    testWidgets('a message first seen being written types itself out', (
+      WidgetTester tester,
+    ) async {
+      // However it arrived — here all at once — it shows a line at a time
+      // behind the ember.
+      await tester.pumpWidget(view(reply, writing: true));
+      await frames(tester, 3);
+      expect(typed(tester), greaterThan(0));
+      expect(typed(tester), lessThan(whole(tester)));
+      expect(typewriter, paints..circle());
+
+      await frames(tester, 90);
+      expect(typed(tester), whole(tester));
+      // Caught up while still writing: the ember waits at the end.
+      expect(typewriter, paints..circle());
+
+      await tester.pumpWidget(view(reply, writing: false));
+      await frames(tester, 60);
+      expect(typewriter, isNot(paints..circle()));
+      expect(typed(tester), whole(tester));
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('text arriving later types on from where it was', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(view('First line of the reply.', writing: true));
+      await frames(tester, 30);
+      final double first = whole(tester);
+      expect(typed(tester), first);
+
+      await tester.pumpWidget(view(reply, writing: true));
+      await tester.pump(AgentMessageView.streamRenderInterval);
+      await frames(tester, 2);
+      expect(typed(tester), greaterThanOrEqualTo(first));
+      expect(typed(tester), lessThan(whole(tester)));
+      await frames(tester, 90);
+      expect(typed(tester), whole(tester));
+
+      await tester.pumpWidget(view(reply, writing: false));
+      await frames(tester, 60);
+    });
+
+    testWidgets('a message first seen finished shows whole', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(view(reply, writing: false));
+      expect(typed(tester), whole(tester));
+      expect(typewriter, isNot(paints..circle()));
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('reduced motion shows the message whole', (
+      WidgetTester tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      await tester.pumpWidget(view(reply, writing: true));
+      await tester.pump();
+      expect(typed(tester), whole(tester));
+      expect(typewriter, isNot(paints..circle()));
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('scrolling a typed message away and back does not retype it', (
+      WidgetTester tester,
+    ) async {
+      final PageStorageBucket bucket = PageStorageBucket();
+      Widget host({required bool shown}) => MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: PageStorage(
+            bucket: bucket,
+            child: shown
+                ? const KeyedSubtree(
+                    key: PageStorageKey<String>('reply'),
+                    child: AgentMessageView(
+                      text: reply,
+                      streaming: true,
+                      writing: true,
+                    ),
+                  )
+                : const SizedBox(),
+          ),
+        ),
+      );
+      await tester.pumpWidget(host(shown: true));
+      await frames(tester, 90);
+      await tester.pumpWidget(host(shown: false));
+      await tester.pumpWidget(host(shown: true));
+      expect(typed(tester), whole(tester));
+      await frames(tester, 2);
+      expect(typed(tester), whole(tester));
+    });
+  });
 }

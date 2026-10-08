@@ -14,6 +14,7 @@ class FakeDaemonClient implements DaemonClient {
   FakeDaemonClient({
     this.eventDelay = const Duration(milliseconds: 50),
     this.sendLatency = Duration.zero,
+    this.toolDuration,
   });
 
   /// Delay between scripted streaming events; tests may pass a tiny duration.
@@ -22,6 +23,10 @@ class FakeDaemonClient implements DaemonClient {
   /// How long a send takes to be accepted (the real daemon may first respawn
   /// and resume the agent); demo mode uses it to show messages in flight.
   final Duration sendLatency;
+
+  /// How long the scripted tool call runs ([eventDelay] when null); demo
+  /// mode lets it run like a real one.
+  final Duration? toolDuration;
 
   bool _disposed = false;
   bool _seeded = false;
@@ -1834,7 +1839,7 @@ class FakeDaemonClient implements DaemonClient {
       ToolCallEvent(toolCall: _toolCall(ToolCallStatus.running)),
     );
 
-    await _delay();
+    await Future<void>.delayed(toolDuration ?? eventDelay);
     if (_isCancelled(sessionId)) return;
     _emit(
       sessionId,

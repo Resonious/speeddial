@@ -357,11 +357,34 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              readable MCP names — over the command cleaned of login-shell
                              wrappers, `cd <dir> &&`, env assignments and long paths
                              (tool_call_summary.dart); expandable raw input/content/diff),
-                             including lazily loaded image outputs. A permission request gating a
+                             including lazily loaded image outputs. Rows stay collapsed until
+                             tapped. Tool calls and the thinking among them fold into one run
+                             (`ToolRunItem`, tool_run.dart; providers think between calls more
+                             often than not) that soon settles at its height however many steps
+                             come: what the agent last thought and what it last did, a line
+                             each — the end of the thought running on as it streams, its start
+                             fading off the left (tail_text.dart, thought_line.dart), and the
+                             call's description typed out, backspaced and retyped for each new
+                             call (typed_text.dart; its command moves into its details). The
+                             thought gets its own line because Claude thinks in a burst just
+                             before the call it leads to, which would otherwise replace it at
+                             once. A rolling "N tool calls · M thoughts" appears once steps
+                             are out of sight and opens every step. A call still unfinished in a
+                             running turn — whatever its status, since Claude never reports
+                             calls as running — is on the heat: its icon glows, a glint
+                             sweeps its title (heat_shimmer.dart) and its running time ticks
+                             (tool_call_heat.dart); it cools back down once done. While the
+                             daemon is out of reach the pane derives the turn as not running,
+                             so nothing in it (heat, ember, "Thinking…") claims to be going.
+                             A permission request gating a
                              tool call in view folds into that row (pending/denied flagged, the
                              chosen option in its details); other requests and questions take one
-                             line with their answer. Streaming agent text is written by a glowing
-                             ember throwing sparks (writing_sparks.dart),
+                             line with their answer. An agent message first seen while it is
+                             being written types itself out behind a glowing ember, at a
+                             steady pace that quickens to work off a backlog, however the
+                             provider delivers it (typewriter.dart: a clip and a cursor over the
+                             laid-out markdown, measured in paint; the bubble grows a line at a
+                             time; progress is kept per row so scrolling back does not retype),
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips,
@@ -405,16 +428,19 @@ Performance rules for the app:
   back out (ignoring taps on the way out). While shown, it flares with activity at the
   live end (latest_button.dart): the chat pane counts changes of the newest buffered
   event, which new events and streamed text replace but older pages never touch. Failed
-  sends retain the reading position.
+  sends retain the reading position. A touch stops following, so opening something to
+  read holds it still; a tap that does not scroll on the newest row (opening the latest
+  tool call) keeps following, so what opens grows into view at the live end.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`.
-- Animations: continuous ones (flame, timer ping, shimmer) run only while a turn is
-  active, repaint through painters/render objects behind repaint boundaries rather than
-  rebuilding, and hold still when the platform requests reduced motion.
+- Animations: continuous ones (flame, timer ping, shimmer, a tool call's heat) run only
+  while a turn is active, repaint through painters/render objects behind repaint
+  boundaries rather than rebuilding, and hold still when the platform requests reduced
+  motion.
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to
   the narrowest widget.
 

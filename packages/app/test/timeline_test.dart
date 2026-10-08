@@ -8,6 +8,7 @@ import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/oven.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
+import 'package:speeddial_app/src/ui/chat/tool_call_heat.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -123,7 +124,7 @@ void main() {
         const AgentThoughtChunkEvent(text: 'let me '),
         const AgentThoughtChunkEvent(text: 'think'),
       ], running: true);
-      final AgentThoughtItem thought = items.last as AgentThoughtItem;
+      final AgentThoughtItem thought = thoughtsIn(items).single;
       expect(thought.text, 'let me think');
       expect(thought.active, isTrue);
     });
@@ -132,7 +133,7 @@ void main() {
       final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
         const AgentThoughtChunkEvent(text: 'done'),
       ]);
-      expect((items.single as AgentThoughtItem).active, isFalse);
+      expect(thoughtsIn(items).single.active, isFalse);
     });
 
     test('thought closes once a message chunk follows', () {
@@ -140,10 +141,7 @@ void main() {
         const AgentThoughtChunkEvent(text: 'hmm'),
         const AgentMessageChunkEvent(text: 'answer'),
       ], running: true);
-      final AgentThoughtItem thought = items
-          .whereType<AgentThoughtItem>()
-          .single;
-      expect(thought.active, isFalse);
+      expect(thoughtsIn(items).single.active, isFalse);
     });
 
     test('thought closes when the turn completes', () {
@@ -156,10 +154,73 @@ void main() {
         // alone must settle the thought.
         running: true,
       );
-      final AgentThoughtItem thought = items
-          .whereType<AgentThoughtItem>()
-          .single;
-      expect(thought.active, isFalse);
+      expect(thoughtsIn(items).single.active, isFalse);
+    });
+  });
+
+  group('deriveTimelineItems writing message', () {
+    bool writing(List<TimelineItem> items) =>
+        items.whereType<AgentMessageItem>().last.writing;
+
+    test('the message ending a running turn is being written', () {
+      final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+        const UserMessageEvent(text: 'hi'),
+        const AgentMessageChunkEvent(text: 'Let me ', messageId: 'm-1'),
+        const AgentMessageChunkEvent(text: 'look.', messageId: 'm-1'),
+        // Bookkeeping that never shows does not end it.
+        const UsageEvent(
+          usage: UsageInfo(inputTokens: 1, outputTokens: 2, totalTokens: 3),
+        ),
+      ], running: true);
+      expect(writing(items), isTrue);
+      expect(
+        deriveTimelineItems(<SessionEvent>[
+          const AgentMessageChunkEvent(text: 'Done.'),
+        ]).whereType<AgentMessageItem>().single.writing,
+        isFalse,
+      );
+    });
+
+    test('a message is written once anything follows it', () {
+      const AgentMessageChunkEvent message = AgentMessageChunkEvent(
+        text: 'Checking.',
+        messageId: 'm-1',
+      );
+      final List<TimelineItem> beforeTool = deriveTimelineItems(
+        const <SessionEvent>[
+          message,
+          ToolCallEvent(
+            toolCall: ToolCall(
+              id: 'read-1',
+              title: 'Read',
+              kind: 'read',
+              status: ToolCallStatus.running,
+              content: <ToolCallContent>[],
+              locations: <String>[],
+            ),
+          ),
+        ],
+        running: true,
+      );
+      expect(writing(beforeTool), isFalse);
+      final List<TimelineItem> ended = deriveTimelineItems(const <SessionEvent>[
+        message,
+        TurnCompleteEvent(stopReason: 'end_turn'),
+      ], running: true);
+      expect(writing(ended), isFalse);
+      final List<TimelineItem> twoMessages = deriveTimelineItems(
+        const <SessionEvent>[
+          message,
+          AgentMessageChunkEvent(text: 'Found it.', messageId: 'm-2'),
+        ],
+        running: true,
+      );
+      expect(
+        twoMessages.whereType<AgentMessageItem>().map(
+          (AgentMessageItem m) => m.writing,
+        ),
+        <bool>[false, true],
+      );
     });
   });
 
@@ -257,7 +318,7 @@ void main() {
           ),
         ]);
 
-        expect(items.whereType<ToolCallTimelineItem>(), isEmpty);
+        expect(toolCallsIn(items), isEmpty);
         final List<AgentActivityItem> activities = items
             .whereType<AgentActivityItem>()
             .toList();
@@ -382,7 +443,7 @@ void main() {
         TurnCompleteEvent(stopReason: 'end_turn'),
       ]);
 
-      expect(items.whereType<ToolCallTimelineItem>(), hasLength(1));
+      expect(toolCallsIn(items), hasLength(1));
       final AgentMessageItem message = items
           .whereType<AgentMessageItem>()
           .single;
@@ -446,7 +507,7 @@ void main() {
         ),
       ]);
 
-      expect(items.whereType<ToolCallTimelineItem>(), hasLength(2));
+      expect(toolCallsIn(items), hasLength(2));
       await tester.pumpWidget(
         MaterialApp(
           theme: buildSpeedDialTheme(),
@@ -460,56 +521,133 @@ void main() {
     });
   });
 
-  group('active action pulse', () {
-    testWidgets('running tool call pulses and completed call is static', (
+  group('calls in progress', () {
+    ToolCall call(ToolCallStatus status) => ToolCall(
+      id: 'tool-1',
+      title: 'Run the test suite',
+      kind: 'execute',
+      status: status,
+      content: const <ToolCallContent>[],
+      locations: const <String>[],
+    );
+    final Finder heat = find.byKey(const ValueKey<String>('tool-heat-tool-1'));
+
+    test('are unfinished calls in a running turn', () {
+      final DateTime reported = DateTime.utc(2026, 10, 9, 8);
+      List<TimelineItem> derive(
+        ToolCallStatus status, {
+        required bool running,
+      }) => deriveTimelineItems(<SessionEvent>[
+        const UserMessageEvent(text: 'test it'),
+        ToolCallEvent(toolCall: call(status), timestamp: reported),
+      ], running: running);
+      ToolCallTimelineItem tool(List<TimelineItem> items) =>
+          toolCallsIn(items).single;
+
+      // Some providers never report a call as running before it is done.
+      final ToolCallTimelineItem pending = tool(
+        derive(ToolCallStatus.pending, running: true),
+      );
+      expect(pending.active, isTrue);
+      expect(pending.startedAt, reported);
+      expect(
+        tool(derive(ToolCallStatus.running, running: true)).active,
+        isTrue,
+      );
+      expect(
+        tool(derive(ToolCallStatus.completed, running: true)).active,
+        isFalse,
+      );
+      // A call left unfinished by a turn that ended is not still going.
+      expect(
+        tool(derive(ToolCallStatus.running, running: false)).active,
+        isFalse,
+      );
+    });
+
+    testWidgets('glow, tick, and cool once done', (WidgetTester tester) async {
+      final ThemeData theme = buildSpeedDialTheme();
+      final DateTime started = DateTime.now().subtract(
+        const Duration(seconds: 75, milliseconds: 400),
+      );
+      Future<void> show(ToolCallStatus status, {required bool active}) =>
+          tester.pumpWidget(
+            MaterialApp(
+              theme: theme,
+              home: Scaffold(
+                body: ToolCallCard(
+                  toolCall: call(status),
+                  active: active,
+                  startedAt: started,
+                ),
+              ),
+            ),
+          );
+
+      await show(ToolCallStatus.pending, active: true);
+      expect(heat, findsOneWidget);
+      expect(tester.hasRunningAnimations, isTrue);
+      expect(find.text('1m 15s'), findsOneWidget);
+      expect(find.text('Waiting for output…'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('1m 16s'), findsOneWidget);
+
+      await show(ToolCallStatus.completed, active: false);
+      await tester.pump(const Duration(milliseconds: 100));
+      // Cooling, not snuffed out.
+      expect(heat, findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(heat, findsNothing);
+      expect(find.text('1m 16s'), findsNothing);
+      expect(find.text('No output'), findsOneWidget);
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('stay cold when not in progress, whatever the status', (
       WidgetTester tester,
     ) async {
-      const ToolCall running = ToolCall(
-        id: 'tool-1',
-        title: 'Searching files',
-        kind: 'search',
-        status: ToolCallStatus.running,
-        content: <ToolCallContent>[],
-        locations: <String>[],
-      );
       await tester.pumpWidget(
         MaterialApp(
           theme: buildSpeedDialTheme(),
-          home: const Scaffold(body: ToolCallCard(toolCall: running)),
+          home: Scaffold(
+            body: ToolCallCard(toolCall: call(ToolCallStatus.running)),
+          ),
         ),
       );
+      expect(heat, findsNothing);
+      expect(tester.hasRunningAnimations, isFalse);
+    });
 
-      final Finder pulse = find.byKey(
-        const ValueKey<String>('tool-pulse-tool-1'),
+    testWidgets('glow still under reduced motion', (WidgetTester tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
       );
-      expect(pulse, findsNWidgets(2));
-      expect(
-        tester.widget<FadeTransition>(pulse.first).opacity.status,
-        anyOf(AnimationStatus.forward, AnimationStatus.reverse),
-      );
-
       await tester.pumpWidget(
         MaterialApp(
           theme: buildSpeedDialTheme(),
-          home: const Scaffold(
+          home: Scaffold(
             body: ToolCallCard(
-              toolCall: ToolCall(
-                id: 'tool-1',
-                title: 'Searched files',
-                kind: 'search',
-                status: ToolCallStatus.completed,
-                content: <ToolCallContent>[],
-                locations: <String>[],
-              ),
+              toolCall: call(ToolCallStatus.running),
+              active: true,
             ),
           ),
         ),
       );
       await tester.pump();
-
-      expect(pulse, findsNothing);
+      expect(heat, findsOneWidget);
+      expect(tester.hasRunningAnimations, isFalse);
     });
 
+    test('running times read short', () {
+      expect(formatElapsed(const Duration(seconds: 4)), '4s');
+      expect(formatElapsed(const Duration(seconds: 65)), '1m 05s');
+      expect(formatElapsed(const Duration(minutes: 62, seconds: 9)), '1h 02m');
+    });
+  });
+
+  group('active action pulse', () {
     testWidgets('running activity pulses and completed activity is static', (
       WidgetTester tester,
     ) async {
@@ -831,42 +969,6 @@ void main() {
       inInclusiveRange(100, expandedTool),
     );
     await tester.pumpAndSettle();
-    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
-  });
-
-  testWidgets('a large running tool releases its height when it completes', (
-    WidgetTester tester,
-  ) async {
-    tester.view.physicalSize = const Size(800, 600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-
-    final String output = List<String>.filled(500, 'output line').join('\n');
-    Widget card(ToolCallStatus status, String text) => MaterialApp(
-      theme: buildSpeedDialTheme(),
-      home: Scaffold(
-        body: SingleChildScrollView(
-          child: ToolCallCard(
-            toolCall: ToolCall(
-              id: 'running-output',
-              title: 'Long command',
-              kind: 'execute',
-              status: status,
-              content: <ToolCallContent>[ToolCallText(text: text)],
-              locations: const <String>[],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    await tester.pumpWidget(card(ToolCallStatus.running, output));
-    expect(tester.getSize(find.byType(ToolCallCard)).height, greaterThan(500));
-    await tester.pumpWidget(card(ToolCallStatus.completed, output));
-    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
-
-    await tester.pumpWidget(card(ToolCallStatus.running, 'Working'));
-    await tester.pumpWidget(card(ToolCallStatus.completed, output));
     expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
   });
 
@@ -1303,10 +1405,7 @@ void main() {
       ]);
       expect(items.whereType<PermissionRequestItem>(), isEmpty);
       expect(items.whereType<PermissionResolvedItem>(), isEmpty);
-      final ToolApproval? approval = items
-          .whereType<ToolCallTimelineItem>()
-          .single
-          .approval;
+      final ToolApproval? approval = toolCallsIn(items).single.approval;
       expect(approval?.state, ToolApprovalState.allowed);
       expect(approval?.choice, 'Yes');
 
@@ -1316,7 +1415,7 @@ void main() {
       ]);
       expect(waiting, hasLength(1));
       expect(
-        (waiting.single as ToolCallTimelineItem).approval?.state,
+        toolCallsIn(waiting).single.approval?.state,
         ToolApprovalState.pending,
       );
     });
@@ -1393,3 +1492,17 @@ void main() {
     });
   });
 }
+
+/// The tool calls in [items], out of the runs that group them.
+List<ToolCallTimelineItem> toolCallsIn(List<TimelineItem> items) =>
+    <ToolCallTimelineItem>[
+      for (final TimelineItem item in items)
+        if (item is ToolRunItem) ...item.calls,
+    ];
+
+/// The thoughts in [items], out of the runs that group them.
+List<AgentThoughtItem> thoughtsIn(List<TimelineItem> items) =>
+    <AgentThoughtItem>[
+      for (final TimelineItem item in items)
+        if (item is ToolRunItem) ...item.steps.whereType<AgentThoughtItem>(),
+    ];

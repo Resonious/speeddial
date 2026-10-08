@@ -16,7 +16,7 @@ import 'history_expansion.dart';
 import 'message_highlighter.dart';
 import 'mermaid/mermaid_diagram.dart';
 import 'mermaid/mermaid_parser.dart';
-import 'writing_sparks.dart';
+import 'typewriter.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
 /// grammars bundled with syntax_highlight. Returns null for anything
@@ -372,6 +372,7 @@ class AgentMessageView extends StatefulWidget {
     super.key,
     required this.text,
     this.streaming = false,
+    this.writing = false,
     this.launchExternal = _launchExternal,
     this.openLocalFile,
   });
@@ -381,6 +382,11 @@ class AgentMessageView extends StatefulWidget {
 
   /// Whether the containing turn is still producing output.
   final bool streaming;
+
+  /// Whether the agent is writing this message right now (it is the live end
+  /// of the turn). A message first seen being written types itself out
+  /// (see [TypewriterReveal]).
+  final bool writing;
 
   /// Opens an external URI when a markdown link is activated.
   ///
@@ -409,8 +415,6 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   final Set<String> _mermaidSourceShown = <String>{};
   late String _renderedText;
 
-  /// Times streamed text grew on screen; each one lights [WritingSparks].
-  int _writes = 0;
   Timer? _renderTimer;
   int _highlightRevision = 0;
   final _MessageSelectionDelegate _selectionDelegate =
@@ -461,9 +465,6 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
   void _setRenderedText() {
     if (_renderedText == widget.text) return;
-    if (widget.streaming && widget.text.length > _renderedText.length) {
-      _writes++;
-    }
     _renderedText = widget.text;
     _codeBlocks.clear();
     _highlightCache.clear();
@@ -571,8 +572,8 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           ),
           border: Border.all(color: context.speedDialColors.border),
         ),
-        child: WritingSparks(
-          writes: _writes,
+        child: TypewriterReveal(
+          writing: widget.writing,
           child: SelectionContainer(
             delegate: _selectionDelegate,
             child: MarkdownBody(

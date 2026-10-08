@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
-import 'active_pulse.dart';
-import 'history_expansion.dart';
+import 'heat_shimmer.dart';
 import 'message_view.dart';
 import 'tool_call_edit_diff.dart';
+import 'tool_call_heat.dart';
+import 'thought_line.dart';
 import 'tool_call_summary.dart';
+import 'typed_text.dart';
 
 /// Semantic accent per tool [ToolCall.kind], used for the card's left border.
 Color _kindColor(BuildContext context, String kind) {
@@ -91,22 +93,43 @@ class ToolApproval {
 
 /// A collapsible record of one agent tool call, read like a log line: a
 /// kind icon, what the call did, and the command or target beneath it, with
-/// per-kind content (text / diff / terminal) on expansion. Expanded by
-/// default while the call is running, collapsed once it completes; the user
-/// can toggle freely.
+/// per-kind content (text / diff / terminal) on expansion. Collapsed until
+/// tapped, so calls coming and going never shift the timeline.
+///
+/// While [active] the call is on the heat: its icon glows, a glint sweeps
+/// its title, and the time it has taken ticks at the end of the row. Once it
+/// finishes it cools back down.
 class ToolCallCard extends StatefulWidget {
   const ToolCallCard({
     super.key,
     required this.toolCall,
     this.approval,
+    this.active = false,
+    this.startedAt,
+    this.typed = false,
+    this.embedded = false,
     this.cwd,
     this.attachmentLoader,
   });
 
   final ToolCall toolCall;
 
+  /// One line, typed: what the call did, typed out as it comes in and
+  /// backspaced and retyped when the card is handed the next call. The
+  /// command moves into the details.
+  final bool typed;
+
+  /// Sits inside another card (a run of calls), which draws the surface.
+  final bool embedded;
+
   /// Outcome of the permission request gating this call, if there was one.
   final ToolApproval? approval;
+
+  /// Whether the call is in progress: unfinished, in a running turn.
+  final bool active;
+
+  /// When the call started, for its running time.
+  final DateTime? startedAt;
 
   /// Session working directory; paths under it read as relative.
   final String? cwd;
@@ -119,18 +142,24 @@ class ToolCallCard extends StatefulWidget {
   State<ToolCallCard> createState() => _ToolCallCardState();
 }
 
-class _ToolCallCardState extends State<ToolCallCard> {
+class _ToolCallCardState extends State<ToolCallCard>
+    with TickerProviderStateMixin {
   final GlobalKey _detailsKey = GlobalKey();
-  late bool _expanded = _shouldDefaultExpand(widget.toolCall.status);
+  bool _expanded = false;
   bool _collapseImmediately = false;
-  bool _userToggled = false;
   late ToolCallSummary _summary = summarizeToolCall(
     widget.toolCall,
     cwd: widget.cwd,
   );
 
-  static bool _shouldDefaultExpand(ToolCallStatus status) =>
-      status == ToolCallStatus.running || status == ToolCallStatus.pending;
+  /// Glows the icon, sweeps the title's glint and fades the running time
+  /// while the call is in progress, cooling once it is done.
+  late final Heat _heat = Heat(this, onCooled: _cooled);
+  bool _still = false;
+
+  void _cooled() {
+    if (mounted) setState(() {});
+  }
 
   bool _detailsAreLarge() {
     final RenderBox? box =
@@ -142,25 +171,6 @@ class _ToolCallCardState extends State<ToolCallCard> {
     return box.size.height > viewportHeight * 0.5;
   }
 
-  bool _newDetailsAreLarge(ToolCall toolCall) {
-    final List<String> details = <String>[
-      if (toolCall.rawInput != null) _formatRawValue(toolCall.rawInput!),
-      for (final ToolCallContent content in toolCall.content)
-        ...switch (content) {
-          ToolCallText e => <String>[e.text],
-          ToolCallDiff e => <String>[
-            if (e.oldText != null) e.oldText!,
-            e.newText,
-          ],
-          ToolCallPatch e => <String>[e.diff],
-          ToolCallTerminal e => <String>[e.output],
-          ToolCallImage _ => const <String>[],
-        },
-      if (toolCall.rawOutput != null) _formatRawValue(toolCall.rawOutput!),
-    ];
-    return !animateHistoryDetails(details);
-  }
-
   Object get _expansionStorageId =>
       ('tool-expanded', widget.key ?? widget.toolCall.id);
 
@@ -169,17 +179,21 @@ class _ToolCallCardState extends State<ToolCallCard> {
     super.didChangeDependencies();
     final Object? saved = PageStorage.maybeOf(context)
         ?.readState(context, identifier: _expansionStorageId);
-    if (saved is bool) {
-      _expanded = saved;
-      _userToggled = true;
-    }
+    if (saved is bool) _expanded = saved;
+    _still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    _heat.sync(active: widget.active, still: _still);
+  }
+
+  @override
+  void dispose() {
+    _heat.dispose();
+    super.dispose();
   }
 
   void _toggleExpanded() {
     final bool expanding = !_expanded;
     final bool collapseImmediately = !expanding && _detailsAreLarge();
     setState(() {
-      _userToggled = true;
       _expanded = expanding;
       PageStorage.maybeOf(context)
           ?.writeState(context, expanding, identifier: _expansionStorageId);
@@ -194,15 +208,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
         oldWidget.cwd != widget.cwd) {
       _summary = summarizeToolCall(widget.toolCall, cwd: widget.cwd);
     }
-    if (!_userToggled && oldWidget.toolCall.status != widget.toolCall.status) {
-      // Track the agent's lifecycle, keeping short calls animated when they
-      // settle and releasing large output in one frame.
-      final bool nextExpanded = _shouldDefaultExpand(widget.toolCall.status);
-      _collapseImmediately =
-          _expanded &&
-          !nextExpanded &&
-          (_detailsAreLarge() || _newDetailsAreLarge(widget.toolCall));
-      _expanded = nextExpanded;
+    if (widget.active != oldWidget.active) {
+      _heat.sync(active: widget.active, still: _still);
     }
   }
 
@@ -211,7 +218,6 @@ class _ToolCallCardState extends State<ToolCallCard> {
     final ToolCall toolCall = widget.toolCall;
     final ThemeData theme = Theme.of(context);
     final SpeedDialColors colors = context.speedDialColors;
-    final bool running = toolCall.status == ToolCallStatus.running;
     final bool failed = toolCall.status == ToolCallStatus.failed;
     final Color iconColor = switch (toolCall.status) {
       ToolCallStatus.pending => colors.idle,
@@ -221,12 +227,65 @@ class _ToolCallCardState extends State<ToolCallCard> {
     };
     final ToolCallSummary summary = _summary;
     final ToolApprovalState? approval = widget.approval?.state;
+    final Animation<double> heat = _heat.level;
+    final Animation<double> glint = _heat.sweep;
+    final bool hot = _heat.hot;
+    final TextStyle? titleStyle = summary.titleIsCommand
+        ? colors.mono.copyWith(
+            fontSize: 12.5,
+            color: failed ? colors.error : theme.colorScheme.onSurface,
+          )
+        : theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w500,
+            color: failed ? colors.error : null,
+          );
+    final Widget text = widget.typed
+        // A fixed line, so swapping with a thought (or a command for a
+        // description) never moves anything.
+        ? SizedBox(
+            height: ThoughtLine.lineHeight,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TypedText(
+                summary.title,
+                style: titleStyle,
+                typeIn: widget.active,
+                caretColor: theme.brightness == Brightness.dark
+                    ? colors.flameTip
+                    : colors.flameRoot,
+              ),
+            ),
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                summary.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: titleStyle,
+              ),
+              if (summary.detail != null)
+                Text(
+                  summary.detail!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: colors.mono.copyWith(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          );
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
+      margin: widget.embedded
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(vertical: 2, horizontal: 8),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
+        color: widget.embedded ? null : theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -238,54 +297,48 @@ class _ToolCallCardState extends State<ToolCallCard> {
               padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
               child: Row(
                 children: <Widget>[
-                  ActivePulse(
-                    active: running,
-                    pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
-                    child: Icon(
-                      _kindIcon(toolCall.kind),
-                      size: 16,
+                  if (hot)
+                    HotToolIcon(
+                      key: ValueKey<String>('tool-heat-${toolCall.id}'),
+                      icon: _kindIcon(toolCall.kind),
                       color: iconColor,
-                    ),
-                  ),
+                      heat: heat,
+                      flicker: glint,
+                    )
+                  else
+                    Icon(_kindIcon(toolCall.kind), size: 16, color: iconColor),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: ActivePulse(
-                      active: running,
-                      pulseKey: ValueKey<String>('tool-pulse-${toolCall.id}'),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Text(
-                            summary.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: summary.titleIsCommand
-                                ? colors.mono.copyWith(
-                                    fontSize: 12.5,
-                                    color: failed
-                                        ? colors.error
-                                        : theme.colorScheme.onSurface,
-                                  )
-                                : theme.textTheme.bodyMedium?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                    color: failed ? colors.error : null,
-                                  ),
-                          ),
-                          if (summary.detail != null)
-                            Text(
-                              summary.detail!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: colors.mono.copyWith(
-                                fontSize: 11,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                    // Each sweep repaints the glint alone, not the card or
+                    // the text under it.
+                    child: hot && !_still
+                        ? RepaintBoundary(
+                            child: HeatShimmer(
+                              animation: glint,
+                              glint: colors.flameTip,
+                              strength: heat,
+                              child: RepaintBoundary(child: text),
                             ),
-                        ],
+                          )
+                        : text,
+                  ),
+                  if (hot)
+                    FadeTransition(
+                      opacity: heat,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: ElapsedTime(
+                          // A typed card hands over to the next call.
+                          key: ValueKey<String>(toolCall.id),
+                          since: widget.startedAt,
+                          running: widget.active,
+                          style: colors.mono.copyWith(
+                            fontSize: 11,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
                   if (approval == ToolApprovalState.pending)
                     _StatusPill(
                       label: 'Needs approval',
@@ -320,7 +373,9 @@ class _ToolCallCardState extends State<ToolCallCard> {
               secondChild: _ToolCallContentList(
                 key: _detailsKey,
                 toolCall: toolCall,
+                command: widget.typed ? summary.detail : null,
                 approval: widget.approval,
+                inProgress: widget.active,
                 attachmentLoader: _expanded ? widget.attachmentLoader : null,
               ),
             ),
@@ -360,12 +415,18 @@ class _ToolCallContentList extends StatelessWidget {
   const _ToolCallContentList({
     super.key,
     required this.toolCall,
+    required this.command,
     required this.approval,
+    required this.inProgress,
     required this.attachmentLoader,
   });
 
   final ToolCall toolCall;
+
+  /// The cleaned command, when the row above shows only the description.
+  final String? command;
   final ToolApproval? approval;
+  final bool inProgress;
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
   @override
@@ -375,7 +436,19 @@ class _ToolCallContentList extends StatelessWidget {
     final bool hasRawOutput = _hasRawValue(toolCall.rawOutput);
     final ToolEditDiff? editDiff = extractEditDiffFromToolCall(toolCall);
     final ToolApproval? approval = this.approval;
+    final String? command = this.command;
     final List<Widget> children = <Widget>[
+      if (command != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          child: Text(
+            command,
+            style: context.speedDialColors.mono.copyWith(
+              fontSize: 11.5,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
       if (approval != null) _ApprovalLine(approval: approval),
       if (editDiff != null)
         _EditDiffView(diff: editDiff, fallbackPaths: toolCall.locations),
@@ -393,7 +466,7 @@ class _ToolCallContentList extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
           child: Text(
-            'No output',
+            inProgress ? 'Waiting for output…' : 'No output',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),

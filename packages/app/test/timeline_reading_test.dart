@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/thought_line.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -311,18 +312,24 @@ void main() {
       ),
       if (complete) const TurnCompleteEvent(stopReason: 'end_turn', seq: 21),
     ]);
+    final Finder body = find.byKey(const Key('thought-body'));
+    String opened() => tester
+        .widget<Text>(find.descendant(of: body, matching: find.byType(Text)))
+        .data!;
     await tester.pumpWidget(app(timeline(2, 'Reasoning')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Thought'));
+    await tester.tap(find.byType(ThoughtLine));
     await tester.pumpAndSettle();
     await tester.pumpWidget(app(timeline(3, 'Reasoning continues')));
     await tester.pumpAndSettle();
-    expect(find.text('Reasoning continues').hitTestable(), findsOneWidget);
+    expect(body.hitTestable(), findsOneWidget);
+    expect(opened(), 'Reasoning continues');
     await tester.pumpWidget(
       app(timeline(3, 'Reasoning continues', complete: true)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Reasoning continues').hitTestable(), findsOneWidget);
+    expect(body.hitTestable(), findsOneWidget);
+    expect(opened(), 'Reasoning continues');
   });
 
   testWidgets('expansion survives virtualization and incoming events', (
@@ -375,11 +382,36 @@ void main() {
     expect(find.text('Activity details').hitTestable(), findsOneWidget);
   });
 
+  testWidgets('opening the newest row keeps the live end in view', (
+    tester,
+  ) async {
+    final List<TimelineItem> items = <TimelineItem>[
+      for (int i = 0; i < 30; i++) UserMessageItem(id: i, text: 'Message $i'),
+      tool(ToolCallStatus.completed),
+    ];
+    await tester.pumpWidget(app(items));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Read a file'));
+    await tester.pumpAndSettle();
+    expect(find.text('Details to read').hitTestable(), findsOneWidget);
+
+    // Unlike opening an earlier row, this keeps following what comes next.
+    await tester.pumpWidget(
+      app(<TimelineItem>[
+        ...items,
+        const UserMessageItem(id: 'new', text: 'New event'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('New event').hitTestable(), findsOneWidget);
+    expect(find.byTooltip('Jump to latest event'), findsNothing);
+  });
+
   testWidgets('manual tool expansion survives completion', (tester) async {
     await tester.pumpWidget(app(<TimelineItem>[tool(ToolCallStatus.running)]));
     await tester.pump();
-    await tester.tap(find.text('Read a file'));
-    await tester.pump(const Duration(milliseconds: 300));
+    // A running call stays collapsed until tapped, so nothing jumps.
+    expect(find.text('Details to read').hitTestable(), findsNothing);
     await tester.tap(find.text('Read a file'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpWidget(

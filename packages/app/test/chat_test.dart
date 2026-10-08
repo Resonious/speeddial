@@ -13,7 +13,9 @@ import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
 import 'package:speeddial_app/src/ui/chat/composer.dart';
 import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
 import 'package:speeddial_app/src/ui/chat/plan_panel.dart';
+import 'package:speeddial_app/src/ui/chat/thought_line.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
+import 'package:speeddial_app/src/ui/chat/tool_call_heat.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_app/src/ui/daemon_error_text.dart';
 
@@ -667,13 +669,17 @@ void main() {
     expect(find.textContaining('tokens'), findsOneWidget);
   });
 
-  testWidgets('thinking indicator pulses while streaming, settles muted', (
+  testWidgets('live thinking streams on one line, then cools', (
     WidgetTester tester,
   ) async {
-    // Slow script: the thought run stays open long enough to inspect.
+    // Slow script: the thought stays open long enough to inspect.
     final (AppData app, FakeDaemonClient _) = await pumpChat(
       tester,
       fake: FakeDaemonClient(eventDelay: const Duration(seconds: 30)),
+    );
+    final Finder hot = find.descendant(
+      of: find.byType(ThoughtLine),
+      matching: find.byType(HotToolIcon),
     );
 
     await tester.enterText(find.byType(TextField), 'hello');
@@ -681,33 +687,16 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    // First thought delta lands after one eventDelay.
+    // The first thought delta lands after one eventDelay and runs on in the
+    // line, its icon hot while the agent thinks.
     await pumpUntil(
       tester,
-      () => find.text('Thinking…').evaluate().isNotEmpty,
+      () => find.textContaining('asked a question').evaluate().isNotEmpty,
       attempts: 5,
       step: const Duration(seconds: 31),
     );
-    expect(find.text('Thinking…'), findsOneWidget);
-
-    final BuildContext tileContext = tester.element(find.byType(ExpansionTile));
-    final ColorScheme scheme = Theme.of(tileContext).colorScheme;
-
-    // Active: primary-colored icon with a running pulse animation on both
-    // the icon and the title.
-    Icon icon = tester.widget(find.byIcon(Icons.psychology_outlined));
-    expect(icon.color, scheme.primary);
-    expect(
-      find.byKey(const ValueKey<String>('thought-pulse')),
-      findsNWidgets(2),
-    );
-    final FadeTransition pulse = tester.widget(
-      find.byKey(const ValueKey<String>('thought-pulse')).first,
-    );
-    expect(
-      pulse.opacity.status,
-      anyOf(AnimationStatus.forward, AnimationStatus.reverse),
-    );
+    expect(find.byType(ThoughtLine), findsOneWidget);
+    expect(hot, findsOneWidget);
 
     // Drain the rest of the scripted turn (~10 delays of 30 s).
     await pumpUntil(
@@ -718,14 +707,11 @@ void main() {
       attempts: 20,
       step: const Duration(seconds: 31),
     );
-    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-    // Settled: past-tense title, muted icon, no pulse wrapper.
-    expect(find.text('Thought'), findsOneWidget);
-    expect(find.text('Thinking…'), findsNothing);
-    icon = tester.widget(find.byIcon(Icons.psychology_outlined));
-    expect(icon.color, scheme.onSurfaceVariant);
-    expect(find.byKey(const ValueKey<String>('thought-pulse')), findsNothing);
+    // Settled: the line rests on how the thought ended, cooled.
+    expect(find.textContaining('short demo response'), findsOneWidget);
+    expect(hot, findsNothing);
 
     // Drain stream + settle timers so the test ends clean.
     await tester.pump(const Duration(seconds: 1));
@@ -1000,6 +986,59 @@ void main() {
       step: const Duration(seconds: 1),
     );
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('a tool call cooks while it runs, cooling when out of reach', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(
+      tester,
+      fake: FakeDaemonClient(
+        eventDelay: const Duration(milliseconds: 1),
+        toolDuration: const Duration(seconds: 6),
+      ),
+    );
+    final String sessionId = app.selection.selectedSessionId!;
+    await app.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    final Finder heat = find.byKey(
+      const ValueKey<String>('tool-heat-tc-exec-1'),
+    );
+
+    await tester.enterText(find.byType(TextField), 'run the tests');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(tester, () => heat.evaluate().isNotEmpty);
+    expect(heat, findsOneWidget);
+    // The call's description types itself out.
+    expect(find.text('Run tests'), findsNothing);
+    await pumpUntil(tester, () => find.text('Run tests').evaluate().isNotEmpty);
+    expect(find.text('Run tests'), findsOneWidget);
+
+    // Whether it is still going is unknown while the daemon is away.
+    app.connections.setStatus('fake', ConnectionStatus.reconnecting);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(heat, findsNothing);
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    expect(heat, findsOneWidget);
+
+    // Done: it cools along with the turn.
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.idle,
+      attempts: 20,
+      step: const Duration(seconds: 1),
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(heat, findsNothing);
+    expect(find.text('Run tests'), findsOneWidget);
   });
 
   testWidgets('reduced motion holds the oven still', (

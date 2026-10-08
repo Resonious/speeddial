@@ -748,10 +748,14 @@ class AppScope extends InheritedWidget {
 /// the lazy WebSocket wiring never touches it.
 AppData buildDemoAppData() {
   final AppData data = AppData();
-  // A realistic round trip, so sent messages visibly bake before landing.
+  // A realistic round trip, so sent messages visibly bake before landing,
+  // and a tool call that takes as long as a typical real one.
   data.registerClient(
     'demo',
-    FakeDaemonClient(sendLatency: const Duration(milliseconds: 650)),
+    FakeDaemonClient(
+      sendLatency: const Duration(milliseconds: 650),
+      toolDuration: const Duration(seconds: 2),
+    ),
   );
   data.connections.addEndpoint(
     id: 'demo',

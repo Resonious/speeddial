@@ -14,6 +14,7 @@ import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
+import 'tool_run.dart';
 import 'tool_call_summary.dart';
 
 /// A derived, display-ready row of the session timeline.
@@ -57,8 +58,13 @@ class AgentMessageItem extends TimelineItem {
     required this.text,
     this.forkSeq,
     this.streaming = false,
+    this.writing = false,
   });
   final bool streaming;
+
+  /// True while this message is the live end of a running turn: the agent
+  /// is writing it.
+  final bool writing;
   final String text;
 
   /// Last chunk sequence in this rendered agent message.
@@ -77,12 +83,41 @@ class AgentThoughtItem extends TimelineItem {
 
 /// The latest snapshot of one tool call (later events update in place).
 class ToolCallTimelineItem extends TimelineItem {
-  const ToolCallTimelineItem({super.id, required this.toolCall, this.approval});
+  const ToolCallTimelineItem({
+    super.id,
+    required this.toolCall,
+    this.approval,
+    this.active = false,
+    this.startedAt,
+  });
   final ToolCall toolCall;
 
   /// Outcome of the permission request that gated the call, if any; the
   /// request and its answer get no rows of their own.
   final ToolApproval? approval;
+
+  /// True while the call is unfinished in a running turn. Status alone can't
+  /// tell: some providers never report a call as running, and a call cut off
+  /// by a cancelled turn is left unfinished forever.
+  final bool active;
+
+  /// When the call was first reported.
+  final DateTime? startedAt;
+}
+
+/// The agent at work between messages, shown as one cell: back-to-back tool
+/// calls and the thinking among them, counted, with only the latest step on
+/// show as each comes in, so a busy agent does not shake the timeline with a
+/// row per step.
+class ToolRunItem extends TimelineItem {
+  const ToolRunItem({super.id, required this.steps});
+
+  /// In order; never empty. Each is a [ToolCallTimelineItem] or an
+  /// [AgentThoughtItem].
+  final List<TimelineItem> steps;
+
+  Iterable<ToolCallTimelineItem> get calls =>
+      steps.whereType<ToolCallTimelineItem>();
 }
 
 /// Latest snapshot of one provider-reported background activity.
@@ -340,6 +375,8 @@ List<TimelineItem> deriveTimelineItems(
               id: e.firstSeq,
               toolCall: e.latest,
               approval: approvals[e.latest.id],
+              active: running && _isActiveToolStatus(e.latest.status),
+              startedAt: e.startedAt,
             ),
           );
         }
@@ -395,7 +432,50 @@ List<TimelineItem> deriveTimelineItems(
         }
     }
   }
-  return items;
+  // A message is being written while nothing has come after it yet.
+  if (items.lastOrNull case final AgentMessageItem last when running) {
+    items.last = AgentMessageItem(
+      id: last.id,
+      text: last.text,
+      forkSeq: last.forkSeq,
+      streaming: last.streaming,
+      writing: true,
+    );
+  }
+  return _groupToolRuns(items);
+}
+
+/// Folds each stretch of tool calls and thinking into one [ToolRunItem],
+/// keyed by its first step so the cell keeps its place as the run grows.
+List<TimelineItem> _groupToolRuns(List<TimelineItem> items) {
+  // Providers think between calls more often than not, so thinking joins
+  // the run rather than breaking it.
+  bool isStep(TimelineItem item) =>
+      item is ToolCallTimelineItem || item is AgentThoughtItem;
+  final List<TimelineItem> grouped = <TimelineItem>[];
+  for (int i = 0; i < items.length;) {
+    final TimelineItem item = items[i];
+    if (!isStep(item)) {
+      grouped.add(item);
+      i++;
+      continue;
+    }
+    int end = i + 1;
+    while (end < items.length && isStep(items[end])) {
+      end++;
+    }
+    grouped.add(
+      ToolRunItem(
+        id: (
+          'tools',
+          item.id ?? (item is ToolCallTimelineItem ? item.toolCall.id : i),
+        ),
+        steps: List<TimelineItem>.unmodifiable(items.sublist(i, end)),
+      ),
+    );
+    i = end;
+  }
+  return grouped;
 }
 
 /// The oven's state for a session: [sending] is true while a message from
@@ -658,6 +738,27 @@ class _TimelineState extends State<Timeline> {
     }
   }
 
+  /// Following as it stood when the current touch began; dropped once the
+  /// touch scrolls, which makes following a matter of where it ends.
+  bool? _followBeforeTouch;
+
+  /// Whether the current touch landed on the newest row.
+  bool _touchAtLiveEnd = false;
+
+  void _touchedLiveEnd(PointerDownEvent _) => _touchAtLiveEnd = true;
+
+  /// A touch that stops following holds the reading position, so opening
+  /// something to read keeps it still while events stream in. A tap on the
+  /// newest row (opening the latest tool call, say) is the exception: the
+  /// view keeps following, so what opens grows into view at the live end.
+  void _endTouch() {
+    final bool liveEnd = _touchAtLiveEnd;
+    final bool followed = _followBeforeTouch ?? false;
+    _touchAtLiveEnd = false;
+    _followBeforeTouch = null;
+    if (liveEnd && followed) _controller.followLatest = true;
+  }
+
   /// Jumps straight to the bottom (animating a long scroll would only blur
   /// past the history); [_onScroll] lands it in sparks.
   void _jumpToLatest() {
@@ -725,6 +826,9 @@ class _TimelineState extends State<Timeline> {
           return _TimelineRow(
             key: PageStorageKey<Object>(identities[itemIndex]),
             item: item,
+            onTouch: itemIndex == widget.items.length - 1
+                ? _touchedLiveEnd
+                : null,
             delivery: _deliveryOf(item),
             cwd: widget.cwd,
             attachmentLoader: widget.attachmentLoader,
@@ -741,13 +845,21 @@ class _TimelineState extends State<Timeline> {
       children: <Widget>[
         Positioned.fill(
           child: Listener(
-            onPointerDown: (_) => _controller.followLatest = false,
+            onPointerDown: (_) {
+              _followBeforeTouch ??= _controller.followLatest;
+              _controller.followLatest = false;
+            },
+            onPointerUp: (_) => _endTouch(),
+            onPointerCancel: (_) => _endTouch(),
             onPointerSignal: (_) => _controller.followLatest = false,
             // Trackpad pans do not emit pointer-down or wheel events.
             onPointerPanZoomStart: (_) => _controller.followLatest = false,
             child: NotificationListener<ScrollNotification>(
               onNotification: (ScrollNotification notification) {
                 if (notification.depth != 0) return false;
+                if (notification is ScrollStartNotification) {
+                  _followBeforeTouch = null;
+                }
                 if (notification is ScrollEndNotification) {
                   _controller.followLatest =
                       notification.metrics.pixels -
@@ -889,6 +1001,7 @@ class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
     super.key,
     required this.item,
+    this.onTouch,
     this.delivery,
     this.cwd,
     this.attachmentLoader,
@@ -897,6 +1010,11 @@ class _TimelineRow extends StatelessWidget {
   });
 
   final TimelineItem item;
+
+  /// Set on the newest row only (see [_TimelineState._endTouch]). The
+  /// listener stays put either way, so rows keep their state when another
+  /// arrives below.
+  final PointerDownEventListener? onTouch;
 
   /// Non-null for a user message that confirmed a send from this client:
   /// true while its pop should still play (see [DeliveredPop]).
@@ -912,6 +1030,10 @@ class _TimelineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Listener(onPointerDown: onTouch, child: _content());
+  }
+
+  Widget _content() {
     return switch (item) {
       UserMessageItem i => _MessageWithActions(
         isUser: true,
@@ -938,14 +1060,23 @@ class _TimelineRow extends StatelessWidget {
         child: AgentMessageView(
           text: i.text,
           streaming: i.streaming,
+          writing: i.writing,
           openLocalFile: openLocalFile,
         ),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
+      ToolRunItem i => ToolRunCard(
+        key: ValueKey<Object?>(i.id),
+        steps: i.steps,
+        cwd: cwd,
+        attachmentLoader: attachmentLoader,
+      ),
       ToolCallTimelineItem i => ToolCallCard(
         key: ValueKey<Object>(i.id ?? i.toolCall.id),
         toolCall: i.toolCall,
         approval: i.approval,
+        active: i.active,
+        startedAt: i.startedAt,
         cwd: cwd,
         attachmentLoader: attachmentLoader,
       ),

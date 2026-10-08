@@ -161,8 +161,9 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     (events, running) => deriveTimelineItems(events, running: running),
   );
 
-  /// Session-running flag underlying [_items]; a turn start/stop can change
-  /// the derived active-thought marker without adding events.
+  /// Session-running flag underlying [_items]; a turn start/stop (or the
+  /// daemon dropping out of reach) can change the derived in-progress
+  /// markers without adding events.
   bool _running = false;
 
   List<TimelineItem> _items = const <TimelineItem>[];
@@ -262,7 +263,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       builder: (BuildContext context, Widget? _) {
         final List<SessionEvent> events = chat.eventViewFor(sessionId);
         final SessionStatus status = chat.statusOf(sessionId);
-        final bool running = status == SessionStatus.running;
+        // A turn last heard running on a daemon out of reach may be long
+        // over, so nothing in it shows as still going.
+        final bool running =
+            status == SessionStatus.running &&
+            !data.connections.statusOf(daemonId).outOfReach;
         // ChatStore bumps a per-session counter on every buffer mutation,
         // so the cached derivation is skipped for rebuilds that carry no
         // new content (unrelated sessions' notifications, status/usage-only

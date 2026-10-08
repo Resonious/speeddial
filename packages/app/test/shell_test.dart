@@ -413,9 +413,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(data.selection.selectedProjectId, isNotNull);
     expect(data.selection.selectedSessionId, isNotNull);
-    // Drain the scripted turn (~9 events at the fake's 50ms event delay) so
-    // no timers outlive the test.
-    await tester.pump(const Duration(seconds: 2));
+    // Drain the scripted turn (~9 events at the fake's 50ms event delay, and
+    // its 2s tool call) so no timers outlive the test.
+    await tester.pump(const Duration(seconds: 4));
     expect(find.textContaining('Working on it', findRichText: true),
         findsOneWidget);
     expect(find.textContaining('Add retry logic', findRichText: true),

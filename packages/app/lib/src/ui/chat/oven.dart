@@ -2,10 +2,10 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 
 import '../../theme.dart';
 import '../flame.dart';
+import 'heat_shimmer.dart';
 import 'message_view.dart';
 
 /// What the oven at the foot of the timeline is doing.
@@ -216,7 +216,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
             Flexible(
               child: FadeTransition(
                 opacity: _label,
-                child: _HeatShimmer(
+                child: HeatShimmer(
                   animation: _shimmer,
                   color: muted,
                   glint: _shown == TurnHeat.keepingWarm
@@ -298,105 +298,6 @@ class _SmokePainter extends CustomPainter {
   @override
   bool shouldRepaint(_SmokePainter oldDelegate) =>
       oldDelegate.lit != lit || oldDelegate.color != color;
-}
-
-/// Sweeps a warm glint across its child, like haze over a hot oven.
-///
-/// Paints through a shader mask on each tick of [animation] without
-/// rebuilding anything; [color] is the child's resting color.
-class _HeatShimmer extends SingleChildRenderObjectWidget {
-  const _HeatShimmer({
-    required this.animation,
-    required this.color,
-    required this.glint,
-    super.child,
-  });
-
-  final Animation<double> animation;
-  final Color color;
-  final Color glint;
-
-  @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderHeatShimmer(animation, color, glint);
-
-  @override
-  void updateRenderObject(
-    BuildContext context,
-    _RenderHeatShimmer renderObject,
-  ) {
-    renderObject
-      ..animation = animation
-      ..color = color
-      ..glint = glint;
-  }
-}
-
-class _RenderHeatShimmer extends RenderProxyBox {
-  _RenderHeatShimmer(this._animation, this._color, this._glint);
-
-  Animation<double> _animation;
-  set animation(Animation<double> value) {
-    if (identical(value, _animation)) return;
-    if (attached) _animation.removeListener(markNeedsPaint);
-    _animation = value;
-    if (attached) _animation.addListener(markNeedsPaint);
-    markNeedsPaint();
-  }
-
-  Color _color;
-  set color(Color value) {
-    if (value == _color) return;
-    _color = value;
-    markNeedsPaint();
-  }
-
-  Color _glint;
-  set glint(Color value) {
-    if (value == _glint) return;
-    _glint = value;
-    markNeedsPaint();
-  }
-
-  @override
-  void attach(PipelineOwner owner) {
-    super.attach(owner);
-    _animation.addListener(markNeedsPaint);
-  }
-
-  @override
-  void detach() {
-    _animation.removeListener(markNeedsPaint);
-    super.detach();
-  }
-
-  @override
-  bool get alwaysNeedsCompositing => child != null;
-
-  @override
-  ShaderMaskLayer? get layer => super.layer as ShaderMaskLayer?;
-
-  @override
-  void paint(PaintingContext context, Offset offset) {
-    if (child == null) {
-      layer = null;
-      return;
-    }
-    final double band = math.max(size.width * 0.3, 28);
-    // Rests just off the left edge between sweeps, and when motion is off.
-    final double center = -band + (size.width + band * 2) * _animation.value;
-    layer ??= ShaderMaskLayer();
-    layer!
-      ..shader = ui.Gradient.linear(
-        Offset(center - band, 0),
-        Offset(center + band, 0),
-        <Color>[_color, _glint, _color],
-        _bandStops,
-      )
-      ..maskRect = offset & size
-      ..blendMode = BlendMode.srcIn;
-    context.pushLayer(layer!, super.paint, offset);
-  }
 }
 
 /// Raw-dough look for a sent message the daemon has not echoed back yet: it
