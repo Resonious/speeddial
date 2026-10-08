@@ -384,7 +384,15 @@ Performance rules for the app:
 - Timeline: a reversed `CustomScrollView` with history and live slivers growing on
   opposite sides of a fixed origin preserves the reading position. Stable row keys
   and local page storage retain expansion; the down-arrow or a successful local send
-  resumes following live events. Failed sends retain the reading position.
+  resumes following live events. The down-arrow jumps instantly (an animated scroll over
+  long history would only blur past it). Any return to the bottom from far enough away to
+  show the down-arrow — the button, a drag, fling or wheel, or following resumed after a
+  send — lands in a short spark burst along the bottom edge (landing_sparks.dart);
+  wiggles that never leave the bottom do not. While shown, the down-arrow flares with
+  activity at the live end
+  (latest_button.dart): the chat pane counts changes of the newest buffered event, which
+  new events and streamed text replace but older pages never touch. Failed sends retain
+  the reading position.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at

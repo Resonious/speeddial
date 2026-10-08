@@ -8,6 +8,8 @@ import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'history_expansion.dart';
+import 'landing_sparks.dart';
+import 'latest_button.dart';
 import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
@@ -443,10 +445,15 @@ class Timeline extends StatefulWidget {
     this.delivered = const <int>{},
     this.heat = TurnHeat.off,
     this.turnSeed = 0,
+    this.activity = 0,
   });
 
   /// Increment after a successful local send to resume following the timeline.
   final int followLatestRequest;
+
+  /// Changes whenever content arrives at the live end; the jump-to-latest
+  /// button flares with it while the reader is scrolled away.
+  final int activity;
 
   final List<TimelineItem> items;
 
@@ -487,7 +494,18 @@ class _TimelineState extends State<Timeline> {
   static const Key _historyKey = ValueKey<String>('timeline-history');
   static const Key _tailKey = ValueKey<String>('timeline-tail');
   final _TimelineScrollController _controller = _TimelineScrollController();
+
+  /// How far above the latest event the reader must be for the jump button
+  /// to show, and for coming back down to count as a landing.
+  static const double _awayDistance = 24;
   final ValueNotifier<bool> _showLatest = ValueNotifier<bool>(false);
+
+  /// Whether the reader has been [_awayDistance] from the bottom since the
+  /// view last landed there.
+  bool _away = false;
+
+  /// Counts landings at the bottom; each one sets off [LandingSparks].
+  final ValueNotifier<int> _landings = ValueNotifier<int>(0);
   Object? _liveStart;
   bool _requestedOlder = false;
   final PageStorageBucket _storage = PageStorageBucket();
@@ -549,7 +567,17 @@ class _TimelineState extends State<Timeline> {
   void _onScroll() {
     if (!mounted || !_controller.hasClients) return;
     final ScrollPosition position = _controller.position;
-    _showLatest.value = position.pixels - position.minScrollExtent > 24;
+    final double fromLatest = position.pixels - position.minScrollExtent;
+    _showLatest.value = fromLatest > _awayDistance;
+    // Back at the bottom after being away — by the jump button, a drag, a
+    // fling or the wheel, or following resumed after a send — the view
+    // lands in sparks. Wiggles that never leave the bottom do not.
+    if (fromLatest > _awayDistance) {
+      _away = true;
+    } else if (_away && fromLatest <= 1) {
+      _away = false;
+      _landings.value++;
+    }
     if (!_requestedOlder &&
         widget.hasOlder &&
         !widget.loadingOlder &&
@@ -560,6 +588,8 @@ class _TimelineState extends State<Timeline> {
     }
   }
 
+  /// Jumps straight to the bottom (animating a long scroll would only blur
+  /// past the history); [_onScroll] lands it in sparks.
   void _jumpToLatest() {
     _controller.followLatest = true;
     _controller.jumpTo(_controller.position.minScrollExtent);
@@ -571,6 +601,7 @@ class _TimelineState extends State<Timeline> {
       ..removeListener(_onScroll)
       ..dispose();
     _showLatest.dispose();
+    _landings.dispose();
     super.dispose();
   }
 
@@ -691,17 +722,22 @@ class _TimelineState extends State<Timeline> {
           ),
         ),
         Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 180,
+          child: LandingSparks(landings: _landings),
+        ),
+        Positioned(
           right: 16,
           bottom: 12,
           child: ValueListenableBuilder<bool>(
             valueListenable: _showLatest,
             builder: (BuildContext context, bool visible, Widget? child) =>
                 visible ? child! : const SizedBox.shrink(),
-            child: FloatingActionButton.small(
-              heroTag: null,
-              tooltip: 'Jump to latest event',
+            child: LatestButton(
+              activity: widget.activity,
               onPressed: _jumpToLatest,
-              child: const Icon(Icons.arrow_downward),
             ),
           ),
         ),

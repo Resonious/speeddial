@@ -913,6 +913,45 @@ void main() {
     expect(find.byKey(const Key('turn-flame')), findsNothing);
   });
 
+  testWidgets('new events below flare the jump button; older pages do not', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final Session session = (await fake.listSessions()).first;
+    fake.seedHistory(session.id, <SessionEvent>[
+      for (int i = 0; i < 560; i++) UserMessageEvent(text: 'Earlier $i'),
+    ]);
+    final (AppData app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    await tester.pumpAndSettle();
+    final Finder flames = find.byKey(const Key('latest-flames'));
+
+    // Reading back far enough loads an older page at the top: no flare.
+    final ScrollPosition position = tester
+        .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+        .controller!
+        .position;
+    position.jumpTo(position.maxScrollExtent);
+    await pumpUntil(tester, () => !app.chat.hasOlderHistory(session.id));
+    await tester.pumpAndSettle();
+    expect(app.chat.eventsFor(session.id), hasLength(560));
+    expect(find.byTooltip('Jump to latest event'), findsOneWidget);
+    expect(flames, findsNothing);
+
+    // Output arriving at the live end does.
+    fake.emitBackgroundEvent(
+      session.id,
+      const AgentMessageChunkEvent(text: 'Meanwhile…', messageId: 'later'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(flames, findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(flames, findsNothing);
+  });
+
   testWidgets('reduced motion holds the oven still', (
     WidgetTester tester,
   ) async {

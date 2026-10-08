@@ -168,6 +168,12 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   List<TimelineItem> _items = const <TimelineItem>[];
   int _turnSeed = 0;
   PermissionRequest? _pending;
+
+  /// Newest buffered event. New events and streamed text replace it, while
+  /// older history pages prepend and leave it alone, so a change here is
+  /// activity at the live end; [_activity] counts those changes.
+  SessionEvent? _tail;
+  int _activity = 0;
   bool _forking = false;
   bool _draftErrorShown = false;
   final ValueNotifier<int> _followLatestRequest = ValueNotifier<int>(0);
@@ -267,6 +273,12 @@ class _SessionSurfaceState extends State<_SessionSurface> {
           _items = _timeline.update(events, running: running);
           _turnSeed = latestTurnSeed(_items);
           _pending = chat.pendingPermissionFor(sessionId);
+          // Loading or reloading history is not activity.
+          final SessionEvent? tail = events.isEmpty ? null : events.last;
+          if (_tail != null && tail != null && !identical(tail, _tail)) {
+            _activity++;
+          }
+          _tail = tail;
         }
         // Messages still on their way: shown at once, and the flame lights
         // before the daemon reports the turn running.
@@ -299,6 +311,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             delivered: chat.deliveredSeqsFor(sessionId),
             heat: turnHeatFor(status, _items, sending: sending),
             turnSeed: _turnSeed,
+            activity: _activity,
             followLatestRequest: _followLatestRequest.value,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),

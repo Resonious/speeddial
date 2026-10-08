@@ -132,6 +132,130 @@ void main() {
     expect(scrollable.position.pixels, scrollable.position.minScrollExtent);
   });
 
+  for (final bool reduceMotion in <bool>[false, true]) {
+    testWidgets(
+      'jumping to the latest event lands instantly'
+      '${reduceMotion ? ' and quietly under reduced motion' : ' in sparks'}',
+      (tester) async {
+        if (reduceMotion) {
+          tester.platformDispatcher.accessibilityFeaturesTestValue =
+              const FakeAccessibilityFeatures(disableAnimations: true);
+          addTearDown(
+            tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+          );
+        }
+        await tester.pumpWidget(
+          app(<TimelineItem>[
+            for (int i = 0; i < 60; i++)
+              UserMessageItem(id: i, text: 'Message $i'),
+          ]),
+        );
+        await tester.pumpAndSettle();
+        final Finder timeline = find.byKey(const Key('chat-timeline'));
+        final ScrollPosition position = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(of: timeline, matching: find.byType(Scrollable))
+                  .first,
+            )
+            .position;
+        await tester.drag(timeline, const Offset(0, 400));
+        await tester.pumpAndSettle();
+        expect(position.pixels, greaterThan(position.minScrollExtent + 100));
+
+        await tester.tap(find.byTooltip('Jump to latest event'));
+        await tester.pump();
+        expect(position.pixels, position.minScrollExtent);
+        // Embers are still flying well after the button's own feedback.
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(tester.hasRunningAnimations, !reduceMotion);
+        await tester.pump(const Duration(seconds: 1));
+        expect(tester.hasRunningAnimations, isFalse);
+      },
+    );
+  }
+
+  testWidgets('scrolling back down to the bottom lands in sparks', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      app(<TimelineItem>[
+        for (int i = 0; i < 60; i++) UserMessageItem(id: i, text: 'Message $i'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    final Finder timeline = find.byKey(const Key('chat-timeline'));
+    final Finder sparks = find.byKey(const Key('landing-sparks'));
+
+    // A wiggle that never leaves the bottom is not a landing.
+    await tester.drag(timeline, const Offset(0, 16));
+    await tester.pumpAndSettle();
+    await tester.drag(timeline, const Offset(0, -40));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(sparks, paintsNothing);
+    await tester.pumpAndSettle();
+
+    // Reading back up, then scrolling all the way down again, is.
+    await tester.drag(timeline, const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Jump to latest event'), findsOneWidget);
+    await tester.drag(timeline, const Offset(0, -400));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(sparks, paints..line());
+    await tester.pumpAndSettle();
+    expect(sparks, paintsNothing);
+  });
+
+  for (final bool reduceMotion in <bool>[false, true]) {
+    testWidgets(
+      'activity below ${reduceMotion ? 'leaves the jump button still under '
+                'reduced motion' : 'flares the jump button, which then cools'}',
+      (tester) async {
+        if (reduceMotion) {
+          tester.platformDispatcher.accessibilityFeaturesTestValue =
+              const FakeAccessibilityFeatures(disableAnimations: true);
+          addTearDown(
+            tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+          );
+        }
+        // One theme instance: a fresh one per pump would crossfade themes.
+        final ThemeData theme = buildSpeedDialTheme();
+        Widget timeline(int activity) => MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: Timeline(
+              activity: activity,
+              items: <TimelineItem>[
+                for (int i = 0; i < 60; i++)
+                  UserMessageItem(id: i, text: 'Message $i'),
+              ],
+            ),
+          ),
+        );
+        final Finder flames = find.byKey(const Key('latest-flames'));
+        await tester.pumpWidget(timeline(0));
+        await tester.pumpAndSettle();
+        await tester.drag(
+          find.byKey(const Key('chat-timeline')),
+          const Offset(0, 400),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('Jump to latest event'), findsOneWidget);
+        expect(flames, findsNothing);
+
+        await tester.pumpWidget(timeline(1));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(flames, reduceMotion ? findsNothing : findsOneWidget);
+
+        await tester.pump(const Duration(seconds: 2));
+        expect(flames, findsNothing);
+        expect(tester.hasRunningAnimations, isFalse);
+      },
+    );
+  }
+
   testWidgets('thought stays expanded when merged chunks change sequence', (
     tester,
   ) async {
