@@ -166,7 +166,14 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   bool _running = false;
 
   List<TimelineItem> _items = const <TimelineItem>[];
+  int _turnSeed = 0;
   PermissionRequest? _pending;
+
+  /// Newest buffered event. New events and streamed text replace it, while
+  /// older history pages prepend and leave it alone, so a change here is
+  /// activity at the live end; [_activity] counts those changes.
+  SessionEvent? _tail;
+  int _activity = 0;
   bool _forking = false;
   bool _draftErrorShown = false;
   final ValueNotifier<int> _followLatestRequest = ValueNotifier<int>(0);
@@ -264,8 +271,19 @@ class _SessionSurfaceState extends State<_SessionSurface> {
           _revision = revision;
           _running = running;
           _items = _timeline.update(events, running: running);
+          _turnSeed = latestTurnSeed(_items);
           _pending = chat.pendingPermissionFor(sessionId);
+          // Loading or reloading history is not activity.
+          final SessionEvent? tail = events.isEmpty ? null : events.last;
+          if (_tail != null && tail != null && !identical(tail, _tail)) {
+            _activity++;
+          }
+          _tail = tail;
         }
+        // Messages still on their way: shown at once, and the flame lights
+        // before the daemon reports the turn running.
+        final List<OutgoingMessage> outgoing = chat.outgoingFor(sessionId);
+        final bool sending = outgoing.isNotEmpty;
         final UsageInfo? usage = chat.usageOf(sessionId);
         final PermissionRequest? pending = _pending;
         final Session? session = data.sessions.byId(sessionId);
@@ -277,10 +295,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
         // While the first fetch runs (or after it failed with nothing live
         // to show), a bare timeline would read as an empty session.
+        final bool bare = events.isEmpty && !sending;
         final Widget surface;
-        if (events.isEmpty && historyStatus == HistoryStatus.loading) {
+        if (bare && historyStatus == HistoryStatus.loading) {
           surface = const _HistoryLoading();
-        } else if (events.isEmpty && historyStatus == HistoryStatus.failed) {
+        } else if (bare && historyStatus == HistoryStatus.failed) {
           surface = _HistoryError(
             error: chat.historyErrorFor(sessionId),
             onRetry: () => chat.retryHistory(daemonId, sessionId),
@@ -288,6 +307,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         } else {
           surface = Timeline(
             items: _items,
+            outgoing: outgoing,
+            delivered: chat.deliveredSeqsFor(sessionId),
+            heat: turnHeatFor(status, _items, sending: sending),
+            turnSeed: _turnSeed,
+            activity: _activity,
             followLatestRequest: _followLatestRequest.value,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),
@@ -346,6 +370,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               child: Composer(
                 focusNode: widget.composerFocusNode,
                 status: status,
+                sending: sending,
                 preparing: session?.preparing ?? false,
                 commands: _commands,
                 onSlashStarted: () => unawaited(_loadCommands()),

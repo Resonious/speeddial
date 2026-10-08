@@ -855,6 +855,140 @@ void main() {
     );
   }
 
+  testWidgets('a sent message bakes in place, then pops when echoed', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(
+      tester,
+      fake: FakeDaemonClient(
+        eventDelay: const Duration(milliseconds: 1),
+        sendLatency: const Duration(seconds: 2),
+      ),
+    );
+    final String sessionId = app.selection.selectedSessionId!;
+
+    await tester.enterText(find.byType(TextField), 'bake me');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // In flight: shown at once under the oven glint while the flame
+    // preheats.
+    expect(find.byKey(const Key('baking-bubble')), findsOneWidget);
+    expect(find.text('bake me'), findsOneWidget);
+    expect(find.text('Preheating…'), findsOneWidget);
+    expect(find.byKey(const Key('delivered-pop')), findsNothing);
+
+    // A follow-up waits for the first message to land.
+    await tester.enterText(find.byType(TextField), 'and another');
+    await tester.pump();
+    final IconButton send = tester.widget(
+      find.widgetWithIcon(IconButton, Icons.send),
+    );
+    expect(send.onPressed, isNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'and another',
+    );
+
+    // The echo replaces the baking bubble in place with the persisted row.
+    await pumpUntil(
+      tester,
+      () => find.byKey(const Key('delivered-pop')).evaluate().isNotEmpty,
+      step: const Duration(milliseconds: 50),
+    );
+    expect(find.byKey(const Key('baking-bubble')), findsNothing);
+    expect(find.text('bake me'), findsOneWidget);
+    expect(app.chat.outgoingFor(sessionId), isEmpty);
+
+    // The turn plays out and the flame goes out.
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.idle,
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const Key('turn-flame')), findsNothing);
+  });
+
+  testWidgets('new events below flare the jump button; older pages do not', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final Session session = (await fake.listSessions()).first;
+    fake.seedHistory(session.id, <SessionEvent>[
+      for (int i = 0; i < 560; i++) UserMessageEvent(text: 'Earlier $i'),
+    ]);
+    final (AppData app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    await tester.pumpAndSettle();
+    final Finder flames = find.byKey(const Key('latest-flames'));
+
+    // Reading back far enough loads an older page at the top: no flare.
+    final ScrollPosition position = tester
+        .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+        .controller!
+        .position;
+    position.jumpTo(position.maxScrollExtent);
+    await pumpUntil(tester, () => !app.chat.hasOlderHistory(session.id));
+    await tester.pumpAndSettle();
+    expect(app.chat.eventsFor(session.id), hasLength(560));
+    expect(find.byTooltip('Jump to latest event'), findsOneWidget);
+    expect(flames, findsNothing);
+
+    // Output arriving at the live end does.
+    fake.emitBackgroundEvent(
+      session.id,
+      const AgentMessageChunkEvent(text: 'Meanwhile…', messageId: 'later'),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(flames, findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(flames, findsNothing);
+  });
+
+  testWidgets('reduced motion holds the oven still', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(
+      tester,
+      eventDelay: const Duration(seconds: 2),
+    );
+    final String sessionId = app.selection.selectedSessionId!;
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'no motion');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.running,
+    );
+
+    // The turn is still running, yet nothing keeps scheduling frames.
+    await tester.pumpAndSettle();
+    expect(app.chat.statusOf(sessionId), SessionStatus.running);
+    expect(find.byKey(const Key('turn-flame')), findsOneWidget);
+    expect(find.text('Preheating…'), findsOneWidget);
+
+    // Drain the scripted turn so no timers outlive the test.
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.idle,
+      attempts: 40,
+      step: const Duration(seconds: 1),
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('Shift+Enter inserts a newline instead of sending', (
     WidgetTester tester,
   ) async {
@@ -979,6 +1113,10 @@ void main() {
     // DaemonError surfaced as a SnackBar...
     expect(find.text('a turn is already running'), findsOneWidget);
     expect(position.pixels, closeTo(readingOffset, 0.1));
+    // ...the optimistic bubble is gone and the flame is out again...
+    expect(find.byKey(const Key('baking-bubble')), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const Key('turn-flame')), findsNothing);
     // ...and the draft was restored into the field.
     final TextField field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller!.text, 'hello');

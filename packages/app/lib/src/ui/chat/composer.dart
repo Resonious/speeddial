@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -72,6 +73,7 @@ class Composer extends StatefulWidget {
     super.key,
     this.focusNode,
     required this.status,
+    this.sending = false,
     this.preparing = false,
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
@@ -99,6 +101,9 @@ class Composer extends StatefulWidget {
 
   /// Current session status; drives the send/stop switch.
   final SessionStatus status;
+
+  /// A sent message is still on its way to the daemon; sending again waits.
+  final bool sending;
   final bool preparing;
 
   /// Native commands advertised by the active harness session.
@@ -213,12 +218,19 @@ class _PasteImageAction extends Action<PasteTextIntent> {
       callingAction?.consumesKey(intent) ?? false;
 }
 
-class _ComposerState extends State<Composer> {
+class _ComposerState extends State<Composer>
+    with SingleTickerProviderStateMixin {
   static final RegExp _commandWhitespace = RegExp(r'\s');
 
   late final TextEditingController _controller;
   final FocusNode _ownedFocusNode = FocusNode();
   late final _PasteImageAction _pasteImageAction;
+
+  /// Shakes the field when a rejected message comes back into it.
+  late final AnimationController _bounce = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 460),
+  );
   bool _hasText = false;
   bool _suppressDraftSave = false;
   bool _menuDismissed = false;
@@ -235,9 +247,10 @@ class _ComposerState extends State<Composer> {
   /// Send is enabled with text, attachments, or both (PROTOCOL.md allows
   /// `sessions.send` with empty text when attachments are present).
   bool get _canSend =>
-      _hasText ||
-      _attachments.isNotEmpty ||
-      widget.sharedAttachments.isNotEmpty;
+      !widget.sending &&
+      (_hasText ||
+          _attachments.isNotEmpty ||
+          widget.sharedAttachments.isNotEmpty);
 
   @override
   void initState() {
@@ -264,6 +277,7 @@ class _ComposerState extends State<Composer> {
       ..removeListener(_onTextChanged)
       ..dispose();
     _ownedFocusNode.dispose();
+    _bounce.dispose();
     super.dispose();
   }
 
@@ -471,7 +485,10 @@ class _ComposerState extends State<Composer> {
       widget.sharedAttachments,
     );
     attachments.addAll(shared);
-    if ((text.isEmpty && attachments.isEmpty) || _running || !mounted) {
+    if ((text.isEmpty && attachments.isEmpty) ||
+        _running ||
+        widget.sending ||
+        !mounted) {
       return;
     }
     _suppressDraftSave = true;
@@ -515,6 +532,9 @@ class _ComposerState extends State<Composer> {
           attachments.where((OutgoingAttachment a) => !shared.contains(a)),
         ),
       );
+      if (!(MediaQuery.maybeDisableAnimationsOf(context) ?? false)) {
+        unawaited(_bounce.forward(from: 0));
+      }
       return;
     }
     if (shared.isNotEmpty) widget.onSharedAttachmentsSent?.call(shared);
@@ -572,145 +592,150 @@ class _ComposerState extends State<Composer> {
             thinkingLevels: widget.thinkingLevels,
             onThinkingChanged: widget.onThinkingChanged,
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                if (_attachments.isNotEmpty ||
-                    widget.sharedAttachments.isNotEmpty)
-                  _AttachmentChips(
-                    attachments: <OutgoingAttachment>[
-                      ..._attachments,
-                      ...widget.sharedAttachments,
-                    ],
-                    onRemove: (OutgoingAttachment attachment) {
-                      if (widget.sharedAttachments.contains(attachment)) {
-                        widget.onRemoveSharedAttachment?.call(attachment);
-                      } else {
-                        _removeAttachment(attachment);
-                      }
-                    },
-                  ),
-                if (_showCommandMenu)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 224),
-                    child: ListView.builder(
-                      key: const Key('slash-command-menu'),
-                      shrinkWrap: true,
-                      itemCount: _commandMatches.length,
-                      itemBuilder: (BuildContext context, int index) {
-                        final NativeCommand command = _commandMatches[index];
-                        return ListTile(
-                          key: Key('slash-command-/${command.name}'),
-                          dense: true,
-                          selected: index == _activeCommand,
-                          title: Text(
-                            '/${command.name}${command.argumentHint == null ? '' : ' ${command.argumentHint}'}',
-                          ),
-                          subtitle: Text(command.description),
-                          onTap: () => _selectCommand(command),
-                        );
+          AnimatedBuilder(
+            animation: _bounce,
+            builder: _shake,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (_attachments.isNotEmpty ||
+                      widget.sharedAttachments.isNotEmpty)
+                    _AttachmentChips(
+                      attachments: <OutgoingAttachment>[
+                        ..._attachments,
+                        ...widget.sharedAttachments,
+                      ],
+                      onRemove: (OutgoingAttachment attachment) {
+                        if (widget.sharedAttachments.contains(attachment)) {
+                          widget.onRemoveSharedAttachment?.call(attachment);
+                        } else {
+                          _removeAttachment(attachment);
+                        }
                       },
                     ),
-                  ),
-                Shortcuts(
-                  shortcuts: <ShortcutActivator, Intent>{
-                    const SingleActivator(LogicalKeyboardKey.enter):
-                        const _SendMessageIntent(),
-                    const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                        const _SendMessageIntent(),
-                    const SingleActivator(
-                      LogicalKeyboardKey.enter,
-                      shift: true,
-                    ): const _InsertNewlineIntent(),
-                    if (_showCommandMenu) ...<ShortcutActivator, Intent>{
-                      const SingleActivator(LogicalKeyboardKey.arrowDown):
-                          const _MoveCommandIntent(1),
-                      const SingleActivator(LogicalKeyboardKey.arrowUp):
-                          const _MoveCommandIntent(-1),
-                      const SingleActivator(LogicalKeyboardKey.escape):
-                          const _DismissCommandIntent(),
-                      const SingleActivator(LogicalKeyboardKey.tab):
+                  if (_showCommandMenu)
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 224),
+                      child: ListView.builder(
+                        key: const Key('slash-command-menu'),
+                        shrinkWrap: true,
+                        itemCount: _commandMatches.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final NativeCommand command = _commandMatches[index];
+                          return ListTile(
+                            key: Key('slash-command-/${command.name}'),
+                            dense: true,
+                            selected: index == _activeCommand,
+                            title: Text(
+                              '/${command.name}${command.argumentHint == null ? '' : ' ${command.argumentHint}'}',
+                            ),
+                            subtitle: Text(command.description),
+                            onTap: () => _selectCommand(command),
+                          );
+                        },
+                      ),
+                    ),
+                  Shortcuts(
+                    shortcuts: <ShortcutActivator, Intent>{
+                      const SingleActivator(LogicalKeyboardKey.enter):
                           const _SendMessageIntent(),
+                      const SingleActivator(LogicalKeyboardKey.numpadEnter):
+                          const _SendMessageIntent(),
+                      const SingleActivator(
+                        LogicalKeyboardKey.enter,
+                        shift: true,
+                      ): const _InsertNewlineIntent(),
+                      if (_showCommandMenu) ...<ShortcutActivator, Intent>{
+                        const SingleActivator(LogicalKeyboardKey.arrowDown):
+                            const _MoveCommandIntent(1),
+                        const SingleActivator(LogicalKeyboardKey.arrowUp):
+                            const _MoveCommandIntent(-1),
+                        const SingleActivator(LogicalKeyboardKey.escape):
+                            const _DismissCommandIntent(),
+                        const SingleActivator(LogicalKeyboardKey.tab):
+                            const _SendMessageIntent(),
+                      },
                     },
-                  },
-                  child: Actions(
-                    actions: <Type, Action<Intent>>{
-                      PasteTextIntent: _pasteImageAction,
-                      _SendMessageIntent: CallbackAction<_SendMessageIntent>(
-                        onInvoke: (_) {
-                          _submitFromKeyboard();
-                          return null;
-                        },
-                      ),
-                      _InsertNewlineIntent:
-                          CallbackAction<_InsertNewlineIntent>(
-                            onInvoke: (_) {
-                              _insertNewline();
-                              return null;
-                            },
-                          ),
-                      _MoveCommandIntent: CallbackAction<_MoveCommandIntent>(
-                        onInvoke: (_MoveCommandIntent intent) {
-                          _moveCommand(intent.delta);
-                          return null;
-                        },
-                      ),
-                      _DismissCommandIntent:
-                          CallbackAction<_DismissCommandIntent>(
-                            onInvoke: (_) {
-                              setState(() => _menuDismissed = true);
-                              return null;
-                            },
-                          ),
-                    },
-                    child: TextField(
-                      focusNode: widget.focusNode ?? _ownedFocusNode,
-                      controller: _controller,
-                      minLines: 1,
-                      maxLines: 8,
-                      keyboardType: TextInputType.multiline,
-                      textInputAction: TextInputAction.newline,
-                      contentInsertionConfiguration:
-                          ContentInsertionConfiguration(
-                            onContentInserted: _onContentInserted,
-                          ),
-                      contextMenuBuilder: _buildContextMenu,
-                      decoration: InputDecoration(
-                        hintText: 'Message the agent…',
-                        prefixIcon: IconButton(
-                          tooltip: 'Attach files',
-                          icon: const Icon(Icons.attach_file),
-                          // Keep the draft stable while a turn is running;
-                          // sending is disabled then too.
-                          onPressed: _running ? null : _pickFiles,
+                    child: Actions(
+                      actions: <Type, Action<Intent>>{
+                        PasteTextIntent: _pasteImageAction,
+                        _SendMessageIntent: CallbackAction<_SendMessageIntent>(
+                          onInvoke: (_) {
+                            _submitFromKeyboard();
+                            return null;
+                          },
                         ),
-                        suffixIcon: _running
-                            ? IconButton(
-                                tooltip: 'Stop',
-                                icon: const Icon(Icons.stop_circle_outlined),
-                                onPressed: widget.onStop,
-                              )
-                            : Padding(
-                                padding: const EdgeInsets.all(4),
-                                child: IconButton(
-                                  tooltip: 'Send',
-                                  icon: const Icon(Icons.send, size: 18),
-                                  style: IconButton.styleFrom(
-                                    backgroundColor: scheme.primary,
-                                    foregroundColor: scheme.onPrimary,
-                                    disabledBackgroundColor: Colors.transparent,
+                        _InsertNewlineIntent:
+                            CallbackAction<_InsertNewlineIntent>(
+                              onInvoke: (_) {
+                                _insertNewline();
+                                return null;
+                              },
+                            ),
+                        _MoveCommandIntent: CallbackAction<_MoveCommandIntent>(
+                          onInvoke: (_MoveCommandIntent intent) {
+                            _moveCommand(intent.delta);
+                            return null;
+                          },
+                        ),
+                        _DismissCommandIntent:
+                            CallbackAction<_DismissCommandIntent>(
+                              onInvoke: (_) {
+                                setState(() => _menuDismissed = true);
+                                return null;
+                              },
+                            ),
+                      },
+                      child: TextField(
+                        focusNode: widget.focusNode ?? _ownedFocusNode,
+                        controller: _controller,
+                        minLines: 1,
+                        maxLines: 8,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        contentInsertionConfiguration:
+                            ContentInsertionConfiguration(
+                              onContentInserted: _onContentInserted,
+                            ),
+                        contextMenuBuilder: _buildContextMenu,
+                        decoration: InputDecoration(
+                          hintText: 'Message the agent…',
+                          prefixIcon: IconButton(
+                            tooltip: 'Attach files',
+                            icon: const Icon(Icons.attach_file),
+                            // Keep the draft stable while a turn is running;
+                            // sending is disabled then too.
+                            onPressed: _running ? null : _pickFiles,
+                          ),
+                          suffixIcon: _running
+                              ? IconButton(
+                                  tooltip: 'Stop',
+                                  icon: const Icon(Icons.stop_circle_outlined),
+                                  onPressed: widget.onStop,
+                                )
+                              : Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: IconButton(
+                                    tooltip: 'Send',
+                                    icon: const Icon(Icons.send, size: 18),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: scheme.primary,
+                                      foregroundColor: scheme.onPrimary,
+                                      disabledBackgroundColor:
+                                          Colors.transparent,
+                                    ),
+                                    onPressed: _canSend ? _send : null,
                                   ),
-                                  onPressed: _canSend ? _send : null,
                                 ),
-                              ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (widget.usage != null) _UsageFooter(usage: widget.usage!),
@@ -718,6 +743,15 @@ class _ComposerState extends State<Composer> {
       ),
     );
   }
+
+  /// A damped side-to-side wobble: the message bounced back.
+  Widget _shake(BuildContext context, Widget? child) => Transform.translate(
+    offset: Offset(
+      7 * math.sin(_bounce.value * math.pi * 5) * (1 - _bounce.value),
+      0,
+    ),
+    child: child,
+  );
 }
 
 class _ControlsRow extends StatelessWidget {

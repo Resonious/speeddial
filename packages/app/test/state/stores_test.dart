@@ -183,6 +183,41 @@ class _GatedPageFake extends FakeDaemonClient {
   }
 }
 
+/// Fake whose `sendMessage` waits for [release] (or fails on [reject]), so
+/// tests can observe a send while it is in flight.
+class _HeldSendFake extends FakeDaemonClient {
+  _HeldSendFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  final Completer<void> _gate = Completer<void>();
+
+  void release() => _gate.complete();
+
+  void reject(Object error) => _gate.completeError(error);
+
+  @override
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+  }) async {
+    await _gate.future;
+    await super.sendMessage(sessionId, text, attachments: attachments);
+  }
+}
+
+/// Fake whose daemon persists a reworded user message, so the echo never
+/// matches what the client sent.
+class _RewordingFake extends FakeDaemonClient {
+  _RewordingFake() : super(eventDelay: const Duration(milliseconds: 1));
+
+  @override
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+  }) => super.sendMessage(sessionId, '$text (reworded)');
+}
+
 void main() {
   late FakeDaemonClient fake;
   late AppData app;
@@ -635,6 +670,104 @@ void main() {
         expect(app.chat.statusOf(sessionId), SessionStatus.idle);
       },
     );
+
+    test('a send stays outgoing until its echo marks it delivered', () async {
+      final _HeldSendFake held = _HeldSendFake();
+      app.registerClient('held', held);
+      app.chat.watchSession('held', 'sess-1');
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+      int notifications = 0;
+      app.chat.addListener(() => notifications++);
+
+      final Future<void> sent = app.chat.send('held', 'sess-1', 'bake this');
+      expect(
+        app.chat.outgoingFor('sess-1').map((OutgoingMessage m) => m.text),
+        <String>['bake this'],
+      );
+      await _flushMicrotasks();
+      expect(notifications, greaterThan(0));
+      expect(app.chat.deliveredSeqsFor('sess-1'), isEmpty);
+
+      held.release();
+      await sent;
+      await _waitUntil(() => app.chat.outgoingFor('sess-1').isEmpty);
+      final UserMessageEvent echo = app.chat
+          .eventsFor('sess-1')
+          .whereType<UserMessageEvent>()
+          .single;
+      expect(echo.text, 'bake this');
+      expect(app.chat.deliveredSeqsFor('sess-1'), <int>{echo.seq!});
+    });
+
+    test('a rejected send drops its outgoing message and rethrows', () async {
+      final _HeldSendFake held = _HeldSendFake();
+      app.registerClient('held', held);
+      app.chat.watchSession('held', 'sess-1');
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+
+      final Future<void> sent = app.chat.send('held', 'sess-1', 'too soon');
+      expect(app.chat.outgoingFor('sess-1'), hasLength(1));
+      held.reject(const DaemonError(kErrConflict, 'a turn is already running'));
+
+      await expectLater(sent, throwsA(isA<DaemonError>()));
+      expect(app.chat.outgoingFor('sess-1'), isEmpty);
+      expect(app.chat.deliveredSeqsFor('sess-1'), isEmpty);
+    });
+
+    test('a native command is delivered by its persisted /name text', () async {
+      final Session session = await fake.createSession(
+        projectId: (await fake.listProjects()).first.id,
+        providerId: 'codex',
+      );
+      app.chat.watchSession('fake', session.id);
+      await _waitUntil(
+        () => app.chat.historyStatusFor(session.id) == HistoryStatus.ready,
+      );
+
+      final Future<void> ran = app.chat.runCommand(
+        'fake',
+        session.id,
+        'review',
+        arguments: 'auth changes',
+      );
+      expect(
+        app.chat.outgoingFor(session.id).single.text,
+        '/review auth changes',
+      );
+      await ran;
+      await _waitUntil(() => app.chat.outgoingFor(session.id).isEmpty);
+      expect(app.chat.deliveredSeqsFor(session.id), hasLength(1));
+    });
+
+    test('an unmatched acknowledged send clears when the turn ends', () async {
+      final _RewordingFake rewording = _RewordingFake();
+      app.registerClient('reword', rewording);
+      app.chat.watchSession('reword', 'sess-1');
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+
+      await app.chat.send('reword', 'sess-1', 'hello');
+      await _waitUntil(
+        () => app.chat
+            .eventsFor('sess-1')
+            .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
+
+      expect(app.chat.outgoingFor('sess-1'), isEmpty);
+      expect(app.chat.deliveredSeqsFor('sess-1'), isEmpty);
+    });
+
+    test('sends to an unwatched session are not tracked', () async {
+      final String sessionId = (await fake.listSessions()).first.id;
+      final Future<void> sent = app.chat.send('fake', sessionId, 'hello');
+      expect(app.chat.outgoingFor(sessionId), isEmpty);
+      await sent;
+    });
 
     test(
       'session seed does not overwrite a newer live running update',

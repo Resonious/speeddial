@@ -294,7 +294,11 @@ lib/src/local_daemon/         embedded in-process daemon (desktop only). Conditi
 lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect,
                              persisted), ProjectsStore, SessionsStore, ChatStore
                              (per-session event buffers, incremental adjacent chunk
-                             append), and the shared presentation-neutral session timeline
+                             append, optimistic outgoing messages held from send until
+                             the daemon's `userMessage` echo retires them — the echo's
+                             seq is remembered as delivered; a rejected send drops the
+                             entry, and an acknowledged entry that never matches is
+                             dropped at turn end), and the shared presentation-neutral session timeline
                              fold used by both the full client and Wear (logical content
                              identity plus tool/activity snapshot replacement),
                              FilesStore, FileTransferStore (active transfers and dismissible receipts),
@@ -310,11 +314,15 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              draggable from 240–480px, chat flexible, right 360;
                              side panes collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
+lib/src/ui/flame.dart        hand-painted flame glyph (flickering seamless loop, blaze or
+                             blue pilot light) marking agent work in the rail and chat
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
                              hierarchy and connection controls; Inbox lists sessions across
                              every configured daemon (pinned first, then activity), with
                              a daemon/project chooser for new sessions. Session rows show
-                             title, status chip, provider badge, and daemon/project in Inbox.
+                             title, status chip, provider badge, and daemon/project in Inbox;
+                             their status mark is a live flame while running and an
+                             oven-timer ping while waiting on permission.
                              New-session sheet (provider, worktree branch, yolo,
                              and short prompt —
                              model/thinking are picked in the
@@ -349,6 +357,14 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              model + thinking/effort selectors fed by the provider, stop button while running), expandable provider
                              activity cards, usage/context footer. A leading `/` opens a
                              filtered menu of commands discovered from the live session.
+                             "Oven" turn feedback (oven.dart): sent messages appear at once
+                             as veiled "baking" bubbles laid out like their final rows,
+                             pop with a glow and steam when the echo replaces them, and a
+                             rejected message shakes back into the composer, which blocks
+                             another send while one is in flight. The timeline's live end
+                             carries a flame row: Preheating… (sent or no output yet), a
+                             per-turn cooking verb, Keeping warm… (pilot light) while
+                             waiting on permission; it goes out in smoke when the turn ends.
                              Codex compact/review/skills and Ante compact/context/skills dispatch
                              through their native transports, with the usual turn events.
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
@@ -370,13 +386,24 @@ Performance rules for the app:
 - Timeline: a reversed `CustomScrollView` with history and live slivers growing on
   opposite sides of a fixed origin preserves the reading position. Stable row keys
   and local page storage retain expansion; the down-arrow or a successful local send
-  resumes following live events. Failed sends retain the reading position.
+  resumes following live events. The down-arrow jumps instantly (an animated scroll over
+  long history would only blur past it). Any return to the bottom from far enough away to
+  show the down-arrow — the button, a drag, fling or wheel, or following resumed after a
+  send — lands in a short spark burst along the bottom edge (landing_sparks.dart);
+  wiggles that never leave the bottom do not. While shown, the down-arrow flares with
+  activity at the live end
+  (latest_button.dart): the chat pane counts changes of the newest buffered event, which
+  new events and streamed text replace but older pages never touch. Failed sends retain
+  the reading position.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`.
+- Animations: continuous ones (flame, timer ping, shimmer) run only while a turn is
+  active, repaint through painters/render objects behind repaint boundaries rather than
+  rebuilding, and hold still when the platform requests reduced motion.
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to
   the narrowest widget.
 

@@ -11,10 +11,17 @@ import 'daemon_client.dart';
 /// no network or agent: every method returns immediately (the send script
 /// steps through its event sequence on live streams with a small delay).
 class FakeDaemonClient implements DaemonClient {
-  FakeDaemonClient({this.eventDelay = const Duration(milliseconds: 50)});
+  FakeDaemonClient({
+    this.eventDelay = const Duration(milliseconds: 50),
+    this.sendLatency = Duration.zero,
+  });
 
   /// Delay between scripted streaming events; tests may pass a tiny duration.
   final Duration eventDelay;
+
+  /// How long a send takes to be accepted (the real daemon may first respawn
+  /// and resume the agent); demo mode uses it to show messages in flight.
+  final Duration sendLatency;
 
   bool _disposed = false;
   bool _seeded = false;
@@ -1087,6 +1094,10 @@ class FakeDaemonClient implements DaemonClient {
     }
     _runningScripts.add(sessionId);
     _cancelRequested.remove(sessionId);
+    if (sendLatency > Duration.zero) {
+      await Future<void>.delayed(sendLatency);
+      if (_disposed || !_sessions.containsKey(sessionId)) return;
+    }
     // The daemon broadcasts the user's own message as the turn's first event
     // (see daemon SessionEngine._runTurn); mirror that here.
     _emit(sessionId, UserMessageEvent(text: text, attachments: metadata));
