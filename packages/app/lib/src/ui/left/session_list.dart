@@ -4,6 +4,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/sessions_store.dart';
 import '../../theme.dart';
+import 'session_status_glyph.dart';
 
 /// Palette color for a session lifecycle status.
 Color sessionStatusColor(SpeedDialColors colors, SessionStatus status) {
@@ -295,18 +296,12 @@ class SessionRow extends StatelessWidget {
         child: SizedBox(
           width: 22,
           child: Center(
-            child: Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: done
-                    ? context.speedDialColors.success
-                    : sessionStatusColor(
-                        context.speedDialColors,
-                        session.status,
-                      ),
-              ),
+            child: SessionStatusGlyph(
+              status: session.status,
+              color: done
+                  ? context.speedDialColors.success
+                  : sessionStatusColor(context.speedDialColors, session.status),
+              phase: (session.id.hashCode % 997) / 997,
             ),
           ),
         ),

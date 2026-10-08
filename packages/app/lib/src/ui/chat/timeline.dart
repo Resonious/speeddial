@@ -3,11 +3,13 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'history_expansion.dart';
 import 'message_view.dart';
+import 'oven.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
 
@@ -334,6 +336,32 @@ List<TimelineItem> deriveTimelineItems(
   return items;
 }
 
+/// The oven's state for a session: [sending] is true while a message from
+/// this client awaits its echo, which lights the flame before the daemon
+/// reports the turn running.
+TurnHeat turnHeatFor(
+  SessionStatus status,
+  List<TimelineItem> items, {
+  bool sending = false,
+}) {
+  if (status == SessionStatus.waitingPermission) return TurnHeat.keepingWarm;
+  if (sending) return TurnHeat.preheating;
+  if (status != SessionStatus.running) return TurnHeat.off;
+  return items.isEmpty || items.last is UserMessageItem
+      ? TurnHeat.preheating
+      : TurnHeat.cooking;
+}
+
+/// Seq of the latest user message in [items] (0 when there is none); keys
+/// per-turn flourishes such as [turnHeatLabel]'s verb.
+int latestTurnSeed(List<TimelineItem> items) {
+  for (int i = items.length - 1; i >= 0; i--) {
+    final TimelineItem item = items[i];
+    if (item is UserMessageItem) return item.forkSeq ?? i;
+  }
+  return 0;
+}
+
 bool _isActiveToolStatus(ToolCallStatus status) => switch (status) {
   ToolCallStatus.pending || ToolCallStatus.running => true,
   ToolCallStatus.completed || ToolCallStatus.failed => false,
@@ -411,12 +439,29 @@ class Timeline extends StatefulWidget {
     this.olderError,
     this.onLoadOlder,
     this.followLatestRequest = 0,
+    this.outgoing = const <OutgoingMessage>[],
+    this.delivered = const <int>{},
+    this.heat = TurnHeat.off,
+    this.turnSeed = 0,
   });
 
   /// Increment after a successful local send to resume following the timeline.
   final int followLatestRequest;
 
   final List<TimelineItem> items;
+
+  /// Sent messages awaiting their echo, shown baking after [items].
+  final List<OutgoingMessage> outgoing;
+
+  /// Seqs of user messages that confirmed one of [outgoing]; their rows pop
+  /// the first time they are built.
+  final Set<int> delivered;
+
+  /// Drives the flame at the foot of the timeline (see [turnHeatFor]).
+  final TurnHeat heat;
+
+  /// See [latestTurnSeed].
+  final int turnSeed;
   final bool hasOlder;
   final bool loadingOlder;
   final Object? olderError;
@@ -440,11 +485,24 @@ class Timeline extends StatefulWidget {
 class _TimelineState extends State<Timeline> {
   static const double _loadThreshold = 320;
   static const Key _historyKey = ValueKey<String>('timeline-history');
+  static const Key _tailKey = ValueKey<String>('timeline-tail');
   final _TimelineScrollController _controller = _TimelineScrollController();
   final ValueNotifier<bool> _showLatest = ValueNotifier<bool>(false);
   Object? _liveStart;
   bool _requestedOlder = false;
   final PageStorageBucket _storage = PageStorageBucket();
+
+  /// Delivered messages whose row has been built, so the pop plays once.
+  final Set<int> _popped = <int>{};
+
+  /// Null unless [item] is a delivered message; then whether its pop should
+  /// still play.
+  bool? _deliveryOf(TimelineItem item) {
+    if (item is! UserMessageItem) return null;
+    final int? seq = item.forkSeq;
+    if (seq == null || !widget.delivered.contains(seq)) return null;
+    return _popped.add(seq);
+  }
 
   Object _identity(TimelineItem item, int index) =>
       item.id ??
@@ -528,6 +586,8 @@ class _TimelineState extends State<Timeline> {
     final int split = originIndex < 0 ? 0 : originIndex;
     final bool historyStatus = widget.loadingOlder || widget.olderError != null;
 
+    // History ends in its load status (when shown); the live side always
+    // ends in the tail of baking messages and the turn's flame.
     SliverChildBuilderDelegate rows(
       int start,
       int end, {
@@ -538,10 +598,20 @@ class _TimelineState extends State<Timeline> {
           PageStorageKey<Object>(identities[i]): reverse
               ? end - 1 - i
               : i - start,
+        if (!reverse) _tailKey: end - start,
       };
       return SliverChildBuilderDelegate(
         (BuildContext context, int index) {
           if (index == end - start) {
+            if (!reverse) {
+              return _TimelineTail(
+                key: _tailKey,
+                outgoing: widget.outgoing,
+                heat: widget.heat,
+                turnSeed: widget.turnSeed,
+                forkable: widget.onFork != null,
+              );
+            }
             return _OlderHistoryStatus(
               loading: widget.loadingOlder,
               error: widget.olderError,
@@ -549,15 +619,17 @@ class _TimelineState extends State<Timeline> {
             );
           }
           final int itemIndex = reverse ? end - 1 - index : start + index;
+          final TimelineItem item = widget.items[itemIndex];
           return _TimelineRow(
             key: PageStorageKey<Object>(identities[itemIndex]),
-            item: widget.items[itemIndex],
+            item: item,
+            delivery: _deliveryOf(item),
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
             openLocalFile: widget.openLocalFile,
           );
         },
-        childCount: end - start + (reverse && historyStatus ? 1 : 0),
+        childCount: end - start + (reverse ? (historyStatus ? 1 : 0) : 1),
         findChildIndexCallback: (Key key) => indices[key],
       );
     }
@@ -709,12 +781,17 @@ class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
     super.key,
     required this.item,
+    this.delivery,
     this.attachmentLoader,
     this.onFork,
     this.openLocalFile,
   });
 
   final TimelineItem item;
+
+  /// Non-null for a user message that confirmed a send from this client:
+  /// true while its pop should still play (see [DeliveredPop]).
+  final bool? delivery;
 
   /// See [Timeline.attachmentLoader].
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
@@ -729,10 +806,12 @@ class _TimelineRow extends StatelessWidget {
         text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
-        child: UserMessageBubble(
-          text: i.text,
-          attachments: i.attachments,
-          attachmentLoader: attachmentLoader,
+        child: _deliveredBubble(
+          UserMessageBubble(
+            text: i.text,
+            attachments: i.attachments,
+            attachmentLoader: attachmentLoader,
+          ),
         ),
       ),
       DisplayedImageItem i => _DisplayedImage(
@@ -763,6 +842,117 @@ class _TimelineRow extends StatelessWidget {
       TurnCompleteItem _ => _TurnDivider(),
       SessionErrorItem i => _ErrorBanner(message: i.message),
     };
+  }
+
+  Widget _deliveredBubble(Widget bubble) {
+    final bool? play = delivery;
+    return play == null ? bubble : DeliveredPop(play: play, child: bubble);
+  }
+}
+
+/// The live end of the timeline: sent messages still baking, then the
+/// flame showing the agent's turn.
+class _TimelineTail extends StatelessWidget {
+  const _TimelineTail({
+    super.key,
+    required this.outgoing,
+    required this.heat,
+    required this.turnSeed,
+    required this.forkable,
+  });
+
+  final List<OutgoingMessage> outgoing;
+  final TurnHeat heat;
+  final int turnSeed;
+  final bool forkable;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        for (final OutgoingMessage message in outgoing)
+          _PendingMessageRow(
+            key: ValueKey<int>(message.id),
+            message: message,
+            forkable: forkable,
+          ),
+        TurnFlameRow(
+          key: const ValueKey<String>('turn-flame-row'),
+          heat: heat,
+          seed: turnSeed,
+        ),
+      ],
+    );
+  }
+}
+
+/// A sent message the daemon has not echoed yet, laid out exactly like the
+/// row that will replace it so the swap happens in place.
+class _PendingMessageRow extends StatefulWidget {
+  const _PendingMessageRow({
+    super.key,
+    required this.message,
+    required this.forkable,
+  });
+
+  final OutgoingMessage message;
+
+  /// Whether the persisted row will offer forking; its button's space is
+  /// reserved.
+  final bool forkable;
+
+  @override
+  State<_PendingMessageRow> createState() => _PendingMessageRowState();
+}
+
+class _PendingMessageRowState extends State<_PendingMessageRow> {
+  // Local payloads stand in for daemon-side attachments until the echo.
+  late final List<AttachmentData> _attachments = <AttachmentData>[
+    for (int i = 0; i < widget.message.attachments.length; i++)
+      _local(i, widget.message.attachments[i]),
+  ];
+  final Map<String, Future<AttachmentData>> _loads =
+      <String, Future<AttachmentData>>{};
+
+  static AttachmentData _local(int index, OutgoingAttachment attachment) {
+    final String data = attachment.data;
+    final int padding = data.endsWith('==')
+        ? 2
+        : data.endsWith('=')
+        ? 1
+        : 0;
+    return AttachmentData(
+      id: 'outgoing-$index',
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: data.length * 3 ~/ 4 - padding,
+      data: data,
+    );
+  }
+
+  Future<AttachmentData> _load(String id) =>
+      _loads[id] ??= Future<AttachmentData>.value(
+        _attachments.firstWhere((AttachmentData a) => a.id == id),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return _MessageWithActions(
+      isUser: true,
+      text: widget.message.text,
+      seq: null,
+      onFork: null,
+      reserveFork: widget.forkable,
+      child: BakingBubble(
+        child: UserMessageBubble(
+          text: widget.message.text,
+          attachments: _attachments,
+          attachmentLoader: _load,
+        ),
+      ),
+    );
   }
 }
 
@@ -802,6 +992,7 @@ class _MessageWithActions extends StatelessWidget {
     required this.text,
     required this.seq,
     required this.onFork,
+    this.reserveFork = false,
   });
 
   final Widget child;
@@ -809,6 +1000,9 @@ class _MessageWithActions extends StatelessWidget {
   final String text;
   final int? seq;
   final void Function(int seq)? onFork;
+
+  /// Holds the fork button's space while there is nothing to fork yet.
+  final bool reserveFork;
 
   @override
   Widget build(BuildContext context) {
@@ -836,6 +1030,18 @@ class _MessageWithActions extends StatelessWidget {
           iconSize: 18,
           onPressed: () => callback(messageSeq),
           icon: const Icon(Icons.fork_right),
+        ),
+      );
+    } else if (reserveFork) {
+      buttons.add(
+        const Visibility.maintain(
+          visible: false,
+          child: IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 18,
+            onPressed: null,
+            icon: Icon(Icons.fork_right),
+          ),
         ),
       );
     }

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:flutter/foundation.dart' show immutable;
+
 import 'store_base.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -28,6 +30,25 @@ enum HistoryStatus {
   /// The last fetch failed (e.g. daemon unreachable). Live events still
   /// apply; the next resync or [ChatStore.retryHistory] retries the fetch.
   failed,
+}
+
+/// A message sent from this client that the daemon has not echoed back yet.
+///
+/// PROTOCOL.md: the daemon persists and broadcasts the turn's `userMessage`
+/// event before it acknowledges `sessions.send`, so that echo is what
+/// retires the entry. Until then the timeline renders it optimistically.
+@immutable
+class OutgoingMessage {
+  const OutgoingMessage({
+    required this.id,
+    required this.text,
+    this.attachments = const <OutgoingAttachment>[],
+  });
+
+  /// Client-local identity, unique within one [ChatStore].
+  final int id;
+  final String text;
+  final List<OutgoingAttachment> attachments;
 }
 
 /// Per-session event buffer plus its live subscription state.
@@ -64,6 +85,19 @@ class _SessionBuffer {
   /// Open chunk-merge run, if the tail of [events] is a chunk delta family
   /// that is still accumulating text (see [_ChunkRun]).
   _ChunkRun? chunkRun;
+
+  /// Sends awaiting their `userMessage` echo, oldest first.
+  final List<OutgoingMessage> outgoing = <OutgoingMessage>[];
+  late final List<OutgoingMessage> outgoingView = UnmodifiableListView(
+    outgoing,
+  );
+
+  /// Ids in [outgoing] whose send the daemon already acknowledged.
+  final Set<int> acknowledged = <int>{};
+
+  /// Seqs of `userMessage` events that retired an [outgoing] entry.
+  final Set<int> deliveredSeqs = <int>{};
+  late final Set<int> deliveredView = UnmodifiableSetView(deliveredSeqs);
 }
 
 /// Scratch state for a run of consecutive same-kind chunk deltas.
@@ -173,6 +207,7 @@ class ChatStore extends StoreBase {
       <String, StreamSubscription<void>>{};
 
   bool _notifyScheduled = false;
+  int _nextOutgoingId = 0;
 
   /// Unmodifiable coalescing-friendly view of a session's buffered events.
   /// Empty list for sessions that were never watched. Reading this
@@ -200,6 +235,16 @@ class ChatStore extends StoreBase {
     if (buffer == null || buffer.permissions.isEmpty) return null;
     return buffer.permissions.values.last;
   }
+
+  /// Read-only live view of messages sent to [sessionId] from this client
+  /// that the daemon has not echoed back yet, oldest first (see [send]).
+  List<OutgoingMessage> outgoingFor(String sessionId) =>
+      _bufferFor(sessionId)?.outgoingView ?? const <OutgoingMessage>[];
+
+  /// Seqs of [sessionId]'s `userMessage` events that confirmed a message
+  /// sent from this client while the session was watched.
+  Set<int> deliveredSeqsFor(String sessionId) =>
+      _bufferFor(sessionId)?.deliveredView ?? const <int>{};
 
   /// Latest derived status; default idle for unknown sessions.
   SessionStatus statusOf(String sessionId) {
@@ -392,24 +437,79 @@ class ChatStore extends StoreBase {
   }
 
   /// Starts a turn. Events flow into the buffer via [watchSession].
+  ///
+  /// For a watched session the message is listed by [outgoingFor] from the
+  /// moment the request leaves until the daemon's `userMessage` echo lands,
+  /// so the UI can show it at once; a rejected send drops it again before
+  /// the error is rethrown.
   Future<void> send(
     String daemonId,
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const [],
-  }) =>
-      _clientFor(daemonId)
-          .sendMessage(sessionId, text, attachments: attachments);
+  }) => _sendOutgoing(
+    daemonId,
+    sessionId,
+    text,
+    attachments,
+    () =>
+        _clientFor(daemonId)
+            .sendMessage(sessionId, text, attachments: attachments),
+  );
 
   Future<List<NativeCommand>> listCommands(String daemonId, String sessionId) =>
       _clientFor(daemonId).listCommands(sessionId);
 
+  /// Starts a native command turn, tracked through [outgoingFor] like
+  /// [send].
   Future<void> runCommand(
     String daemonId,
     String sessionId,
     String name, {
     String arguments = '',
-  }) => _clientFor(daemonId).runCommand(sessionId, name, arguments: arguments);
+  }) => _sendOutgoing(
+    daemonId,
+    sessionId,
+    // PROTOCOL.md `sessions.command`: the daemon persists exactly this text
+    // as the turn's user event.
+    '/$name${arguments.isEmpty ? '' : ' $arguments'}',
+    const <OutgoingAttachment>[],
+    () =>
+        _clientFor(daemonId).runCommand(sessionId, name, arguments: arguments),
+  );
+
+  Future<void> _sendOutgoing(
+    String daemonId,
+    String sessionId,
+    String text,
+    List<OutgoingAttachment> attachments,
+    Future<void> Function() request,
+  ) async {
+    final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
+    final OutgoingMessage? message = buffer?.eventSub == null
+        ? null
+        : OutgoingMessage(
+            id: _nextOutgoingId++,
+            text: text,
+            attachments: attachments,
+          );
+    if (message != null) {
+      buffer!.outgoing.add(message);
+      _scheduleNotify();
+    }
+    try {
+      await request();
+    } on Object {
+      if (message != null && buffer!.outgoing.remove(message)) {
+        _scheduleNotify();
+      }
+      rethrow;
+    }
+    // Usually the echo already retired it; otherwise it is still in flight.
+    if (message != null && buffer!.outgoing.contains(message)) {
+      buffer.acknowledged.add(message.id);
+    }
+  }
 
   /// Fetches an attachment's payload, memoized per composite
   /// `daemonId/sessionId/attachmentId` key. Attachments are immutable (their
@@ -876,10 +976,14 @@ class ChatStore extends StoreBase {
 
   void _noteEvent(_SessionBuffer buffer, SessionEvent event) {
     switch (event) {
+      case final UserMessageEvent message:
+        _deliverOutgoing(buffer, message);
       case TurnCompleteEvent():
         _statusById[buffer.key] = SessionStatus.idle;
+        _dropAcknowledged(buffer);
       case SessionErrorEvent():
         _statusById[buffer.key] = SessionStatus.error;
+        _dropAcknowledged(buffer);
       // Permission events do not imply a status: auto-approved requests and
       // requests from the agent's own background work arrive outside a turn,
       // and no turnComplete follows them. The daemon broadcasts the real
@@ -889,6 +993,35 @@ class ChatStore extends StoreBase {
       default:
         break;
     }
+  }
+
+  /// Retires the oldest outgoing message [event] echoes, remembering its seq
+  /// so the timeline can celebrate that arrival.
+  void _deliverOutgoing(_SessionBuffer buffer, UserMessageEvent event) {
+    final List<OutgoingMessage> outgoing = buffer.outgoing;
+    for (int i = 0; i < outgoing.length; i++) {
+      final OutgoingMessage message = outgoing[i];
+      if (message.text != event.text ||
+          message.attachments.length != event.attachments.length) {
+        continue;
+      }
+      outgoing.removeAt(i);
+      buffer.acknowledged.remove(message.id);
+      final int? seq = event.seq;
+      if (seq != null) buffer.deliveredSeqs.add(seq);
+      return;
+    }
+  }
+
+  /// Events arrive in seq order and an acknowledged send's echo precedes the
+  /// turn's end, so an acknowledged message still unmatched here never will
+  /// be; drop it rather than leave it pending forever.
+  void _dropAcknowledged(_SessionBuffer buffer) {
+    if (buffer.acknowledged.isEmpty) return;
+    buffer.outgoing.removeWhere(
+      (OutgoingMessage message) => buffer.acknowledged.contains(message.id),
+    );
+    buffer.acknowledged.clear();
   }
 
   // ---------------------------------------------------------------------

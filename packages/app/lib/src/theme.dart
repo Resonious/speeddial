@@ -23,6 +23,9 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
     required this.codeBackground,
     required this.terminalBackground,
     required this.terminalForeground,
+    required this.flameRoot,
+    required this.flameTip,
+    required this.flameCore,
     required this.mono,
   });
 
@@ -66,6 +69,16 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
   /// Text on [terminalBackground].
   final Color terminalForeground;
 
+  /// Deep red-orange at the root of the agent-turn flame; its body is the
+  /// accent (`colorScheme.primary`).
+  final Color flameRoot;
+
+  /// Amber licking up through the flame's inner core.
+  final Color flameTip;
+
+  /// Pale, hottest base of the flame's core.
+  final Color flameCore;
+
   /// Monospace text style for code, paths and IDs.
   final TextStyle mono;
 
@@ -84,6 +97,9 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
     Color? codeBackground,
     Color? terminalBackground,
     Color? terminalForeground,
+    Color? flameRoot,
+    Color? flameTip,
+    Color? flameCore,
     TextStyle? mono,
   }) {
     return SpeedDialColors(
@@ -100,6 +116,9 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
       codeBackground: codeBackground ?? this.codeBackground,
       terminalBackground: terminalBackground ?? this.terminalBackground,
       terminalForeground: terminalForeground ?? this.terminalForeground,
+      flameRoot: flameRoot ?? this.flameRoot,
+      flameTip: flameTip ?? this.flameTip,
+      flameCore: flameCore ?? this.flameCore,
       mono: mono ?? this.mono,
     );
   }
@@ -133,6 +152,9 @@ class SpeedDialColors extends ThemeExtension<SpeedDialColors> {
         other.terminalForeground,
         t,
       )!,
+      flameRoot: Color.lerp(flameRoot, other.flameRoot, t)!,
+      flameTip: Color.lerp(flameTip, other.flameTip, t)!,
+      flameCore: Color.lerp(flameCore, other.flameCore, t)!,
       mono: TextStyle.lerp(mono, other.mono, t) ?? mono,
     );
   }
@@ -206,6 +228,9 @@ class _Palette {
     required this.attention,
     required this.purple,
     required this.diffRemove,
+    required this.flameRoot,
+    required this.flameTip,
+    required this.flameCore,
     required this.shadow,
   });
 
@@ -252,6 +277,9 @@ class _Palette {
   final Color attention;
   final Color purple;
   final Color diffRemove;
+  final Color flameRoot;
+  final Color flameTip;
+  final Color flameCore;
   final Color shadow;
 }
 
@@ -281,6 +309,9 @@ const _Palette _dark = _Palette(
   attention: Color(0xFFE39C3A),
   purple: Color(0xFFB59BFF),
   diffRemove: Color(0xFFFF6B6B),
+  flameRoot: Color(0xFFE5402A),
+  flameTip: Color(0xFFFFC04A),
+  flameCore: Color(0xFFFFF1C9),
   shadow: Color(0xFF000000),
 );
 
@@ -310,6 +341,9 @@ const _Palette _light = _Palette(
   attention: Color(0xFFA56300),
   purple: Color(0xFF7550D6),
   diffRemove: Color(0xFFC8323A),
+  flameRoot: Color(0xFFC2301A),
+  flameTip: Color(0xFFF7A825),
+  flameCore: Color(0xFFFFE6A1),
   shadow: Color(0xFF2B2418),
 );
 
@@ -734,6 +768,9 @@ ThemeData _buildTheme(_Palette p) {
         codeBackground: dark ? const Color(0xFF0E0E0D) : p.panel,
         terminalBackground: const Color(0xFF0E0E0D),
         terminalForeground: const Color(0xFFE4E0D8),
+        flameRoot: p.flameRoot,
+        flameTip: p.flameTip,
+        flameCore: p.flameCore,
         mono: _monoBase.copyWith(fontSize: 12, height: 1.5, color: p.fg),
       ),
     ],

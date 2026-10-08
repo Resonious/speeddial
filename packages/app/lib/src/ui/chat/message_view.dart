@@ -64,6 +64,21 @@ class UserMessageBubble extends StatelessWidget {
   /// static chips without loading (defensive default).
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
 
+  /// Space between the bubble and the edges of the widget.
+  static const EdgeInsets margin = EdgeInsets.symmetric(
+    vertical: 4,
+    horizontal: 8,
+  );
+
+  /// The bubble's outline: squared corner toward the sender, like a speech
+  /// tail.
+  static const BorderRadius radius = BorderRadius.only(
+    topLeft: Radius.circular(14),
+    topRight: Radius.circular(14),
+    bottomLeft: Radius.circular(14),
+    bottomRight: Radius.circular(4),
+  );
+
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -85,18 +100,12 @@ class UserMessageBubble extends StatelessWidget {
       alignment: Alignment.centerRight,
       widthFactor: 1,
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        margin: margin,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         constraints: const BoxConstraints(maxWidth: 560),
         decoration: BoxDecoration(
           color: scheme.primaryContainer,
-          // Squared corner toward the sender, like a speech tail.
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(14),
-            topRight: Radius.circular(14),
-            bottomLeft: Radius.circular(14),
-            bottomRight: Radius.circular(4),
-          ),
+          borderRadius: radius,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,

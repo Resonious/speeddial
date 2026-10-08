@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
+import 'package:speeddial_app/src/ui/chat/oven.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_app/src/ui/chat/tool_call_card.dart';
 
@@ -1185,6 +1186,79 @@ void main() {
         'att-1',
         'att-2',
       ]);
+    });
+  });
+
+  group('turn oven', () {
+    const List<TimelineItem> asked = <TimelineItem>[
+      UserMessageItem(text: 'go', forkSeq: 7),
+    ];
+    const List<TimelineItem> answering = <TimelineItem>[
+      UserMessageItem(text: 'go', forkSeq: 7),
+      AgentThoughtItem(text: 'hmm', active: true),
+    ];
+
+    test('heat follows the turn from send to output to waiting', () {
+      expect(turnHeatFor(SessionStatus.idle, asked), TurnHeat.off);
+      expect(
+        turnHeatFor(SessionStatus.idle, asked, sending: true),
+        TurnHeat.preheating,
+      );
+      expect(turnHeatFor(SessionStatus.running, asked), TurnHeat.preheating);
+      expect(turnHeatFor(SessionStatus.running, answering), TurnHeat.cooking);
+      expect(
+        turnHeatFor(SessionStatus.waitingPermission, answering),
+        TurnHeat.keepingWarm,
+      );
+      expect(turnHeatFor(SessionStatus.error, answering), TurnHeat.off);
+    });
+
+    test('a turn keeps one cooking verb, chosen by its message', () {
+      expect(latestTurnSeed(answering), 7);
+      expect(latestTurnSeed(const <TimelineItem>[]), 0);
+      final String label = turnHeatLabel(TurnHeat.cooking, 7);
+      expect(label, endsWith('…'));
+      expect(turnHeatLabel(TurnHeat.cooking, 7), label);
+      expect(turnHeatLabel(TurnHeat.cooking, 8), isNot(label));
+      expect(turnHeatLabel(TurnHeat.preheating, 7), 'Preheating…');
+      expect(turnHeatLabel(TurnHeat.keepingWarm, 7), 'Keeping warm…');
+    });
+
+    testWidgets('a delivered message pops once, not again on rebuild', (
+      WidgetTester tester,
+    ) async {
+      Widget timeline(int revision) => MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            key: const ValueKey<String>('timeline'),
+            items: <TimelineItem>[
+              const UserMessageItem(text: 'fresh', forkSeq: 3),
+              AgentMessageItem(text: 'reply $revision', forkSeq: 4),
+            ],
+            delivered: const <int>{3},
+          ),
+        ),
+      );
+      double scale() => tester
+          .widget<ScaleTransition>(
+            find.descendant(
+              of: find.byKey(const Key('delivered-pop')),
+              matching: find.byType(ScaleTransition),
+            ),
+          )
+          .scale
+          .value;
+
+      await tester.pumpWidget(timeline(0));
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(scale(), isNot(1));
+
+      await tester.pumpAndSettle();
+      expect(scale(), 1);
+      await tester.pumpWidget(timeline(1));
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(scale(), 1);
     });
   });
 }

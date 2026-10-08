@@ -538,6 +538,67 @@ void main() {
     expect(find.text('idle'), findsNWidgets(2));
   });
 
+  testWidgets('a working session burns a flame, a waiting one pings', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = AppData();
+    addTearDown(app.dispose);
+    Session withStatus(SessionStatus status) {
+      final Session base = testSession(
+        id: 'session-${status.name}',
+        title: status.name,
+        lastActivityAt: DateTime(2026, 8, 21, 9, 7),
+      );
+      return Session(
+        id: base.id,
+        projectId: base.projectId,
+        providerId: base.providerId,
+        title: base.title,
+        status: status,
+        model: base.model,
+        cwd: base.cwd,
+        baseBranch: base.baseBranch,
+        yolo: base.yolo,
+        archived: base.archived,
+        createdAt: base.createdAt,
+        lastActivityAt: base.lastActivityAt,
+        updatedAt: base.updatedAt,
+      );
+    }
+
+    Future<void> pumpRow(SessionStatus status) => tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AppScope(
+            data: app,
+            child: SessionRow(
+              session: withStatus(status),
+              selected: false,
+              daemonId: 'fake',
+              projectId: 'project',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await pumpRow(SessionStatus.running);
+    expect(find.byKey(const ValueKey<String>('session-flame')), findsOneWidget);
+    expect(find.byTooltip('running'), findsOneWidget);
+
+    await pumpRow(SessionStatus.waitingPermission);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey<String>('session-ping')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('session-flame')), findsNothing);
+
+    // Back at rest the glyph settles to a plain dot; nothing keeps ticking.
+    await pumpRow(SessionStatus.idle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('session-ping')), findsNothing);
+    expect(find.byKey(const ValueKey<String>('session-flame')), findsNothing);
+  });
+
   testWidgets('idle session tooltip includes last activity timestamp', (
     WidgetTester tester,
   ) async {
