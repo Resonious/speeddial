@@ -14,6 +14,8 @@ import 'active_pulse.dart';
 import 'external_link_launcher.dart';
 import 'history_expansion.dart';
 import 'message_highlighter.dart';
+import 'mermaid/mermaid_diagram.dart';
+import 'mermaid/mermaid_parser.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
 /// grammars bundled with syntax_highlight. Returns null for anything
@@ -391,6 +393,10 @@ class AgentMessageView extends StatefulWidget {
 class _AgentMessageViewState extends State<AgentMessageView> {
   final Map<String, TextSpan> _highlightCache = <String, TextSpan>{};
   final Set<String> _codeBlocks = <String>{};
+
+  /// Mermaid sources the user switched to the code view; survives the
+  /// markdown rebuild that a highlight batch triggers.
+  final Set<String> _mermaidSourceShown = <String>{};
   late String _renderedText;
   Timer? _renderTimer;
   int _highlightRevision = 0;
@@ -490,6 +496,18 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     return _highlightCache[code];
   }
 
+  /// Whether [code]'s fence has closed. While streaming, the trailing block
+  /// may still be growing; drawing it would flicker between diagram and
+  /// fallback with every chunk.
+  bool _fenceClosed(String code) {
+    if (!widget.streaming) return true;
+    final int at = _renderedText.lastIndexOf(code);
+    if (at < 0) return false;
+    return _closingFence.hasMatch(_renderedText.substring(at + code.length));
+  }
+
+  static final RegExp _closingFence = RegExp(r'^\s*(```|~~~)', multiLine: true);
+
   void _activateLink(String href) {
     final Uri? uri = Uri.tryParse(href);
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
@@ -572,10 +590,121 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
       context,
       Theme.of(context).textTheme.bodyMedium,
     );
-    return _CodeBlock(
+    final Widget codeBlock = _CodeBlock(
       span: _message._spanFor(code) ?? TextSpan(text: code),
       padding: styleSheet.codeblockPadding ?? EdgeInsets.zero,
       textStyle: styleSheet.code ?? context.speedDialColors.mono,
+    );
+    if (!_isMermaid(element, code) || !_message._fenceClosed(code)) {
+      return codeBlock;
+    }
+    final FlowGraph? graph = cachedMermaidGraph(code);
+    if (graph == null) return codeBlock;
+    return _MermaidBlock(
+      graph: graph,
+      codeBlock: codeBlock,
+      showSource: _message._mermaidSourceShown.contains(code),
+      onShowSourceChanged: (bool shown) {
+        if (shown) {
+          _message._mermaidSourceShown.add(code);
+        } else {
+          _message._mermaidSourceShown.remove(code);
+        }
+      },
+    );
+  }
+
+  /// A `mermaid` fence, or an untagged fence that starts like a flowchart.
+  bool _isMermaid(md.Element pre, String code) {
+    final List<md.Node>? children = pre.children;
+    final md.Node? first = children == null || children.isEmpty
+        ? null
+        : children.first;
+    final String? language = first is md.Element
+        ? first.attributes['class']
+        : null;
+    if (language == null) return looksLikeMermaidFlowchart(code);
+    return language == 'language-mermaid';
+  }
+}
+
+/// A rendered Mermaid diagram with a toggle back to its source.
+class _MermaidBlock extends StatefulWidget {
+  const _MermaidBlock({
+    required this.graph,
+    required this.codeBlock,
+    required this.showSource,
+    required this.onShowSourceChanged,
+  });
+
+  final FlowGraph graph;
+  final Widget codeBlock;
+  final bool showSource;
+  final ValueChanged<bool> onShowSourceChanged;
+
+  @override
+  State<_MermaidBlock> createState() => _MermaidBlockState();
+}
+
+class _MermaidBlockState extends State<_MermaidBlock> {
+  late bool _showSource = widget.showSource;
+
+  void _toggle() {
+    setState(() => _showSource = !_showSource);
+    widget.onShowSourceChanged(_showSource);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color muted = theme.colorScheme.onSurfaceVariant;
+    const VisualDensity dense = VisualDensity(horizontal: -4, vertical: -4);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 2, 2, 0),
+          child: Row(
+            children: <Widget>[
+              Text(
+                'mermaid',
+                style: context.speedDialColors.mono.copyWith(
+                  fontSize: 11,
+                  color: muted,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: _showSource ? 'Show diagram' : 'Show source',
+                visualDensity: dense,
+                iconSize: 16,
+                color: muted,
+                icon: Icon(
+                  _showSource ? Icons.account_tree_outlined : Icons.code,
+                ),
+                onPressed: _toggle,
+              ),
+              if (!_showSource)
+                IconButton(
+                  tooltip: 'Expand diagram',
+                  visualDensity: dense,
+                  iconSize: 16,
+                  color: muted,
+                  icon: const Icon(Icons.open_in_full),
+                  onPressed: () => showMermaidViewer(context, widget.graph),
+                ),
+            ],
+          ),
+        ),
+        if (_showSource)
+          widget.codeBlock
+        else
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+            child: MermaidDiagram(graph: widget.graph),
+          ),
+      ],
     );
   }
 }

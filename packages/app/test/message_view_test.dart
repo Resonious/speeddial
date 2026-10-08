@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/mermaid/mermaid_diagram.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 
 void main() {
@@ -519,5 +520,110 @@ void main() {
     await tester.pump();
 
     expect(openedPath, '/work/project/result.pdf');
+  });
+
+  group('mermaid', () {
+    const String diagram =
+        'flowchart LR\n  A["MySQL<br/>tables"] --> B["ClickPipes"] --> C';
+
+    Future<void> show(
+      WidgetTester tester,
+      String text, {
+      bool streaming = false,
+    }) => tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AgentMessageView(text: text, streaming: streaming),
+        ),
+      ),
+    );
+
+    Finder painted() => find.byWidgetPredicate(
+      (Widget w) => w is CustomPaint && w.painter is MermaidPainter,
+    );
+
+    testWidgets('renders a mermaid fence and toggles to its source', (
+      WidgetTester tester,
+    ) async {
+      await show(tester, 'Plan:\n\n```mermaid\n$diagram\n```\n');
+      expect(painted(), findsOneWidget);
+      expect(
+        find.textContaining('ClickPipes', findRichText: true),
+        findsNothing,
+      );
+
+      await tester.tap(find.byTooltip('Show source'));
+      await tester.pump();
+      expect(painted(), findsNothing);
+      expect(
+        find.textContaining('ClickPipes', findRichText: true),
+        findsOneWidget,
+      );
+
+      // A highlight batch remounts the markdown; the choice persists.
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+      expect(painted(), findsNothing);
+
+      await tester.tap(find.byTooltip('Show diagram'));
+      await tester.pump();
+      expect(painted(), findsOneWidget);
+    });
+
+    testWidgets('untagged flowchart fences render too', (
+      WidgetTester tester,
+    ) async {
+      await show(tester, '```\n$diagram\n```');
+      expect(painted(), findsOneWidget);
+    });
+
+    testWidgets('unsupported diagrams stay plain code', (
+      WidgetTester tester,
+    ) async {
+      await show(tester, '```mermaid\nsequenceDiagram\n  A->>B: hi\n```');
+      expect(painted(), findsNothing);
+      expect(find.textContaining('A->>B', findRichText: true), findsOneWidget);
+    });
+
+    testWidgets('a still-streaming fence waits for its closing marker', (
+      WidgetTester tester,
+    ) async {
+      await show(tester, '```mermaid\n$diagram', streaming: true);
+      expect(painted(), findsNothing);
+
+      await show(tester, '```mermaid\n$diagram\n```\nMore', streaming: true);
+      await tester.pump(AgentMessageView.streamRenderInterval);
+      expect(painted(), findsOneWidget);
+    });
+
+    testWidgets('expand opens a full-screen viewer', (
+      WidgetTester tester,
+    ) async {
+      await show(tester, '```mermaid\n$diagram\n```');
+      await tester.tap(find.byTooltip('Expand diagram'));
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(painted(), findsNWidgets(2));
+
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsNothing);
+    });
+
+    testWidgets('wide diagrams fit narrow screens', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final StringBuffer wide = StringBuffer('flowchart LR\n');
+      for (int i = 0; i < 10; i++) {
+        wide.writeln('  n$i["Step number $i"] --> n${i + 1}');
+      }
+      await show(tester, '```mermaid\n$wide```');
+      expect(painted(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

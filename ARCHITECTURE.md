@@ -327,7 +327,9 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              secret values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, reversed), message bubbles,
                              MCP-displayed images with lazy attachment payload loading,
-                             markdown + syntax-highlighted code blocks, remote file links that
+                             markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
+                             natively (`chat/mermaid/`: subset parser, layered layout, painter;
+                             anything unsupported stays a code block), remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
                              offer Download (system save picker) or Float (the shared-file card).
                              Transfers and dismissible completion/error receipts live in
