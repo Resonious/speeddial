@@ -14,6 +14,7 @@ import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
 import 'tool_call_card.dart';
+import 'subagent_crew.dart';
 import 'tool_run.dart';
 import 'tool_call_summary.dart';
 
@@ -126,21 +127,98 @@ class AgentActivityItem extends TimelineItem {
   final AgentActivity activity;
 }
 
+/// One subagent the agent worked with during a turn, and what it reported.
+class Subagent {
+  const Subagent({
+    required this.name,
+    this.kind = '',
+    required this.status,
+    required this.updates,
+    this.report,
+    this.finished = false,
+  });
+
+  /// The task it was given, or the provider's name for it.
+  final String name;
+
+  /// Its type, when the provider says (`explore`, …).
+  final String kind;
+
+  /// As last reported. Providers that only report interactions, each
+  /// settled as it lands, leave it completed while the subagent works on.
+  final AgentActivityStatus status;
+
+  /// The provider said it is done; otherwise it may still be working while
+  /// its turn runs (Codex never says).
+  final bool finished;
+
+  /// What it reported, in order.
+  final List<AgentActivity> updates;
+
+  /// What it handed back when it finished, if anything.
+  final String? report;
+}
+
+/// The subagents a turn worked with, gathered from wherever their updates
+/// fell so they take one line at the turn's end rather than a card each.
+/// While the turn is [live] they show in its flame row instead.
+class SubagentCrewItem extends TimelineItem {
+  const SubagentCrewItem({
+    super.id,
+    required this.subagents,
+    this.live = false,
+  });
+
+  /// In the order they first reported; never empty.
+  final List<Subagent> subagents;
+  final bool live;
+
+  int get updates => subagents.fold(
+    0,
+    (int count, Subagent subagent) => count + subagent.updates.length,
+  );
+}
+
+/// A subagent as the fold meets its updates.
+class _CrewMember {
+  _CrewMember(this.name, {this.kind = ''});
+
+  final String name;
+  final String kind;
+  AgentActivityStatus? status;
+  bool finished = false;
+  final List<AgentActivity> updates = <AgentActivity>[];
+  String? report;
+
+  void add(AgentActivity update) {
+    updates.add(update);
+    // Anything still running keeps it running; otherwise a failure shows.
+    if (status != AgentActivityStatus.running) {
+      status = update.status == AgentActivityStatus.completed
+          ? status ?? AgentActivityStatus.completed
+          : update.status;
+    }
+  }
+
+  Subagent build() => Subagent(
+    name: name,
+    kind: kind,
+    status: status ?? AgentActivityStatus.completed,
+    updates: List<AgentActivity>.unmodifiable(updates),
+    report: report,
+    finished: finished,
+  );
+}
+
 class _LegacySubagentState {
   _LegacySubagentState({
-    required this.activityId,
-    required this.identity,
-    required this.headerIndex,
-    required this.title,
-    required this.type,
+    required this.key,
+    required this.member,
     required this.startedWithoutMetadata,
   });
 
-  final String activityId;
-  final Object identity;
-  final int headerIndex;
-  final String title;
-  final String type;
+  final String key;
+  final _CrewMember member;
   final bool startedWithoutMetadata;
   String progressText = '';
   int step = 0;
@@ -207,8 +285,35 @@ List<TimelineItem> deriveTimelineItems(
   final Map<String, _LegacySubagentState> legacySubagents =
       <String, _LegacySubagentState>{};
   final Map<String, int> legacySubagentGenerations = <String, int>{};
+  int? turnSeq;
 
-  void foldLegacySubagent(ToolCall toolCall, int? firstSeq) {
+  // Subagents report through a turn in many small updates (Codex sends one
+  // per interaction): they gather into one crew per turn instead of taking
+  // a card each.
+  final Map<String, _CrewMember> crew = <String, _CrewMember>{};
+  _CrewMember member(String key, String name, {String kind = ''}) =>
+      crew.putIfAbsent(key, () => _CrewMember(name, kind: kind));
+  void flushCrew({required bool live}) {
+    if (crew.isEmpty) return;
+    final SubagentCrewItem item = SubagentCrewItem(
+      id: ('crew', turnSeq, crew.keys.first),
+      subagents: <Subagent>[
+        for (final _CrewMember member in crew.values) member.build(),
+      ],
+      live: live,
+    );
+    crew.clear();
+    // At the turn's end, ahead of whatever closed it.
+    final TimelineItem? last = items.lastOrNull;
+    items.insert(
+      last is TurnCompleteItem || last is SessionErrorItem
+          ? items.length - 1
+          : items.length,
+      item,
+    );
+  }
+
+  void foldLegacySubagent(ToolCall toolCall) {
     _LegacySubagentState? state = legacySubagents[toolCall.id];
     if (state == null ||
         (state.terminal && _isActiveToolStatus(toolCall.status))) {
@@ -224,29 +329,15 @@ List<TimelineItem> deriveTimelineItems(
           : type.isNotEmpty
           ? '${_humanizeActivity(type)} subagent'
           : 'Subagent';
-      final String activityId = 'legacy-subagent-${toolCall.id}-$generation';
+      final String key = 'legacy-subagent-${toolCall.id}-$generation';
       state = _LegacySubagentState(
-        activityId: activityId,
-        identity: (firstSeq, activityId),
-        headerIndex: items.length,
-        title: title,
-        type: type,
+        key: key,
+        member: member(key, title, kind: type),
         startedWithoutMetadata: input == null,
       );
       legacySubagents[toolCall.id] = state;
-      items.add(
-        AgentActivityItem(
-          id: state.identity,
-          activity: AgentActivity(
-            id: activityId,
-            kind: 'subagent',
-            title: title,
-            status: _activityStatusFor(toolCall.status),
-            details: <String>[if (type.isNotEmpty) type],
-          ),
-        ),
-      );
     }
+    state.member.status = _activityStatusFor(toolCall.status);
 
     if (_isActiveToolStatus(toolCall.status)) {
       final String progressText = _toolCallText(toolCall);
@@ -270,16 +361,13 @@ List<TimelineItem> deriveTimelineItems(
         final _SubagentPresentation presentation = _subagentPresentation(
           update,
         );
-        items.add(
-          AgentActivityItem(
-            id: (state.identity, state.step),
-            activity: AgentActivity(
-              id: '${state.activityId}-step-${state.step++}',
-              kind: 'subagent',
-              title: presentation.title,
-              status: AgentActivityStatus.completed,
-              details: presentation.details,
-            ),
+        state.member.updates.add(
+          AgentActivity(
+            id: '${state.key}-step-${state.step++}',
+            kind: 'subagent',
+            title: presentation.title,
+            status: AgentActivityStatus.completed,
+            details: presentation.details,
           ),
         );
       }
@@ -287,23 +375,11 @@ List<TimelineItem> deriveTimelineItems(
     }
 
     final String? report = _legacySubagentReport(toolCall);
-    items[state.headerIndex] = AgentActivityItem(
-      id: state.identity,
-      activity: AgentActivity(
-        id: state.activityId,
-        kind: 'subagent',
-        title: state.title,
-        status: _activityStatusFor(toolCall.status),
-        details: <String>[
-          if (state.type.isNotEmpty) state.type,
-          if (report != null && report.isNotEmpty) report,
-        ],
-      ),
-    );
+    if (report != null && report.isNotEmpty) state.member.report = report;
+    state.member.finished = true;
     state.terminal = true;
   }
 
-  int? turnSeq;
   int turnIndex = 0;
   final List<FoldedSessionEntry> folded = foldSessionEvents(events);
 
@@ -342,6 +418,8 @@ List<TimelineItem> deriveTimelineItems(
   for (int index = 0; index < folded.length; index++) {
     final FoldedSessionEntry entry = folded[index];
     if (entry case FoldedSessionEvent(event: UserMessageEvent(:final seq))) {
+      // A new turn: the last one's crew has finished.
+      flushCrew(live: false);
       turnSeq = seq;
       turnIndex = 0;
     }
@@ -367,7 +445,7 @@ List<TimelineItem> deriveTimelineItems(
       case FoldedToolCall e:
         if (_isLegacySubagentTool(e.latest)) {
           for (final ToolCall snapshot in e.snapshots) {
-            foldLegacySubagent(snapshot, e.firstSeq);
+            foldLegacySubagent(snapshot);
           }
         } else {
           items.add(
@@ -380,6 +458,11 @@ List<TimelineItem> deriveTimelineItems(
             ),
           );
         }
+      case FoldedAgentActivity(:final AgentActivity activity)
+          when activity.kind == 'subagent':
+        // One per interaction, each naming its subagent by path first.
+        final String key = activity.details.firstOrNull ?? activity.title;
+        member(key, _subagentName(key)).add(activity);
       case FoldedAgentActivity e:
         items.add(AgentActivityItem(id: e.activity.id, activity: e.activity));
       case FoldedSessionEvent(:final event):
@@ -442,7 +525,21 @@ List<TimelineItem> deriveTimelineItems(
       writing: true,
     );
   }
+  // As for thoughts, the closing event settles the crew even when the
+  // status lags.
+  final TimelineItem? last = items.lastOrNull;
+  flushCrew(
+    live: running && last is! TurnCompleteItem && last is! SessionErrorItem,
+  );
   return _groupToolRuns(items);
+}
+
+/// "audit_references" for Codex's "/root/audit_references".
+String _subagentName(String key) {
+  final String name = key
+      .split('/')
+      .lastWhere((String part) => part.isNotEmpty, orElse: () => key);
+  return name.isEmpty ? 'Subagent' : name;
 }
 
 /// Folds each stretch of tool calls and thinking into one [ToolRunItem],
@@ -787,6 +884,21 @@ class _TimelineState extends State<Timeline> {
         : identities.indexOf(_liveStart!);
     final int split = originIndex < 0 ? 0 : originIndex;
     final bool historyStatus = widget.loadingOlder || widget.olderError != null;
+    // The running turn's subagents gather at its end but show in its flame
+    // row, and a finished turn ends in its divider: the newest row worth
+    // opening comes before either.
+    int newest = widget.items.length - 1;
+    SubagentCrewItem? liveCrew;
+    if (newest >= 0) {
+      if (widget.items[newest] case final SubagentCrewItem crew
+          when crew.live) {
+        liveCrew = crew;
+        newest--;
+      }
+    }
+    while (newest >= 0 && widget.items[newest] is TurnCompleteItem) {
+      newest--;
+    }
 
     // History ends in its load status (when shown); the live side always
     // ends in the tail of baking messages and the turn's flame.
@@ -812,7 +924,11 @@ class _TimelineState extends State<Timeline> {
                 heat: widget.heat,
                 turnSeed: widget.turnSeed,
                 unreachable: widget.unreachable,
+                crew: liveCrew?.subagents ?? const <Subagent>[],
                 forkable: widget.onFork != null,
+                // The turn's flame row is the live end as much as the
+                // newest row (opening its subagents, say).
+                onTouch: _touchedLiveEnd,
               );
             }
             return _OlderHistoryStatus(
@@ -826,9 +942,7 @@ class _TimelineState extends State<Timeline> {
           return _TimelineRow(
             key: PageStorageKey<Object>(identities[itemIndex]),
             item: item,
-            onTouch: itemIndex == widget.items.length - 1
-                ? _touchedLiveEnd
-                : null,
+            onTouch: itemIndex == newest ? _touchedLiveEnd : null,
             delivery: _deliveryOf(item),
             cwd: widget.cwd,
             attachmentLoader: widget.attachmentLoader,
@@ -1065,6 +1179,12 @@ class _TimelineRow extends StatelessWidget {
         ),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
+      // A live crew shows in the turn's flame row instead.
+      SubagentCrewItem i when i.live => const SizedBox.shrink(),
+      SubagentCrewItem i => SubagentCrewRow(
+        key: ValueKey<Object?>(i.id),
+        crew: i,
+      ),
       ToolRunItem i => ToolRunCard(
         key: ValueKey<Object?>(i.id),
         steps: i.steps,
@@ -1108,34 +1228,42 @@ class _TimelineTail extends StatelessWidget {
     required this.heat,
     required this.turnSeed,
     required this.unreachable,
+    required this.crew,
     required this.forkable,
+    required this.onTouch,
   });
 
   final List<OutgoingMessage> outgoing;
   final TurnHeat heat;
   final int turnSeed;
   final String? unreachable;
+  final List<Subagent> crew;
   final bool forkable;
+  final PointerDownEventListener onTouch;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        for (final OutgoingMessage message in outgoing)
-          _PendingMessageRow(
-            key: ValueKey<int>(message.id),
-            message: message,
-            forkable: forkable,
+    return Listener(
+      onPointerDown: onTouch,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (final OutgoingMessage message in outgoing)
+            _PendingMessageRow(
+              key: ValueKey<int>(message.id),
+              message: message,
+              forkable: forkable,
+            ),
+          TurnFlameRow(
+            key: const ValueKey<String>('turn-flame-row'),
+            heat: heat,
+            seed: turnSeed,
+            unreachable: unreachable,
+            crew: crew,
           ),
-        TurnFlameRow(
-          key: const ValueKey<String>('turn-flame-row'),
-          heat: heat,
-          seed: turnSeed,
-          unreachable: unreachable,
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

@@ -7,6 +7,8 @@ import '../../theme.dart';
 import '../flame.dart';
 import 'heat_shimmer.dart';
 import 'message_view.dart';
+import 'subagent_crew.dart';
+import 'timeline.dart' show Subagent;
 
 /// What the oven at the foot of the timeline is doing.
 enum TurnHeat {
@@ -53,7 +55,8 @@ const List<double> _bandStops = <double>[0, 0.5, 1];
 
 /// The agent's turn at the foot of the timeline: a flame that ignites when a
 /// message goes in, burns while the agent works, turns down to a pilot light
-/// while the turn waits on the user, and goes out in a puff of smoke.
+/// while the turn waits on the user, and goes out in a puff of smoke. The
+/// turn's subagents keep a little spot at its end, opening to their list.
 ///
 /// Collapses to nothing (and unmounts its flame) while [heat] is off.
 class TurnFlameRow extends StatefulWidget {
@@ -62,6 +65,7 @@ class TurnFlameRow extends StatefulWidget {
     required this.heat,
     this.seed = 0,
     this.unreachable,
+    this.crew = const <Subagent>[],
   });
 
   final TurnHeat heat;
@@ -73,6 +77,9 @@ class TurnFlameRow extends StatefulWidget {
   /// unknown: the flame sits grey and still, and this replaces the status
   /// line.
   final String? unreachable;
+
+  /// The subagents the turn has worked with so far (see [CrewSpot]).
+  final List<Subagent> crew;
 
   @override
   State<TurnFlameRow> createState() => _TurnFlameRowState();
@@ -115,6 +122,8 @@ class _TurnFlameRowState extends State<TurnFlameRow>
       ? TurnHeat.preheating
       : widget.heat;
   late int _shownSeed = widget.seed;
+  late List<Subagent> _shownCrew = widget.crew;
+  bool _crewOpen = false;
   bool _still = false;
 
   @override
@@ -129,6 +138,8 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     super.didUpdateWidget(oldWidget);
     if (widget.heat == TurnHeat.off) {
       if (oldWidget.heat == TurnHeat.off) return;
+      // The next turn's crew starts closed.
+      _crewOpen = false;
       if (_still) {
         _lit.value = 0;
       } else {
@@ -138,6 +149,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     }
     _shown = widget.heat;
     _shownSeed = widget.seed;
+    _shownCrew = widget.crew;
     if (widget.unreachable != oldWidget.unreachable) _syncShimmer();
     if (_lit.isCompleted || _lit.status == AnimationStatus.forward) return;
     if (_still) {
@@ -181,39 +193,41 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     final Color muted = theme.colorScheme.onSurfaceVariant;
     final String? unreachable = widget.unreachable;
     final String label = unreachable ?? turnHeatLabel(_shown, _shownSeed);
-    return SizeTransition(
-      key: const Key('turn-flame'),
-      sizeFactor: _open,
-      alignment: Alignment.topLeft,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 6, 12, 8),
-        child: Row(
-          children: <Widget>[
-            SizedBox(
-              width: 22,
-              height: 26,
-              child: CustomPaint(
-                foregroundPainter: _SmokePainter(lit: _lit, color: muted),
-                child: Align(
+    final List<Subagent> crew = _shownCrew;
+    final Widget crewList = _crewOpen && crew.isNotEmpty
+        ? SubagentList(subagents: crew, live: true)
+        : const SizedBox(width: double.infinity);
+    final Widget row = Padding(
+      padding: const EdgeInsets.fromLTRB(14, 6, 12, 8),
+      child: Row(
+        children: <Widget>[
+          SizedBox(
+            width: 22,
+            height: 26,
+            child: CustomPaint(
+              foregroundPainter: _SmokePainter(lit: _lit, color: muted),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: ScaleTransition(
+                  scale: _flame,
                   alignment: Alignment.bottomCenter,
-                  child: ScaleTransition(
-                    scale: _flame,
-                    alignment: Alignment.bottomCenter,
-                    child: Flame(
-                      size: 24,
-                      glow: true,
-                      phase: _shownSeed * 0.17,
-                      intensity: _shown == TurnHeat.keepingWarm
-                          ? FlameIntensity.pilot
-                          : FlameIntensity.blaze,
-                      dormant: unreachable != null,
-                    ),
+                  child: Flame(
+                    size: 24,
+                    glow: true,
+                    phase: _shownSeed * 0.17,
+                    intensity: _shown == TurnHeat.keepingWarm
+                        ? FlameIntensity.pilot
+                        : FlameIntensity.blaze,
+                    dormant: unreachable != null,
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 10),
-            Flexible(
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
               child: FadeTransition(
                 opacity: _label,
                 child: HeatShimmer(
@@ -243,8 +257,40 @@ class _TurnFlameRowState extends State<TurnFlameRow>
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          if (crew.isNotEmpty)
+            FadeTransition(
+              opacity: _label,
+              child: CrewSpot(
+                subagents: crew,
+                open: _crewOpen,
+                onTap: () => setState(() => _crewOpen = !_crewOpen),
+              ),
+            ),
+        ],
+      ),
+    );
+    return SizeTransition(
+      key: const Key('turn-flame'),
+      sizeFactor: _open,
+      alignment: Alignment.topLeft,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          row,
+          // AnimatedSize cannot take no time (it would relayout itself in
+          // the middle of its own layout), so a still list just appears.
+          if (_still)
+            crewList
+          else
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: crewList,
+            ),
+        ],
       ),
     );
   }

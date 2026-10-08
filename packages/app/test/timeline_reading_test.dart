@@ -407,6 +407,22 @@ void main() {
     expect(find.byTooltip('Jump to latest event'), findsNothing);
   });
 
+  testWidgets('a finished turn\'s last row opens into view past its divider', (
+    tester,
+  ) async {
+    final List<TimelineItem> items = <TimelineItem>[
+      for (int i = 0; i < 30; i++) UserMessageItem(id: i, text: 'Message $i'),
+      tool(ToolCallStatus.completed),
+      const TurnCompleteItem(id: 'done', stopReason: 'end_turn'),
+    ];
+    await tester.pumpWidget(app(items));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Read a file'));
+    await tester.pumpAndSettle();
+    expect(find.text('Details to read').hitTestable(), findsOneWidget);
+    expect(find.byTooltip('Jump to latest event'), findsNothing);
+  });
+
   testWidgets('manual tool expansion survives completion', (tester) async {
     await tester.pumpWidget(app(<TimelineItem>[tool(ToolCallStatus.running)]));
     await tester.pump();

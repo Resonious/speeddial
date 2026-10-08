@@ -12,7 +12,7 @@ void main() {
       const AgentActivityEvent started = AgentActivityEvent(
         activity: AgentActivity(
           id: 'child',
-          kind: 'subagent',
+          kind: 'wait',
           title: 'Sub-agent launch',
           status: AgentActivityStatus.running,
         ),
@@ -20,7 +20,7 @@ void main() {
       const AgentActivityEvent completed = AgentActivityEvent(
         activity: AgentActivity(
           id: 'child',
-          kind: 'subagent',
+          kind: 'wait',
           title: 'Sub-agent launch',
           status: AgentActivityStatus.completed,
         ),
@@ -65,7 +65,7 @@ void main() {
         const AgentActivityEvent(
           activity: AgentActivity(
             id: 'other-child',
-            kind: 'subagent',
+            kind: 'wait',
             title: 'Sub-agent launch',
             status: AgentActivityStatus.running,
           ),

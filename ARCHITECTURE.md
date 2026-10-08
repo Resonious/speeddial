@@ -399,6 +399,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              carries a flame row: Preheating… (sent or no output yet), a
                              per-turn cooking verb, Keeping warm… (pilot light) while
                              waiting on permission; it goes out in smoke when the turn ends.
+                             Subagents (Codex `subagent` activities, one per interaction;
+                             Ante's legacy Agent tool calls and their progress) gather into
+                             one crew per turn (`SubagentCrewItem`, subagent_crew.dart) instead
+                             of a card per update: while the turn runs, a little spot at the
+                             end of its flame row — a small flame per subagent, flaring as it
+                             reports — opens to the list; once the turn ends, the crew takes
+                             one line ahead of its divider, the flames gone cold.
                              Codex compact/review/skills and Ante compact/context/skills dispatch
                              through their native transports, with the usual turn events.
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
@@ -430,7 +437,8 @@ Performance rules for the app:
   event, which new events and streamed text replace but older pages never touch. Failed
   sends retain the reading position. A touch stops following, so opening something to
   read holds it still; a tap that does not scroll on the newest row (opening the latest
-  tool call) keeps following, so what opens grows into view at the live end.
+  tool call; a finished turn's divider and the running turn's crew don't count as rows)
+  or on the flame row keeps following, so what opens grows into view at the live end.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at

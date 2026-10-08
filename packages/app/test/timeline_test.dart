@@ -262,94 +262,104 @@ void main() {
       expect(message.text, 'answer continues');
     });
 
-    testWidgets(
-      'flattens legacy Ante Agent progress into tagged top-level actions',
-      (WidgetTester tester) async {
-        const String intro = 'I’ll inspect the deployment workflow.';
-        const String read =
-            'Read(file_path="/workspace/.github/workflows/deploy.yml")';
-        final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
-          const ToolCallEvent(
-            toolCall: ToolCall(
-              id: 'agent-1',
-              title: 'Agent',
-              kind: 'other',
-              status: ToolCallStatus.running,
-              content: <ToolCallContent>[],
-              locations: <String>[],
-              rawInput: <String, Object?>{
-                'description': 'Trace the deployment graph',
-                'subagent_type': 'explore',
-              },
-            ),
+    testWidgets('gathers a legacy Ante Agent call into the turn\'s crew', (
+      WidgetTester tester,
+    ) async {
+      const String intro = 'I’ll inspect the deployment workflow.';
+      const String read =
+          'Read(file_path="/workspace/.github/workflows/deploy.yml")';
+      final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'agent-1',
+            title: 'Agent',
+            kind: 'other',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+            rawInput: <String, Object?>{
+              'description': 'Trace the deployment graph',
+              'subagent_type': 'explore',
+            },
           ),
-          const ToolCallEvent(
-            toolCall: ToolCall(
-              id: 'agent-1',
-              title: 'Agent',
-              kind: 'other',
-              status: ToolCallStatus.running,
-              content: <ToolCallContent>[ToolCallText(text: intro)],
-              locations: <String>[],
-            ),
+        ),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'agent-1',
+            title: 'Agent',
+            kind: 'other',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[ToolCallText(text: intro)],
+            locations: <String>[],
           ),
-          const ToolCallEvent(
-            toolCall: ToolCall(
-              id: 'agent-1',
-              title: 'Agent',
-              kind: 'other',
-              status: ToolCallStatus.running,
-              content: <ToolCallContent>[ToolCallText(text: '$intro\n$read')],
-              locations: <String>[],
-            ),
+        ),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'agent-1',
+            title: 'Agent',
+            kind: 'other',
+            status: ToolCallStatus.running,
+            content: <ToolCallContent>[ToolCallText(text: '$intro\n$read')],
+            locations: <String>[],
           ),
-          const ToolCallEvent(
-            toolCall: ToolCall(
-              id: 'agent-1',
-              title: 'Agent',
-              kind: 'other',
-              status: ToolCallStatus.completed,
-              content: <ToolCallContent>[],
-              locations: <String>[],
-              rawOutput: <String, Object?>{
-                'report': 'The workflow has three entry points.',
-              },
-            ),
+        ),
+        const ToolCallEvent(
+          toolCall: ToolCall(
+            id: 'agent-1',
+            title: 'Agent',
+            kind: 'other',
+            status: ToolCallStatus.completed,
+            content: <ToolCallContent>[],
+            locations: <String>[],
+            rawOutput: <String, Object?>{
+              'report': 'The workflow has three entry points.',
+            },
           ),
-        ]);
+        ),
+      ]);
 
-        expect(toolCallsIn(items), isEmpty);
-        final List<AgentActivityItem> activities = items
-            .whereType<AgentActivityItem>()
-            .toList();
-        expect(activities, hasLength(3));
-        expect(activities.first.activity.status, AgentActivityStatus.completed);
-        expect(
-          activities.first.activity.details,
-          contains('The workflow has three entry points.'),
-        );
+      // One subagent in the turn's crew, not a card per progress line.
+      expect(toolCallsIn(items), isEmpty);
+      expect(items.whereType<AgentActivityItem>(), isEmpty);
+      final Subagent subagent = items
+          .whereType<SubagentCrewItem>()
+          .single
+          .subagents
+          .single;
+      expect(subagent.name, 'Trace the deployment graph');
+      expect(subagent.kind, 'explore');
+      expect(subagent.status, AgentActivityStatus.completed);
+      expect(subagent.updates.map((AgentActivity u) => u.title), <String>[
+        intro,
+        'Read',
+      ]);
+      expect(subagent.report, 'The workflow has three entry points.');
 
-        tester.view.physicalSize = const Size(390, 844);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: buildSpeedDialTheme(),
-            home: Scaffold(body: Timeline(items: items)),
-          ),
-        );
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: Scaffold(body: Timeline(items: items)),
+        ),
+      );
 
-        expect(find.text('SUBAGENT'), findsNWidgets(3));
-        expect(find.text('Trace the deployment graph'), findsOneWidget);
-        expect(find.text(intro), findsOneWidget);
-        expect(find.text('Read'), findsOneWidget);
-        expect(
-          find.text('file_path="/workspace/.github/workflows/deploy.yml"'),
-          findsOneWidget,
-        );
-        expect(tester.takeException(), isNull);
-      },
-    );
+      expect(find.text('1 subagent · 2 updates'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('crew-row')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Trace the deployment graph'));
+      await tester.pumpAndSettle();
+      expect(find.text(intro), findsOneWidget);
+      expect(
+        find.textContaining(
+          'file_path="/workspace/.github/workflows/deploy.yml"',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('The workflow has three entry points.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('deriveTimelineItems tool calls', () {
