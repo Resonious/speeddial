@@ -390,11 +390,11 @@ Performance rules for the app:
   long history would only blur past it). Any return to the bottom from far enough away to
   show the down-arrow — the button, a drag, fling or wheel, or following resumed after a
   send — lands in a short spark burst along the bottom edge (landing_sparks.dart);
-  wiggles that never leave the bottom do not. While shown, the down-arrow flares with
-  activity at the live end
-  (latest_button.dart): the chat pane counts changes of the newest buffered event, which
-  new events and streamed text replace but older pages never touch. Failed sends retain
-  the reading position.
+  wiggles that never leave the bottom do not. The down-arrow rises into view and sinks
+  back out (ignoring taps on the way out). While shown, it flares with activity at the
+  live end (latest_button.dart): the chat pane counts changes of the newest buffered
+  event, which new events and streamed text replace but older pages never touch. Failed
+  sends retain the reading position.
   Adjacent deltas with the same identity
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at

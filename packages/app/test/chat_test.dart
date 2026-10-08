@@ -847,7 +847,9 @@ void main() {
         );
         expect(find.text('My new message').hitTestable(), findsOneWidget);
         expect(position.pixels, closeTo(position.minScrollExtent, 0.1));
+        // The jump button sinks away instead of vanishing.
         await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
         expect(find.byTooltip('Jump to latest event'), findsNothing);
         await tester.pump(const Duration(seconds: 1));
         expect(position.pixels, closeTo(position.minScrollExtent, 0.1));

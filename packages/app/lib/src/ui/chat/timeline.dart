@@ -733,12 +733,12 @@ class _TimelineState extends State<Timeline> {
           bottom: 12,
           child: ValueListenableBuilder<bool>(
             valueListenable: _showLatest,
-            builder: (BuildContext context, bool visible, Widget? child) =>
-                visible ? child! : const SizedBox.shrink(),
-            child: LatestButton(
-              activity: widget.activity,
-              onPressed: _jumpToLatest,
-            ),
+            builder: (BuildContext context, bool visible, Widget? _) =>
+                LatestButton(
+                  visible: visible,
+                  activity: widget.activity,
+                  onPressed: _jumpToLatest,
+                ),
           ),
         ),
       ],

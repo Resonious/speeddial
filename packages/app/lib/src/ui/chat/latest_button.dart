@@ -6,17 +6,21 @@ import '../flame.dart';
 
 /// The jump-to-latest button, kept warm by what happens below it.
 ///
-/// Each change of [activity] fans it like an ember: it flares up with a glow
-/// and a few flames licking up from behind it, and cools off once things go
-/// quiet. Steady streaming keeps it burning rather than strobing; the first
-/// activity after a lull also bumps it down, toward the news. Holds still
-/// when the platform asks for reduced motion.
+/// It rises into view when [visible] turns on and sinks back down when it
+/// turns off. While shown, each change of [activity] fans it like an ember:
+/// it flares up with a glow and a few flames licking up from behind it, and
+/// cools off once things go quiet. Steady streaming keeps it burning rather
+/// than strobing; the first activity after a lull also bumps it down, toward
+/// the news. Holds still when the platform asks for reduced motion.
 class LatestButton extends StatefulWidget {
   const LatestButton({
     super.key,
+    required this.visible,
     required this.activity,
     required this.onPressed,
   });
+
+  final bool visible;
 
   /// Changes whenever content arrives at the timeline's live end.
   final int activity;
@@ -28,17 +32,42 @@ class LatestButton extends StatefulWidget {
 
 class _LatestButtonState extends State<LatestButton>
     with TickerProviderStateMixin {
+  /// 1 while shown; rises in with a little overshoot, sinks out quicker.
+  late final AnimationController _presence = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+    reverseDuration: const Duration(milliseconds: 190),
+    value: widget.visible ? 1 : 0,
+  )..addStatusListener(_onPresence);
+  late final Animation<double> _rise = CurvedAnimation(
+    parent: _presence,
+    curve: Curves.easeOutBack,
+    reverseCurve: Curves.easeInCubic,
+  );
+  late final Animation<double> _fade = CurvedAnimation(
+    parent: _presence,
+    curve: const Interval(0, 0.6, curve: Curves.easeOut),
+    reverseCurve: Curves.easeIn,
+  );
+
   /// 0 is cold; each activity stokes it toward 1, then it cools back down.
   late final AnimationController _heat = AnimationController(vsync: this);
   late final AnimationController _bump = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 420),
   );
-  late final Listenable _motion = Listenable.merge(<Listenable>[_heat, _bump]);
+  late final Listenable _motion = Listenable.merge(<Listenable>[
+    _presence,
+    _heat,
+    _bump,
+  ]);
   bool _still = false;
 
   /// Distance the button drops when activity breaks a lull.
   static const double _drop = 5;
+
+  /// How far below its spot the button rises from and sinks back to.
+  static const double _sink = 14;
 
   @override
   void didChangeDependencies() {
@@ -53,7 +82,27 @@ class _LatestButtonState extends State<LatestButton>
   @override
   void didUpdateWidget(LatestButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.activity != oldWidget.activity) _stoke();
+    if (widget.visible != oldWidget.visible) {
+      if (_still) {
+        _presence.value = widget.visible ? 1 : 0;
+      } else if (widget.visible) {
+        _presence.forward();
+      } else {
+        _presence.reverse();
+      }
+    }
+    // Nothing to flare while hidden or on its way out.
+    if (widget.visible && widget.activity != oldWidget.activity) _stoke();
+  }
+
+  void _onPresence(AnimationStatus status) {
+    // The button is mounted only while it shows: unmount it once it has
+    // sunk away, remount it as it starts to rise.
+    if (status == AnimationStatus.dismissed ||
+        status == AnimationStatus.forward ||
+        status == AnimationStatus.completed) {
+      setState(() {});
+    }
   }
 
   void _stoke() {
@@ -73,6 +122,7 @@ class _LatestButtonState extends State<LatestButton>
 
   @override
   void dispose() {
+    _presence.dispose();
     _heat.dispose();
     _bump.dispose();
     super.dispose();
@@ -80,49 +130,37 @@ class _LatestButtonState extends State<LatestButton>
 
   @override
   Widget build(BuildContext context) {
+    if (_presence.isDismissed) return const SizedBox.shrink();
     final Color glow = Theme.of(context).colorScheme.primary;
+    // On its way out it no longer takes taps or reads as a control.
+    return IgnorePointer(
+      ignoring: !widget.visible,
+      child: ExcludeSemantics(
+        excluding: !widget.visible,
+        child: FadeTransition(
+          key: const Key('latest-button'),
+          opacity: _fade,
+          child: _burner(glow),
+        ),
+      ),
+    );
+  }
+
+  Widget _burner(Color glow) {
     return AnimatedBuilder(
       animation: _motion,
       builder: (BuildContext context, Widget? button) {
         final double heat = _heat.value;
+        final double rise = _rise.value;
         return Transform.translate(
-          offset: Offset(0, _drop * math.sin(math.pi * _bump.value)),
-          child: Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: <Widget>[
-              // Rising from just behind the button's top edge (it sits
-              // centered here whatever its tap-target padding). Even a
-              // single flare shows clear flames.
-              if (heat > 0.02)
-                Transform.translate(
-                  offset: const Offset(0, -27),
-                  child: IgnorePointer(
-                    child: Opacity(
-                      // Gutters out before it is unmounted.
-                      opacity: math.min(1.0, heat * 4),
-                      child: Transform.scale(
-                        key: const Key('latest-flames'),
-                        scale: 0.45 + 0.55 * heat,
-                        alignment: Alignment.bottomCenter,
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: <Widget>[
-                            Flame(size: 14, phase: 0.13),
-                            Flame(size: 20, phase: 0.58),
-                            Flame(size: 14, phase: 0.81),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              CustomPaint(
-                painter: _GlowPainter(heat: heat, color: glow),
-                child: button,
-              ),
-            ],
+          offset: Offset(
+            0,
+            _drop * math.sin(math.pi * _bump.value) + _sink * (1 - rise),
+          ),
+          child: Transform.scale(
+            scale: 0.6 + 0.4 * rise,
+            alignment: Alignment.bottomCenter,
+            child: _withFlames(heat, glow, button),
           ),
         );
       },
@@ -132,6 +170,46 @@ class _LatestButtonState extends State<LatestButton>
         onPressed: widget.onPressed,
         child: const Icon(Icons.arrow_downward),
       ),
+    );
+  }
+
+  Widget _withFlames(double heat, Color glow, Widget? button) {
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: <Widget>[
+        // Rising from just behind the button's top edge (it sits
+        // centered here whatever its tap-target padding). Even a
+        // single flare shows clear flames.
+        if (heat > 0.02)
+          Transform.translate(
+            offset: const Offset(0, -27),
+            child: IgnorePointer(
+              child: Opacity(
+                // Gutters out before it is unmounted.
+                opacity: math.min(1.0, heat * 4),
+                child: Transform.scale(
+                  key: const Key('latest-flames'),
+                  scale: 0.45 + 0.55 * heat,
+                  alignment: Alignment.bottomCenter,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: <Widget>[
+                      Flame(size: 14, phase: 0.13),
+                      Flame(size: 20, phase: 0.58),
+                      Flame(size: 14, phase: 0.81),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        CustomPaint(
+          painter: _GlowPainter(heat: heat, color: glow),
+          child: button,
+        ),
+      ],
     );
   }
 }

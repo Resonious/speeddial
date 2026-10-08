@@ -175,6 +175,44 @@ void main() {
     );
   }
 
+  testWidgets('the jump button rises in and sinks back out', (tester) async {
+    await tester.pumpWidget(
+      app(<TimelineItem>[
+        for (int i = 0; i < 60; i++) UserMessageItem(id: i, text: 'Message $i'),
+      ]),
+    );
+    await tester.pumpAndSettle();
+    final Finder button = find.byKey(const Key('latest-button'));
+    final Finder tooltip = find.byTooltip('Jump to latest event');
+    double opacity() => tester.widget<FadeTransition>(button).opacity.value;
+    Future<void> frames() async {
+      await tester.pump();
+      for (int i = 0; i < 3; i++) {
+        await tester.pump(const Duration(milliseconds: 30));
+      }
+    }
+
+    expect(button, findsNothing);
+    // Reading away from the bottom: it rises in rather than popping up.
+    await tester.drag(
+      find.byKey(const Key('chat-timeline')),
+      const Offset(0, 300),
+    );
+    await frames();
+    expect(opacity(), inExclusiveRange(0, 1));
+    await tester.pumpAndSettle();
+    expect(opacity(), 1);
+    expect(tooltip.hitTestable(), findsOneWidget);
+
+    // Landing: it sinks away and takes no taps on the way out.
+    await tester.tap(tooltip);
+    await frames();
+    expect(opacity(), inExclusiveRange(0, 1));
+    expect(tooltip.hitTestable(), findsNothing);
+    await tester.pumpAndSettle();
+    expect(button, findsNothing);
+  });
+
   testWidgets('scrolling back down to the bottom lands in sparks', (
     tester,
   ) async {
