@@ -954,6 +954,54 @@ void main() {
     expect(flames, findsNothing);
   });
 
+  testWidgets('a turn on a daemon out of reach shows still, not cooking', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(
+      tester,
+      eventDelay: const Duration(seconds: 2),
+    );
+    final String sessionId = app.selection.selectedSessionId!;
+    await app.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+
+    await tester.enterText(find.byType(TextField), 'start');
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.running,
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('Preheating…'), findsOneWidget);
+
+    // The daemon drops: the turn's real state is unknown, so nothing burns.
+    app.connections.setStatus('fake', ConnectionStatus.reconnecting);
+    await tester.pumpAndSettle();
+    expect(find.text('Reconnecting…'), findsOneWidget);
+    expect(find.text('Preheating…'), findsNothing);
+
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Preheating…'), findsOneWidget);
+    expect(tester.hasRunningAnimations, isTrue);
+
+    // Drain the scripted turn so no timers outlive the test.
+    await pumpUntil(
+      tester,
+      () => app.chat.statusOf(sessionId) == SessionStatus.idle,
+      attempts: 40,
+      step: const Duration(seconds: 1),
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('reduced motion holds the oven still', (
     WidgetTester tester,
   ) async {

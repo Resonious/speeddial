@@ -57,12 +57,22 @@ const List<double> _bandStops = <double>[0, 0.5, 1];
 ///
 /// Collapses to nothing (and unmounts its flame) while [heat] is off.
 class TurnFlameRow extends StatefulWidget {
-  const TurnFlameRow({super.key, required this.heat, this.seed = 0});
+  const TurnFlameRow({
+    super.key,
+    required this.heat,
+    this.seed = 0,
+    this.unreachable,
+  });
 
   final TurnHeat heat;
 
   /// See [turnHeatLabel].
   final int seed;
+
+  /// While set, the daemon is out of reach and the turn's real state is
+  /// unknown: the flame sits grey and still, and this replaces the status
+  /// line.
+  final String? unreachable;
 
   @override
   State<TurnFlameRow> createState() => _TurnFlameRowState();
@@ -128,6 +138,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     }
     _shown = widget.heat;
     _shownSeed = widget.seed;
+    if (widget.unreachable != oldWidget.unreachable) _syncShimmer();
     if (_lit.isCompleted || _lit.status == AnimationStatus.forward) return;
     if (_still) {
       _lit.value = 1;
@@ -147,7 +158,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
   }
 
   void _syncShimmer() {
-    if (_lit.isDismissed || _still) {
+    if (_lit.isDismissed || _still || widget.unreachable != null) {
       // Parks the glint off the label's edge (and stops the loop).
       _shimmer.value = 0;
     } else if (!_shimmer.isAnimating) {
@@ -168,7 +179,8 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     final ThemeData theme = Theme.of(context);
     final SpeedDialColors colors = theme.speedDialColors;
     final Color muted = theme.colorScheme.onSurfaceVariant;
-    final String label = turnHeatLabel(_shown, _shownSeed);
+    final String? unreachable = widget.unreachable;
+    final String label = unreachable ?? turnHeatLabel(_shown, _shownSeed);
     return SizeTransition(
       key: const Key('turn-flame'),
       sizeFactor: _open,
@@ -194,6 +206,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
                       intensity: _shown == TurnHeat.keepingWarm
                           ? FlameIntensity.pilot
                           : FlameIntensity.blaze,
+                      dormant: unreachable != null,
                     ),
                   ),
                 ),

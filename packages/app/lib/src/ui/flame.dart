@@ -19,7 +19,7 @@ enum FlameIntensity {
 ///
 /// Only repaints itself (never rebuilds) behind a [RepaintBoundary].
 /// Changing [intensity] turns the flame up or down smoothly. Holds one still
-/// frame when the platform asks for reduced motion.
+/// frame when the platform asks for reduced motion, or when [dormant].
 class Flame extends StatefulWidget {
   const Flame({
     super.key,
@@ -27,6 +27,7 @@ class Flame extends StatefulWidget {
     this.intensity = FlameIntensity.blaze,
     this.phase = 0,
     this.glow = false,
+    this.dormant = false,
   });
 
   /// Height of the glyph; it is three quarters as wide.
@@ -41,6 +42,10 @@ class Flame extends StatefulWidget {
   /// Casts warm light around the flame and sends up the odd ember. Meant for
   /// larger flames; both spill outside the glyph's box.
   final bool glow;
+
+  /// Grey and still: what the flame stands for cannot be vouched for right
+  /// now (its daemon is out of reach). Fades in and out of grey.
+  final bool dormant;
 
   @override
   State<Flame> createState() => _FlameState();
@@ -60,6 +65,13 @@ class _FlameState extends State<Flame> with TickerProviderStateMixin {
     parent: _heat,
     curve: Curves.easeInOut,
   );
+
+  /// 1 when fully grey.
+  late final AnimationController _dormancy = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 350),
+    value: widget.dormant ? 1 : 0,
+  );
   bool _still = false;
 
   static double _heatFor(FlameIntensity intensity) =>
@@ -69,23 +81,39 @@ class _FlameState extends State<Flame> with TickerProviderStateMixin {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    if (_still) {
-      // Setting the value also stops a running loop.
-      _flicker.value = 0.2;
-    } else if (!_flicker.isAnimating) {
-      _flicker.repeat();
-    }
+    _syncFlicker();
   }
 
   @override
   void didUpdateWidget(Flame oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.intensity == oldWidget.intensity) return;
-    final double target = _heatFor(widget.intensity);
+    if (widget.intensity != oldWidget.intensity) {
+      final double target = _heatFor(widget.intensity);
+      if (_still) {
+        _heat.value = target;
+      } else {
+        _heat.animateTo(target);
+      }
+    }
+    if (widget.dormant != oldWidget.dormant) {
+      final double target = widget.dormant ? 1 : 0;
+      if (_still) {
+        _dormancy.value = target;
+      } else {
+        _dormancy.animateTo(target);
+      }
+      _syncFlicker();
+    }
+  }
+
+  void _syncFlicker() {
     if (_still) {
-      _heat.value = target;
-    } else {
-      _heat.animateTo(target);
+      // Setting the value also stops a running loop.
+      _flicker.value = 0.2;
+    } else if (widget.dormant) {
+      _flicker.stop();
+    } else if (!_flicker.isAnimating) {
+      _flicker.repeat();
     }
   }
 
@@ -93,6 +121,7 @@ class _FlameState extends State<Flame> with TickerProviderStateMixin {
   void dispose() {
     _flicker.dispose();
     _heat.dispose();
+    _dormancy.dispose();
     super.dispose();
   }
 
@@ -106,6 +135,7 @@ class _FlameState extends State<Flame> with TickerProviderStateMixin {
         painter: _FlamePainter(
           flicker: _flicker,
           heat: _heatCurve,
+          dormancy: _dormancy,
           phase: widget.phase,
           glow: widget.glow,
           glowStrength: theme.brightness == Brightness.dark ? 1 : 0.45,
@@ -114,6 +144,11 @@ class _FlameState extends State<Flame> with TickerProviderStateMixin {
           tip: colors.flameTip,
           core: colors.flameCore,
           pilot: colors.running,
+          // Greys on either side of the idle grey: toward the canvas at the
+          // root, toward the ink in the core.
+          ash: colors.idle,
+          soot: Color.lerp(colors.idle, theme.colorScheme.surface, 0.35)!,
+          cinder: Color.lerp(colors.idle, theme.colorScheme.onSurface, 0.45)!,
         ),
       ),
     );
@@ -131,6 +166,7 @@ class _FlamePainter extends CustomPainter {
   _FlamePainter({
     required this.flicker,
     required this.heat,
+    required this.dormancy,
     required this.phase,
     required this.glow,
     required this.glowStrength,
@@ -139,12 +175,18 @@ class _FlamePainter extends CustomPainter {
     required this.tip,
     required this.core,
     required this.pilot,
-  }) : super(repaint: Listenable.merge(<Listenable>[flicker, heat]));
+    required this.ash,
+    required this.soot,
+    required this.cinder,
+  }) : super(repaint: Listenable.merge(<Listenable>[flicker, heat, dormancy]));
 
   final Animation<double> flicker;
 
   /// 1 for a full blaze, 0 for the pilot light.
   final Animation<double> heat;
+
+  /// 1 when the flame has gone fully grey.
+  final Animation<double> dormancy;
   final double phase;
   final bool glow;
 
@@ -156,14 +198,20 @@ class _FlamePainter extends CustomPainter {
   final Color core;
   final Color pilot;
 
+  /// Greys a dormant flame takes on for its body, root and core.
+  final Color ash;
+  final Color soot;
+  final Color cinder;
+
   final Path _body = Path();
   final Path _core = Path();
   final Paint _fill = Paint();
   final Paint _spot = Paint();
 
-  // Gradients live in the normalized space and depend only on heat, so they
-  // survive the flicker (and any resize).
+  // Gradients live in the normalized space and depend only on heat and
+  // dormancy, so they survive the flicker (and any resize).
   double? _shadedHeat;
+  double? _shadedDormancy;
   late ui.Shader _bodyShader;
   late ui.Shader _coreShader;
   late ui.Shader _glowShader;
@@ -193,13 +241,14 @@ class _FlamePainter extends CustomPainter {
     final double coreSway =
         motion * (0.6 * math.sin(3 * a + 2.2) + 0.4 * math.sin(8 * a + 0.9));
 
-    _shade(heat);
+    final double dormancy = this.dormancy.value;
+    _shade(heat, dormancy);
 
     final double halfWidth = w * 0.5 * ui.lerpDouble(0.62, 0.94, heat)!;
     final double height = h * ui.lerpDouble(0.55, 0.97, heat)!;
     final double tipY = 0.95 + 0.05 * lick;
 
-    if (glow) {
+    if (glow && dormancy < 1) {
       canvas
         ..save()
         ..translate(w / 2, h - height * 0.42)
@@ -229,7 +278,7 @@ class _FlamePainter extends CustomPainter {
       ..drawPath(_core, _fill)
       ..restore();
 
-    if (glow && heat > 0.5) {
+    if (glow && heat > 0.5 && dormancy < 0.5) {
       _paintEmbers(canvas, w, h, h * 0.99 - height * tipY, heat);
     }
   }
@@ -257,22 +306,27 @@ class _FlamePainter extends CustomPainter {
     }
   }
 
-  void _shade(double heat) {
-    if (heat == _shadedHeat) return;
+  void _shade(double heat, double dormancy) {
+    if (heat == _shadedHeat && dormancy == _shadedDormancy) return;
     _shadedHeat = heat;
+    _shadedDormancy = dormancy;
     final double cool = 1 - heat;
+    Color grey(Color color, Color to) => Color.lerp(color, to, dormancy)!;
     final Color pilotCore = Color.lerp(pilot, const Color(0xFFFFFFFF), 0.6)!;
     _bodyShader = ui.Gradient.linear(
       Offset.zero,
       const Offset(0, 1),
       <Color>[
-        Color.lerp(root, pilot, cool)!,
-        Color.lerp(body, pilot.withValues(alpha: 0.85), cool)!,
-        Color.lerp(
-          Color.lerp(body, tip, 0.3),
-          pilot.withValues(alpha: 0.15),
-          cool,
-        )!,
+        grey(Color.lerp(root, pilot, cool)!, soot),
+        grey(Color.lerp(body, pilot.withValues(alpha: 0.85), cool)!, ash),
+        grey(
+          Color.lerp(
+            Color.lerp(body, tip, 0.3),
+            pilot.withValues(alpha: 0.15),
+            cool,
+          )!,
+          ash,
+        ),
       ],
       const <double>[0, 0.5, 1],
     );
@@ -280,13 +334,15 @@ class _FlamePainter extends CustomPainter {
       Offset.zero,
       const Offset(0, 0.66),
       <Color>[
-        Color.lerp(core, pilotCore, cool)!,
-        Color.lerp(tip, pilotCore.withValues(alpha: 0.5), cool)!,
+        grey(Color.lerp(core, pilotCore, cool)!, cinder),
+        grey(Color.lerp(tip, pilotCore.withValues(alpha: 0.5), cool)!, ash),
       ],
     );
     final Color light = Color.lerp(body, pilot, cool)!;
     _glowShader = ui.Gradient.radial(Offset.zero, 1, <Color>[
-      light.withValues(alpha: glowStrength * (0.32 * heat + 0.14 * cool)),
+      light.withValues(
+        alpha: glowStrength * (0.32 * heat + 0.14 * cool) * (1 - dormancy),
+      ),
       light.withValues(alpha: 0),
     ]);
   }
@@ -348,6 +404,10 @@ class _FlamePainter extends CustomPainter {
   bool shouldRepaint(_FlamePainter oldDelegate) =>
       oldDelegate.flicker != flicker ||
       oldDelegate.heat != heat ||
+      oldDelegate.dormancy != dormancy ||
+      oldDelegate.ash != ash ||
+      oldDelegate.soot != soot ||
+      oldDelegate.cinder != cinder ||
       oldDelegate.phase != phase ||
       oldDelegate.glow != glow ||
       oldDelegate.glowStrength != glowStrength ||

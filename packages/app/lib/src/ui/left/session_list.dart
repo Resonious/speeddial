@@ -25,15 +25,25 @@ Color sessionStatusColor(SpeedDialColors colors, SessionStatus status) {
 /// Small pill showing a session's lifecycle status, tinted with the status
 /// color from the theme.
 class SessionStatusChip extends StatelessWidget {
-  const SessionStatusChip({super.key, required this.status, this.done = false});
+  const SessionStatusChip({
+    super.key,
+    required this.status,
+    this.done = false,
+    this.dormant = false,
+  });
 
   final SessionStatus status;
   final bool done;
 
+  /// Only the last status heard (the daemon is out of reach): shown grey.
+  final bool dormant;
+
   @override
   Widget build(BuildContext context) {
     final SpeedDialColors colors = context.speedDialColors;
-    final Color color = done
+    final Color color = dormant
+        ? colors.idle
+        : done
         ? colors.success
         : sessionStatusColor(colors, status);
     return Container(
@@ -263,8 +273,16 @@ class SessionRow extends StatelessWidget {
     }
   }
 
-  String _statusTooltip(BuildContext context, bool done) {
+  String _statusTooltip(
+    BuildContext context,
+    bool done,
+    ConnectionStatus link,
+  ) {
     final String label = done ? 'Done' : session.status.name;
+    if (_inProgress && link.outOfReach) {
+      return '$label (last known)\n'
+          '${link == ConnectionStatus.failed ? 'Daemon unreachable' : 'Reconnecting to the daemon…'}';
+    }
     if (session.status != SessionStatus.idle) return label;
 
     final DateTime lastActivity = session.lastActivityAt.toLocal();
@@ -279,12 +297,28 @@ class SessionRow extends StatelessWidget {
     return '$label\nLast activity: $date at $time';
   }
 
+  /// The agent is (or was last heard to be) mid-turn.
+  bool get _inProgress =>
+      session.status == SessionStatus.running ||
+      session.status == SessionStatus.waitingPermission;
+
   @override
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
+    return ListenableBuilder(
+      listenable: data.connections,
+      builder: (BuildContext context, Widget? _) =>
+          _tile(context, data, data.connections.statusOf(daemonId)),
+    );
+  }
+
+  Widget _tile(BuildContext context, AppData data, ConnectionStatus link) {
     final TextTheme textTheme = Theme.of(context).textTheme;
     final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool done = data.sessions.isDone(daemonId, session.id);
+    // A turn last seen in progress on a daemon now out of reach may long
+    // be over: show it as last known rather than live.
+    final bool dormant = _inProgress && link.outOfReach;
 
     return ListTile(
       dense: true,
@@ -292,7 +326,7 @@ class SessionRow extends StatelessWidget {
       selected: selected,
       selectedTileColor: scheme.surfaceContainerHighest,
       leading: Tooltip(
-        message: _statusTooltip(context, done),
+        message: _statusTooltip(context, done, link),
         child: SizedBox(
           width: 22,
           child: Center(
@@ -302,6 +336,7 @@ class SessionRow extends StatelessWidget {
                   ? context.speedDialColors.success
                   : sessionStatusColor(context.speedDialColors, session.status),
               phase: (session.id.hashCode % 997) / 997,
+              dormant: dormant,
             ),
           ),
         ),
@@ -342,7 +377,11 @@ class SessionRow extends StatelessWidget {
               child: Icon(Icons.push_pin, size: 12),
             ),
           ProviderBadge(providerId: session.providerId),
-          SessionStatusChip(status: session.status, done: done),
+          SessionStatusChip(
+            status: session.status,
+            done: done,
+            dormant: dormant,
+          ),
           SessionGitBadges(session: session, daemonId: daemonId),
         ],
       ),

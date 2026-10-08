@@ -599,6 +599,70 @@ void main() {
     expect(find.byKey(const ValueKey<String>('session-flame')), findsNothing);
   });
 
+  testWidgets('a daemon out of reach leaves its running sessions grey and '
+      'still', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final AppData app = AppData()..registerClient('fake', FakeDaemonClient());
+    addTearDown(app.dispose);
+    await app.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    app.connections.setStatus('fake', ConnectionStatus.reconnecting);
+    final Session base = testSession(
+      id: 'stale',
+      title: 'Last heard running',
+      lastActivityAt: DateTime(2026, 8, 21, 9, 7),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AppScope(
+            data: app,
+            child: SessionRow(
+              session: Session(
+                id: base.id,
+                projectId: base.projectId,
+                providerId: base.providerId,
+                title: base.title,
+                status: SessionStatus.running,
+                model: base.model,
+                cwd: base.cwd,
+                baseBranch: base.baseBranch,
+                yolo: base.yolo,
+                archived: base.archived,
+                createdAt: base.createdAt,
+                lastActivityAt: base.lastActivityAt,
+                updatedAt: base.updatedAt,
+              ),
+              selected: false,
+              daemonId: 'fake',
+              projectId: 'project',
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // Still a flame, but nothing flickers: the status may be long stale.
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('session-flame')), findsOneWidget);
+    expect(
+      find.byTooltip('running (last known)\nReconnecting to the daemon…'),
+      findsOneWidget,
+    );
+
+    // Back in reach, it burns again.
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.hasRunningAnimations, isTrue);
+    expect(find.byTooltip('running'), findsOneWidget);
+  });
+
   testWidgets('idle session tooltip includes last activity timestamp', (
     WidgetTester tester,
   ) async {

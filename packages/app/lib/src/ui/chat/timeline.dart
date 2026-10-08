@@ -507,11 +507,16 @@ class Timeline extends StatefulWidget {
     this.turnSeed = 0,
     this.activity = 0,
     this.cwd,
+    this.unreachable,
   });
 
   /// The session's working directory: tool rows show paths under it as
   /// relative ones.
   final String? cwd;
+
+  /// Set while the session's daemon is out of reach (see
+  /// [TurnFlameRow.unreachable]).
+  final String? unreachable;
 
   /// Increment after a successful local send to resume following the timeline.
   final int followLatestRequest;
@@ -705,6 +710,7 @@ class _TimelineState extends State<Timeline> {
                 outgoing: widget.outgoing,
                 heat: widget.heat,
                 turnSeed: widget.turnSeed,
+                unreachable: widget.unreachable,
                 forkable: widget.onFork != null,
               );
             }
@@ -970,12 +976,14 @@ class _TimelineTail extends StatelessWidget {
     required this.outgoing,
     required this.heat,
     required this.turnSeed,
+    required this.unreachable,
     required this.forkable,
   });
 
   final List<OutgoingMessage> outgoing;
   final TurnHeat heat;
   final int turnSeed;
+  final String? unreachable;
   final bool forkable;
 
   @override
@@ -994,6 +1002,7 @@ class _TimelineTail extends StatelessWidget {
           key: const ValueKey<String>('turn-flame-row'),
           heat: heat,
           seed: turnSeed,
+          unreachable: unreachable,
         ),
       ],
     );

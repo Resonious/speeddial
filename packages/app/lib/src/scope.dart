@@ -35,6 +35,19 @@ enum ConnectionStatus {
   failed,
 }
 
+extension ConnectionStatusReach on ConnectionStatus {
+  /// The daemon cannot be reached right now, so what the app last heard from
+  /// it (a session still "running", say) may be stale. `disconnected` is
+  /// also where clients the app does not manage itself (tests, demos) rest,
+  /// so their state is taken at face value.
+  bool get outOfReach => switch (this) {
+    ConnectionStatus.connecting ||
+    ConnectionStatus.reconnecting ||
+    ConnectionStatus.failed => true,
+    ConnectionStatus.connected || ConnectionStatus.disconnected => false,
+  };
+}
+
 /// A configured daemon endpoint. UI-local model (the daemon itself reports a
 /// `DaemonInfo` over the wire); fields are `final`.
 @immutable

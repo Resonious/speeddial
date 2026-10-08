@@ -15,6 +15,7 @@ class SessionStatusGlyph extends StatelessWidget {
     required this.status,
     required this.color,
     this.phase = 0,
+    this.dormant = false,
   });
 
   final SessionStatus status;
@@ -25,17 +26,27 @@ class SessionStatusGlyph extends StatelessWidget {
   /// Offsets the flame's flicker so neighbouring rows burn out of step.
   final double phase;
 
+  /// The status is only the last one heard (the daemon is out of reach):
+  /// the flame goes grey and still, and nothing pings.
+  final bool dormant;
+
   @override
   Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
     final Widget glyph = switch (status) {
       SessionStatus.running => Flame(
         key: const ValueKey<String>('session-flame'),
         size: 16,
         phase: phase,
+        dormant: dormant,
+      ),
+      SessionStatus.waitingPermission when dormant => _Dot(
+        key: const ValueKey<String>('session-ping-dormant'),
+        color: colors.idle,
       ),
       SessionStatus.waitingPermission => _TimerPing(
         key: const ValueKey<String>('session-ping'),
-        color: context.speedDialColors.waitingPermission,
+        color: colors.waitingPermission,
       ),
       _ => _Dot(key: ValueKey<Color>(color), color: color),
     };

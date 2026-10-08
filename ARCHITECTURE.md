@@ -322,7 +322,11 @@ lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's p
                              a daemon/project chooser for new sessions. Session rows show
                              title, status chip, provider badge, and daemon/project in Inbox;
                              their status mark is a live flame while running and an
-                             oven-timer ping while waiting on permission.
+                             oven-timer ping while waiting on permission. While the
+                             session's daemon is out of reach (connecting, reconnecting,
+                             failed) an in-progress status is only the last one heard:
+                             flame, ping and chip go grey and still, and the chat's turn
+                             row reads "Reconnecting…" / "Daemon unreachable".
                              New-session sheet (provider, worktree branch, yolo,
                              and short prompt —
                              model/thinking are picked in the

@@ -256,6 +256,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       listenable: Listenable.merge(<Listenable>[
         chat,
         data.sessions,
+        data.connections,
         _followLatestRequest,
       ]),
       builder: (BuildContext context, Widget? _) {
@@ -313,6 +314,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             turnSeed: _turnSeed,
             activity: _activity,
             cwd: session?.cwd,
+            // A turn last heard running may be long over: say so instead.
+            unreachable: switch (data.connections.statusOf(daemonId)) {
+              ConnectionStatus.failed => 'Daemon unreachable',
+              final ConnectionStatus link when link.outOfReach =>
+                'Reconnecting…',
+              _ => null,
+            },
             followLatestRequest: _followLatestRequest.value,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),
