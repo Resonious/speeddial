@@ -309,6 +309,13 @@ Activity ids are session-scoped: later snapshots replace the original activity
 in place even across turn boundaries. A newly observed id remains a new row,
 including when first received after a turn ends.
 
+`subagent` activities report the provider's subagents, which clients gather per
+subagent. Codex sends one per subagent interaction, with the subagent's path as
+`details[0]` (its thread id follows). Ante sends one per subagent,
+`ante-subagent-<toolCallId>`: `running` with the subagent type as `details[0]`
+when launched, then `completed` or `failed` with its report as `details[1]`.
+Each action the subagent takes is a further activity, `<that id>-step-<n>`.
+
 For a request with nonempty `questions`, respond with `optionId: "answer"` and
 one `answers` entry per question, in order, or `optionId: "dismiss"` without answers.
 Selections are exact option labels; a free-text answer has an empty selection and a note.

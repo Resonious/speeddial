@@ -179,5 +179,93 @@ void main() {
       expect(edit.title, 'Edit');
       expect(edit.detail, 'lib/main.dart');
     });
+
+    test('says what a call titled only with its tool did', () {
+      ToolCallSummary named(String title, Map<String, Object?> input) =>
+          summarizeToolCall(
+            _tool(title: title, kind: 'other', rawInput: input),
+            cwd: cwd,
+          );
+      // A file leads by its own name, with where it lives beneath.
+      final ToolCallSummary read = named('Read', <String, Object?>{
+        'file_path': '$cwd/src/main.rs',
+      });
+      expect(read.title, 'Read main.rs');
+      expect(read.detail, 'src/main.rs');
+      expect(read.titleIsCommand, isFalse);
+      // Only part of it: which part.
+      String reading(Map<String, Object?> range) => named(
+        'Read',
+        <String, Object?>{'file_path': '$cwd/src/main.rs', ...range},
+      ).title;
+      expect(
+        reading(<String, Object?>{'offset': 755, 'limit': 70}),
+        'Read lines 755–824 of main.rs',
+      );
+      expect(
+        reading(<String, Object?>{'offset': 1, 'limit': 130}),
+        'Read lines 1–130 of main.rs',
+      );
+      expect(
+        reading(<String, Object?>{'offset': 300}),
+        'Read main.rs from line 300',
+      );
+      expect(
+        reading(<String, Object?>{'offset': 0, 'limit': 2000}),
+        'Read main.rs',
+      );
+      final ToolCallSummary edit = named('Edit', <String, Object?>{
+        'file_path': '/home/nigel/.zshrc',
+      });
+      expect(edit.title, 'Edit .zshrc');
+      expect(edit.detail, '~/.zshrc');
+      final ToolCallSummary write = named('Write', <String, Object?>{
+        'file_path': '$cwd/notes.md',
+      });
+      expect(write.title, 'Write notes.md');
+      expect(write.detail, isNull);
+
+      String titled(String title, Map<String, Object?> input) =>
+          named(title, input).title;
+      expect(
+        titled('Grep', <String, Object?>{
+          'pattern': 'retry|backoff',
+          'path': '$cwd/src',
+          '-n': true,
+        }),
+        'Search “retry|backoff” in src',
+      );
+      // Searching the working directory itself needs no "in".
+      expect(
+        titled('Glob', <String, Object?>{'pattern': '**/*.yml', 'path': cwd}),
+        'Find **/*.yml',
+      );
+      expect(titled('LS', <String, Object?>{'path': '$cwd/lib'}), 'List lib');
+      expect(
+        titled('WebFetch', <String, Object?>{
+          'url': 'https://docs.flutter.dev/ui',
+          'prompt': 'Summarize',
+        }),
+        'Fetch docs.flutter.dev/ui',
+      );
+      expect(
+        titled('WebSearch', <String, Object?>{'query': 'sliver keep alive'}),
+        'Search the web for “sliver keep alive”',
+      );
+      expect(
+        titled('Grep', <String, Object?>{'pattern': 'a' * 60}),
+        'Search “${'a' * 39}…”',
+      );
+
+      // A title that already says what the call did stays, as does one
+      // whose input lacks what it would take.
+      expect(
+        titled('Read native/src/main.rs (462 - 811)', <String, Object?>{
+          'file_path': '$cwd/native/src/main.rs',
+        }),
+        'Read native/src/main.rs (462 - 811)',
+      );
+      expect(titled('Grep', <String, Object?>{'path': 'src'}), 'Grep');
+    });
   });
 }

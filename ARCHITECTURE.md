@@ -359,9 +359,12 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              Floated files use ShareStore and the protocol’s 8 MiB attachment cap,
                              compact collapsible tool-call rows (kind icon; the agent's own words
                              for the call — a shell tool's `description`, Codex `commandActions`,
-                             readable MCP names — over the command cleaned of login-shell
-                             wrappers, `cd <dir> &&`, env assignments and long paths
-                             (tool_call_summary.dart); expandable raw input/content/diff),
+                             readable MCP names, or for a call titled only with a Claude Code
+                             tool's name what its input did ("Read lines 40–79 of main.dart",
+                             "Search “retry” in src") — over the command cleaned of login-shell
+                             wrappers, `cd <dir> &&`, env assignments and long paths, or the
+                             file's path (tool_call_summary.dart); expandable raw
+                             input/content/diff),
                              including lazily loaded image outputs. Rows stay collapsed until
                              tapped. Tool calls and the thinking among them fold into one run
                              (`ToolRunItem`, tool_run.dart; providers think between calls more
@@ -404,13 +407,20 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              carries a flame row: Preheating… (sent or no output yet), a
                              per-turn cooking verb, Keeping warm… (pilot light) while
                              waiting on permission; it goes out in smoke when the turn ends.
-                             Subagents (Codex `subagent` activities, one per interaction;
-                             Ante's legacy Agent tool calls and their progress) gather into
-                             one crew per turn (`SubagentCrewItem`, subagent_crew.dart) instead
-                             of a card per update: while the turn runs, a little spot at the
+                             Subagents (Codex `subagent` activities, one per interaction, by
+                             path; Ante's, one per subagent plus one per action it takes, by
+                             the subagent's activity id; older Ante history's Agent tool calls
+                             and their progress) gather into one crew per turn
+                             (`SubagentCrewItem`, subagent_crew.dart) instead of a card per
+                             update: while the turn runs, a little spot at the
                              end of its flame row — a small flame per subagent, flaring as it
                              reports — opens to the list; once the turn ends, the crew takes
-                             one line ahead of its divider, the flames gone cold.
+                             one line ahead of its divider, the flames gone cold. An opened
+                             subagent reads as a log: its actions as tool-style lines (Ante's
+                             `Name(key="value", …)` progress parsed back into the tool call it
+                             made, subagent_action.dart, and summarized like a tool row; tap
+                             for the arguments), its own words without terminal styling, and
+                             its report rendered as a message.
                              Codex compact/review/skills and Ante compact/context/skills dispatch
                              through their native transports, with the usual turn events.
 lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax

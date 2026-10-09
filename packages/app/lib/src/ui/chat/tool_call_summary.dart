@@ -17,9 +17,10 @@ class ToolCallSummary {
 ///
 /// The title prefers the agent's own words: the `description` its shell
 /// tool states (Claude, Ante), Codex's parsed `commandActions`, or a
-/// readable form of an `mcp__server__tool` name. The command shown beneath
-/// it is cleaned by [cleanCommand]. Nothing is hidden: the row's details
-/// keep the raw input.
+/// readable form of an `mcp__server__tool` name; a call titled with just a
+/// Claude Code tool's name says what its input did ("Read main.dart").
+/// The command shown beneath it is cleaned by [cleanCommand]. Nothing is
+/// hidden: the row's details keep the raw input.
 ToolCallSummary summarizeToolCall(ToolCall toolCall, {String? cwd}) {
   final _Paths paths = _Paths(cwd);
   final Object? rawInput = toolCall.rawInput;
@@ -52,6 +53,11 @@ ToolCallSummary summarizeToolCall(ToolCall toolCall, {String? cwd}) {
       detail: _argumentsPreview(input),
     );
   }
+
+  final ToolCallSummary? named = description.isEmpty
+      ? _namedSummary(toolCall.title, input, paths)
+      : null;
+  if (named != null) return named;
 
   final String title = paths.shorten(_oneLine(toolCall.title));
   final String locations = toolCall.locations.map(paths.shorten).join(', ');
@@ -142,6 +148,69 @@ String? _mcpTitle(String title) {
       ? 'SpeedDial'
       : server.replaceAll('_', ' ');
   return '$name · ${parts.last.replaceAll('_', ' ')}';
+}
+
+/// What a call to one of Claude Code's tools did, from its input ("Search
+/// “retry” in src"), for calls titled with nothing but the tool's name (as
+/// Ante's are, and its subagents' actions). A file leads by its own name;
+/// where it lives goes beneath.
+ToolCallSummary? _namedSummary(
+  String name,
+  Map<Object?, Object?>? input,
+  _Paths paths,
+) {
+  if (input == null) return null;
+  String text(String key) => _oneLine(_text(input[key]));
+  // Under the working directory itself, "in ." says nothing.
+  String within(String key) {
+    final String where = paths.shorten(text(key));
+    return where.isEmpty || where == '.' ? '' : ' in $where';
+  }
+
+  ToolCallSummary? file(String key, String Function(String name) title) {
+    final String path = paths.shorten(text(key));
+    final String name = path.substring(path.lastIndexOf('/') + 1);
+    if (name.isEmpty) return null;
+    return ToolCallSummary(title(name), detail: path == name ? null : path);
+  }
+
+  return switch (name) {
+    'Read' => file(
+      'file_path',
+      (String name) => _reading(name, input['offset'], input['limit']),
+    ),
+    'NotebookRead' => file('notebook_path', (String name) => 'Read $name'),
+    'Edit' || 'MultiEdit' => file('file_path', (String name) => 'Edit $name'),
+    'NotebookEdit' => file('notebook_path', (String name) => 'Edit $name'),
+    'Write' => file('file_path', (String name) => 'Write $name'),
+    'Grep' when text('pattern').isNotEmpty => ToolCallSummary(
+      'Search “${_clip(text('pattern'), 40)}”${within('path')}',
+    ),
+    'Glob' when text('pattern').isNotEmpty => ToolCallSummary(
+      'Find ${_clip(text('pattern'), 40)}${within('path')}',
+    ),
+    'LS' when text('path').isNotEmpty => ToolCallSummary(
+      'List ${paths.shorten(text('path'))}',
+    ),
+    'WebFetch' when text('url').isNotEmpty => ToolCallSummary(
+      'Fetch ${text('url').replaceFirst(RegExp(r'^https?://'), '')}',
+    ),
+    'WebSearch' when text('query').isNotEmpty => ToolCallSummary(
+      'Search the web for “${_clip(text('query'), 60)}”',
+    ),
+    _ => null,
+  };
+}
+
+/// "Read main.dart", or the part of it that was read ("Read lines 40–79 of
+/// main.dart"). Lines count from 1; a read from the top as long as the
+/// tool's default (2000 lines) reads the whole file.
+String _reading(String name, Object? offset, Object? limit) {
+  final int start = offset is num && offset > 1 ? offset.toInt() : 1;
+  if (limit is num && limit > 0 && (start > 1 || limit < 2000)) {
+    return 'Read lines $start–${start + limit.toInt() - 1} of $name';
+  }
+  return start > 1 ? 'Read $name from line $start' : 'Read $name';
 }
 
 /// A few short scalar arguments ("operation: listUsers"), for tools whose

@@ -183,8 +183,10 @@ class SubagentCrewItem extends TimelineItem {
 class _CrewMember {
   _CrewMember(this.name, {this.kind = ''});
 
-  final String name;
-  final String kind;
+  /// Ante names its subagent when it launches or settles, which a history
+  /// page can cut off ahead of the actions.
+  String name;
+  String kind;
   AgentActivityStatus? status;
   bool finished = false;
   final List<AgentActivity> updates = <AgentActivity>[];
@@ -380,6 +382,28 @@ List<TimelineItem> deriveTimelineItems(
     state.terminal = true;
   }
 
+  void foldSubagentActivity(AgentActivity activity) {
+    // Ante reports a subagent as one activity, settled with its report once
+    // it finishes, and each action it takes as `<that id>-step-<n>`.
+    if (_anteSubagentId.firstMatch(activity.id) case final RegExpMatch match) {
+      final String key = match.group(1)!;
+      if (key != activity.id) {
+        member(key, 'Subagent').updates.add(activity);
+        return;
+      }
+      final _CrewMember subagent = member(key, activity.title)
+        ..name = activity.title
+        ..kind = activity.details.firstOrNull ?? ''
+        ..status = activity.status
+        ..finished = activity.status != AgentActivityStatus.running;
+      if (activity.details.length > 1) subagent.report = activity.details[1];
+      return;
+    }
+    // Codex sends one per interaction, each naming its subagent by path first.
+    final String key = activity.details.firstOrNull ?? activity.title;
+    member(key, _subagentName(key)).add(activity);
+  }
+
   int turnIndex = 0;
   final List<FoldedSessionEntry> folded = foldSessionEvents(events);
 
@@ -460,9 +484,7 @@ List<TimelineItem> deriveTimelineItems(
         }
       case FoldedAgentActivity(:final AgentActivity activity)
           when activity.kind == 'subagent':
-        // One per interaction, each naming its subagent by path first.
-        final String key = activity.details.firstOrNull ?? activity.title;
-        member(key, _subagentName(key)).add(activity);
+        foldSubagentActivity(activity);
       case FoldedAgentActivity e:
         items.add(AgentActivityItem(id: e.activity.id, activity: e.activity));
       case FoldedSessionEvent(:final event):
@@ -660,6 +682,10 @@ String _humanizeActivity(String value) {
 final RegExp _subagentInvocation = RegExp(
   r'^([A-Za-z][A-Za-z0-9_]*)\(([\s\S]*)\)$',
 );
+
+/// Ante's id for a subagent (`ante-subagent-<call>`) or for one of its
+/// actions (`ante-subagent-<call>-step-<n>`); group 1 is the subagent's.
+final RegExp _anteSubagentId = RegExp(r'^(ante-subagent-.+?)(?:-step-\d+)?$');
 
 /// Virtualized, bottom-following timeline of a session's derived items.
 ///
@@ -925,6 +951,7 @@ class _TimelineState extends State<Timeline> {
                 turnSeed: widget.turnSeed,
                 unreachable: widget.unreachable,
                 crew: liveCrew?.subagents ?? const <Subagent>[],
+                cwd: widget.cwd,
                 forkable: widget.onFork != null,
                 // The turn's flame row is the live end as much as the
                 // newest row (opening its subagents, say).
@@ -1184,6 +1211,7 @@ class _TimelineRow extends StatelessWidget {
       SubagentCrewItem i => SubagentCrewRow(
         key: ValueKey<Object?>(i.id),
         crew: i,
+        cwd: cwd,
       ),
       ToolRunItem i => ToolRunCard(
         key: ValueKey<Object?>(i.id),
@@ -1229,6 +1257,7 @@ class _TimelineTail extends StatelessWidget {
     required this.turnSeed,
     required this.unreachable,
     required this.crew,
+    required this.cwd,
     required this.forkable,
     required this.onTouch,
   });
@@ -1238,6 +1267,9 @@ class _TimelineTail extends StatelessWidget {
   final int turnSeed;
   final String? unreachable;
   final List<Subagent> crew;
+
+  /// See [Timeline.cwd].
+  final String? cwd;
   final bool forkable;
   final PointerDownEventListener onTouch;
 
@@ -1261,6 +1293,7 @@ class _TimelineTail extends StatelessWidget {
             seed: turnSeed,
             unreachable: unreachable,
             crew: crew,
+            cwd: cwd,
           ),
         ],
       ),

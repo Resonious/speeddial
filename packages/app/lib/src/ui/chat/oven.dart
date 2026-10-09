@@ -66,6 +66,7 @@ class TurnFlameRow extends StatefulWidget {
     this.seed = 0,
     this.unreachable,
     this.crew = const <Subagent>[],
+    this.cwd,
   });
 
   final TurnHeat heat;
@@ -80,6 +81,10 @@ class TurnFlameRow extends StatefulWidget {
 
   /// The subagents the turn has worked with so far (see [CrewSpot]).
   final List<Subagent> crew;
+
+  /// The session's working directory, which their actions' paths shorten
+  /// against.
+  final String? cwd;
 
   @override
   State<TurnFlameRow> createState() => _TurnFlameRowState();
@@ -195,7 +200,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
     final String label = unreachable ?? turnHeatLabel(_shown, _shownSeed);
     final List<Subagent> crew = _shownCrew;
     final Widget crewList = _crewOpen && crew.isNotEmpty
-        ? SubagentList(subagents: crew, live: true)
+        ? SubagentList(subagents: crew, live: true, cwd: widget.cwd)
         : const SizedBox(width: double.infinity);
     final Widget row = Padding(
       padding: const EdgeInsets.fromLTRB(14, 6, 12, 8),

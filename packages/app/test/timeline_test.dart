@@ -351,12 +351,8 @@ void main() {
       await tester.tap(find.textContaining('Trace the deployment graph'));
       await tester.pumpAndSettle();
       expect(find.text(intro), findsOneWidget);
-      expect(
-        find.textContaining(
-          'file_path="/workspace/.github/workflows/deploy.yml"',
-        ),
-        findsOneWidget,
-      );
+      // Its action reads like a tool row.
+      expect(find.text('Read deploy.yml'), findsOneWidget);
       expect(find.text('The workflow has three entry points.'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
@@ -1175,6 +1171,7 @@ void main() {
           theme: buildSpeedDialTheme(),
           home: const Scaffold(
             body: ToolCallCard(
+              cwd: '/home/nigel/r/project',
               toolCall: ToolCall(
                 id: 'ante-edit',
                 title: 'Edit',
@@ -1207,7 +1204,8 @@ void main() {
         ),
       );
 
-      await tester.tap(find.text('Edit'));
+      // Named for the file it edits.
+      await tester.tap(find.text('Edit config.rs'));
       await tester.pumpAndSettle();
 
       expect(find.text('Input'), findsNothing);

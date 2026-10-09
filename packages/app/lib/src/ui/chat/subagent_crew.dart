@@ -4,7 +4,11 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../theme.dart';
 import '../flame.dart';
 import 'history_expansion.dart';
+import 'message_view.dart';
+import 'subagent_action.dart';
 import 'timeline.dart';
+import 'tool_call_card.dart';
+import 'tool_call_summary.dart';
 
 /// "3 subagents".
 String subagentCount(int count) => '$count subagent${count == 1 ? '' : 's'}';
@@ -182,9 +186,12 @@ class CrewSpot extends StatelessWidget {
 /// cold, how many there were and how much they reported — opening to the
 /// list.
 class SubagentCrewRow extends StatefulWidget {
-  const SubagentCrewRow({super.key, required this.crew});
+  const SubagentCrewRow({super.key, required this.crew, this.cwd});
 
   final SubagentCrewItem crew;
+
+  /// See [SubagentList.cwd].
+  final String? cwd;
 
   @override
   State<SubagentCrewRow> createState() => _SubagentCrewRowState();
@@ -220,7 +227,11 @@ class _SubagentCrewRowState extends State<SubagentCrewRow> {
     final SubagentCrewItem crew = widget.crew;
     final int updates = crew.updates;
     final Widget list = _open
-        ? SubagentList(subagents: crew.subagents)
+        ? SubagentList(
+            subagents: crew.subagents,
+            id: widget.key,
+            cwd: widget.cwd,
+          )
         : const SizedBox(width: double.infinity);
     final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     return Container(
@@ -282,12 +293,27 @@ class _SubagentCrewRowState extends State<SubagentCrewRow> {
 
 /// Each subagent with what it reported, one line apiece until opened.
 class SubagentList extends StatelessWidget {
-  const SubagentList({super.key, required this.subagents, this.live = false});
+  const SubagentList({
+    super.key,
+    required this.subagents,
+    this.live = false,
+    this.id,
+    this.cwd,
+  });
 
   final List<Subagent> subagents;
 
   /// The turn is still running: flames burn rather than lie cold.
   final bool live;
+
+  /// Keeps which subagents are open under this id, for a list in a row the
+  /// timeline may rebuild (as it does one that grows past the screen while
+  /// it follows the bottom).
+  final Object? id;
+
+  /// The session's working directory: the subagents' actions show paths
+  /// under it relative to it, as tool rows do.
+  final String? cwd;
 
   @override
   Widget build(BuildContext context) {
@@ -302,6 +328,8 @@ class SubagentList extends StatelessWidget {
               subagent: subagents[i],
               live: live,
               phase: i * 0.31,
+              openId: id == null ? null : ('subagent-open', id, i),
+              cwd: cwd,
             ),
         ],
       ),
@@ -315,11 +343,17 @@ class _SubagentTile extends StatefulWidget {
     required this.subagent,
     required this.live,
     required this.phase,
+    this.openId,
+    this.cwd,
   });
 
   final Subagent subagent;
   final bool live;
   final double phase;
+
+  /// Where its open state is kept, if anywhere.
+  final Object? openId;
+  final String? cwd;
 
   @override
   State<_SubagentTile> createState() => _SubagentTileState();
@@ -327,6 +361,25 @@ class _SubagentTile extends StatefulWidget {
 
 class _SubagentTileState extends State<_SubagentTile> {
   bool _open = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Object? id = widget.openId;
+    if (id == null) return;
+    final Object? saved = PageStorage.maybeOf(context)
+        ?.readState(context, identifier: id);
+    if (saved is bool) _open = saved;
+  }
+
+  void _toggle() {
+    setState(() {
+      _open = !_open;
+      final Object? id = widget.openId;
+      if (id == null) return;
+      PageStorage.maybeOf(context)?.writeState(context, _open, identifier: id);
+    });
+  }
 
   static final RegExp _uuid = RegExp(
     r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -341,6 +394,29 @@ class _SubagentTileState extends State<_SubagentTile> {
         !detail.endsWith('/${widget.subagent.name}'),
   );
 
+  /// What an update says, once: Ante sends a long message's opening line as
+  /// its title ahead of the whole message.
+  String _words(AgentActivity update) {
+    final List<String> said = _said(update).toList();
+    final String title = update.title;
+    final String opening = title.endsWith('…')
+        ? title.substring(0, title.length - 1)
+        : title;
+    return withoutTerminalCodes(
+      said.length == 1 && said.single.startsWith(opening)
+          ? said.single
+          : <String>[title, ...said].join('\n'),
+    );
+  }
+
+  /// An update in a word: what an action did, or its opening line.
+  String _headline(AgentActivity update) {
+    final ToolCall? action = subagentActionOf(update);
+    return action == null
+        ? withoutTerminalCodes(update.title)
+        : summarizeToolCall(action, cwd: widget.cwd).title;
+  }
+
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -353,49 +429,46 @@ class _SubagentTileState extends State<_SubagentTile> {
       AgentActivityStatus.failed => 'Failed',
       AgentActivityStatus.completed => count == 0 ? 'Done' : '',
     };
+    final AgentActivity? latest = subagent.updates.lastOrNull;
     final String summary = <String>[
       if (status.isNotEmpty) status,
       if (count > 0) '$count update${count == 1 ? '' : 's'}',
-      ?subagent.updates.lastOrNull?.title,
+      if (latest != null) _headline(latest),
     ].join(' · ');
     final bool hasMore = count > 0 || (subagent.report?.isNotEmpty ?? false);
-    final TextStyle? detailStyle = theme.textTheme.bodySmall?.copyWith(
-      color: muted,
-    );
     final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final String report = subagent.report ?? '';
+    final bool failed = subagent.status == AgentActivityStatus.failed;
     final Widget details = _open && hasMore
         ? Padding(
             padding: const EdgeInsets.fromLTRB(32, 0, 12, 8),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 for (final AgentActivity update in subagent.updates)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Text.rich(
-                      TextSpan(
-                        children: <InlineSpan>[
-                          TextSpan(
-                            text: update.title,
-                            style: TextStyle(
-                              color: update.status == AgentActivityStatus.failed
-                                  ? colors.error
-                                  : theme.colorScheme.onSurface,
-                            ),
-                          ),
-                          for (final String detail in _said(update))
-                            TextSpan(text: '\n$detail'),
-                        ],
-                      ),
-                      style: detailStyle,
+                  switch (subagentActionOf(update)) {
+                    final ToolCall action => _ActionLine(
+                      key: ValueKey<String>(update.id),
+                      action: action,
+                      cwd: widget.cwd,
                     ),
-                  ),
-                if (report.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(report, style: detailStyle),
-                  ),
+                    null => _WordsLine(
+                      icon: Icons.chat_bubble_outline,
+                      text: _words(update),
+                      color: update.status == AgentActivityStatus.failed
+                          ? colors.error
+                          : muted,
+                    ),
+                  },
+                if (report.isNotEmpty && failed)
+                  _WordsLine(
+                    icon: Icons.assignment_late_outlined,
+                    text: withoutTerminalCodes(report),
+                    color: colors.error,
+                  )
+                else if (report.isNotEmpty)
+                  // What it handed back reads as the message it is.
+                  AgentMessageView(text: withoutTerminalCodes(report)),
               ],
             ),
           )
@@ -404,7 +477,7 @@ class _SubagentTileState extends State<_SubagentTile> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         InkWell(
-          onTap: hasMore ? () => setState(() => _open = !_open) : null,
+          onTap: hasMore ? _toggle : null,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 6, 4),
             child: Row(
@@ -449,9 +522,7 @@ class _SubagentTileState extends State<_SubagentTile> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.labelSmall?.copyWith(
-                            color: subagent.status == AgentActivityStatus.failed
-                                ? colors.error
-                                : muted,
+                            color: failed ? colors.error : muted,
                           ),
                         ),
                     ],
@@ -477,6 +548,158 @@ class _SubagentTileState extends State<_SubagentTile> {
             child: details,
           ),
       ],
+    );
+  }
+}
+
+/// One of a subagent's actions, read like a tool row: its kind's icon, what
+/// it did and, beneath, the command behind it. Tapping shows everything it
+/// was given.
+class _ActionLine extends StatefulWidget {
+  const _ActionLine({super.key, required this.action, this.cwd});
+
+  final ToolCall action;
+  final String? cwd;
+
+  @override
+  State<_ActionLine> createState() => _ActionLineState();
+}
+
+class _ActionLineState extends State<_ActionLine> {
+  bool _open = false;
+
+  // Action ids are unique within the session, as the bucket is.
+  Object get _openId => ('subagent-action-open', widget.action.id);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Object? saved = PageStorage.maybeOf(context)
+        ?.readState(context, identifier: _openId);
+    if (saved is bool) _open = saved;
+  }
+
+  void _toggle() {
+    setState(() {
+      _open = !_open;
+      PageStorage.maybeOf(context)
+          ?.writeState(context, _open, identifier: _openId);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final SpeedDialColors colors = theme.speedDialColors;
+    final ToolCall action = widget.action;
+    final ToolCallSummary summary = summarizeToolCall(action, cwd: widget.cwd);
+    final bool failed = action.status == ToolCallStatus.failed;
+    final Color ink = failed ? colors.error : theme.colorScheme.onSurface;
+    final TextStyle code = colors.mono.copyWith(
+      fontSize: 11,
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final Object? input = action.rawInput;
+    return InkWell(
+      onTap: _toggle,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(
+                toolKindIcon(action.kind),
+                size: 14,
+                color: failed
+                    ? colors.error
+                    : toolKindColor(context, action.kind),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    summary.title,
+                    maxLines: _open ? null : 1,
+                    overflow: _open ? null : TextOverflow.ellipsis,
+                    style: summary.titleIsCommand
+                        ? colors.mono.copyWith(fontSize: 11.5, color: ink)
+                        : theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w500,
+                            color: ink,
+                          ),
+                  ),
+                  if (_open && input is Map<String, Object?>)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        <String>[
+                          for (final MapEntry<String, Object?> argument
+                              in input.entries)
+                            '${argument.key}: ${argument.value}',
+                        ].join('\n'),
+                        style: code,
+                      ),
+                    )
+                  else if (summary.detail != null)
+                    Text(
+                      summary.detail!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: code,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A line in a subagent's own words: something it said, or its report.
+class _WordsLine extends StatelessWidget {
+  const _WordsLine({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              icon,
+              size: 14,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodySmall?.copyWith(color: color),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -12,8 +12,8 @@ import 'thought_line.dart';
 import 'tool_call_summary.dart';
 import 'typed_text.dart';
 
-/// Semantic accent per tool [ToolCall.kind], used for the card's left border.
-Color _kindColor(BuildContext context, String kind) {
+/// Semantic accent per tool [ToolCall.kind], used for its row's icon.
+Color toolKindColor(BuildContext context, String kind) {
   final SpeedDialColors c = context.speedDialColors;
   switch (kind) {
     case 'read':
@@ -37,7 +37,8 @@ Color _kindColor(BuildContext context, String kind) {
   }
 }
 
-IconData _kindIcon(String kind) => switch (kind) {
+/// The icon for a tool [ToolCall.kind].
+IconData toolKindIcon(String kind) => switch (kind) {
   'execute' => Icons.terminal,
   'read' => Icons.description_outlined,
   'edit' => Icons.edit_outlined,
@@ -222,7 +223,7 @@ class _ToolCallCardState extends State<ToolCallCard>
     final Color iconColor = switch (toolCall.status) {
       ToolCallStatus.pending => colors.idle,
       ToolCallStatus.running => colors.running,
-      ToolCallStatus.completed => _kindColor(context, toolCall.kind),
+      ToolCallStatus.completed => toolKindColor(context, toolCall.kind),
       ToolCallStatus.failed => colors.error,
     };
     final ToolCallSummary summary = _summary;
@@ -300,13 +301,17 @@ class _ToolCallCardState extends State<ToolCallCard>
                   if (hot)
                     HotToolIcon(
                       key: ValueKey<String>('tool-heat-${toolCall.id}'),
-                      icon: _kindIcon(toolCall.kind),
+                      icon: toolKindIcon(toolCall.kind),
                       color: iconColor,
                       heat: heat,
                       flicker: glint,
                     )
                   else
-                    Icon(_kindIcon(toolCall.kind), size: 16, color: iconColor),
+                    Icon(
+                      toolKindIcon(toolCall.kind),
+                      size: 16,
+                      color: iconColor,
+                    ),
                   const SizedBox(width: 10),
                   Expanded(
                     // Each sweep repaints the glint alone, not the card or
