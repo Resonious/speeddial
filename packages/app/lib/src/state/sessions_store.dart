@@ -264,16 +264,13 @@ class SessionsStore extends StoreBase {
       yolo: yolo,
       shortPrompt: shortPrompt,
     );
-    // Upsert rather than blind-add: daemons surface the created session on
-    // `sessionUpdates`, and a live listener (running synchronously inside
-    // createSession, before this continuation) may already have inserted it.
-    final List<Session> bucket = _sessionsByProject.putIfAbsent(
+    // Preparation can finish before the creation reply arrives. Preserve any
+    // newer notification rather than restoring the original preparing snapshot.
+    _sessionsByProject.putIfAbsent(
       _scopedKey(daemonId, projectId),
       () => <Session>[],
     );
-    _upsertNewestFirst(bucket, session);
-    _note(daemonId, session);
-    notifyListeners();
+    _replace(daemonId, session);
     return session;
   }
 
@@ -282,13 +279,11 @@ class SessionsStore extends StoreBase {
     _ensureDaemonSubscriptions(daemonId);
     final Session session = await _clientFor(daemonId)
         .forkSession(sourceSessionId, seq);
-    final List<Session> bucket = _sessionsByProject.putIfAbsent(
+    _sessionsByProject.putIfAbsent(
       _scopedKey(daemonId, session.projectId),
       () => <Session>[],
     );
-    _upsertNewestFirst(bucket, session);
-    _note(daemonId, session);
-    notifyListeners();
+    _replace(daemonId, session);
     return session;
   }
 
@@ -416,7 +411,9 @@ class SessionsStore extends StoreBase {
   void _replace(String daemonId, Session session) {
     final String key = _scopedKey(daemonId, session.id);
     final Session? current = _sessionsById[key];
-    if (current != null && current.updatedAt.isAfter(session.updatedAt)) return;
+    if (current != null && current.updatedAt.isAfter(session.updatedAt)) {
+      session = current;
+    }
     _note(daemonId, session);
     _touch(key);
     final List<Session>? bucket =

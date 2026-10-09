@@ -67,6 +67,61 @@ class _InstrumentedFake extends FakeDaemonClient {
   }
 }
 
+/// Delivers the ready notification while the original create reply is in flight.
+class _PreparingCreateFake extends FakeDaemonClient {
+  final StreamController<Session> updates =
+      StreamController<Session>.broadcast();
+  final Completer<Session> ready = Completer<Session>();
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Stream<Session> get sessionUpdates => updates.stream;
+
+  @override
+  Future<Session> createSession({
+    required String projectId,
+    required String providerId,
+    String? model,
+    String? title,
+    String? baseBranch,
+    SessionSandboxMode? sandboxMode,
+    bool yolo = false,
+    bool shortPrompt = false,
+  }) async {
+    final Session created = await super.createSession(
+      projectId: projectId,
+      providerId: providerId,
+      model: model,
+      title: title,
+      baseBranch: baseBranch,
+      sandboxMode: sandboxMode,
+      yolo: yolo,
+      shortPrompt: shortPrompt,
+    );
+    final Session prepared = Session.fromJson(<String, Object?>{
+      ...created.toJson(),
+      'preparing': false,
+      'status': 'running',
+      'updatedAt': created.updatedAt
+          .add(const Duration(seconds: 1))
+          .toIso8601String(),
+    });
+    updates.add(prepared);
+    ready.complete(prepared);
+    await release.future;
+    return Session.fromJson(<String, Object?>{
+      ...created.toJson(),
+      'preparing': true,
+    });
+  }
+
+  @override
+  Future<void> dispose() async {
+    await updates.close();
+    await super.dispose();
+  }
+}
+
 class _GatedSessionListFake extends FakeDaemonClient {
   _GatedSessionListFake()
     : super(eventDelay: const Duration(milliseconds: 100));
@@ -299,6 +354,33 @@ void main() {
   });
 
   group('sessions', () {
+    test(
+      'late create reply does not restore preparing after ready update',
+      () async {
+        final _PreparingCreateFake client = _PreparingCreateFake();
+        app.registerClient('preparing', client);
+        final Future<Session> creating = app.sessions.create(
+          'preparing',
+          projectId: 'proj-demo',
+          providerId: 'omp',
+        );
+        final Session prepared = await client.ready.future;
+        await _flushMicrotasks();
+        expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
+        client.release.complete();
+        await creating;
+        expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
+        expect(app.sessions.byId(prepared.id)!.status, SessionStatus.running);
+        expect(
+          app.sessions
+              .sessionsFor('proj-demo', daemonId: 'preparing')
+              .single
+              .preparing,
+          isFalse,
+        );
+      },
+    );
+
     test(
       'create/refresh/rename/archive/delete keep the cache consistent',
       () async {
