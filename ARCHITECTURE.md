@@ -338,6 +338,11 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              embedded daemon and repoints its endpoint); stored
                              secret values are never read back into Flutter.
 lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, reversed), message bubbles,
+                             a placeholder conversation while a session's history first loads
+                             (history_skeleton.dart: faint bubbles from the bottom up under a
+                             warm glint, shown only once the wait outlasts a blink, going cold
+                             under the retry card if the fetch fails; the conversation
+                             crossfades in over it),
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
                              natively (`chat/mermaid/`: subset parser, layered layout, painter;

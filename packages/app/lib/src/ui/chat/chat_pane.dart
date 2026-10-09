@@ -11,6 +11,7 @@ import '../daemon_error_text.dart';
 import 'composer.dart';
 import 'file_action_dialog.dart';
 import 'file_transfer_banner.dart';
+import 'history_skeleton.dart';
 import 'permission_banner.dart';
 import 'question_banner.dart';
 import 'timeline.dart';
@@ -302,16 +303,31 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         // While the first fetch runs (or after it failed with nothing live
         // to show), a bare timeline would read as an empty session.
         final bool bare = events.isEmpty && !sending;
+        final bool failed = historyStatus == HistoryStatus.failed;
         final Widget surface;
-        if (bare && historyStatus == HistoryStatus.loading) {
-          surface = const _HistoryLoading();
-        } else if (bare && historyStatus == HistoryStatus.failed) {
-          surface = _HistoryError(
-            error: chat.historyErrorFor(sessionId),
-            onRetry: () => chat.retryHistory(daemonId, sessionId),
+        if (bare && (historyStatus == HistoryStatus.loading || failed)) {
+          // One placeholder for both, so a failure dims it in place.
+          surface = Stack(
+            key: const ValueKey<String>('history-placeholder'),
+            fit: StackFit.expand,
+            children: <Widget>[
+              HistorySkeleton(
+                failed: failed,
+                caption: failed ? null : 'Loading history…',
+              ),
+              if (failed)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: _HistoryError(
+                    error: chat.historyErrorFor(sessionId),
+                    onRetry: () => chat.retryHistory(daemonId, sessionId),
+                  ),
+                ),
+            ],
           );
         } else {
           surface = Timeline(
+            key: const ValueKey<String>('timeline'),
             items: _items,
             outgoing: outgoing,
             delivered: chat.deliveredSeqsFor(sessionId),
@@ -347,7 +363,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         return Column(
           children: <Widget>[
             const FileTransferBanner(),
-            Expanded(child: surface),
+            Expanded(child: _SurfaceSwitcher(child: surface)),
             if (catchingUp) const _CatchingUp(),
             if (pending != null && pending.questions.isNotEmpty)
               QuestionBanner(
@@ -598,37 +614,43 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-/// Shown while a selected session's persisted history is being fetched, so a
-/// slow daemon never reads as an empty conversation.
-class _HistoryLoading extends StatelessWidget {
-  const _HistoryLoading();
+/// Hands the session's surface over — loading placeholder to conversation —
+/// with a short crossfade, the incoming side settling up into place.
+class _SurfaceSwitcher extends StatelessWidget {
+  const _SurfaceSwitcher({required this.child});
+
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2.5),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Loading history…',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-        ],
+    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    return AnimatedSwitcher(
+      duration: still ? Duration.zero : const Duration(milliseconds: 320),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      layoutBuilder: (Widget? current, List<Widget> previous) => Stack(
+        fit: StackFit.expand,
+        children: <Widget>[...previous, ?current],
       ),
+      transitionBuilder: (Widget child, Animation<double> animation) =>
+          FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.015),
+                end: Offset.zero,
+              ).animate(animation),
+              child: child,
+            ),
+          ),
+      child: child,
     );
   }
 }
 
-/// Shown when the history fetch failed before any event arrived (typically
-/// because the daemon was unreachable); [onRetry] re-runs the fetch.
+/// Shown along the foot of the cold placeholder when the history fetch
+/// failed before any event arrived (typically because the daemon was
+/// unreachable); [onRetry] re-runs the fetch.
 class _HistoryError extends StatelessWidget {
   const _HistoryError({required this.error, required this.onRetry});
 
@@ -639,35 +661,53 @@ class _HistoryError extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Text(
-            'Could not load history',
-            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
-          ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '$error',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Material(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.cloud_off_outlined, size: 20, color: scheme.error),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      'Could not load history',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          '$error',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: const Key('history-retry'),
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('Retry'),
+              const SizedBox(width: 8),
+              FilledButton.tonalIcon(
+                key: const Key('history-retry'),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Retry'),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

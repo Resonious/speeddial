@@ -556,16 +556,21 @@ void main() {
     await pumpChat(tester, fake: gated);
     await tester.pump();
 
-    // While the fetch is held open the pane must not render as empty.
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    // While the fetch is held open the pane must not render as empty: a
+    // placeholder conversation stands in, under its caption.
+    final Finder skeleton = find.byKey(const Key('history-skeleton'));
+    expect(skeleton, findsOneWidget);
     expect(find.text('Loading history…'), findsOneWidget);
 
     gated.blockHistory = false;
     gated.releaseHistory();
     await pumpUntil(tester, () => find.text('from disk').evaluate().isNotEmpty);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text('from disk'), findsOneWidget);
+    // The conversation crossfades in over the placeholder, not cut to.
+    expect(skeleton, findsOneWidget);
     await tester.pumpAndSettle();
+    expect(skeleton, findsNothing);
+    expect(find.text('Loading history…'), findsNothing);
   });
 
   testWidgets('a failed history load offers a retry that recovers', (
@@ -592,9 +597,11 @@ void main() {
     gated.failHistory = false;
     await tester.tap(find.byKey(const Key('history-retry')));
     await pumpUntil(tester, () => find.text('from disk').evaluate().isNotEmpty);
-    expect(find.text('Could not load history'), findsNothing);
     expect(find.text('from disk'), findsOneWidget);
+    // The conversation crossfades in over the cold placeholder.
     await tester.pumpAndSettle();
+    expect(find.text('Could not load history'), findsNothing);
+    expect(find.byKey(const Key('history-skeleton')), findsNothing);
   });
 
   testWidgets(
