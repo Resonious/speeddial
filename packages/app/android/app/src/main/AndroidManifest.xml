@@ -5,10 +5,15 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <!-- usesCleartextTraffic: daemons are commonly plain ws:// on a LAN or
+         tailnet. dart:io ignores the platform cleartext policy, but the
+         WearProxyService's OkHttp client enforces it, so without this the
+         watch proxy fails with "CLEARTEXT communication ... not permitted". -->
     <application
         android:label="Speeddial"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <!-- Reuse the app task for incoming shares, including from another app
              or the screenshot UI. MainActivity.onNewIntent delivers the float
              to the running Flutter engine. Keep the default app task affinity. -->
