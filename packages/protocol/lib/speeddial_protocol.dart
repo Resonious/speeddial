@@ -7,3 +7,4 @@ export 'src/models.dart';
 export 'src/events.dart';
 export 'src/rpc.dart';
 export 'src/session_search.dart';
+export 'src/session_link.dart';

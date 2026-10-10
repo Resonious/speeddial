@@ -52,6 +52,42 @@ void main() {
       expect(await runCli(['--help']), 0);
     });
 
+    test('serve validates ntfy topics before starting the daemon', () async {
+      for (final String topic in ['', 'a/b', 'with spaces', 'x' * 65]) {
+        final StringBuffer err = StringBuffer();
+        expect(
+          await runCli(['serve', '--ntfy-topic', topic], err: err),
+          Exit.usage,
+        );
+        expect(err.toString(), contains('--ntfy-topic must contain'));
+      }
+    });
+
+    test('serve requires a topic and an absolute HTTP(S) app URL', () async {
+      for (final List<String> args in [
+        ['serve', '--ntfy-app-url', 'https://app.example/'],
+        ['serve', '--ntfy-topic', 'topic', '--ntfy-app-url', 'relative'],
+        [
+          'serve',
+          '--ntfy-topic',
+          'topic',
+          '--ntfy-app-url',
+          'ftp://app.example/',
+        ],
+        [
+          'serve',
+          '--ntfy-topic',
+          'topic',
+          '--ntfy-app-url',
+          'https://user:secret@app.example/',
+        ],
+      ]) {
+        final StringBuffer err = StringBuffer();
+        expect(await runCli(args, err: err), Exit.usage);
+        expect(err.toString(), contains('--ntfy-app-url requires'));
+      }
+    });
+
     test('usage errors are written to the provided stderr sink', () async {
       final err = StringBuffer();
       final code = await runCli(['frobnicate'], err: err);

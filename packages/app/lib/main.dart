@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'src/companion/companion_endpoint_sync.dart';
 import 'src/local_daemon/local_daemon.dart';
 import 'src/local_daemon/mcp_entry.dart';
 import 'src/state/embedded_daemon_store.dart';
+import 'src/state/session_link_store.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
 import 'src/ui/shell.dart';
@@ -125,15 +127,75 @@ class SpeedDialApp extends StatefulWidget {
 
 class _SpeedDialAppState extends State<SpeedDialApp>
     with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
+  final GlobalKey<ScaffoldMessengerState> _messenger =
+      GlobalKey<ScaffoldMessengerState>();
+  late final SessionLinkStore _sessionLinks;
+
   @override
   void initState() {
     super.initState();
+    _sessionLinks = SessionLinkStore(widget.data);
     WidgetsBinding.instance.addObserver(this);
+    final Uri? initialUri = kIsWeb
+        ? Uri.base
+        : Uri.tryParse(
+            WidgetsBinding.instance.platformDispatcher.defaultRouteName,
+          );
+    final SessionLink? link = initialUri == null
+        ? null
+        : SessionLink.fromUri(initialUri);
+    if (link != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_openSessionLink(link));
+      });
+    }
+  }
+
+  @override
+  Future<bool> didPushRouteInformation(RouteInformation routeInformation) =>
+      _handleSessionUri(routeInformation.uri);
+
+  @override
+  Future<bool> didPushRoute(String route) async {
+    final Uri? uri = Uri.tryParse(route);
+    return uri != null && await _handleSessionUri(uri);
+  }
+
+  Future<bool> _handleSessionUri(Uri uri) async {
+    final SessionLink? link = SessionLink.fromUri(uri);
+    if (link == null) return false;
+    unawaited(_openSessionLink(link));
+    return true;
+  }
+
+  Future<void> _openSessionLink(SessionLink link) async {
+    try {
+      if (await _sessionLinks.open(link) && mounted) {
+        _navigator.currentState?.popUntil(
+          (Route<Object?> route) =>
+              route.isFirst && !route.willHandlePopInternally,
+        );
+      }
+    } on Object catch (error) {
+      debugPrint('Session link failed: $error');
+      if (!mounted) return;
+      _messenger.currentState?.showSnackBar(
+        SnackBar(
+          content: Text(
+            error is SessionLinkException
+                ? error.message
+                : 'Could not open the session. Check your daemon connections.',
+          ),
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _sessionLinks.dispose();
     // Tear down the store graph and stop the embedded daemon (best-effort):
     // agent processes are killed and the WebSocket server closed.
     final AppData data = widget.data;
@@ -175,6 +237,11 @@ class _SpeedDialAppState extends State<SpeedDialApp>
         listenable: widget.data.settings,
         builder: (BuildContext context, Widget? _) {
           return MaterialApp(
+            navigatorKey: _navigator,
+            scaffoldMessengerKey: _messenger,
+            // Session links select within the existing shell; they do not
+            // create a second Navigator route on cold launch.
+            initialRoute: '/',
             title: 'SpeedDial',
             debugShowCheckedModeBanner: false,
             theme: buildSpeedDialLightTheme(),

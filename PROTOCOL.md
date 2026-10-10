@@ -772,3 +772,15 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 
 `seq` is a per-session monotonically increasing integer starting at 1. Clients use it for
 gap detection: on reconnect, refetch history with `beforeSeq` of the oldest known gap.
+
+## Session links
+
+Completion push notifications configured through `serve --ntfy-topic` use
+`speeddial://session?sessionId=<id>&projectId=<id>` to open the mobile app.
+With `--ntfy-app-url`, the same query parameters are added to the configured
+HTTP(S) frontend URL, retaining its path, existing query parameters, and fragment.
+The shared `SessionLink` helper builds and parses these URLs; they contain no
+daemon credentials or device-local endpoint IDs. Clients resolve the IDs against
+already configured daemons and report missing or ambiguous matches. This is a
+frontend navigation convention; ntfy publishing adds no JSON-RPC methods,
+session fields, or WebSocket notifications.

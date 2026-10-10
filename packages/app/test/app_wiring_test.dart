@@ -54,7 +54,11 @@ void main() {
 
   test('editing an endpoint recycles its websocket client when url/token '
       'change', () async {
-    final AppData data = AppData();
+    // Exercise failed-connection recycling without depending on real closed
+    // ports, whose WebSocket handshake can outlast this test's deadline.
+    final AppData data = AppData(
+      daemonChannelFactory: (_) => throw StateError('connection refused'),
+    );
     addTearDown(data.dispose);
     await data.connections.addEndpoint(
       id: 'ep1',

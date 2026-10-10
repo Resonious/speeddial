@@ -12,6 +12,7 @@ import 'package:speeddial_daemon/src/client.dart';
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/git/pr_service.dart';
+import 'package:speeddial_daemon/src/notifications/ntfy_notifier.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
 import 'package:speeddial_daemon/src/server/ws_server.dart';
 import 'package:speeddial_daemon/src/store/daemon_store.dart';
@@ -44,6 +45,18 @@ class ServeCommand extends Command<int> {
         help:
             'SQLite database path (default: ~/.speeddial/speeddial.db, '
             'overridable with \$SPEEDIAL_DB).',
+      )
+      ..addOption(
+        'ntfy-topic',
+        help:
+            'Send session titles and final replies to this ntfy.sh topic '
+            'when agent turns finish. Omit to disable notifications.',
+      )
+      ..addOption(
+        'ntfy-app-url',
+        help:
+            'Hosted SpeedDial web app URL for notification links '
+            '(requires --ntfy-topic). Defaults to opening the mobile app.',
       );
   }
 
@@ -64,6 +77,30 @@ class ServeCommand extends Command<int> {
     if (port == null) {
       throw UsageException('Invalid --port value: "$portRaw".', '');
     }
+    final String? ntfyTopic = argResults!['ntfy-topic'] as String?;
+    final String? appUrlRaw = argResults!['ntfy-app-url'] as String?;
+    if (ntfyTopic != null && !NtfyNotifier.isValidTopic(ntfyTopic)) {
+      throw UsageException(
+        '--ntfy-topic must contain 1–64 letters, numbers, underscores or dashes.',
+        usage,
+      );
+    }
+    final Uri? appUrl = appUrlRaw == null ? null : Uri.tryParse(appUrlRaw);
+    if (appUrlRaw != null &&
+        (ntfyTopic == null ||
+            appUrl == null ||
+            (appUrl.scheme != 'https' && appUrl.scheme != 'http') ||
+            appUrl.host.isEmpty ||
+            appUrl.userInfo.isNotEmpty)) {
+      throw UsageException(
+        '--ntfy-app-url requires --ntfy-topic and an absolute HTTP(S) URL '
+        'without credentials.',
+        usage,
+      );
+    }
+    final NtfyNotifier? notifier = ntfyTopic == null
+        ? null
+        : NtfyNotifier(topic: ntfyTopic, appUrl: appUrl);
     final dbPath =
         argResults!['db'] as String? ??
         Platform.environment['SPEEDIAL_DB'] ??
@@ -88,7 +125,12 @@ class ServeCommand extends Command<int> {
       environmentProvider: store.daemonEnvironment,
     );
     final git = GitService();
-    engine = SessionEngine(store: store, providers: providers, git: git);
+    engine = SessionEngine(
+      store: store,
+      providers: providers,
+      git: git,
+      onTurnComplete: notifier?.publish,
+    );
     final pr = PrService();
     await engine.restore();
 

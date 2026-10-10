@@ -38,6 +38,7 @@ import '../ante/ante_client.dart';
 import '../codex/codex_client.dart';
 import '../git/git_service.dart';
 import '../mcp/built_in_mcp_server.dart';
+import '../notifications/final_reply.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'event_mapper.dart';
@@ -81,6 +82,9 @@ class _LiveSession {
 
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
+
+  /// Present only for an active turn when completion notifications are on.
+  FinalReply? finalReply;
 
   /// Lifetime subscription to the provider's session updates, attached when
   /// the live session is created and cancelled at teardown. Agents like OMP
@@ -151,12 +155,17 @@ class SessionEngine {
     required DaemonStore store,
     required ProviderRegistry providers,
     GitService? git,
+    Future<void> Function(Session session, String finalText)? onTurnComplete,
   }) : _store = store, // ignore: prefer_initializing_formals
        _providers = providers, // ignore: prefer_initializing_formals
-       _git = git; // ignore: prefer_initializing_formals
+       _git = git, // ignore: prefer_initializing_formals
+       _onTurnComplete = onTurnComplete; // ignore: prefer_initializing_formals
 
   final DaemonStore _store;
   final ProviderRegistry _providers;
+  final Future<void> Function(Session session, String finalText)?
+  _onTurnComplete;
+  final Set<Future<void>> _turnNotifications = <Future<void>>{};
 
   /// Git operations for per-session worktrees (`baseBranch` on
   /// [createSession]); null only in tests that never pass a base branch.
@@ -1784,6 +1793,7 @@ class SessionEngine {
       await live.client.dispose();
     }
     _live.clear();
+    await Future.wait(_turnNotifications.toList());
     _toolCalls.clear();
     _toolCallImages.clear();
     _mcpReloadPending.clear();
@@ -1811,6 +1821,7 @@ class SessionEngine {
     bool alreadyPersisted = false,
   }) {
     final sessionId = live.sessionId;
+    live.finalReply = _onTurnComplete == null ? null : FinalReply();
     _toolCalls[sessionId] = <String, ToolCall>{};
     _toolCallImages[sessionId] = <String, Attachment>{};
     live.activityIds.clear();
@@ -1851,11 +1862,16 @@ class SessionEngine {
   }) async {
     try {
       final result = await run();
+      if (live.closed) return;
       if (forkContext != null) {
         _store.setForkContextSeq(live.sessionId, null);
       }
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
       _setStatus(live, SessionStatus.idle, activity: true, completed: true);
+      final String finalText = live.finalReply?.text ?? '';
+      if (result.stopReason != 'cancelled' && finalText.isNotEmpty) {
+        _notifyTurnComplete(live.session, finalText);
+      }
     } on Object catch (error) {
       if (!live.closed) {
         final String message = switch (error) {
@@ -1874,10 +1890,30 @@ class SessionEngine {
         _setStatus(live, SessionStatus.error, activity: true);
       }
     } finally {
+      live.finalReply = null;
       // The client normally ends the wait through its busyWaitChanged
       // callback; this closes it even if that report was lost.
       _endBusyWait(live);
     }
+  }
+
+  /// Delivery is independent of agent completion. Drain pending deliveries
+  /// on shutdown, including an idle auto-update restart, without holding the
+  /// turn slot open or turning a push failure into an agent failure.
+  void _notifyTurnComplete(Session session, String finalText) {
+    final Future<void> Function(Session, String)? notify = _onTurnComplete;
+    if (notify == null) return;
+    late final Future<void> delivery;
+    delivery = Future<void>.sync(() => notify(session, finalText))
+        .catchError((Object error) {
+          stderr.writeln(
+            'Turn notification failed for session ${session.id}: $error',
+          );
+        })
+        .whenComplete(() {
+          _turnNotifications.remove(delivery);
+        });
+    _turnNotifications.add(delivery);
   }
 
   /// Attaches the lifetime updates subscription for a freshly created live
@@ -2533,6 +2569,7 @@ class SessionEngine {
   /// (sessionId, seq, event) tuple. Fully synchronous: store access and
   /// stream delivery cannot interleave.
   void _emit(_LiveSession live, SessionEvent event) {
+    if (event is AgentMessageChunkEvent) live.finalReply?.add(event);
     _emitForSession(live.sessionId, event);
   }
 

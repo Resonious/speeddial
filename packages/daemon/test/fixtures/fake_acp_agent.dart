@@ -461,6 +461,45 @@ Future<void> _runTurn(
   }
 
   if (text == 'cancel') return; // Left pending; session/cancel resolves it.
+
+  if (text == 'notification-reply') {
+    for (final update in <Map<String, Object?>>[
+      {
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'm1',
+        'content': {'type': 'text', 'text': 'Inspecting files.'},
+      },
+      {
+        'sessionUpdate': 'agent_thought_chunk',
+        'content': {'type': 'text', 'text': 'Private reasoning.'},
+      },
+      {
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'm2',
+        'content': {'type': 'text', 'text': '**Done** — '},
+      },
+      {
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'notification-tool',
+        'title': 'Read a file',
+        'kind': 'read',
+        'status': 'completed',
+      },
+      {
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'm1',
+        'content': {'type': 'text', 'text': 'Late commentary.'},
+      },
+      {
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'm2',
+        'content': {'type': 'text', 'text': 'fixed it 🔥.'},
+      },
+    ]) {
+      await _sendUpdate(update);
+    }
+    return _resolvePrompt(promptId, 'end_turn');
+  }
   if (text == 'hang') return; // Never resolves; used with dispose().
   if (text == 'die') {
     // Park a permission request at the engine, then wait for the test's kill

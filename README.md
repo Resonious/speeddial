@@ -50,6 +50,35 @@ dart run bin/speeddial.dart serve --host 0.0.0.0 --token "$(openssl rand -hex 16
 The daemon writes `~/.speeddial/daemon.json` (mode 0600) with host/port/token
 for CLI and UI discovery.
 
+To receive completed-turn notifications, subscribe to a topic in the ntfy app
+or at `https://ntfy.sh/<topic>`, then start the daemon with that topic:
+
+```bash
+dart run bin/speeddial.dart serve --ntfy-topic speeddial-your-random-suffix
+```
+
+Notifications use the session title, a completion checkmark, and the agent's
+final message with Markdown formatting. Earlier commentary, thoughts, and tool
+output are excluded. Cancelled/failed turns and turns without an agent reply
+send nothing. Omitting `--ntfy-topic` disables the feature. Delivery failures
+are logged to stderr and do not affect the session or delay another turn.
+
+Tapping the notification or **Open SpeedDial** opens that chat in the Android
+or iOS app. Install a build with session-link support and configure the session's
+daemon in the app first; the link contains no connection credentials. For a
+hosted web app, supply its URL instead (and configure the daemon in that browser):
+
+```bash
+dart run bin/speeddial.dart serve --ntfy-topic speeddial-your-random-suffix \
+  --ntfy-app-url https://your-speeddial-app.example/
+```
+
+Replies longer than ntfy's 4,096-byte message limit show a Unicode-safe preview
+ending in `…`; open the chat to read the full reply. Choose a hard-to-guess topic:
+anyone who knows an unprotected topic can subscribe to it. See the
+[ntfy publishing documentation](https://docs.ntfy.sh/publish/) for formatting
+and topic details.
+
 ## CLI
 
 Every UI operation has a CLI equivalent against a running daemon:

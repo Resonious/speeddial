@@ -190,6 +190,15 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     context resolver and saves other binary files as tool-readable paths. Tool progress persists lifecycle metadata rather than
                     repeated accumulated output; terminal tool content/raw payloads are
                     bounded before they enter history.
+lib/src/notifications/  Opt-in ntfy.sh completed-turn publishing. The engine
+                    collects the latest logical message only while a turn is
+                    active and a completion callback is configured; title and
+                    final text are captured at terminal idle. Delivery runs
+                    independently of the turn and failures are logged without
+                    changing its outcome. Shutdown drains pending deliveries.
+                    NtfyNotifier uses dart:io with a 10-second exchange deadline,
+                    bounded Unicode-safe title/message previews, Markdown,
+                    a completion tag, and a session click/action link.
 lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLite runtime
                     dependency) at ~/.speeddial/speeddial.db (override with --db or
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,
@@ -236,6 +245,9 @@ CLI (`speeddial <command>`), all bookkeeping commands talk to the running daemon
 WebSocket except `serve` and `token`:
 - `serve [--port 7331] [--host 127.0.0.1] [--token T] [--db PATH]` — runs the daemon.
   Writes PID + port + token to `~/.speeddial/daemon.json` for discovery.
+  `--ntfy-topic TOPIC` enables completed-turn pushes to ntfy.sh; omitted means
+  disabled. `--ntfy-app-url URL` optionally links to a hosted HTTP(S) frontend
+  instead of the mobile app. Both flags survive supervised worker restarts.
 - `token` — prints/rotates the auth token.
 - `projects list|add <path>|remove <id>`
 - `sessions list [--project <id>]|create --project <id> --provider <id> [--model m] [--title t] [--base b] [--yolo]|send <id> <text>|cancel <id>|archive <id>|delete <id>|history <id>|attach <id>` (attach = stream session.event notifications to stdout)
@@ -310,6 +322,11 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              interface/port/token of the built-in daemon; restart
                              errors surfaced for its settings page). Stores NEVER hold
                              BuildContext.
+                             SessionLinkStore resolves notification links across
+                             saved daemon connections, caches only the matching
+                             session, and selects daemon/project/session together.
+                             Failed and ambiguous lookups retain and rethrow an
+                             error; superseded lookups cannot replace selection.
 lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left rail
                              draggable from 240–480px, chat flexible, right 360;
                              side panes collapsible); <1000px →
@@ -544,6 +561,18 @@ picker and an App Group inbox; the app imports one file on launch or resume,
 then advances after attach or dismiss. The extension has no daemon credentials
 and does not send messages. Its immutable inbox entries are published atomically
 and consumed by a serial native worker.
+
+### Notification session links
+
+The protocol package's SessionLink helper builds and parses
+`speeddial://session?sessionId=<id>&projectId=<id>` and hosted-web equivalents.
+Android/iOS register the `speeddial` scheme and use Flutter's built-in deep-link
+delivery. The root app handles initial and incoming route information within
+the existing shell, and web startup reads session parameters from `Uri.base`.
+Links use already saved endpoints and credentials; they never add a connection.
+If the same project/session IDs exist on multiple daemons, the app reports the
+ambiguity instead of opening an arbitrary copy. Native desktop URL-scheme
+registration is not provided; desktop notification links can use a hosted web app.
 
 ### Session preparation
 

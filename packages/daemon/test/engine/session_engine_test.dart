@@ -220,6 +220,127 @@ void main() {
     }
   }
 
+  group('turn completion notifications', () {
+    final List<({Session session, String text})> notifications = [];
+    Future<void> Function(Session, String)? delivery;
+
+    setUp(() async {
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      notifications.clear();
+      delivery = null;
+      engine = SessionEngine(
+        store: store,
+        providers: fakeProviders(),
+        onTurnComplete: (Session session, String text) async {
+          notifications.add((session: session, text: text));
+          await delivery?.call(session, text);
+        },
+      );
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+    });
+
+    test(
+      'sends the current title and only the completed final reply once',
+      () async {
+        final Session session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+          title: 'Original',
+        );
+        await engine.rename(session.id, 'Renamed 🔥');
+        await engine.sendMessage(session.id, 'notification-reply');
+        await waitFor(() => notifications.isNotEmpty);
+        expect(notifications, hasLength(1));
+        expect(notifications.single.session.id, session.id);
+        expect(notifications.single.session.title, 'Renamed 🔥');
+        expect(notifications.single.session.status, SessionStatus.idle);
+        expect(notifications.single.session.completionRevision, 1);
+        expect(notifications.single.text, '**Done** — fixed it 🔥.');
+        expect(store.getSession(session.id)!.status, SessionStatus.idle);
+      },
+    );
+
+    test(
+      'does not reuse the previous reply for silent, cancelled or failed turns',
+      () async {
+        final Session session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+        );
+        await engine.sendMessage(session.id, 'notification-reply');
+        await waitFor(() => !engine.hasActiveSessions);
+        expect(notifications, hasLength(1));
+        await engine.sendMessage(session.id, 'weird');
+        await waitFor(() => !engine.hasActiveSessions);
+        expect(notifications, hasLength(1));
+        await engine.sendMessage(session.id, 'cancel');
+        await engine.cancel(session.id);
+        await waitFor(() => !engine.hasActiveSessions);
+        expect(notifications, hasLength(1));
+        await engine.sendMessage(session.id, 'rpc-error');
+        await waitFor(() => !engine.hasActiveSessions);
+        expect(store.getSession(session.id)!.status, SessionStatus.error);
+        expect(notifications, hasLength(1));
+      },
+    );
+
+    test(
+      'slow delivery allows another turn and is drained during shutdown',
+      () async {
+        final Completer<void> gate = Completer<void>();
+        delivery = (_, _) => gate.future;
+        addTearDown(() {
+          if (!gate.isCompleted) gate.complete();
+        });
+        final Session session = await engine.createSession(
+          projectId: project.id,
+          providerId: 'fake',
+        );
+        await engine.sendMessage(session.id, 'notification-reply');
+        await waitFor(() => !engine.hasActiveSessions);
+        await engine.sendMessage(session.id, 'notification-reply');
+        await waitFor(() => !engine.hasActiveSessions);
+        expect(notifications, hasLength(2));
+        bool disposed = false;
+        final Future<void> shutdown = engine.dispose().then((_) {
+          disposed = true;
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(disposed, isFalse);
+        gate.complete();
+        await shutdown;
+        expect(disposed, isTrue);
+      },
+    );
+
+    test('delivery failure does not fail the turn or the next turn', () async {
+      delivery = (_, _) async {
+        throw const SocketException('ntfy offline');
+      };
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'notification-reply');
+      await waitFor(() => !engine.hasActiveSessions);
+      expect(store.getSession(session.id)!.status, SessionStatus.idle);
+      expect(
+        events.where((event) => event.event is SessionErrorEvent),
+        isEmpty,
+      );
+      delivery = null;
+      await engine.sendMessage(session.id, 'notification-reply');
+      await waitFor(() => !engine.hasActiveSessions);
+      expect(notifications, hasLength(2));
+      expect(store.getSession(session.id)!.completionRevision, 2);
+    });
+  });
+
   group('background preparation', () {
     test('worktree fetch does not block creation or send', () async {
       await engine.dispose();
