@@ -13,8 +13,10 @@ import '../../theme.dart';
 /// shows in reading order at a steady pace that quickens to work off a
 /// backlog, the message grows a line at a time, and sparks fly off the ember
 /// at the typing point. The ember keeps glowing while [writing] (more may
-/// come) and dies down once the typing is done. A message first seen
-/// finished shows whole, as does everything under reduced motion.
+/// come); once the message is done and typed out, it goes out with a pop: a
+/// flash, a burst of sparks, and a few wisps of smoke like those off a
+/// delivered message. A message first seen finished shows whole, as does
+/// everything under reduced motion.
 ///
 /// Markdown still re-renders only when text arrives: typing is a clip and a
 /// cursor over the laid-out child, so it repaints rather than rebuilds.
@@ -131,6 +133,7 @@ class _TypewriterRevealState extends State<TypewriterReveal>
       hot: dark ? colors.flameCore : colors.flameTip,
       warm: dark ? colors.flameTip : theme.colorScheme.primary,
       ember: theme.colorScheme.primary,
+      smoke: theme.colorScheme.onSurfaceVariant,
       glowStrength: dark ? 1 : 0.7,
       // Typing repaints the clip and the ember, never the text itself.
       child: RepaintBoundary(child: widget.child),
@@ -164,6 +167,7 @@ class _Typewriter extends SingleChildRenderObjectWidget {
     required this.hot,
     required this.warm,
     required this.ember,
+    required this.smoke,
     required this.glowStrength,
     super.child,
   });
@@ -174,11 +178,20 @@ class _Typewriter extends SingleChildRenderObjectWidget {
   final Color hot;
   final Color warm;
   final Color ember;
+  final Color smoke;
   final double glowStrength;
 
   @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderTypewriter(pace, writing, still, hot, warm, ember, glowStrength);
+  RenderObject createRenderObject(BuildContext context) => _RenderTypewriter(
+    pace,
+    writing,
+    still,
+    hot,
+    warm,
+    ember,
+    smoke,
+    glowStrength,
+  );
 
   @override
   void updateRenderObject(
@@ -191,6 +204,7 @@ class _Typewriter extends SingleChildRenderObjectWidget {
       ..hot = hot
       ..warm = warm
       ..ember = ember
+      ..smoke = smoke
       ..glowStrength = glowStrength;
   }
 }
@@ -263,6 +277,8 @@ class _Spark {
     required this.born,
     required this.life,
     required this.size,
+    this.drag = 0,
+    this.fall = 1,
   });
 
   final Offset origin;
@@ -270,6 +286,12 @@ class _Spark {
   final double born;
   final double life;
   final double size;
+
+  /// How quickly the air slows it, per second; none by default.
+  final double drag;
+
+  /// How much of gravity it feels.
+  final double fall;
 }
 
 class _RenderTypewriter extends RenderProxyBox {
@@ -280,6 +302,7 @@ class _RenderTypewriter extends RenderProxyBox {
     this._hot,
     this._warm,
     this._ember,
+    this._smoke,
     this._glowStrength,
   ) : _shown = _still ? double.infinity : _pace.typed;
 
@@ -303,6 +326,7 @@ class _RenderTypewriter extends RenderProxyBox {
       _shown = double.infinity;
       _sparks.clear();
       _glow = 0;
+      _poppedAt = null;
       markNeedsLayout();
     }
   }
@@ -325,6 +349,13 @@ class _RenderTypewriter extends RenderProxyBox {
   set ember(Color value) {
     if (value == _ember) return;
     _ember = value;
+    markNeedsPaint();
+  }
+
+  Color _smoke;
+  set smoke(Color value) {
+    if (value == _smoke) return;
+    _smoke = value;
     markNeedsPaint();
   }
 
@@ -376,7 +407,21 @@ class _RenderTypewriter extends RenderProxyBox {
   double _sparkDue = 0;
   double _nextTrickle = 0;
 
+  /// Whether the ember was lit as of the last frame: going out, it pops.
+  bool _wasLit = false;
+
+  /// When the ember popped, and where; the flash and smoke follow on.
+  double? _poppedAt;
+  Offset _popAt = Offset.zero;
+  final Path _wisp = Path();
+
+  static const double _flashLife = 0.32;
+  static const double _smokeLife = 1.0;
+
   bool get _typing => _shown < _total;
+
+  double get _sincePop =>
+      _poppedAt == null ? double.infinity : _now - _poppedAt!;
 
   @override
   void attach(PipelineOwner owner) {
@@ -430,16 +475,20 @@ class _RenderTypewriter extends RenderProxyBox {
     }
     _sparks.removeWhere((_Spark spark) => now - spark.born >= spark.life);
     final bool lit = _typing || _writing;
+    // The message is done and typed out: the ember goes out with a pop.
+    if (_wasLit && !lit && at != null && _glow > 0) _pop(at, now);
+    _wasLit = lit;
     _glow = lit
         ? math.min(1, _glow + step / 0.15)
         : math.max(0, _glow - step / 0.6);
-    if (!lit && _glow == 0 && _sparks.isEmpty && _shown.isFinite) {
+    final bool popping = _sincePop < _smokeLife;
+    if (!lit && _glow == 0 && _sparks.isEmpty && !popping && _shown.isFinite) {
       // Done for good: stop measuring, and let later text show at once.
       _shown = double.infinity;
     }
     _pace
       ..typed = _shown
-      ..moving = lit || _glow > 0 || _sparks.isNotEmpty;
+      ..moving = lit || _glow > 0 || _sparks.isNotEmpty || popping;
     if (_resizeDue || _lineFor(_shown) != _line) {
       // Only how much shows changed, not the child: no need to measure.
       _resizeDue = false;
@@ -463,6 +512,35 @@ class _RenderTypewriter extends RenderProxyBox {
         size: 1.1 + 0.9 * _random.nextDouble(),
       ),
     );
+  }
+
+  /// Bursts the ember: its glow gives way to a flash (see [_paintFlash])
+  /// and a ring of sparks thrown every way, harder upward. The air soon
+  /// slows them, so they spread a finger's width and drift down as they
+  /// burn out rather than falling off the bubble; smoke follows (see
+  /// [_paintSmoke]).
+  void _pop(Offset at, double now) {
+    _poppedAt = now;
+    _popAt = at;
+    _glow = 0;
+    const int count = 16;
+    for (int i = 0; i < count; i++) {
+      final double angle =
+          2 * math.pi * (i + 0.6 * _random.nextDouble()) / count;
+      final double lift = math.max(0, -math.sin(angle));
+      final double speed = 90 + 60 * _random.nextDouble() + 40 * lift;
+      _sparks.add(
+        _Spark(
+          origin: at,
+          velocity: Offset(math.cos(angle), math.sin(angle)) * speed,
+          born: now,
+          life: 0.45 + 0.3 * _random.nextDouble(),
+          size: 1.2 + 0.9 * _random.nextDouble(),
+          drag: 5,
+          fall: 0.3,
+        ),
+      );
+    }
   }
 
   /// The line holding the typing point: the last one once typing has
@@ -662,6 +740,10 @@ class _RenderTypewriter extends RenderProxyBox {
       canvas.drawCircle(at, 2.5 * flicker, _paint);
       _paint.maskFilter = null;
     }
+    final double since = _sincePop;
+    if (since < _flashLife) {
+      _paintFlash(canvas, offset + _popAt, since / _flashLife);
+    }
     for (final _Spark spark in _sparks) {
       final double age = _now - spark.born;
       if (age <= 0) continue;
@@ -677,10 +759,53 @@ class _RenderTypewriter extends RenderProxyBox {
         ..color = color.withValues(alpha: 1 - cooled * cooled);
       canvas.drawLine(tail, head, _paint);
     }
+    if (since < _smokeLife) _paintSmoke(canvas, offset + _popAt, since);
   }
 
-  static Offset _sparkAt(_Spark spark, double age) =>
-      spark.origin +
-      spark.velocity * age +
-      Offset(0, 0.5 * _gravity * age * age);
+  /// The ember swelling white-hot as it bursts, [t] of the way through.
+  void _paintFlash(Canvas canvas, Offset at, double t) {
+    // From where its glow was, up to full heat, then gone.
+    final double flash = t < 0.2
+        ? 0.7 + 0.3 * Curves.easeOut.transform(t / 0.2)
+        : 1 - Curves.easeIn.transform((t - 0.2) / 0.8);
+    _paint
+      ..style = PaintingStyle.fill
+      ..color = _ember.withValues(alpha: 0.55 * flash * _glowStrength)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+    canvas.drawCircle(at, 8 + 10 * flash, _paint);
+    _paint
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5)
+      ..color = _hot.withValues(alpha: flash);
+    canvas.drawCircle(at, 2.5 + 3 * flash, _paint);
+    _paint.maskFilter = null;
+  }
+
+  /// Three wisps of smoke curling up from where the ember was, [since]
+  /// seconds after it popped, like the steam off a delivered message.
+  void _paintSmoke(Canvas canvas, Offset at, double since) {
+    _paint
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6;
+    for (int i = 0; i < 3; i++) {
+      final double rise = ((since - 0.06 - i * 0.08) / 0.75).clamp(0.0, 1.0);
+      if (rise <= 0 || rise >= 1) continue;
+      final double x = at.dx + (i - 1) * 5;
+      final double y = at.dy - 3 - rise * 20;
+      final double sway = (i.isEven ? 1 : -1) * 4;
+      _paint.color = _smoke.withValues(alpha: 0.6 * math.sin(math.pi * rise));
+      _wisp
+        ..reset()
+        ..moveTo(x, y)
+        ..cubicTo(x + sway, y - 5, x - sway, y - 9, x, y - 14);
+      canvas.drawPath(_wisp, _paint);
+    }
+  }
+
+  static Offset _sparkAt(_Spark spark, double age) {
+    final double drag = spark.drag;
+    final double travel = drag == 0 ? age : (1 - math.exp(-drag * age)) / drag;
+    return spark.origin +
+        spark.velocity * travel +
+        Offset(0, 0.5 * _gravity * spark.fall * age * age);
+  }
 }

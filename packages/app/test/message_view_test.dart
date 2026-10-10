@@ -668,9 +668,46 @@ void main() {
       expect(typewriter, paints..circle());
 
       await tester.pumpWidget(view(reply, writing: false));
-      await frames(tester, 60);
+      // Its pop and smoke take a second.
+      await frames(tester, 80);
       expect(typewriter, isNot(paints..circle()));
       expect(typed(tester), whole(tester));
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('the ember pops once the message is done', (
+      WidgetTester tester,
+    ) async {
+      int sparks() {
+        int count = 0;
+        expect(
+          typewriter,
+          paints..everything((Symbol method, List<dynamic> arguments) {
+            if (method == #drawLine) count++;
+            return true;
+          }),
+        );
+        return count;
+      }
+
+      await tester.pumpWidget(view(reply, writing: true));
+      await frames(tester, 90);
+      // Lingering at the end while it may go on: a spark now and then.
+      expect(sparks(), lessThan(6));
+      expect(typewriter, isNot(paints..path()));
+
+      await tester.pumpWidget(view(reply, writing: false));
+      await frames(tester, 4);
+      // It bursts into sparks…
+      expect(sparks(), greaterThanOrEqualTo(12));
+      await frames(tester, 12);
+      // …then smoke curls up from where it was…
+      expect(typewriter, paints..path());
+      // …and clears.
+      await frames(tester, 60);
+      expect(typewriter, isNot(paints..circle()));
+      expect(typewriter, isNot(paints..path()));
+      expect(sparks(), 0);
       expect(tester.hasRunningAnimations, isFalse);
     });
 
