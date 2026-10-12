@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -12,10 +13,12 @@ import '../../theme.dart';
 /// A message first seen while the agent is [writing] it types out: its text
 /// shows in reading order at a steady pace that quickens to work off a
 /// backlog, the message grows a line at a time, and sparks fly off the ember
-/// at the typing point. The ember keeps glowing while [writing] (more may
-/// come); once the message is done and typed out, it goes out with a pop: a
-/// flash, a burst of sparks, and a few wisps of smoke like those off a
-/// delivered message. A message first seen finished shows whole, as does
+/// at the typing point. Freshly typed text glows behind it as if just out of
+/// the fire, cooling over a second, so even a message that lands all at once
+/// sweeps through in a wave of heat. The ember keeps glowing while [writing]
+/// (more may come); once the message is done and typed out, it goes out with
+/// a pop: a flash, a burst of sparks, and a few wisps of smoke like those off
+/// a delivered message. A message first seen finished shows whole, as does
 /// everything under reduced motion.
 ///
 /// Markdown still re-renders only when text arrives: typing is a clip and a
@@ -135,6 +138,9 @@ class _TypewriterRevealState extends State<TypewriterReveal>
       ember: theme.colorScheme.primary,
       smoke: theme.colorScheme.onSurfaceVariant,
       glowStrength: dark ? 1 : 0.7,
+      // On a dark canvas the afterglow is light; on a light one, a warm tint.
+      afterglow: dark ? BlendMode.plus : BlendMode.srcOver,
+      afterglowHot: colors.flameTip,
       // Typing repaints the clip and the ember, never the text itself.
       child: RepaintBoundary(child: widget.child),
     );
@@ -169,6 +175,8 @@ class _Typewriter extends SingleChildRenderObjectWidget {
     required this.ember,
     required this.smoke,
     required this.glowStrength,
+    required this.afterglow,
+    required this.afterglowHot,
     super.child,
   });
 
@@ -180,6 +188,8 @@ class _Typewriter extends SingleChildRenderObjectWidget {
   final Color ember;
   final Color smoke;
   final double glowStrength;
+  final BlendMode afterglow;
+  final Color afterglowHot;
 
   @override
   RenderObject createRenderObject(BuildContext context) => _RenderTypewriter(
@@ -191,6 +201,8 @@ class _Typewriter extends SingleChildRenderObjectWidget {
     ember,
     smoke,
     glowStrength,
+    afterglow,
+    afterglowHot,
   );
 
   @override
@@ -205,7 +217,9 @@ class _Typewriter extends SingleChildRenderObjectWidget {
       ..warm = warm
       ..ember = ember
       ..smoke = smoke
-      ..glowStrength = glowStrength;
+      ..glowStrength = glowStrength
+      ..afterglow = afterglow
+      ..afterglowHot = afterglowHot;
   }
 }
 
@@ -304,6 +318,8 @@ class _RenderTypewriter extends RenderProxyBox {
     this._ember,
     this._smoke,
     this._glowStrength,
+    this._afterglow,
+    this._afterglowHot,
   ) : _shown = _still ? double.infinity : _pace.typed;
 
   final _Pace _pace;
@@ -367,6 +383,22 @@ class _RenderTypewriter extends RenderProxyBox {
     markNeedsPaint();
   }
 
+  /// How the afterglow lays over what is behind the text.
+  BlendMode _afterglow;
+  set afterglow(BlendMode value) {
+    if (value == _afterglow) return;
+    _afterglow = value;
+    markNeedsPaint();
+  }
+
+  /// The afterglow's color just as text is typed; it cools to [_ember].
+  Color _afterglowHot;
+  set afterglowHot(Color value) {
+    if (value == _afterglowHot) return;
+    _afterglowHot = value;
+    markNeedsPaint();
+  }
+
   /// The slowest typing, in characters a second: about a line every
   /// quarter second.
   static const double _steadyRate = 220;
@@ -418,6 +450,18 @@ class _RenderTypewriter extends RenderProxyBox {
   static const double _flashLife = 0.32;
   static const double _smokeLife = 1.0;
 
+  /// How long freshly typed text takes to cool.
+  static const double _cool = 0.9;
+
+  /// How far typing had got ([_marks]) at recent frame times ([_times]),
+  /// back to just before the oldest text still warm: the afterglow cools
+  /// along it.
+  final List<double> _times = <double>[];
+  final List<double> _marks = <double>[];
+
+  /// When typing last moved on.
+  double _lastTyped = double.negativeInfinity;
+
   bool get _typing => _shown < _total;
 
   double get _sincePop =>
@@ -462,8 +506,12 @@ class _RenderTypewriter extends RenderProxyBox {
         math.max(_steadyRate, backlog / _catchUp) * step,
       );
       _shown += typed;
-      _sparkDue += typed / 9;
+      // A spark every few characters, but not a spray of dust when text
+      // lands in bulk: the afterglow carries speed.
+      _sparkDue += math.min(typed / 9, 25 * step);
+      if (typed > 0) _lastTyped = now;
     }
+    if (_shown.isFinite) _note(now);
     final Offset? at = _cursor;
     if (at != null && _sparkDue >= 1) {
       _spawn(at, now);
@@ -482,13 +530,19 @@ class _RenderTypewriter extends RenderProxyBox {
         ? math.min(1, _glow + step / 0.15)
         : math.max(0, _glow - step / 0.6);
     final bool popping = _sincePop < _smokeLife;
-    if (!lit && _glow == 0 && _sparks.isEmpty && !popping && _shown.isFinite) {
+    final bool warm = now - _lastTyped < _cool;
+    if (!lit &&
+        _glow == 0 &&
+        _sparks.isEmpty &&
+        !popping &&
+        !warm &&
+        _shown.isFinite) {
       // Done for good: stop measuring, and let later text show at once.
       _shown = double.infinity;
     }
     _pace
       ..typed = _shown
-      ..moving = lit || _glow > 0 || _sparks.isNotEmpty || popping;
+      ..moving = lit || _glow > 0 || _sparks.isNotEmpty || popping || warm;
     if (_resizeDue || _lineFor(_shown) != _line) {
       // Only how much shows changed, not the child: no need to measure.
       _resizeDue = false;
@@ -496,6 +550,43 @@ class _RenderTypewriter extends RenderProxyBox {
     } else {
       markNeedsPaint();
     }
+  }
+
+  void _note(double now) {
+    _times.add(now);
+    _marks.add(_shown);
+    // One sample from before the window shows where it began.
+    while (_times.length > 2 && _times[1] <= now - _cool) {
+      _times.removeAt(0);
+      _marks.removeAt(0);
+    }
+  }
+
+  /// How far typing had got at [time].
+  double _markAt(double time) {
+    for (int i = 0; i < _times.length; i++) {
+      if (_times[i] < time) continue;
+      if (i == 0) return _marks[0];
+      final double span = _times[i] - _times[i - 1];
+      final double part = span <= 0 ? 1 : (time - _times[i - 1]) / span;
+      return _marks[i - 1] + (_marks[i] - _marks[i - 1]) * part;
+    }
+    return _marks.last;
+  }
+
+  /// How hot the text [at] characters in still is: 1 as typing reaches it,
+  /// none once [_cool] seconds have passed.
+  double _heatAt(double at) {
+    for (int i = 0; i < _marks.length; i++) {
+      if (_marks[i] < at) continue;
+      double time = _times[i];
+      if (i > 0 && _marks[i] > _marks[i - 1]) {
+        final double part = (at - _marks[i - 1]) / (_marks[i] - _marks[i - 1]);
+        time = _times[i - 1] + (_times[i] - _times[i - 1]) * part;
+      }
+      return (1 - (_now - time) / _cool).clamp(0.0, 1.0);
+    }
+    return 1;
   }
 
   void _spawn(Offset at, double now) {
@@ -698,6 +789,8 @@ class _RenderTypewriter extends RenderProxyBox {
       }
     }
     final int index = _lineFor(_shown);
+    // Behind the text, which paints over it.
+    _paintAfterglow(context.canvas, offset);
     if (index < 0) {
       _clipLayer.layer = null;
       context.paintChild(child, offset);
@@ -720,6 +813,55 @@ class _RenderTypewriter extends RenderProxyBox {
     }
     _paintEmber(context.canvas, offset);
   }
+
+  /// Freshly typed text glowing as if just out of the fire, hottest at the
+  /// typing point and cooling behind it: a warm streak trailing the ember,
+  /// a line's worth at a time.
+  void _paintAfterglow(Canvas canvas, Offset offset) {
+    if (!_shown.isFinite || _marks.isEmpty || _lines.isEmpty) return;
+    final double hot = math.min(_shown, _total.toDouble());
+    final double cold = _markAt(_now - _cool);
+    if (hot <= cold) return;
+    for (int i = math.max(0, _lineFor(cold)); i <= _lineFor(hot); i++) {
+      final _Line line = _lines[i];
+      final double from = math.max(cold, line.start.toDouble());
+      final double to = math.min(hot, line.end.toDouble());
+      if (to <= from) continue;
+      final double left = _caretX(line, from);
+      final double right = _caretX(line, to);
+      if (right - left < 1) continue;
+      final Rect span = Rect.fromLTRB(
+        left,
+        line.top,
+        right,
+        line.bottom,
+      ).shift(offset);
+      _paint
+        ..style = PaintingStyle.fill
+        ..shader = ui.Gradient.linear(
+          span.centerLeft,
+          span.centerRight,
+          <Color>[_heatColor(_heatAt(from)), _heatColor(_heatAt(to))],
+        )
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5)
+        ..blendMode = _afterglow;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(span.inflate(1), const Radius.circular(6)),
+        _paint,
+      );
+    }
+    _paint
+      ..shader = null
+      ..maskFilter = null
+      ..blendMode = BlendMode.srcOver;
+  }
+
+  /// Amber as it is typed, deepening and fading as it cools.
+  Color _heatColor(double heat) => Color.lerp(
+    _ember,
+    _afterglowHot,
+    heat,
+  )!.withValues(alpha: 0.45 * _glowStrength * heat * heat);
 
   void _paintEmber(Canvas canvas, Offset offset) {
     final Offset? cursor = _cursor;
