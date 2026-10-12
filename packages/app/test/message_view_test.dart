@@ -711,6 +711,54 @@ void main() {
       expect(tester.hasRunningAnimations, isFalse);
     });
 
+    testWidgets('freshly typed text glows behind the ember, then cools', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(view(reply, writing: true));
+      await frames(tester, 3);
+      // Laid over the text, so no code block's own background can hide it.
+      expect(
+        typewriter,
+        paints
+          ..paragraph()
+          ..rrect(),
+      );
+
+      await frames(tester, 90);
+      // Typed out a while ago: cold, while the ember waits on.
+      expect(typed(tester), whole(tester));
+      expect(typewriter, isNot(paints..rrect()));
+      expect(typewriter, paints..circle());
+    });
+
+    testWidgets('text landing in bulk sweeps in heat, not a spray of sparks', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      int sparks() {
+        int count = 0;
+        expect(
+          typewriter,
+          paints..everything((Symbol method, List<dynamic> arguments) {
+            if (method == #drawLine) count++;
+            return true;
+          }),
+        );
+        return count;
+      }
+
+      await tester.pumpWidget(
+        view(List<String>.filled(8, reply).join('\n\n'), writing: true),
+      );
+      await frames(tester, 20);
+      expect(typed(tester), lessThan(whole(tester)));
+      expect(typewriter, paints..rrect());
+      // A spark every few characters would be a spray of some twenty.
+      expect(sparks(), lessThan(12));
+    });
+
     testWidgets('text arriving later types on from where it was', (
       WidgetTester tester,
     ) async {
@@ -752,6 +800,7 @@ void main() {
       await tester.pump();
       expect(typed(tester), whole(tester));
       expect(typewriter, isNot(paints..circle()));
+      expect(typewriter, isNot(paints..rrect()));
       expect(tester.hasRunningAnimations, isFalse);
     });
 

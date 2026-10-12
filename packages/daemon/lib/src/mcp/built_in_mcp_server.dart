@@ -3,7 +3,7 @@
 /// The agent launches this process from the ACP `mcpServers` configuration.
 /// It speaks newline-delimited MCP JSON-RPC on stdio and uses a private,
 /// authenticated WebSocket bridge back to the owning daemon for searches,
-/// session archiving, and user-visible image events.
+/// session archiving, and user-visible image and explainer events.
 library;
 
 import 'dart:async';
@@ -19,6 +19,8 @@ const String kMcpSecretEnv = 'SPEEDDIAL_MCP_SECRET';
 const String kMcpSessionIdEnv = 'SPEEDDIAL_MCP_SESSION_ID';
 const String kMcpSessionCwdEnv = 'SPEEDDIAL_MCP_SESSION_CWD';
 const String kMcpServerName = 'speeddial';
+const String kSessionSummaryInstruction =
+    'Call speeddial set_session_summary with a brief session title when the task is clear or changes.';
 const String _kLatestMcpVersion = '2025-11-25';
 const Set<String> _kSupportedMcpVersions = <String>{
   '2024-11-05',
@@ -119,9 +121,14 @@ class BuiltInMcpServer {
         'version': '0.1.0',
       },
       'instructions':
+          '$kSessionSummaryInstruction\n\n'
           'SpeedDial exposes tools from enabled MCP servers through this single '
           'speeddial server, alongside project/session search, transcript browsing, '
-          'session archiving, and image display. Managed tools are named '
+          'session archiving, image display, and interactive explainers. When '
+          'a visual walkthrough would help the user understand something (an '
+          'architecture, a request flow, an algorithm, a state machine), call '
+          'show_explainer to show a stepped, animated SVG diagram. '
+          'Managed tools are named '
           '<server-name>__<tool-name> (for example, Linear__save_issue when a '
           'Linear server provides that tool); their descriptions identify the '
           'source server. Before reporting that an integration is unavailable, '
@@ -205,7 +212,9 @@ class BuiltInMcpServer {
         'read_session_transcript' => await _readSessionTranscript(arguments),
         'archive_session' => await _setSessionArchived(arguments, true),
         'unarchive_session' => await _setSessionArchived(arguments, false),
+        'set_session_summary' => await _setSessionSummary(arguments),
         'display_image' => await _displayImage(arguments),
+        'show_explainer' => await _showExplainer(arguments),
         _ => await _callManagedTool(rawName, arguments),
       };
     } on Object catch (error) {
@@ -355,6 +364,20 @@ class BuiltInMcpServer {
     return _textResult(_pretty(result));
   }
 
+  Future<Map<String, Object?>> _setSessionSummary(
+    Map<String, Object?> arguments,
+  ) async {
+    final String? summary = _optionalString(arguments, 'summary')?.trim();
+    if (summary == null || summary.isEmpty) {
+      throw ArgumentError('summary must be a non-empty string');
+    }
+    final Object? result = await _daemonCall(
+      'internal.mcpSetSessionSummary',
+      <String, Object?>{'summary': summary},
+    );
+    return _textResult(_pretty(result));
+  }
+
   Future<Map<String, Object?>> _displayImage(
     Map<String, Object?> arguments,
   ) async {
@@ -420,6 +443,68 @@ class BuiltInMcpServer {
       'isError': false,
     };
   }
+
+  Future<Map<String, Object?>> _showExplainer(
+    Map<String, Object?> arguments,
+  ) async {
+    switch (arguments['help']) {
+      case true:
+        return _textResult(kShowExplainerReference);
+      case null || false:
+        break;
+      default:
+        throw ArgumentError('help must be a boolean');
+    }
+    if (!arguments.containsKey('svg')) {
+      return _explainerRejected(<String>[
+        'svg is required; call show_explainer with {"help": true} for the '
+            'format reference',
+      ]);
+    }
+    final Map<String, Object?> spec = Map<String, Object?>.of(arguments)
+      ..remove('help');
+    // Validate here first so the agent gets every problem in one result; the
+    // daemon validates again before persisting.
+    final ExplainerDocument document;
+    try {
+      document = ExplainerDocument.parse(ExplainerSpec.fromJson(spec));
+    } on FormatException catch (error) {
+      return _explainerRejected(<String>[error.message]);
+    } on ExplainerException catch (error) {
+      return _explainerRejected(error.errors);
+    }
+    await _daemonCall('internal.mcpShowExplainer', <String, Object?>{
+      'explainer': document.spec.toJson(),
+    });
+    final int steps = document.spec.steps.length;
+    final int toggles = document.toggles.length;
+    final StringBuffer text = StringBuffer(
+      'Displayed explainer${document.spec.title == null ? '' : ' "${document.spec.title}"'} '
+      'with $steps step${steps == 1 ? '' : 's'} and $toggles '
+      'toggle${toggles == 1 ? '' : 's'} in SpeedDial session $_sessionId.',
+    );
+    if (document.warnings.isNotEmpty) {
+      text.write('\nIgnored (fix if they matter):');
+      for (final String warning in document.warnings) {
+        text.write('\n- $warning');
+      }
+    }
+    return _textResult(text.toString());
+  }
+
+  static Map<String, Object?> _explainerRejected(List<String> errors) =>
+      <String, Object?>{
+        'content': <Object?>[
+          <String, Object?>{
+            'type': 'text',
+            'text':
+                'Explainer rejected; nothing was shown. Fix every problem '
+                'and call show_explainer again:\n'
+                '${errors.map((String e) => '- $e').join('\n')}',
+          },
+        ],
+        'isError': true,
+      };
 
   File _imageFile(String requestedPath) {
     final String candidate = p.isAbsolute(requestedPath)
@@ -621,6 +706,25 @@ class BuiltInMcpServer {
       },
     },
     <String, Object?>{
+      'name': 'set_session_summary',
+      'title': 'Set this session summary',
+      'description': 'Set a brief summary of the current session as its title in the SpeedDial session list.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'summary': <String, Object?>{'type': 'string', 'minLength': 1},
+        },
+        'required': <String>['summary'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': false,
+        'idempotentHint': true,
+        'openWorldHint': false,
+      },
+    },
+    <String, Object?>{
       'name': 'display_image',
       'title': 'Display an image',
       'description': 'Display an image in the user\'s SpeedDial timeline and return it to the model. Provide an absolute or session-relative path, or base64 data.',
@@ -655,8 +759,106 @@ class BuiltInMcpServer {
         'additionalProperties': false,
       },
     },
+    <String, Object?>{
+      'name': 'show_explainer',
+      'title': 'Show an interactive explainer',
+      'description': kShowExplainerDescription,
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'help': <String, Object?>{
+            'type': 'boolean',
+            'description':
+                'true returns the format reference and a worked example; '
+                'nothing is displayed.',
+          },
+          'title': <String, Object?>{'type': 'string', 'maxLength': 200},
+          'svg': <String, Object?>{
+            'type': 'string',
+            'description':
+                'The scene: one <svg viewBox="..."> document in the subset '
+                'the help reference describes.',
+          },
+          'steps': <String, Object?>{
+            'type': 'array',
+            'maxItems': kMaxExplainerSteps,
+            'items': <String, Object?>{
+              'type': 'object',
+              'properties': <String, Object?>{
+                'caption': <String, Object?>{'type': 'string'},
+                'set': _kExplainerChangesSchema,
+              },
+              'required': <String>['caption'],
+              'additionalProperties': false,
+            },
+          },
+          'toggles': <String, Object?>{
+            'type': 'array',
+            'maxItems': kMaxExplainerToggles,
+            'items': <String, Object?>{
+              'type': 'object',
+              'properties': <String, Object?>{
+                'label': <String, Object?>{'type': 'string', 'maxLength': 60},
+                'on': <String, Object?>{'type': 'boolean', 'default': false},
+                'set': _kExplainerChangesSchema,
+              },
+              'required': <String>['label', 'set'],
+              'additionalProperties': false,
+            },
+          },
+        },
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': false,
+        'idempotentHint': false,
+        'openWorldHint': false,
+      },
+    },
   ];
 }
+
+const Map<String, Object?> _kExplainerChangesSchema = <String, Object?>{
+  'type': 'object',
+  'description':
+      'Selector (#id, .class, tag, or a comma list) to attribute changes.',
+  'additionalProperties': <String, Object?>{
+    'type': 'object',
+    'additionalProperties': <String, Object?>{
+      'type': <String>['string', 'number'],
+    },
+  },
+};
+
+/// Kept short: harnesses truncate long tool descriptions, so the full format
+/// lives in [kShowExplainerReference], returned by `{"help": true}`.
+const String kShowExplainerDescription =
+    "Show an interactive explainer in the user's SpeedDial timeline: an SVG "
+    'diagram the user steps through, with animated transitions, toggles, and '
+    'hover/tap tooltips. Use it when a visual walkthrough explains better '
+    'than prose: architectures, request flows, algorithms, data structures, '
+    'state machines. Before your first explainer in a session, call it with '
+    '{"help": true} alone. That returns the format reference (SVG subset, '
+    'theme colors, steps, toggles) and a worked example, and displays '
+    'nothing. Invalid explainers are rejected with every problem listed; fix '
+    'them all and call again.';
+
+/// The agent-facing explainer format. Keep in sync with PROTOCOL.md
+/// "Explainers" and the parser in speeddial_protocol.
+const String kShowExplainerReference = r'''
+show_explainer format reference. Arguments: {"title"?, "svg", "steps"?, "toggles"?}. Invalid input is rejected with every problem listed; fix them all and call again.
+
+SVG subset. Root <svg viewBox="0 0 W H"> is required (W 600-800 suits the chat column). Elements: g, rect, circle, ellipse, line, polyline, polygon, path (all commands incl. arcs), text, tspan (x/y/dx/dy; dy may use em), defs, marker (arrowheads via marker-end="url(#id)"), title (tooltip for its parent element), style (simple selectors only: tag, .class, #id, tag.class). Attributes: fill, stroke, stroke-width, stroke-dasharray, stroke-linecap, stroke-linejoin, opacity, fill-opacity, stroke-opacity, font-size, font-weight, font-family (sans or monospace), font-style, text-anchor, dominant-baseline, display, visibility, transform, and geometry. Not supported: gradients, filters, clipPath, mask, image, use, foreignObject, scripts, event handlers, CSS/SMIL animation, % and em lengths (except dy/dx).
+
+Colors. Use theme tokens so the diagram reads in light and dark themes: var(--fg) text and default fill, var(--muted) secondary text and arrows, var(--bg), var(--surface) box fill, var(--border) box outline, var(--accent) the focus, var(--success), var(--warning), var(--danger), var(--info), var(--purple), var(--code) code background. Literal colors (hex, rgb(), names) also work; tint with fill-opacity. Text defaults to 16px sans; 12-15 suits most labels. Allow about 0.6 x font-size per character so labels fit their boxes.
+
+Steps: [{"caption", "set"}]. The first step is the initial view. "set" maps selectors (#id, .class, tag, or comma lists) to attribute changes, e.g. {"#cache": {"fill": "var(--accent)"}, ".reply": {"opacity": 1}}. Changes accumulate: each step starts from the previous one, and moving back restores earlier states. Numbers, colors, opacity, transforms, points, and same-shape path data animate. The attribute "text" replaces a text or tspan's content. Draw later elements with opacity="0" and reveal them in a step. Keep captions to one or two sentences; the diagram carries the detail. Give every element you change an id or class.
+
+Toggles: [{"label", "on", "set"}] are switches under the diagram whose "set" applies on top of the current step while on, e.g. an overlay of latencies.
+
+Example: {"title": "Cache-aside read", "svg": "<svg viewBox=\"0 0 640 160\"><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"7\" markerHeight=\"7\" orient=\"auto\"><path d=\"M0 0L10 5L0 10z\" fill=\"var(--muted)\"/></marker></defs><style>.box{fill:var(--surface);stroke:var(--border)} .edge{stroke:var(--muted);stroke-width:2;marker-end:url(#arrow);opacity:0}</style><g font-size=\"14\" text-anchor=\"middle\" dominant-baseline=\"central\"><rect class=\"box\" id=\"app\" x=\"20\" y=\"60\" width=\"120\" height=\"44\" rx=\"8\"/><text x=\"80\" y=\"82\">App</text><rect class=\"box\" id=\"cache\" x=\"260\" y=\"60\" width=\"120\" height=\"44\" rx=\"8\"><title>In-memory, 5 min TTL</title></rect><text x=\"320\" y=\"82\">Cache</text><rect class=\"box\" id=\"db\" x=\"500\" y=\"60\" width=\"120\" height=\"44\" rx=\"8\"/><text x=\"560\" y=\"82\">Database</text></g><line class=\"edge\" id=\"ask\" x1=\"140\" y1=\"82\" x2=\"256\" y2=\"82\"/><line class=\"edge\" id=\"miss\" x1=\"380\" y1=\"82\" x2=\"496\" y2=\"82\"/></svg>", "steps": [{"caption": "The app needs a user record."}, {"caption": "It asks the cache first.", "set": {"#ask": {"opacity": 1}, "#cache": {"stroke": "var(--accent)"}}}, {"caption": "On a miss it reads the database and fills the cache.", "set": {"#miss": {"opacity": 1}, "#cache": {"stroke": "var(--warning)"}, "#db": {"stroke": "var(--accent)"}}}]}
+''';
 
 class _McpRpcError implements Exception {
   const _McpRpcError(this.code, this.message);

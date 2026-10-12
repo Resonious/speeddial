@@ -5,6 +5,7 @@
 /// fills them in. `toJson` includes them only when non-null.
 library;
 
+import 'explainer/explainer.dart';
 import 'models.dart';
 
 /// Amount of event detail requested from `sessions.history`.
@@ -49,6 +50,7 @@ sealed class SessionEvent {
       switch (json['type']) {
         'userMessage' => UserMessageEvent.fromJson(json),
         'image' => ImageEvent.fromJson(json),
+        'explainer' => ExplainerEvent.fromJson(json),
         'agentMessageChunk' => AgentMessageChunkEvent.fromJson(json),
         'agentThoughtChunk' => AgentThoughtChunkEvent.fromJson(json),
         'toolCall' => ToolCallEvent.fromJson(json),
@@ -107,6 +109,11 @@ SessionEvent summarizeSessionEvent(SessionEvent event) => switch (event) {
       title: e.activity.title,
       status: e.activity.status,
     ),
+    seq: e.seq,
+    timestamp: e.timestamp,
+  ),
+  ExplainerEvent e => ExplainerEvent(
+    explainer: ExplainerSpec(title: e.explainer.title, svg: ''),
     seq: e.seq,
     timestamp: e.timestamp,
   ),
@@ -179,6 +186,35 @@ class ImageEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'image',
       'attachment': attachment.toMetadataJson(),
+      'seq': ?localSeq,
+      if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
+    };
+  }
+}
+
+/// An interactive explainer the agent displayed through `show_explainer`.
+/// The daemon validated it before emitting; clients still parse defensively
+/// and fall back to a plain card when it does not render.
+class ExplainerEvent extends SessionEvent {
+  const ExplainerEvent({required this.explainer, super.seq, super.timestamp});
+
+  final ExplainerSpec explainer;
+
+  factory ExplainerEvent.fromJson(Map<String, Object?> json) => ExplainerEvent(
+    explainer: ExplainerSpec.fromJson(
+      (json['explainer']! as Map).cast<String, Object?>(),
+    ),
+    seq: json['seq'] as int?,
+    timestamp: _parseTimestamp(json['timestamp']),
+  );
+
+  @override
+  Map<String, Object?> toJson() {
+    final int? localSeq = seq;
+    final DateTime? localTimestamp = timestamp;
+    return <String, Object?>{
+      'type': 'explainer',
+      'explainer': explainer.toJson(),
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

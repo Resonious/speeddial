@@ -9,7 +9,9 @@ of per-frame work.
 
 ```
 packages/protocol/   pure Dart, zero deps beyond SDK. Implements PROTOCOL.md exactly:
-                     models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides).
+                     models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides),
+                     and the explainer SVG-subset parser/validator (`src/explainer/`) so
+                     the daemon rejects exactly what the app could not draw.
 packages/daemon/     Dart CLI + library. Spawns ACP and Ante agent CLIs, owns
                      session/project bookkeeping (SQLite), git/gh operations, WebSocket
                      JSON-RPC server.
@@ -60,6 +62,11 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
                     Session creation/resume uses existing provider credentials; advertised
                     login methods are not automatically invoked (Claude uses terminal login).
+                    Claude Code creation and resume append SpeedDial guidance through the
+                    adapter's `_meta.systemPrompt` preset extension, preserving its native
+                    system prompt. The guidance tells Claude to wait for finite background
+                    work, inspect its results, and finish dependent work before ending the
+                    turn; intentionally persistent services may remain running.
                     Explicit busy prompt rejections (the agent is running its own
                     background turn — OMP continues subagent-driven work after
                     yielding) are retried with backoff until the agent accepts or
@@ -110,7 +117,11 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     Built-in tools bridge over an authenticated, session-bound loopback
                     WebSocket to query projects/session history (including archived
                     sessions), browse message-only transcript pages, archive or restore
-                    other sessions, or persist an attachment and emit an image event.
+                    other sessions, set the calling session’s summary/title, persist an
+                    attachment and emit an image event, or validate and emit an explainer
+                    (`show_explainer`; a short description points agents at
+                    `{"help": true}`, which returns the format reference with a worked
+                    example that a test keeps valid).
                     McpProxySession owns
                     the matching managed upstreams for that bridge connection, starts stdio
                     servers in the session cwd, drives Streamable HTTP JSON/SSE sessions,
@@ -411,7 +422,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
                              natively (`chat/mermaid/`: subset parser, layered layout, painter;
-                             anything unsupported stays a code block), remote file links that
+                             anything unsupported stays a code block), MCP `show_explainer`
+                             explainers drawn natively (`chat/explainer/`: the shared
+                             `speeddial_protocol` SVG-subset parser validates in the daemon and
+                             parses again here; the scene bakes each settled step/toggle state
+                             into a Picture and tweens between states from the tree; steps,
+                             toggles, `<title>` tooltips, arrow keys, full-screen view; a parse
+                             failure shows a fallback card), remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
                              offer Download (system save picker) or Float (the shared-file card).
                              Transfers and dismissible completion/error receipts live in
@@ -458,9 +475,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              provider delivers it (typewriter.dart: a clip and a cursor over the
                              laid-out markdown, measured in paint; the bubble grows a line at a
                              time; progress is kept per row so scrolling back does not retype).
-                             The ember waits at the end while the message may go on, then goes
-                             out with a pop once it is done: a flash, a burst of sparks the air
-                             soon slows, and wisps of smoke like a delivered message's steam;
+                             Freshly typed text glows behind it like hot metal, amber cooling
+                             to nothing over a second, so a message that lands at once sweeps
+                             through in a wave of heat; sparks stay sparse at speed rather than
+                             spraying dust. The ember waits at the end while the message may go
+                             on, then goes out with a pop once it is done: a flash, a burst of
+                             sparks the air soon slows, and wisps of smoke like a delivered
+                             message's steam;
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips,

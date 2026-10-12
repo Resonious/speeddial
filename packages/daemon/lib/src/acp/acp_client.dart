@@ -92,6 +92,7 @@ class AcpClient implements AgentClient {
     List<String> command, {
     required String cwd,
     Map<String, String>? environment,
+    String? systemPromptAppend,
     this.initTimeout = const Duration(seconds: 30),
     AgentPermissionHandler? requestPermission,
     AcpReadTextFileHandler? readTextFile,
@@ -101,6 +102,15 @@ class AcpClient implements AgentClient {
        _cwd = cwd, // ignore: prefer_initializing_formals — public API name
        // ignore: prefer_initializing_formals — public API name
        _environment = environment,
+       _sessionMeta = systemPromptAppend == null
+           ? null
+           : <String, Object?>{
+               'systemPrompt': <String, Object?>{
+                 'type': 'preset',
+                 'preset': 'claude_code',
+                 'append': systemPromptAppend,
+               },
+             },
        _permissionHandler = requestPermission,
        _readTextFileHandler = readTextFile,
        _writeTextFileHandler = writeTextFile,
@@ -112,6 +122,7 @@ class AcpClient implements AgentClient {
   final List<String> _command;
   final String _cwd;
   final Map<String, String>? _environment;
+  final Map<String, Object?>? _sessionMeta;
   final Duration initTimeout;
   final Map<String, Completer<void>> _promptCancellations =
       <String, Completer<void>>{};
@@ -478,6 +489,7 @@ class AcpClient implements AgentClient {
     final result = await _request('session/new', <String, Object?>{
       'cwd': cwd,
       'mcpServers': mcpServers,
+      '_meta': ?_sessionMeta,
     });
     final sessionId = result['sessionId'];
     if (sessionId is! String || sessionId.isEmpty) {
@@ -511,6 +523,7 @@ class AcpClient implements AgentClient {
       'sessionId': sessionId,
       'cwd': cwd,
       'mcpServers': mcpServers,
+      '_meta': ?_sessionMeta,
     });
     _rememberSessionModeIds(sessionId, result);
     // Older SpeedDial sessions may have saved the provider's plan mode.

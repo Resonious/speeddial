@@ -2379,6 +2379,50 @@ void main() {
         ),
       );
 
+      await expectLater(
+        client.peer.call('internal.mcpSetSessionSummary', {
+          'summary': 'Denied',
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrUnauthenticated,
+          ),
+        ),
+      );
+      for (final Object? summary in <Object?>[null, '', '  ', 42]) {
+        await expectLater(
+          mcp.peer.call('internal.mcpSetSessionSummary', {'summary': summary}),
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError error) => error.code,
+              'code',
+              -32602,
+            ),
+          ),
+        );
+      }
+      final int previousUpdates = client.of('session.updated').length;
+      final Map<String, Object?> summaryResult = j(
+        await mcp.peer.call('internal.mcpSetSessionSummary', {
+          'summary': '  Summarize the session  ',
+          'sessionId': other.id,
+        }),
+      );
+      expect((summaryResult['session']! as Map)['id'], owner.id);
+      expect(
+        (summaryResult['session']! as Map)['title'],
+        'Summarize the session',
+      );
+      expect(store.getSession(owner.id)!.title, 'Summarize the session');
+      expect(store.getSession(other.id)!.title, other.title);
+      await untilRecorded(client, 'session.updated', previousUpdates + 1);
+      expect(
+        (client.of('session.updated').last.params['session']! as Map)['title'],
+        'Summarize the session',
+      );
+
       const String imageData =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
       await mcp.peer.call('internal.mcpDisplayImage', <String, Object?>{
@@ -2404,6 +2448,48 @@ void main() {
         }),
       );
       expect((attachment['attachment']! as Map)['data'], imageData);
+
+      await mcp.peer.call('internal.mcpShowExplainer', <String, Object?>{
+        'explainer': <String, Object?>{
+          'title': 'Flow',
+          'svg': '<svg viewBox="0 0 10 10"><rect id="a" width="4" height="4"/></svg>',
+          'steps': <Object?>[
+            <String, Object?>{'caption': 'Start'},
+            <String, Object?>{
+              'caption': 'Lit',
+              'set': <String, Object?>{
+                '#a': <String, Object?>{'fill': 'var(--accent)'},
+              },
+            },
+          ],
+        },
+      });
+      await untilRecorded(client, 'session.event', 2);
+      final Map<String, Object?> withExplainer = j(
+        await client.peer.call('sessions.history', <String, Object?>{
+          'sessionId': owner.id,
+        }),
+      );
+      final ExplainerEvent explainer = SessionEvent.fromJson(
+        ((withExplainer['events']! as List<Object?>).last! as Map)
+            .cast<String, Object?>(),
+      ) as ExplainerEvent;
+      expect(explainer.explainer.title, 'Flow');
+      expect(explainer.explainer.steps, hasLength(2));
+      await expectLater(
+        mcp.peer.call('internal.mcpShowExplainer', <String, Object?>{
+          'explainer': <String, Object?>{'svg': '<svg><blink/></svg>'},
+        }),
+        throwsA(
+          isA<DaemonError>()
+              .having((DaemonError error) => error.code, 'code', -32602)
+              .having(
+                (DaemonError error) => error.message,
+                'message',
+                contains('<blink>'),
+              ),
+        ),
+      );
 
       await mcp.close();
       await client.close();
@@ -2492,7 +2578,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(8));
+        expect((listed['result']! as Map)['tools'], hasLength(10));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

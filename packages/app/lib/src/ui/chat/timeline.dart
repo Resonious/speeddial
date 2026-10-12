@@ -10,6 +10,7 @@ import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'catching_up.dart';
+import 'explainer/explainer_view.dart';
 import 'history_expansion.dart';
 import 'landing_sparks.dart';
 import 'latest_button.dart';
@@ -53,6 +54,12 @@ class UserMessageItem extends TimelineItem {
 class DisplayedImageItem extends TimelineItem {
   const DisplayedImageItem({super.id, required this.attachment});
   final Attachment attachment;
+}
+
+/// An interactive explainer the agent displayed (`show_explainer`).
+class ExplainerItem extends TimelineItem {
+  const ExplainerItem({super.id, required this.explainer});
+  final ExplainerSpec explainer;
 }
 
 /// One logical agent message assembled from its identified chunks.
@@ -503,6 +510,8 @@ List<TimelineItem> deriveTimelineItems(
             );
           case ImageEvent e:
             items.add(DisplayedImageItem(id: e.seq, attachment: e.attachment));
+          case ExplainerEvent e:
+            items.add(ExplainerItem(id: e.seq, explainer: e.explainer));
           case PlanEvent e:
             items.add(PlanTimelineItem(id: e.seq, entries: e.entries));
           case PermissionRequestEvent e:
@@ -1263,6 +1272,13 @@ class _TimelineRow extends StatelessWidget {
       DisplayedImageItem i => _DisplayedImage(
         attachment: i.attachment,
         attachmentLoader: attachmentLoader,
+      ),
+      ExplainerItem i => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: ExplainerView(
+          key: ValueKey<Object?>('explainer-${i.id}'),
+          spec: i.explainer,
+        ),
       ),
       AgentMessageItem i => _MessageWithActions(
         isUser: false,

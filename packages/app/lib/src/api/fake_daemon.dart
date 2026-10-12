@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'daemon_client.dart';
+import 'demo_explainer.dart';
 
 /// In-memory, scripted [DaemonClient] used by widget tests and `--demo` mode.
 ///
@@ -1965,6 +1966,12 @@ class FakeDaemonClient implements DaemonClient {
     if (_isCancelled(sessionId)) return;
     _emit(sessionId, PlanEvent(entries: _planEntries()));
 
+    if (text.toLowerCase().contains('explain')) {
+      await _delay();
+      if (_isCancelled(sessionId)) return;
+      _emit(sessionId, const ExplainerEvent(explainer: kDemoExplainer));
+    }
+
     if (text.toLowerCase().contains('permission')) {
       await _delay();
       if (_isCancelled(sessionId)) return;
@@ -2236,6 +2243,11 @@ class FakeDaemonClient implements DaemonClient {
         ),
         ImageEvent e => ImageEvent(
           attachment: e.attachment,
+          seq: seq,
+          timestamp: timestamp,
+        ),
+        ExplainerEvent e => ExplainerEvent(
+          explainer: e.explainer,
           seq: seq,
           timestamp: timestamp,
         ),

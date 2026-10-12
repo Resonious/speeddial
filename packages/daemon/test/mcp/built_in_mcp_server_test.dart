@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -112,6 +113,7 @@ void main() {
     final result = (initialized['result'] as Map).cast<String, Object?>();
     expect(result['protocolVersion'], '2025-11-25');
     expect(result['capabilities'], contains('tools'));
+    expect(result['instructions'], contains(kSessionSummaryInstruction));
 
     final Map<String, Object?> listed = await request(2, 'tools/list');
     final listedResult = (listed['result'] as Map).cast<String, Object?>();
@@ -125,7 +127,9 @@ void main() {
       'read_session_transcript',
       'archive_session',
       'unarchive_session',
+      'set_session_summary',
       'display_image',
+      'show_explainer',
       'workspace__read',
     ]);
     final Map<String, Object?> archiveTool = tools.singleWhere(
@@ -138,6 +142,28 @@ void main() {
       'offline: connection refused',
     );
   });
+
+  test(
+    'set_session_summary trims text and rejects invalid summaries',
+    () async {
+      final Map<String, Object?> response = await request(1, 'tools/call', {
+        'name': 'set_session_summary',
+        'arguments': {'summary': '  Add session summaries  '},
+      });
+      expect((response['result'] as Map)['isError'], isFalse);
+      expect(calls.single.method, 'internal.mcpSetSessionSummary');
+      expect(calls.single.params, {'summary': 'Add session summaries'});
+      calls.clear();
+      for (final Object? summary in <Object?>[null, '', '  ', 42]) {
+        final Map<String, Object?> invalid = await request(2, 'tools/call', {
+          'name': 'set_session_summary',
+          'arguments': {'summary': summary},
+        });
+        expect((invalid['result'] as Map)['isError'], isTrue);
+      }
+      expect(calls, isEmpty);
+    },
+  );
 
   test('discovery returns filtered schemas and visible warnings', () async {
     final Map<String, Object?> response = await request(1, 'tools/call', {
@@ -380,6 +406,120 @@ void main() {
       'name': 'workspace__read',
       'arguments': <String, Object?>{'path': 'README'},
     });
+  });
+
+  test('show_explainer validates, then forwards the explainer', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'show_explainer',
+        'arguments': <String, Object?>{
+          'title': 'Boxes',
+          'svg':
+              '<svg viewBox="0 0 10 10"><rect id="a" width="4" height="4" '
+              'filter="url(#f)"/></svg>',
+          'steps': <Object?>[
+            <String, Object?>{'caption': 'One'},
+            <String, Object?>{
+              'caption': 'Two',
+              'set': <String, Object?>{
+                '#a': <String, Object?>{'x': 5},
+              },
+            },
+          ],
+        },
+      },
+    );
+    final result = (response['result'] as Map).cast<String, Object?>();
+    expect(result['isError'], isFalse);
+    final String text =
+        ((result['content'] as List).single as Map)['text'] as String;
+    expect(text, contains('"Boxes" with 2 steps'));
+    expect(text, contains('filter'));
+    expect(calls.single.method, 'internal.mcpShowExplainer');
+    final explainer = (calls.single.params['explainer'] as Map)
+        .cast<String, Object?>();
+    expect(explainer['title'], 'Boxes');
+    expect(explainer['steps'], hasLength(2));
+  });
+
+  test('show_explainer reports every problem without displaying', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'show_explainer',
+        'arguments': <String, Object?>{
+          'svg':
+              '<svg viewBox="0 0 10 10"><circle id="c" cx="1" cy="1"/>'
+              '<image/></svg>',
+        },
+      },
+    );
+    final result = (response['result'] as Map).cast<String, Object?>();
+    expect(result['isError'], isTrue);
+    final String text =
+        ((result['content'] as List).single as Map)['text'] as String;
+    expect(text, contains('needs r'));
+    expect(text, contains('<image>'));
+    expect(calls, isEmpty);
+  });
+
+  test(
+    'show_explainer help returns the reference without displaying',
+    () async {
+      final Map<String, Object?> response = await request(
+        1,
+        'tools/call',
+        <String, Object?>{
+          'name': 'show_explainer',
+          'arguments': <String, Object?>{'help': true},
+        },
+      );
+      final result = (response['result'] as Map).cast<String, Object?>();
+      expect(result['isError'], isFalse);
+      expect(
+        ((result['content'] as List).single as Map)['text'],
+        kShowExplainerReference,
+      );
+      expect(calls, isEmpty);
+
+      final Map<String, Object?> missing = await request(
+        2,
+        'tools/call',
+        <String, Object?>{
+          'name': 'show_explainer',
+          'arguments': <String, Object?>{'title': 'No scene'},
+        },
+      );
+      final missingResult = (missing['result'] as Map).cast<String, Object?>();
+      expect(missingResult['isError'], isTrue);
+      expect(
+        ((missingResult['content'] as List).single as Map)['text'],
+        contains('{"help": true}'),
+      );
+      expect(calls, isEmpty);
+    },
+  );
+
+  test('the show_explainer description stays short enough not to truncate', () {
+    expect(kShowExplainerDescription.length, lessThan(800));
+    expect(kShowExplainerDescription, contains('{"help": true}'));
+  });
+
+  test('the show_explainer reference example is a valid explainer', () {
+    final String reference = kShowExplainerReference;
+    final String example = reference.substring(
+      reference.indexOf('Example: ') + 'Example: '.length,
+    );
+    final ExplainerDocument document = ExplainerDocument.parse(
+      ExplainerSpec.fromJson(
+        (jsonDecode(example.trim()) as Map).cast<String, Object?>(),
+      ),
+    );
+    expect(document.steps, hasLength(3));
+    expect(document.warnings, isEmpty);
   });
 
   test('display_image reads a session-relative file and returns MCP image content', () async {

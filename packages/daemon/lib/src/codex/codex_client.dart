@@ -10,7 +10,8 @@ import '../acp/acp_types.dart';
 
 import '../agents/agent_client.dart';
 import '../agents/native_commands.dart';
-import '../mcp/built_in_mcp_server.dart' show kMcpServerName;
+import '../mcp/built_in_mcp_server.dart'
+    show kMcpServerName, kSessionSummaryInstruction;
 
 /// A failed Codex turn, reported by `turn/completed`.
 class CodexTurnException implements Exception {
@@ -778,6 +779,7 @@ class CodexClient implements AgentClient, NativeCommandClient {
     final String? existing = config['developer_instructions'] as String?;
     return <String>[
       if (existing != null && existing.isNotEmpty) existing,
+      kSessionSummaryInstruction,
       'SpeedDial MCP integrations: Enabled external services (such as Linear) '
           'are exposed through the speeddial MCP server, not necessarily as '
           'separate MCP connections. For requests involving an external service '
@@ -792,6 +794,10 @@ class CodexClient implements AgentClient, NativeCommandClient {
           'unavailability is not evidence; retry discovery when asked to retry. '
           'Credentials are held by the daemon; missing local credentials or '
           'MCP resource entries do not establish that tools are unavailable.',
+      'SpeedDial explainers: when a visual walkthrough would help the user '
+          'understand something (an architecture, a request flow, an '
+          'algorithm, a state machine), call speeddial show_explainer to show '
+          'a stepped, animated SVG diagram in the timeline.',
     ].join('\n\n');
   }
 

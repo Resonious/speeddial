@@ -105,7 +105,9 @@ const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpSearchSessions',
   'internal.mcpReadSessionTranscript',
   'internal.mcpArchiveSession',
+  'internal.mcpSetSessionSummary',
   'internal.mcpDisplayImage',
+  'internal.mcpShowExplainer',
 ];
 
 typedef _McpCredential = ({String secret, String projectId, String cwd});
@@ -479,7 +481,12 @@ class SpeedDialServer {
           params,
         ),
         'internal.mcpArchiveSession' => _mcpArchiveSession(client, params),
+        'internal.mcpSetSessionSummary' => _mcpSetSessionSummary(
+          client,
+          params,
+        ),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
+        'internal.mcpShowExplainer' => _mcpShowExplainer(client, params),
         _ => throw DaemonError(
           kErrUnauthenticated,
           'MCP bridge connections may only call internal MCP methods',
@@ -722,6 +729,18 @@ class SpeedDialServer {
     return <String, Object?>{'session': session.toJson()};
   }
 
+  Future<Object?> _mcpSetSessionSummary(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final String summary = _requiredString(params, 'summary').trim();
+    if (summary.isEmpty) {
+      throw DaemonError(_kErrInvalidParams, 'summary must be non-empty');
+    }
+    final Session session = await _engine.rename(client.mcpSessionId!, summary);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
   Future<Object?> _mcpDisplayImage(
     _Client client,
     Map<String, Object?> params,
@@ -750,6 +769,28 @@ class SpeedDialServer {
       mimeType: mimeType,
       data: data,
     );
+    return <String, Object?>{'ok': true};
+  }
+
+  Future<Object?> _mcpShowExplainer(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final Object? raw = params['explainer'];
+    if (raw is! Map) {
+      throw DaemonError(_kErrInvalidParams, 'explainer must be an object');
+    }
+    final ExplainerDocument document;
+    try {
+      document = ExplainerDocument.parse(
+        ExplainerSpec.fromJson(raw.cast<String, Object?>()),
+      );
+    } on FormatException catch (error) {
+      throw DaemonError(_kErrInvalidParams, error.message);
+    } on ExplainerException catch (error) {
+      throw DaemonError(_kErrInvalidParams, error.toString());
+    }
+    await _engine.showExplainer(client.mcpSessionId!, document.spec);
     return <String, Object?>{'ok': true};
   }
 
