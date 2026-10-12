@@ -178,12 +178,20 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     requiring clients. A partial SQLite activity index selects only
                     eligible rows, with a latest-event lookup excluding recent
                     background output; running/permission-waiting/preparing/resuming
-                    sessions and in-flight turns are excluded. Archival uses the
-                    normal metadata persistence/broadcast path and clears done.
+                    sessions and in-flight turns are excluded. The
+                    daemon-wide autoArchiveKeep minimum (default 5) counts only
+                    unarchived non-pinned sessions, including active/preparing
+                    ones. An indexed count limits oldest-first candidates to the
+                    excess above the minimum without loading every session.
+                    Archival uses the normal metadata persistence/broadcast
+                    path and clears done.
                     Disposal cancels the timer. DaemonConfig reads autoArchiveHours
+                    (default 72; 0 disables archival) and autoArchiveKeep
+                    (default 5; 0 removes the minimum)
                     from ~/.speeddial/config.json for standalone and embedded startup
-                    (0 disables, default 72); --auto-archive-hours overrides it for
-                    serve. Invalid settings fail before opening the store. Restoring
+                    with independent --auto-archive-hours and --auto-archive-keep
+                    overrides for serve.
+                    Invalid settings fail before opening the store. Restoring
                     or unpinning starts a fresh activity window; restart errors also
                     advance activity so interrupted turns remain visible.
                     ArchiveService previews daemon-wide archive storage and clears
@@ -272,6 +280,8 @@ WebSocket except `serve` and `token`:
   `--auto-archive-hours HOURS` overrides config.json's `autoArchiveHours` (default
   72; 0 disables automatic archival). Settings are read at startup; the supervisor
   preserves the flag across worker restarts.
+  `--auto-archive-keep COUNT` overrides `autoArchiveKeep` (default 5; 0 removes the
+  minimum), independently of the inactivity timeout. It is preserved across restarts.
   `--ntfy-topic TOPIC` enables completed-turn pushes to ntfy.sh; omitted means
   disabled. `--ntfy-app-url URL` optionally links to a hosted HTTP(S) frontend
   instead of the mobile app. Both flags survive supervised worker restarts.

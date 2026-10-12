@@ -51,22 +51,31 @@ The daemon writes `~/.speeddial/daemon.json` (mode 0600) with host/port/token
 for CLI and UI discovery.
 
 Sessions are automatically archived after 72 hours without conversation activity.
-Pinned sessions, running turns, permission waits, and sessions still preparing are
-excluded. The daemon checks at startup and every minute, even with no UI connected.
+The daemon retains at least five unarchived, non-pinned sessions when that many
+exist, archiving the oldest eligible sessions only while above that minimum.
+The count spans all projects; pinned and already archived sessions do not count.
+Pinned sessions are always protected. Running turns, permission waits, and sessions
+still preparing count toward the minimum and remain protected from archival.
+The daemon checks at startup and every minute, even with no UI connected.
 Background output between turns also counts as activity.
 Archiving preserves transcripts, attachments, and worktrees. Restoring or unpinning
 a session starts a fresh inactivity window.
 
 Set `"autoArchiveHours": 168` in `~/.speeddial/config.json` to use one week, or
-`"autoArchiveHours": 0` to disable automatic archival. This setting applies to
-both standalone and built-in desktop daemons; restart the daemon after changing it.
-The value must be a non-negative whole number. Invalid settings fail startup.
-For the standalone daemon, a flag overrides the file:
+`"autoArchiveHours": 0` to disable automatic archival. Set `"autoArchiveKeep": 10`
+to retain ten non-pinned sessions, or `"autoArchiveKeep": 0` to remove the minimum.
+Both settings apply to standalone and built-in desktop daemons; restart after
+changing them. Values must be non-negative whole numbers. Invalid settings fail
+startup. Standalone flags override each setting independently:
 
 ```bash
 dart run bin/speeddial.dart serve --auto-archive-hours 168
+dart run bin/speeddial.dart serve --auto-archive-keep 10
 dart run bin/speeddial.dart serve --auto-archive-hours 0   # disable
 ```
+
+The keep count applies to automatic archival; explicitly archiving a session or
+clearing the archive still follows the user's request.
 
 To permanently clear an archive, open the daemon's actions menu in the app and
 choose **Clear archive…**. Review the estimated worktree, transcript, and attachment

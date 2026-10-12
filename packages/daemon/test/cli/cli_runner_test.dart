@@ -83,6 +83,23 @@ void main() {
       },
     );
 
+    test('serve validates keep counts before starting the daemon', () async {
+      for (final String count in <String>[
+        '-1',
+        '1.5',
+        'never',
+        '',
+        '9223372036854775808',
+      ]) {
+        final StringBuffer err = StringBuffer();
+        expect(
+          await runCli(['serve', '--auto-archive-keep=$count'], err: err),
+          Exit.usage,
+        );
+        expect(err.toString(), contains('Invalid --auto-archive-keep'));
+      }
+    });
+
     test('serve requires a topic and an absolute HTTP(S) app URL', () async {
       for (final List<String> args in [
         ['serve', '--ntfy-app-url', 'https://app.example/'],

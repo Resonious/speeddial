@@ -1807,6 +1807,17 @@ void main() {
       providerId: 'fake',
       yolo: true,
     );
+    for (int index = 0; index < 5; index++) {
+      store.insertSession(
+        Session.fromJson(<String, Object?>{
+          ...session.toJson(),
+          'id': 'retained-$index',
+          'lastActivityAt': session.lastActivityAt
+              .add(const Duration(hours: 2))
+              .toIso8601String(),
+        }),
+      );
+    }
     engine.archiveInactiveSessions(
       now: session.lastActivityAt.add(const Duration(hours: 73)),
     );

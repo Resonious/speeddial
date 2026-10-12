@@ -19,11 +19,13 @@ void main() {
   SessionEngine createEngine({
     Duration timeout = const Duration(hours: 72),
     Duration interval = const Duration(minutes: 1),
+    int keep = 0,
   }) => SessionEngine(
     store: store,
     providers: ProviderRegistry(configOverrides: const <String, Object?>{}),
     autoArchiveAfter: timeout,
     autoArchiveCheckInterval: interval,
+    autoArchiveKeep: keep,
   );
 
   Session insert(
@@ -80,6 +82,168 @@ void main() {
     await subscription.cancel();
     await engine.dispose();
     store.dispose();
+  });
+
+  test('default keeps five unpinned sessions, excluding pins and archived sessions from the count', () async {
+    await engine.dispose();
+    engine = SessionEngine(
+      store: store,
+      providers: ProviderRegistry(configOverrides: const <String, Object?>{}),
+    );
+    final DateTime oldest = now.subtract(const Duration(days: 4));
+    for (int index = 0; index < 3; index++) {
+      insert('session-$index', activity: oldest.add(Duration(hours: index)));
+      insert('pinned-$index', pinned: true);
+      insert('archived-$index', archived: true);
+    }
+    engine.archiveInactiveSessions(now: now);
+    expect(
+      store.listSessions().where((Session session) => !session.pinned),
+      hasLength(3),
+    );
+    for (int index = 3; index < 5; index++) {
+      insert('session-$index', activity: oldest.add(Duration(hours: index)));
+    }
+    engine.archiveInactiveSessions(now: now);
+    expect(
+      store.listSessions().where((Session session) => !session.pinned),
+      hasLength(5),
+    );
+    insert('session-5', activity: oldest.add(const Duration(hours: 5)));
+    engine.archiveInactiveSessions(now: now);
+    expect(store.getSession('session-0')!.archived, isTrue);
+    expect(
+      store
+          .listSessions()
+          .where((Session session) => !session.pinned)
+          .map((Session session) => session.id),
+      unorderedEquals(<String>[
+        'session-1',
+        'session-2',
+        'session-3',
+        'session-4',
+        'session-5',
+      ]),
+    );
+    engine.archiveInactiveSessions(now: now.add(const Duration(days: 365)));
+    expect(
+      store.listSessions().where((Session session) => !session.pinned),
+      hasLength(5),
+    );
+  });
+
+  test('custom keep count archives the oldest excess and leaves the most recent sessions', () async {
+    await engine.dispose();
+    engine = createEngine(keep: 2);
+    final DateTime oldest = now.subtract(const Duration(days: 4));
+    for (int index = 0; index < 9; index++) {
+      insert('session-$index', activity: oldest.add(Duration(hours: index)));
+    }
+    engine.archiveInactiveSessions(now: now);
+    expect(
+      store.listSessions().map((Session session) => session.id),
+      unorderedEquals(<String>['session-7', 'session-8']),
+    );
+  });
+
+  test('recent sessions count toward the floor but are never forced into the archive', () async {
+    await engine.dispose();
+    engine = createEngine(keep: 5);
+    for (int index = 0; index < 6; index++) {
+      insert(
+        'old-$index',
+        activity: now
+            .subtract(const Duration(days: 4))
+            .add(Duration(hours: index)),
+      );
+    }
+    insert('recent-1', activity: now);
+    insert('recent-2', activity: now);
+    engine.archiveInactiveSessions(now: now);
+    expect(
+      store.listSessions().map((Session session) => session.id),
+      unorderedEquals(<String>[
+        'old-3',
+        'old-4',
+        'old-5',
+        'recent-1',
+        'recent-2',
+      ]),
+    );
+    await engine.dispose();
+    engine = createEngine(keep: 2);
+    for (int index = 3; index < 6; index++) {
+      insert('recent-$index', activity: now);
+    }
+    engine.archiveInactiveSessions(now: now);
+    expect(store.listSessions(), hasLength(5));
+    expect(
+      store.listSessions().every(
+        (Session session) => session.id.startsWith('recent'),
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'running, permission-waiting and preparing sessions count toward the floor',
+    () async {
+      await engine.dispose();
+      engine = createEngine(keep: 5);
+      insert('running', status: SessionStatus.running);
+      insert('permission', status: SessionStatus.waitingPermission);
+      insert('preparing', preparing: true);
+      for (int index = 0; index < 4; index++) {
+        insert(
+          'idle-$index',
+          activity: now
+              .subtract(const Duration(days: 4))
+              .add(Duration(hours: index)),
+        );
+      }
+      engine.archiveInactiveSessions(now: now);
+      expect(
+        store.listSessions().map((Session session) => session.id),
+        unorderedEquals(<String>[
+          'running',
+          'permission',
+          'preparing',
+          'idle-2',
+          'idle-3',
+        ]),
+      );
+    },
+  );
+
+  test('keep floor applies across projects on the daemon', () async {
+    await engine.dispose();
+    engine = createEngine(keep: 2);
+    store.insertProject(
+      Project(
+        id: 'p2',
+        name: 'Other',
+        path: '/other',
+        addedAt: now,
+        lastActiveAt: now,
+      ),
+    );
+    insert('oldest', activity: now.subtract(const Duration(days: 5)));
+    insert('first-project', activity: now.subtract(const Duration(days: 4)));
+    final Session other = insert(
+      'other-project',
+      activity: now.subtract(const Duration(days: 3)),
+    );
+    store.updateSession(
+      Session.fromJson(<String, Object?>{...other.toJson(), 'projectId': 'p2'}),
+    );
+    engine.archiveInactiveSessions(now: now);
+    expect(store.getSession('oldest')!.archived, isTrue);
+    expect(store.getSession('first-project')!.archived, isFalse);
+    expect(store.getSession('other-project')!.archived, isFalse);
+  });
+
+  test('negative keep count is rejected', () {
+    expect(() => createEngine(keep: -1), throwsArgumentError);
   });
 
   test('archives at 72 hours and preserves newer or pinned sessions', () async {

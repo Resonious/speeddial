@@ -68,12 +68,15 @@ class LocalDaemon {
   /// `~/.speeddial/speeddial.db`.
   /// [autoArchiveHours] overrides config.json's inactivity timeout (72 hours
   /// by default). Zero disables automatic archival.
+  /// [autoArchiveKeep] overrides the daemon-wide minimum of five unpinned
+  /// unarchived sessions. Zero removes the minimum.
   static Future<LocalDaemon> start({
     String host = '127.0.0.1',
     int port = 0,
     String? authToken,
     String? dbPath,
     int? autoArchiveHours,
+    int? autoArchiveKeep,
   }) async {
     final String token = (authToken ?? '').trim();
     if (!_isLoopback(host) && token.isEmpty) {
@@ -83,11 +86,10 @@ class LocalDaemon {
         'binding a non-loopback interface requires a non-empty authToken',
       );
     }
-    final DaemonConfig config = autoArchiveHours == null
-        ? DaemonConfig.load()
-        : DaemonConfig.fromJson(<String, Object?>{
-            'autoArchiveHours': autoArchiveHours,
-          });
+    final DaemonConfig config = DaemonConfig.load(
+      autoArchiveHours: autoArchiveHours,
+      autoArchiveKeep: autoArchiveKeep,
+    );
     final String resolvedDb =
         dbPath ??
         p.join(
@@ -107,6 +109,7 @@ class LocalDaemon {
       providers: providers,
       git: git,
       autoArchiveAfter: config.autoArchiveAfter,
+      autoArchiveKeep: config.autoArchiveKeep,
     );
     final pr = PrService();
     await engine.restore();

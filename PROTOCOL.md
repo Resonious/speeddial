@@ -814,6 +814,12 @@ gap detection: on reconnect, refetch history with `beforeSeq` of the oldest know
 
 The daemon automatically archives unpinned sessions after 72 hours without
 conversation activity, checking at startup and every minute even without clients.
+Automatic archival retains a daemon-wide minimum of five unarchived, non-pinned
+sessions, removing the oldest eligible sessions only above that count. Pinned and
+already archived sessions do not count; running/preparing sessions do count but
+cannot be auto-archived. The minimum is `autoArchiveKeep` in config.json or the
+standalone `serve --auto-archive-keep` override (default 5; 0 removes the minimum).
+This does not constrain explicit `sessions.archive` or `sessions.clearArchive` calls.
 The timeout is configured at daemon startup through `autoArchiveHours` in
 `~/.speeddial/config.json` or the standalone `serve --auto-archive-hours` override;
 0 disables automatic archival. Running turns, permission waits, preparation, and

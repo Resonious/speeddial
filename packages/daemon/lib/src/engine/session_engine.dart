@@ -158,15 +158,20 @@ class SessionEngine {
     GitService? git,
     Future<void> Function(Session session, String finalText)? onTurnComplete,
     Duration autoArchiveAfter = const Duration(hours: 72),
+    int autoArchiveKeep = 5,
     Duration autoArchiveCheckInterval = const Duration(minutes: 1),
   }) : _store = store, // ignore: prefer_initializing_formals
        _providers = providers, // ignore: prefer_initializing_formals
        _git = git, // ignore: prefer_initializing_formals
        _onTurnComplete = onTurnComplete, // ignore: prefer_initializing_formals
        _autoArchiveAfter = autoArchiveAfter,
+       _autoArchiveKeep = autoArchiveKeep,
        _autoArchiveCheckInterval = autoArchiveCheckInterval {
     if (autoArchiveAfter.isNegative) {
       throw ArgumentError.value(autoArchiveAfter, 'autoArchiveAfter');
+    }
+    if (autoArchiveKeep < 0) {
+      throw ArgumentError.value(autoArchiveKeep, 'autoArchiveKeep');
     }
     if (autoArchiveCheckInterval <= Duration.zero) {
       throw ArgumentError.value(
@@ -177,6 +182,7 @@ class SessionEngine {
   }
 
   final Duration _autoArchiveAfter;
+  final int _autoArchiveKeep;
   final Duration _autoArchiveCheckInterval;
   Timer? _autoArchiveTimer;
 
@@ -408,7 +414,10 @@ class SessionEngine {
     final DateTime cutoff = (now ?? DateTime.now().toUtc()).subtract(
       _autoArchiveAfter,
     );
-    for (final Session session in _store.autoArchiveCandidates(cutoff)) {
+    for (final Session session in _store.autoArchiveCandidates(
+      cutoff,
+      keep: _autoArchiveKeep,
+    )) {
       final _LiveSession? live = _live[session.id];
       if (_preparations.containsKey(session.id) ||
           _resuming.containsKey(session.id) ||

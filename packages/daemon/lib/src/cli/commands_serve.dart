@@ -54,6 +54,12 @@ class ServeCommand extends Command<int> {
             '(default: config.json autoArchiveHours, or 72; 0 disables).',
       )
       ..addOption(
+        'auto-archive-keep',
+        help:
+            'Keep at least this many unpinned sessions unarchived '
+            '(default: config.json autoArchiveKeep, or 5; 0 removes the minimum).',
+      )
+      ..addOption(
         'ntfy-topic',
         help:
             'Send session titles and final replies to this ntfy.sh topic '
@@ -84,22 +90,29 @@ class ServeCommand extends Command<int> {
     if (port == null) {
       throw UsageException('Invalid --port value: "$portRaw".', '');
     }
-    final String? archiveRaw = argResults!['auto-archive-hours'] as String?;
+    final Map<String, int> archiveOverrides = <String, int>{};
+    for (final (String flag, String key) in <(String, String)>[
+      ('auto-archive-hours', 'autoArchiveHours'),
+      ('auto-archive-keep', 'autoArchiveKeep'),
+    ]) {
+      final String? raw = argResults![flag] as String?;
+      if (raw == null) continue;
+      final int? value = int.tryParse(raw);
+      try {
+        DaemonConfig.fromJson(<String, Object?>{key: value});
+      } on FormatException catch (error) {
+        throw UsageException('Invalid --$flag: ${error.message}', usage);
+      }
+      archiveOverrides[key] = value!;
+    }
     final DaemonConfig config;
     try {
-      if (archiveRaw == null) {
-        config = DaemonConfig.load();
-      } else {
-        config = DaemonConfig.fromJson(<String, Object?>{
-          'autoArchiveHours': int.tryParse(archiveRaw),
-        });
-      }
-    } on FormatException catch (error) {
-      throw UsageException(
-        '${archiveRaw == null ? 'Invalid config.json' : 'Invalid --auto-archive-hours'}: '
-        '${error.message}',
-        usage,
+      config = DaemonConfig.load(
+        autoArchiveHours: archiveOverrides['autoArchiveHours'],
+        autoArchiveKeep: archiveOverrides['autoArchiveKeep'],
       );
+    } on FormatException catch (error) {
+      throw UsageException('Invalid config.json: ${error.message}', usage);
     }
     final String? ntfyTopic = argResults!['ntfy-topic'] as String?;
     final String? appUrlRaw = argResults!['ntfy-app-url'] as String?;
@@ -155,6 +168,7 @@ class ServeCommand extends Command<int> {
       git: git,
       onTurnComplete: notifier?.publish,
       autoArchiveAfter: config.autoArchiveAfter,
+      autoArchiveKeep: config.autoArchiveKeep,
     );
     final pr = PrService();
     await engine.restore();
