@@ -716,7 +716,13 @@ void main() {
     ) async {
       await tester.pumpWidget(view(reply, writing: true));
       await frames(tester, 3);
-      expect(typewriter, paints..rrect());
+      // Laid over the text, so no code block's own background can hide it.
+      expect(
+        typewriter,
+        paints
+          ..paragraph()
+          ..rrect(),
+      );
 
       await frames(tester, 90);
       // Typed out a while ago: cold, while the ember waits on.

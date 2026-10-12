@@ -138,8 +138,9 @@ class _TypewriterRevealState extends State<TypewriterReveal>
       ember: theme.colorScheme.primary,
       smoke: theme.colorScheme.onSurfaceVariant,
       glowStrength: dark ? 1 : 0.7,
-      // On a dark canvas the afterglow is light; on a light one, a warm tint.
-      afterglow: dark ? BlendMode.plus : BlendMode.srcOver,
+      // Laid over the text: added light on a dark canvas, and on a light one
+      // a warm tint that leaves dark ink dark. Code blocks glow like the rest.
+      afterglow: dark ? BlendMode.plus : BlendMode.multiply,
       afterglowHot: colors.flameTip,
       // Typing repaints the clip and the ember, never the text itself.
       child: RepaintBoundary(child: widget.child),
@@ -383,7 +384,7 @@ class _RenderTypewriter extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  /// How the afterglow lays over what is behind the text.
+  /// How the afterglow blends into the text it lies over.
   BlendMode _afterglow;
   set afterglow(BlendMode value) {
     if (value == _afterglow) return;
@@ -789,8 +790,6 @@ class _RenderTypewriter extends RenderProxyBox {
       }
     }
     final int index = _lineFor(_shown);
-    // Behind the text, which paints over it.
-    _paintAfterglow(context.canvas, offset);
     if (index < 0) {
       _clipLayer.layer = null;
       context.paintChild(child, offset);
@@ -811,6 +810,8 @@ class _RenderTypewriter extends RenderProxyBox {
         oldLayer: _clipLayer.layer,
       );
     }
+    // Over everything typed, code blocks' own backgrounds too.
+    _paintAfterglow(context.canvas, offset);
     _paintEmber(context.canvas, offset);
   }
 
