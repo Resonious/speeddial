@@ -56,7 +56,7 @@ class ServeCommand extends Command<int> {
       ..addOption(
         'auto-archive-keep',
         help:
-            'Keep at least this many unpinned sessions unarchived '
+            'Keep at least this many unpinned sessions unarchived per project '
             '(default: config.json autoArchiveKeep, or 5; 0 removes the minimum).',
       )
       ..addOption(

@@ -96,6 +96,47 @@ void main() {
     expect(store.getSession('legacy')!.toJson(), loaded.toJson());
   });
 
+  test(
+    'upgrades legacy archive indices while preserving per-project floors',
+    () {
+      store.insertProject(project());
+      store.insertProject(project(id: 'p2'));
+      for (final String id in <String>[
+        'p1-a',
+        'p1-b',
+        'p2-a',
+        'p2-b',
+        'p2-c',
+      ]) {
+        store.insertSession(session(id: id, projectId: id.substring(0, 2)));
+      }
+      store.dispose();
+      final Database db = sqlite3.open(p.join(tempDir.path, 'speeddial.db'));
+      try {
+        db.execute('''
+        DROP INDEX sessions_auto_archive_by_project;
+        DROP INDEX sessions_unarchived_unpinned_by_project;
+        CREATE INDEX sessions_auto_archive ON sessions(last_activity_at)
+          WHERE archived = 0 AND pinned = 0 AND preparing = 0
+            AND status NOT IN ('running', 'waitingPermission');
+        CREATE INDEX sessions_unarchived_unpinned ON sessions(id)
+          WHERE archived = 0 AND pinned = 0;
+      ''');
+      } finally {
+        db.close();
+      }
+      store = openStore(tempDir);
+
+      expect(store.listSessions(), hasLength(5));
+      expect(
+        store
+            .autoArchiveCandidates(DateTime.utc(2026, 1, 5), keep: 2)
+            .map((Session session) => session.id),
+        <String>['p2-a'],
+      );
+    },
+  );
+
   test('database files are owner-readable only on POSIX', () {
     if (!Platform.isLinux && !Platform.isMacOS) return;
     final FileStat stat = File(p.join(tempDir.path, 'speeddial.db')).statSync();

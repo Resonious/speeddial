@@ -30,6 +30,7 @@ void main() {
 
   Session insert(
     String id, {
+    String projectId = 'p1',
     DateTime? activity,
     SessionStatus status = SessionStatus.idle,
     bool pinned = false,
@@ -41,7 +42,7 @@ void main() {
         activity ?? now.subtract(const Duration(days: 4));
     final Session session = Session(
       id: id,
-      projectId: 'p1',
+      projectId: projectId,
       providerId: 'fake',
       title: id,
       status: status,
@@ -60,6 +61,18 @@ void main() {
     );
     store.insertSession(session);
     return session;
+  }
+
+  void insertProject(String id) {
+    store.insertProject(
+      Project(
+        id: id,
+        name: 'Project $id',
+        path: '/unused/$id',
+        addedAt: now,
+        lastActiveAt: now,
+      ),
+    );
   }
 
   setUp(() {
@@ -215,32 +228,131 @@ void main() {
     },
   );
 
-  test('keep floor applies across projects on the daemon', () async {
+  test('default keeps five sessions independently in each project', () async {
+    await engine.dispose();
+    engine = SessionEngine(
+      store: store,
+      providers: ProviderRegistry(configOverrides: const <String, Object?>{}),
+    );
+    insertProject('p2');
+    insertProject('p3');
+    final DateTime oldest = now.subtract(const Duration(days: 5));
+    for (final (String projectId, int count) in <(String, int)>[
+      ('p1', 6),
+      ('p2', 5),
+      ('p3', 2),
+    ]) {
+      for (int index = 0; index < count; index++) {
+        insert(
+          '$projectId-$index',
+          projectId: projectId,
+          activity: oldest.add(Duration(hours: index)),
+        );
+      }
+    }
+    engine.archiveInactiveSessions(now: now);
+    expect(store.getSession('p1-0')!.archived, isTrue);
+    expect(store.listSessions(projectId: 'p1'), hasLength(5));
+    expect(store.listSessions(projectId: 'p2'), hasLength(5));
+    expect(store.listSessions(projectId: 'p3'), hasLength(2));
+    engine.archiveInactiveSessions(now: now.add(const Duration(days: 365)));
+    expect(store.listSessions(projectId: 'p1'), hasLength(5));
+    expect(store.listSessions(projectId: 'p2'), hasLength(5));
+    expect(store.listSessions(projectId: 'p3'), hasLength(2));
+  });
+
+  test('custom and zero keep counts apply to each project excluding pins and archives', () async {
     await engine.dispose();
     engine = createEngine(keep: 2);
-    store.insertProject(
-      Project(
-        id: 'p2',
-        name: 'Other',
-        path: '/other',
-        addedAt: now,
-        lastActiveAt: now,
-      ),
-    );
-    insert('oldest', activity: now.subtract(const Duration(days: 5)));
-    insert('first-project', activity: now.subtract(const Duration(days: 4)));
-    final Session other = insert(
-      'other-project',
-      activity: now.subtract(const Duration(days: 3)),
-    );
-    store.updateSession(
-      Session.fromJson(<String, Object?>{...other.toJson(), 'projectId': 'p2'}),
-    );
+    insertProject('p2');
+    insertProject('p3');
+    final DateTime oldest = now.subtract(const Duration(days: 5));
+    for (final (String projectId, int count) in <(String, int)>[
+      ('p1', 4),
+      ('p2', 1),
+      ('p3', 3),
+    ]) {
+      for (int index = 0; index < count; index++) {
+        insert(
+          '$projectId-$index',
+          projectId: projectId,
+          activity: oldest.add(Duration(hours: index)),
+        );
+        insert('$projectId-pin-$index', projectId: projectId, pinned: true);
+        insert(
+          '$projectId-archive-$index',
+          projectId: projectId,
+          archived: true,
+        );
+      }
+    }
     engine.archiveInactiveSessions(now: now);
-    expect(store.getSession('oldest')!.archived, isTrue);
-    expect(store.getSession('first-project')!.archived, isFalse);
-    expect(store.getSession('other-project')!.archived, isFalse);
+    expect(
+      store
+          .listSessions()
+          .where((Session session) => !session.pinned)
+          .map((Session session) => session.id),
+      unorderedEquals(<String>['p1-2', 'p1-3', 'p2-0', 'p3-1', 'p3-2']),
+    );
+    await engine.dispose();
+    engine = createEngine(keep: 0);
+    engine.archiveInactiveSessions(now: now);
+    expect(
+      store.listSessions().every((Session session) => session.pinned),
+      isTrue,
+    );
+    expect(store.listSessions(), hasLength(8));
   });
+
+  test(
+    'recent and busy sessions count only toward their own project floor',
+    () async {
+      await engine.dispose();
+      engine = createEngine(keep: 2);
+      insertProject('p2');
+      insertProject('p3');
+      insert('p1-oldest', activity: now.subtract(const Duration(days: 5)));
+      insert('p1-newest');
+      insert(
+        'p2-oldest',
+        projectId: 'p2',
+        activity: now.subtract(const Duration(days: 5)),
+      );
+      insert('p2-newest', projectId: 'p2');
+      insert('p2-recent', projectId: 'p2', activity: now);
+      insert('p3-old', projectId: 'p3');
+      insert('p3-running', projectId: 'p3', status: SessionStatus.running);
+      insert(
+        'p3-permission',
+        projectId: 'p3',
+        status: SessionStatus.waitingPermission,
+      );
+      insert('p3-preparing', projectId: 'p3', preparing: true);
+      engine.archiveInactiveSessions(now: now);
+      expect(
+        store
+            .listSessions(projectId: 'p1')
+            .map((Session session) => session.id),
+        unorderedEquals(<String>['p1-oldest', 'p1-newest']),
+      );
+      expect(
+        store
+            .listSessions(projectId: 'p2')
+            .map((Session session) => session.id),
+        unorderedEquals(<String>['p2-newest', 'p2-recent']),
+      );
+      expect(
+        store
+            .listSessions(projectId: 'p3')
+            .map((Session session) => session.id),
+        unorderedEquals(<String>[
+          'p3-running',
+          'p3-permission',
+          'p3-preparing',
+        ]),
+      );
+    },
+  );
 
   test('negative keep count is rejected', () {
     expect(() => createEngine(keep: -1), throwsArgumentError);

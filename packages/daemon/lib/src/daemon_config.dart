@@ -10,7 +10,7 @@ class DaemonConfig {
   /// Inactivity timeout in whole hours; zero disables automatic archival.
   final int autoArchiveHours;
 
-  /// Minimum unarchived, non-pinned sessions to retain across this daemon.
+  /// Minimum unarchived, non-pinned sessions to retain in each project.
   /// Zero removes the minimum; the inactivity timeout still applies.
   final int autoArchiveKeep;
 

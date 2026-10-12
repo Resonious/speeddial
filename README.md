@@ -51,9 +51,9 @@ The daemon writes `~/.speeddial/daemon.json` (mode 0600) with host/port/token
 for CLI and UI discovery.
 
 Sessions are automatically archived after 72 hours without conversation activity.
-The daemon retains at least five unarchived, non-pinned sessions when that many
-exist, archiving the oldest eligible sessions only while above that minimum.
-The count spans all projects; pinned and already archived sessions do not count.
+The daemon retains at least five unarchived, non-pinned sessions in each project
+when that many exist, archiving that project's oldest eligible sessions only while
+it is above the minimum. Pinned and already archived sessions do not count.
 Pinned sessions are always protected. Running turns, permission waits, and sessions
 still preparing count toward the minimum and remain protected from archival.
 The daemon checks at startup and every minute, even with no UI connected.
@@ -63,7 +63,8 @@ a session starts a fresh inactivity window.
 
 Set `"autoArchiveHours": 168` in `~/.speeddial/config.json` to use one week, or
 `"autoArchiveHours": 0` to disable automatic archival. Set `"autoArchiveKeep": 10`
-to retain ten non-pinned sessions, or `"autoArchiveKeep": 0` to remove the minimum.
+to retain ten non-pinned sessions per project, or `"autoArchiveKeep": 0` to remove
+the minimum.
 Both settings apply to standalone and built-in desktop daemons; restart after
 changing them. Values must be non-negative whole numbers. Invalid settings fail
 startup. Standalone flags override each setting independently:

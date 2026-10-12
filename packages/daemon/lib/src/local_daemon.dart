@@ -68,7 +68,7 @@ class LocalDaemon {
   /// `~/.speeddial/speeddial.db`.
   /// [autoArchiveHours] overrides config.json's inactivity timeout (72 hours
   /// by default). Zero disables automatic archival.
-  /// [autoArchiveKeep] overrides the daemon-wide minimum of five unpinned
+  /// [autoArchiveKeep] overrides the per-project minimum of five unpinned
   /// unarchived sessions. Zero removes the minimum.
   static Future<LocalDaemon> start({
     String host = '127.0.0.1',

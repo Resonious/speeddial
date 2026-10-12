@@ -216,15 +216,18 @@ class DaemonStore {
         'WHERE last_activity_at = 0',
       );
     }
+    // Replace the older daemon-wide archival indices with project-scoped ones.
+    _db.execute('DROP INDEX IF EXISTS sessions_auto_archive');
+    _db.execute('DROP INDEX IF EXISTS sessions_unarchived_unpinned');
     _db.execute('''
-      CREATE INDEX IF NOT EXISTS sessions_auto_archive
-      ON sessions(last_activity_at)
+      CREATE INDEX IF NOT EXISTS sessions_auto_archive_by_project
+      ON sessions(project_id, last_activity_at, id)
       WHERE archived = 0 AND pinned = 0 AND preparing = 0
         AND status NOT IN ('running', 'waitingPermission');
     ''');
     _db.execute('''
-      CREATE INDEX IF NOT EXISTS sessions_unarchived_unpinned
-      ON sessions(id) WHERE archived = 0 AND pinned = 0;
+      CREATE INDEX IF NOT EXISTS sessions_unarchived_unpinned_by_project
+      ON sessions(project_id) WHERE archived = 0 AND pinned = 0;
     ''');
     _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
@@ -882,22 +885,35 @@ class DaemonStore {
   }
 
   /// Oldest eligible sessions, limited to the excess above [keep] unarchived,
-  /// non-pinned sessions across all projects. Active sessions count toward the
-  /// minimum but cannot be archival candidates.
+  /// non-pinned sessions in each project. Active sessions count toward their
+  /// project's minimum but cannot be archival candidates.
   List<Session> autoArchiveCandidates(DateTime cutoff, {required int keep}) {
-    final ResultSet rows = _db.select(
-      'SELECT * FROM sessions '
-      'WHERE archived = 0 AND pinned = 0 AND preparing = 0 '
-      "AND status NOT IN ('running', 'waitingPermission') "
-      'AND last_activity_at <= ? '
-      'AND COALESCE((SELECT timestamp FROM session_events '
-      'WHERE session_id = sessions.id ORDER BY seq DESC LIMIT 1), '
-      'last_activity_at) <= ? ORDER BY last_activity_at, id '
-      'LIMIT MAX(0, (SELECT COUNT(*) FROM sessions '
-      'WHERE archived = 0 AND pinned = 0) - ?)',
-      <Object?>[_ts(cutoff), _ts(cutoff), keep],
+    final ResultSet projects = _db.select(
+      'SELECT project_id, COUNT(*) AS session_count FROM sessions '
+      'WHERE archived = 0 AND pinned = 0 GROUP BY project_id '
+      'HAVING COUNT(*) > ?',
+      <Object?>[keep],
     );
-    return rows.map(_sessionFromRow).toList(growable: false);
+    final List<Session> candidates = <Session>[];
+    for (final Row project in projects) {
+      final ResultSet rows = _db.select(
+        'SELECT * FROM sessions '
+        'WHERE project_id = ? AND archived = 0 AND pinned = 0 AND preparing = 0 '
+        "AND status NOT IN ('running', 'waitingPermission') "
+        'AND last_activity_at <= ? '
+        'AND COALESCE((SELECT timestamp FROM session_events '
+        'WHERE session_id = sessions.id ORDER BY seq DESC LIMIT 1), '
+        'last_activity_at) <= ? ORDER BY last_activity_at, id LIMIT ?',
+        <Object?>[
+          project['project_id'],
+          _ts(cutoff),
+          _ts(cutoff),
+          (project['session_count'] as int) - keep,
+        ],
+      );
+      candidates.addAll(rows.map(_sessionFromRow));
+    }
+    return candidates;
   }
 
   /// The session with [id], or null when unknown.
