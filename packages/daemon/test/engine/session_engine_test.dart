@@ -1819,6 +1819,27 @@ void main() {
   });
 
   test(
+    'clear archive stops a live idle agent and removes its session',
+    () async {
+      final Session session = await engine.createSession(
+        projectId: 'p1',
+        providerId: 'fake',
+      );
+      await engine.archive(session.id, true);
+      final ClearArchiveResult result = await engine.clearArchive(<String>[
+        session.id,
+      ]);
+      expect(result.deletedSessionIds, <String>[session.id]);
+      expect(result.failures, isEmpty);
+      expect(store.getSession(session.id), isNull);
+      await expectLater(
+        engine.sendMessage(session.id, 'should fail'),
+        throwsA(isA<DaemonError>()),
+      );
+    },
+  );
+
+  test(
     'pin persists across metadata and turns; unpin refreshes activity',
     () async {
       final Session created = await engine.createSession(

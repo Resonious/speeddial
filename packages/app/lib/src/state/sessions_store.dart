@@ -79,8 +79,86 @@ class SessionsStore extends StoreBase {
 
   Object? _lastError;
 
-  /// Most recent pin or background completion-acknowledgement failure.
+  /// Most recent pin, archive operation, or completion-acknowledgement failure.
   Object? get lastError => _lastError;
+
+  final Map<String, ArchivePreview> _archivePreviews =
+      <String, ArchivePreview>{};
+  final Map<String, Object> _archiveErrors = <String, Object>{};
+  final Set<String> _loadingArchive = <String>{};
+  final Set<String> _clearingArchive = <String>{};
+
+  ArchivePreview? archivePreviewFor(String daemonId) =>
+      _archivePreviews[daemonId];
+  Object? archiveErrorFor(String daemonId) => _archiveErrors[daemonId];
+  bool isLoadingArchive(String daemonId) => _loadingArchive.contains(daemonId);
+  bool isClearingArchive(String daemonId) =>
+      _clearingArchive.contains(daemonId);
+  Session? sessionOnDaemon(String daemonId, String sessionId) =>
+      _sessionsById[_scopedKey(daemonId, sessionId)];
+
+  Future<void> refreshArchive(String daemonId) async {
+    if (_loadingArchive.contains(daemonId) ||
+        _clearingArchive.contains(daemonId)) {
+      return;
+    }
+    _loadingArchive.add(daemonId);
+    _archiveErrors.remove(daemonId);
+    notifyListeners();
+    try {
+      _archivePreviews[daemonId] = await _clientFor(daemonId).previewArchive();
+    } catch (error) {
+      _lastError = error;
+      _archiveErrors[daemonId] = error;
+      _archivePreviews.remove(daemonId);
+      rethrow;
+    } finally {
+      _loadingArchive.remove(daemonId);
+      notifyListeners();
+    }
+  }
+
+  Future<ClearArchiveResult> clearArchive(
+    String daemonId,
+    List<String> sessionIds,
+  ) async {
+    if (_clearingArchive.contains(daemonId) ||
+        _loadingArchive.contains(daemonId)) {
+      final Object error = StateError('Archive operation already in progress');
+      _lastError = error;
+      _archiveErrors[daemonId] = error;
+      notifyListeners();
+      throw error;
+    }
+    _clearingArchive.add(daemonId);
+    _archiveErrors.remove(daemonId);
+    notifyListeners();
+    try {
+      _ensureDaemonSubscriptions(daemonId);
+      final ClearArchiveResult result = await _clientFor(daemonId)
+          .clearArchive(sessionIds);
+      for (final String id in result.deletedSessionIds) {
+        _onSessionRemoved(daemonId, id);
+      }
+      _archivePreviews.remove(daemonId);
+      if (result.failures.isNotEmpty) {
+        throw StateError(
+          'Deleted ${result.deletedSessionIds.length} sessions; '
+          '${result.failures.length} could not be deleted. '
+          '${result.failures.map((ArchiveFailure failure) => failure.message).toSet().join(' ')}',
+        );
+      }
+      _lastError = null;
+      return result;
+    } catch (error) {
+      _lastError = error;
+      _archiveErrors[daemonId] = error;
+      rethrow;
+    } finally {
+      _clearingArchive.remove(daemonId);
+      notifyListeners();
+    }
+  }
 
   /// One `sessionUpdates`/`sessionRemovals` subscription per daemon, alive
   /// from first use until [dispose].

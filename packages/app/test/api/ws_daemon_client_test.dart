@@ -45,6 +45,7 @@ class TestDaemonServer {
 
   /// Every `sessions.create` params object received, in call order.
   final List<Map<String, Object?>> creates = <Map<String, Object?>>[];
+  final List<Map<String, Object?>> archiveClears = <Map<String, Object?>>[];
 
   /// Every `mcp.oauth.begin` params object received, in call order.
   final List<Map<String, Object?>> oauthBegins = <Map<String, Object?>>[];
@@ -125,6 +126,28 @@ class TestDaemonServer {
       return <String, Object?>{
         'projects': <Object?>[projectJson()],
       };
+    });
+    peer.registerHandler(
+      'sessions.archivePreview',
+      (Map<String, Object?> _) => <String, Object?>{
+        'archive': const ArchivePreview(
+          sessionIds: <String>['archived'],
+          worktreeCount: 1,
+          worktreeBytes: 4096,
+          transcriptBytes: 100,
+          attachmentBytes: 20,
+          retainedWorktreeCount: 0,
+        ).toJson(),
+      },
+    );
+    peer.registerHandler('sessions.clearArchive', (
+      Map<String, Object?> params,
+    ) {
+      archiveClears.add(params);
+      return const ClearArchiveResult(
+        deletedSessionIds: <String>['archived'],
+        removedWorktreeCount: 1,
+      ).toJson();
     });
     peer.registerHandler('mcp.create', (Map<String, Object?> params) {
       mcpCreates.add(params);
@@ -377,6 +400,31 @@ class TestDaemonServer {
 }
 
 void main() {
+  test(
+    'archive preview and explicit cleanup snapshot cross the websocket',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+      );
+      addTearDown(client.dispose);
+      await client.connect();
+      final ArchivePreview preview = await client.previewArchive();
+      expect(preview.sessionIds, <String>['archived']);
+      expect(preview.totalBytes, 4216);
+      final ClearArchiveResult result = await client.clearArchive(
+        preview.sessionIds,
+      );
+      expect(server.archiveClears.single, <String, Object?>{
+        'sessionIds': <String>['archived'],
+      });
+      expect(result.deletedSessionIds, <String>['archived']);
+      expect(result.removedWorktreeCount, 1);
+    },
+  );
+
   test('structured question answers cross the websocket without losing labels or notes', () async {
     final server = await TestDaemonServer.start();
     addTearDown(server.close);

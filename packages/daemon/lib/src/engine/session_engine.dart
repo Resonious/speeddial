@@ -42,6 +42,7 @@ import '../notifications/final_reply.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
 import 'event_mapper.dart';
+import 'archive_service.dart';
 
 /// JSON-RPC code: invalid params (PROTOCOL.md `-32602`), used for
 /// `sessions.create` cwd confinement rejects.
@@ -194,6 +195,8 @@ class SessionEngine {
   final Map<String, _SessionPreparation> _preparations = {};
   int _pendingOperations = 0;
   bool _restarting = false;
+  bool _clearingArchive = false;
+  Future<ClearArchiveResult>? _archiveClearTask;
 
   bool get hasActiveSessions =>
       _pendingOperations > 0 ||
@@ -208,6 +211,9 @@ class SessionEngine {
 
   Future<T> _withSessionOperation<T>(Future<T> Function() operation) async {
     if (_restarting) throw DaemonError(kErrConflict, 'Daemon restarting');
+    if (_clearingArchive) {
+      throw DaemonError(kErrConflict, 'Archive cleanup in progress');
+    }
     _pendingOperations++;
     try {
       return await operation();
@@ -396,7 +402,9 @@ class SessionEngine {
   /// Runs at startup and once a minute even without connected clients.
   /// Selection and updates are synchronous so a turn or pin cannot interleave.
   void archiveInactiveSessions({DateTime? now}) {
-    if (_restarting || _autoArchiveAfter == Duration.zero) return;
+    if (_restarting || _clearingArchive || _autoArchiveAfter == Duration.zero) {
+      return;
+    }
     final DateTime cutoff = (now ?? DateTime.now().toUtc()).subtract(
       _autoArchiveAfter,
     );
@@ -1602,6 +1610,70 @@ class SessionEngine {
   Future<Session> archive(String sessionId, bool archived) =>
       _updateSession(sessionId, (session) => _withArchived(session, archived));
 
+  bool _isSessionBusy(String sessionId) {
+    final Session? session = _store.getSession(sessionId);
+    final _LiveSession? live = _live[sessionId];
+    return session?.preparing == true ||
+        session?.status == SessionStatus.running ||
+        session?.status == SessionStatus.waitingPermission ||
+        _preparations.containsKey(sessionId) ||
+        _resuming.containsKey(sessionId) ||
+        live?.turn != null ||
+        live?.pendingPermissions.isNotEmpty == true;
+  }
+
+  ArchiveService get _archiveService => ArchiveService(
+    store: _store,
+    git: _git ?? GitService(),
+    isBusy: _isSessionBusy,
+    stopSession: _stopArchivedSession,
+    deleteSession: _delete,
+  );
+
+  Future<ArchivePreview> previewArchive() => _archiveService.preview();
+
+  Future<ClearArchiveResult> clearArchive(List<String> sessionIds) {
+    if (_archiveClearTask != null) {
+      throw DaemonError(kErrConflict, 'Archive cleanup in progress');
+    }
+    final Future<ClearArchiveResult> task = _withSessionOperation(() async {
+      if (_pendingOperations > 1 ||
+          _preparations.isNotEmpty ||
+          _resuming.isNotEmpty) {
+        throw DaemonError(
+          kErrConflict,
+          'Session startup in progress; retry archive cleanup shortly',
+        );
+      }
+      _clearingArchive = true;
+      try {
+        return await _archiveService.clear(List<String>.of(sessionIds));
+      } finally {
+        _clearingArchive = false;
+      }
+    });
+    _archiveClearTask = task;
+    return task.whenComplete(() => _archiveClearTask = null);
+  }
+
+  Future<void> _stopArchivedSession(String sessionId) async {
+    if (_store.getSession(sessionId)?.archived != true ||
+        _isSessionBusy(sessionId)) {
+      throw DaemonError(
+        kErrConflict,
+        'Session is no longer archived or is active: $sessionId',
+      );
+    }
+    final _LiveSession? live = _live.remove(sessionId);
+    if (live == null) return;
+    live.closed = true;
+    _expirePendingPermissions(live, 'Archived session deleted');
+    _toolCalls.remove(sessionId);
+    _toolCallImages.remove(sessionId);
+    await live.updatesSubscription?.cancel();
+    await live.client.dispose();
+  }
+
   /// Clears an observed completion only when [completionRevision] still
   /// identifies the daemon's latest completion. A delayed client response for
   /// an older turn is therefore a harmless no-op rather than hiding a newer
@@ -1805,6 +1877,13 @@ class SessionEngine {
   /// Kills the agent (if alive), removes the session and its events, and
   /// emits a removal notification.
   Future<void> delete(String sessionId) async {
+    if (_clearingArchive) {
+      throw DaemonError(kErrConflict, 'Archive cleanup in progress');
+    }
+    await _delete(sessionId);
+  }
+
+  Future<void> _delete(String sessionId) async {
     final preparation = _preparations[sessionId];
     if (preparation != null) {
       preparation.cancelled = true;
@@ -1836,6 +1915,13 @@ class SessionEngine {
     _autoArchiveTimer?.cancel();
     _autoArchiveTimer = null;
     _restarting = true;
+    try {
+      await _archiveClearTask;
+    } catch (error) {
+      stderr.writeln(
+        'speeddial: archive cleanup during shutdown failed: $error',
+      );
+    }
     final preparations = _preparations.values.toList();
     for (final preparation in preparations) {
       preparation.cancelled = true;
@@ -2607,6 +2693,9 @@ class SessionEngine {
     String sessionId,
     Session Function(Session current) transform,
   ) async {
+    if (_clearingArchive) {
+      throw DaemonError(kErrConflict, 'Archive cleanup in progress');
+    }
     final session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');

@@ -174,6 +174,22 @@ SessionSearchPage = {
 FileDownloadChunk = { name: string, size: int, offset: int, revision: string, data: string } // bounded base64 payload
 FileDownload = { name: string, size: int, data: string } // full file payload, base64 encoded
 
+ArchiveFailure = { sessionId: string, message: string }
+ArchivePreview = {
+  sessionIds: string[],       // explicit archived snapshot eligible for deletion
+  worktreeCount: int,         // unique removable worktrees, shared forks counted once
+  worktreeBytes: int,         // estimated regular-file contents; symlinks not followed
+  transcriptBytes: int,       // UTF-8 bytes of saved event JSON (not SQLite page allocation)
+  attachmentBytes: int,       // saved attachment payload bytes
+  retainedWorktreeCount: int, // shared/external worktrees kept when session records are deleted
+  blockedSessions: ArchiveFailure[], // active/preparing or unverified/inaccessible worktrees
+}
+ClearArchiveResult = {
+  deletedSessionIds: string[],
+  removedWorktreeCount: int,
+  failures: ArchiveFailure[], // retained records; partial cleanup is allowed and reported
+}
+
 // Attachments (files the user attaches to a message)
 OutgoingAttachment = {           // client → daemon payload (sessions.send only)
   name: string,                  // file name incl. extension
@@ -643,6 +659,27 @@ Agent task-progress `plan` events remain supported.
 - `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}` —
   archiving clears `done`; restoring an archived session refreshes `lastActivityAt`.
   Repeating the current archive state preserves activity.
+- `sessions.archivePreview {}` → `{archive: ArchivePreview}` — estimates storage for
+  archived sessions across this daemon. Includes archived pins, excludes active/preparing
+  sessions, and reports per-session verification/scan failures in `blockedSessions`.
+  Main project directories and registered nested projects are always preserved. Worktrees
+  shared with a surviving session or outside daemon-managed paths are retained. Only linked
+  Git worktrees under `.speeddial-worktrees` with verified registration are removable.
+  File-content estimates exclude shared Git objects, filesystem overhead and symlink targets;
+  deleting transcript rows frees reusable database space rather than guaranteeing file shrinkage.
+- `sessions.clearArchive {sessionIds: string[]}` → `ClearArchiveResult` — permanently
+  deletes only the explicitly supplied snapshot. Clients show the preview and require
+  confirmation first, including notice that dirty/untracked worktree files are deleted.
+  The daemon rechecks archive/busy state, stops eligible agents, removes each exclusive
+  verified worktree through Git, then deletes session events/attachments and emits
+  `session.removed` per deleted session. Branches and shared Git history remain.
+  Restored/active sessions are retained and reported; already-deleted IDs are no-ops.
+  Sessions archived after preview are excluded unless explicitly submitted. Worktree failures
+  retain associated session records/history for retry while other groups can succeed.
+  Concurrent cleanup or in-flight session startup returns `-32003`; session mutations are
+  blocked during cleanup, and shutdown drains it. Missing/non-array/non-string/empty-string
+  IDs return `-32602`. An empty array is a no-op. These methods require normal app auth and
+  are unavailable to session-bound MCP bridge credentials.
 - `sessions.acknowledgeCompletion {sessionId: string, completionRevision: int}` →
   `{session: Session}` — clears `done` only when the supplied non-negative revision still matches
   the session's latest completion. A stale acknowledgement is a successful no-op returning the

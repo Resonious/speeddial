@@ -70,6 +70,8 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.cancel',
   'sessions.rename',
   'sessions.archive',
+  'sessions.archivePreview',
+  'sessions.clearArchive',
   'sessions.pin',
   'sessions.acknowledgeCompletion',
   'sessions.delete',
@@ -525,6 +527,8 @@ class SpeedDialServer {
       'sessions.cancel' => _sessionsCancel(params),
       'sessions.rename' => _sessionsRename(params),
       'sessions.archive' => _sessionsArchive(params),
+      'sessions.archivePreview' => _sessionsArchivePreview(),
+      'sessions.clearArchive' => _sessionsClearArchive(params),
       'sessions.pin' => _sessionsPin(params),
       'sessions.acknowledgeCompletion' => _sessionsAcknowledgeCompletion(
         params,
@@ -1528,6 +1532,22 @@ class SpeedDialServer {
     }
     final session = await _engine.pin(sessionId, pinned);
     return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _sessionsArchivePreview() async => <String, Object?>{
+    'archive': (await _engine.previewArchive()).toJson(),
+  };
+
+  /// Deletes only the explicit snapshot confirmed by the app.
+  Future<Object?> _sessionsClearArchive(Map<String, Object?> params) async {
+    final Object? ids = params['sessionIds'];
+    if (ids is! List || ids.any((Object? id) => id is! String || id.isEmpty)) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'sessionIds must be an array of nonempty strings',
+      );
+    }
+    return (await _engine.clearArchive(ids.cast<String>())).toJson();
   }
 
   /// Restoring through the engine also refreshes the inactivity window.

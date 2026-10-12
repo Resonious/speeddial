@@ -68,6 +68,15 @@ dart run bin/speeddial.dart serve --auto-archive-hours 168
 dart run bin/speeddial.dart serve --auto-archive-hours 0   # disable
 ```
 
+To permanently clear an archive, open the daemon's actions menu in the app and
+choose **Clear archive…**. Review the estimated worktree, transcript, and attachment
+storage, then confirm deletion. This removes the previewed archived sessions and
+their exclusive daemon-managed worktrees, including uncommitted/untracked files.
+Shared worktrees, project directories, Git branches, and shared Git history are
+kept. Restored or active sessions are retained, and cleanup failures remain available
+for retry. Transcript sizes describe stored payloads; SQLite may reuse deleted space
+instead of shrinking its database file.
+
 To receive completed-turn notifications, subscribe to a topic in the ntfy app
 or at `https://ntfy.sh/<topic>`, then start the daemon with that topic:
 

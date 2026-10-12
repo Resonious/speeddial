@@ -262,6 +262,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Fake daemon Environment'), findsOneWidget);
     expect(find.byKey(const Key('environment-add-variable')), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-action-archive')));
+    await tester.pumpAndSettle();
+    expect(find.text('Fake daemon Archive'), findsOneWidget);
+    expect(find.text('The archive is empty.'), findsOneWidget);
   });
 
   testWidgets('selecting the fake daemon loads and lists the seeded project', (

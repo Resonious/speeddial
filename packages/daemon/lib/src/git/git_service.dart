@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 /// Shells out to `git` to inspect and mutate a repository.
@@ -302,13 +304,64 @@ class GitService {
   }
 
   /// Removes the worktree at [path], discarding any uncommitted changes in
-  /// it (`--force`): only used to roll back a worktree whose session never
-  /// started, never for user-facing deletion.
+  /// it (`--force`). Used to roll back a worktree whose session never started.
   Future<void> removeWorktree(String repoPath, String path) async {
     if (path.startsWith('-')) {
       throw DaemonError(kErrGit, 'invalid worktree path: $path');
     }
     await _run(repoPath, ['worktree', 'remove', '--force', path]);
+  }
+
+  /// Verifies that [path] is a linked worktree, never a main checkout.
+  Future<String> _linkedWorktreeCommonDir(String path) async {
+    if (await FileSystemEntity.type(p.join(path, '.git'), followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw DaemonError(kErrGit, 'Cannot verify linked worktree: $path');
+    }
+    final ProcessResult directory = await _run(path, <String>[
+      'rev-parse',
+      '--absolute-git-dir',
+    ]);
+    final ProcessResult common = await _run(path, <String>[
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
+    final String gitDir = await Directory((directory.stdout as String).trim())
+        .resolveSymbolicLinks();
+    final String commonDir = await Directory((common.stdout as String).trim())
+        .resolveSymbolicLinks();
+    if (!p.isWithin(p.join(commonDir, 'worktrees'), gitDir)) {
+      throw DaemonError(kErrGit, 'Refusing to remove a main checkout: $path');
+    }
+    final String backlink = (await File(
+      p.join(gitDir, 'gitdir'),
+    ).readAsString()).trim();
+    final String registered = await File(backlink).resolveSymbolicLinks();
+    final String actual = await File(p.join(path, '.git'))
+        .resolveSymbolicLinks();
+    if (registered != actual) {
+      throw DaemonError(kErrGit, 'Worktree registration does not match: $path');
+    }
+    return commonDir;
+  }
+
+  Future<void> validateLinkedWorktree(String path) async {
+    await _linkedWorktreeCommonDir(path);
+  }
+
+  /// Removes a verified linked worktree and its registration, including dirty
+  /// files, while retaining branches and shared repository history.
+  Future<void> removeLinkedWorktree(String path) async {
+    final String commonDir = await _linkedWorktreeCommonDir(path);
+    await _run(p.dirname(path), <String>[
+      '--git-dir',
+      commonDir,
+      'worktree',
+      'remove',
+      '--force',
+      path,
+    ]);
   }
 
   /// Merges the session worktree branch at [worktreePath] back into the

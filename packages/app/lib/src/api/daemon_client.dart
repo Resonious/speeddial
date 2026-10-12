@@ -189,6 +189,8 @@ abstract class DaemonClient {
 
   /// Restoring an archived session starts a fresh daemon inactivity window.
   Future<Session> archiveSession(String sessionId, bool archived);
+  Future<ArchivePreview> previewArchive();
+  Future<ClearArchiveResult> clearArchive(List<String> sessionIds);
 
   /// Clears an observed completed turn if [completionRevision] still
   /// identifies the daemon's latest completion.

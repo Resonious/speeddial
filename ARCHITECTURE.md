@@ -186,6 +186,17 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     serve. Invalid settings fail before opening the store. Restoring
                     or unpinning starts a fresh activity window; restart errors also
                     advance activity so interrupted turns remain visible.
+                    ArchiveService previews daemon-wide archive storage and clears
+                    an explicit confirmed session-id snapshot. It measures file
+                    contents asynchronously without following symlinks and queries
+                    SQLite event/attachment payload sizes without loading histories.
+                    Canonical cwd groups deduplicate forked worktrees and preserve
+                    surviving sessions, main/nested projects, and external paths.
+                    Git validates linked-worktree registration before force removal;
+                    failures retain session records for retry. The engine serializes
+                    cleanup against session mutations, stops idle agents before
+                    worktree removal, broadcasts normal removals, and drains cleanup
+                    before shutdown. Branches/shared Git objects remain.
                     The update subscription lives for the agent's lifetime
                     rather than one turn, so updates arriving between client turns
                     (an OMP background wakeup after a finished subagent) are persisted
@@ -370,6 +381,11 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              interface/port/token settings (apply restarts the
                              embedded daemon and repoints its endpoint); stored
                              secret values are never read back into Flutter.
+                             ArchivePage, opened through each daemon's Clear archive
+                             action, previews transcript/attachment/worktree storage
+                             and requires explicit confirmation for permanent deletion.
+                             State and errors live in SessionsStore; partial failures
+                             update removed-session caches before surfacing the error.
 lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, reversed), message bubbles,
                              a placeholder conversation while a session's history first loads
                              (history_skeleton.dart: faint bubbles from the bottom up under a

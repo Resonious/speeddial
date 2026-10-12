@@ -3,6 +3,7 @@
 library;
 
 export 'src/errors.dart';
+export 'src/archive.dart';
 export 'src/models.dart';
 export 'src/events.dart';
 export 'src/rpc.dart';

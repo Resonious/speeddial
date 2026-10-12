@@ -803,6 +803,93 @@ void main() {
 
   group('sessions', () {
     test(
+      'archive preview and clear validate IDs and broadcast removals',
+      () async {
+        await startServer();
+        final client = await connect(server!.port);
+        addTearDown(client.close);
+        final DateTime now = DateTime.now().toUtc();
+        store.insertProject(
+          Project(
+            id: 'cleanup-project',
+            name: 'Cleanup',
+            path: tempDir.path,
+            addedAt: now,
+            lastActiveAt: now,
+          ),
+        );
+        for (final String id in <String>['archived', 'active']) {
+          store.insertSession(
+            Session(
+              id: id,
+              projectId: 'cleanup-project',
+              providerId: 'fake',
+              title: id,
+              status: SessionStatus.idle,
+              model: null,
+              cwd: tempDir.path,
+              baseBranch: null,
+              yolo: false,
+              archived: id == 'archived',
+              createdAt: now,
+              updatedAt: now,
+            ),
+          );
+        }
+        store.appendEvent(
+          'archived',
+          1,
+          const UserMessageEvent(text: 'Saved history'),
+        );
+        final Map<String, Object?> response = j(
+          await client.peer.call(
+            'sessions.archivePreview',
+            <String, Object?>{},
+          ),
+        );
+        final ArchivePreview preview = ArchivePreview.fromJson(
+          (response['archive']! as Map).cast<String, Object?>(),
+        );
+        expect(preview.sessionIds, <String>['archived']);
+        expect(preview.transcriptBytes, greaterThan(0));
+        for (final Object? invalid in <Object?>[
+          null,
+          'archived',
+          <Object?>[3],
+          <String>[''],
+        ]) {
+          await expectLater(
+            client.peer.call('sessions.clearArchive', <String, Object?>{
+              'sessionIds': invalid,
+            }),
+            throwsA(
+              isA<DaemonError>().having(
+                (DaemonError error) => error.code,
+                'code',
+                -32602,
+              ),
+            ),
+          );
+        }
+        final ClearArchiveResult result = ClearArchiveResult.fromJson(
+          j(
+            await client.peer.call('sessions.clearArchive', <String, Object?>{
+              'sessionIds': preview.sessionIds,
+            }),
+          ),
+        );
+        expect(result.deletedSessionIds, <String>['archived']);
+        await untilRecorded(client, 'session.removed', 1);
+        expect(
+          client.of('session.removed').single.params['sessionId'],
+          'archived',
+        );
+        expect(store.getSession('active'), isNotNull);
+        expect(await tempDir.exists(), isTrue);
+      },
+    );
+
+    test(
       'full lifecycle: create, send, ordered events, permission, history',
       () async {
         await startServer();

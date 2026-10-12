@@ -11,6 +11,7 @@ import 'new_session_sheet.dart';
 import 'session_list.dart';
 import 'session_search_dialog.dart';
 import '../settings/environment_page.dart';
+import '../settings/archive_page.dart';
 import '../settings/embedded_daemon_page.dart';
 import '../settings/harnesses_page.dart';
 import '../settings/mcp_settings_page.dart';
@@ -173,6 +174,7 @@ class _SessionsTab extends StatelessWidget {
                       onMcpServers: () => _showMcpServers(context, endpoint),
                       onHarnesses: () => _showHarnesses(context, endpoint),
                       onEnvironment: () => _showEnvironment(context, endpoint),
+                      onArchive: () => _showArchive(context, endpoint),
                       onEdit: () => _showDaemonDialog(context, endpoint),
                       onRemove: () => _removeDaemon(context, endpoint),
                     );
@@ -280,6 +282,18 @@ class _SessionsTab extends StatelessWidget {
             daemonId: endpoint.id,
             daemonName: endpoint.name,
           ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showArchive(BuildContext context, DaemonEndpoint endpoint) {
+    final AppData data = AppScope.of(context);
+    return Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => AppScope(
+          data: data,
+          child: ArchivePage(daemonId: endpoint.id, daemonName: endpoint.name),
         ),
       ),
     );
@@ -775,7 +789,15 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
 }
 
 /// Menu entries on a daemon endpoint tile.
-enum _EndpointAction { retry, mcpServers, harnesses, environment, edit, remove }
+enum _EndpointAction {
+  retry,
+  mcpServers,
+  harnesses,
+  environment,
+  archive,
+  edit,
+  remove,
+}
 
 class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
@@ -787,6 +809,7 @@ class _EndpointTile extends StatelessWidget {
     required this.onMcpServers,
     required this.onHarnesses,
     required this.onEnvironment,
+    required this.onArchive,
     required this.onEdit,
     required this.onRemove,
   });
@@ -802,6 +825,7 @@ class _EndpointTile extends StatelessWidget {
   final VoidCallback onMcpServers;
   final VoidCallback onHarnesses;
   final VoidCallback onEnvironment;
+  final VoidCallback onArchive;
   final VoidCallback onRemove;
 
   @override
@@ -856,6 +880,11 @@ class _EndpointTile extends StatelessWidget {
                 value: _EndpointAction.environment,
                 child: Text('Environment'),
               ),
+              const PopupMenuItem<_EndpointAction>(
+                key: Key('endpoint-action-archive'),
+                value: _EndpointAction.archive,
+                child: Text('Clear archive…'),
+              ),
               if (canRetry)
                 const PopupMenuItem<_EndpointAction>(
                   key: Key('endpoint-action-retry'),
@@ -878,6 +907,7 @@ class _EndpointTile extends StatelessWidget {
           _EndpointAction.mcpServers => onMcpServers(),
           _EndpointAction.harnesses => onHarnesses(),
           _EndpointAction.environment => onEnvironment(),
+          _EndpointAction.archive => onArchive(),
           _EndpointAction.edit => onEdit(),
           _EndpointAction.remove => onRemove(),
         },

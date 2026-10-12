@@ -64,6 +64,8 @@ class FakeDaemonClient implements DaemonClient {
 
   /// Harness ids updated through [updateHarness], for demo/widget assertions.
   final List<String> harnessUpdateCalls = <String>[];
+  int archivePreviewCalls = 0;
+  final List<List<String>> clearArchiveCalls = <List<String>>[];
   final Map<String, List<SessionEvent>> _history =
       <String, List<SessionEvent>>{};
   final Map<String, int> _seqBySession = <String, int>{};
@@ -1290,6 +1292,117 @@ class FakeDaemonClient implements DaemonClient {
     _ensureSeeded();
     _requireSession(sessionId);
     _removeSession(sessionId);
+  }
+
+  bool _archiveBusy(Session session) =>
+      session.preparing ||
+      session.status == SessionStatus.running ||
+      session.status == SessionStatus.waitingPermission ||
+      _runningScripts.contains(session.id);
+
+  @override
+  Future<ArchivePreview> previewArchive() async {
+    _ensureSeeded();
+    archivePreviewCalls++;
+    final List<Session> archived = _sessions.values
+        .where((Session session) => session.archived)
+        .toList();
+    final List<Session> ready = archived
+        .where((Session session) => !_archiveBusy(session))
+        .toList();
+    final Set<String> ids = ready.map((Session session) => session.id).toSet();
+    final Set<String> worktrees = <String>{
+      for (final Session session in ready)
+        if (session.baseBranch != null &&
+            !_sessions.values.any(
+              (Session other) =>
+                  other.cwd == session.cwd && !ids.contains(other.id),
+            ))
+          session.cwd,
+    };
+    return ArchivePreview(
+      sessionIds: ids.toList(growable: false),
+      worktreeCount: worktrees.length,
+      worktreeBytes: worktrees.length * 1024 * 1024,
+      transcriptBytes: ready.fold<int>(
+        0,
+        (int sum, Session session) =>
+            sum +
+            (_history[session.id] ?? <SessionEvent>[]).fold<int>(
+              0,
+              (int bytes, SessionEvent event) =>
+                  bytes + utf8.encode(jsonEncode(event.toJson())).length,
+            ),
+      ),
+      attachmentBytes: ready.fold<int>(
+        0,
+        (int sum, Session session) =>
+            sum +
+            (_attachmentsBySession[session.id]?.values.fold<int>(
+                  0,
+                  (int bytes, AttachmentData attachment) =>
+                      bytes + attachment.size,
+                ) ??
+                0),
+      ),
+      retainedWorktreeCount: ready
+          .where(
+            (Session session) =>
+                session.baseBranch != null && !worktrees.contains(session.cwd),
+          )
+          .map((Session session) => session.cwd)
+          .toSet()
+          .length,
+      blockedSessions: archived
+          .where(_archiveBusy)
+          .map(
+            (Session session) => ArchiveFailure(
+              sessionId: session.id,
+              message: 'Session is active or preparing.',
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  @override
+  Future<ClearArchiveResult> clearArchive(List<String> sessionIds) async {
+    _ensureSeeded();
+    clearArchiveCalls.add(List<String>.of(sessionIds));
+    final Set<String> selected = sessionIds.toSet();
+    final List<String> deleted = <String>[];
+    final List<ArchiveFailure> failures = <ArchiveFailure>[];
+    final Set<String> worktrees = <String>{};
+    for (final String id in selected) {
+      final Session? session = _sessions[id];
+      if (session == null) continue;
+      if (!session.archived || _archiveBusy(session)) {
+        failures.add(
+          ArchiveFailure(
+            sessionId: id,
+            message: 'Session is no longer archived or is active.',
+          ),
+        );
+        continue;
+      }
+      if (session.baseBranch != null &&
+          !_sessions.values.any(
+            (Session other) =>
+                other.cwd == session.cwd &&
+                (!selected.contains(other.id) ||
+                    !other.archived ||
+                    _archiveBusy(other)),
+          )) {
+        worktrees.add(session.cwd);
+      }
+      _removeSession(id);
+      deleted.add(id);
+    }
+    return ClearArchiveResult(
+      deletedSessionIds: deleted,
+      removedWorktreeCount: worktrees.length,
+      failures: failures,
+    );
   }
 
   @override

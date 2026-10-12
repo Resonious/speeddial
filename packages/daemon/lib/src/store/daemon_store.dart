@@ -945,8 +945,27 @@ class DaemonStore {
     _search.schedule();
   }
 
-  /// Permanently removes a session and (via cascade) its events and
-  /// attachments.
+  /// UTF-8 event payload bytes and attachment payload bytes, without reading
+  /// whole transcripts into Dart. SQLite pages may be reused after deletion.
+  ({int transcriptBytes, int attachmentBytes}) sessionStorageBytes(String id) {
+    final int transcripts =
+        _db.select(
+              'SELECT COALESCE(SUM(length(CAST(json AS BLOB))), 0) AS bytes '
+              'FROM session_events WHERE session_id = ?',
+              <Object?>[id],
+            ).single['bytes']
+            as int;
+    final int attachments =
+        _db.select(
+              'SELECT COALESCE(SUM(size), 0) AS bytes '
+              'FROM attachments WHERE session_id = ?',
+              <Object?>[id],
+            ).single['bytes']
+            as int;
+    return (transcriptBytes: transcripts, attachmentBytes: attachments);
+  }
+
+  /// Permanently removes a session and (via cascade) its events and attachments.
   void deleteSession(String id) {
     _db.execute('DELETE FROM sessions WHERE id = ?', [id]);
   }

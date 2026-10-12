@@ -362,6 +362,27 @@ class DaemonClient {
     return Session.fromJson(_asMap(map['session'], 'sessions.archive'));
   }
 
+  /// Estimates storage for the daemon's archived sessions.
+  Future<ArchivePreview> previewArchive() async {
+    final Map<String, Object?> result = _asMap(
+      await _peer.call('sessions.archivePreview', <String, Object?>{}),
+      'sessions.archivePreview',
+    );
+    return ArchivePreview.fromJson(
+      _asMap(result['archive'], 'sessions.archivePreview'),
+    );
+  }
+
+  Future<ClearArchiveResult> clearArchive(List<String> sessionIds) async =>
+      ClearArchiveResult.fromJson(
+        _asMap(
+          await _peer.call('sessions.clearArchive', <String, Object?>{
+            'sessionIds': sessionIds,
+          }),
+          'sessions.clearArchive',
+        ),
+      );
+
   /// `sessions.acknowledgeCompletion` — clears an observed completed turn if
   /// [completionRevision] still identifies the latest completion.
   Future<Session> acknowledgeCompletion(

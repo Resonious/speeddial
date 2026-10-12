@@ -956,6 +956,25 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<ArchivePreview> previewArchive() async {
+    final Object? result = await _requirePeer().call(
+      'sessions.archivePreview',
+      <String, Object?>{},
+    );
+    return ArchivePreview.fromJson(_resultMap(_resultField(result, 'archive')));
+  }
+
+  @override
+  Future<ClearArchiveResult> clearArchive(List<String> sessionIds) async =>
+      ClearArchiveResult.fromJson(
+        _resultMap(
+          await _requirePeer().call('sessions.clearArchive', <String, Object?>{
+            'sessionIds': sessionIds,
+          }),
+        ),
+      );
+
+  @override
   Future<Session> acknowledgeCompletion(
     String sessionId,
     int completionRevision,
