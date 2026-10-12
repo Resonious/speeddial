@@ -923,6 +923,16 @@ class SessionEngine {
 
   /// Persists an agent-requested image and emits it into the session timeline.
   /// This does not start/resume the provider process or change turn state.
+  /// Emits a validated explainer as a timeline event.
+  Future<void> showExplainer(String sessionId, ExplainerSpec explainer) async {
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final _LiveSession? live = _live[sessionId];
+    if (live != null) _breakSyntheticContent(live);
+    _emitForSession(sessionId, ExplainerEvent(explainer: explainer));
+  }
+
   Future<void> displayImage(
     String sessionId, {
     required String name,

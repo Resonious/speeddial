@@ -2343,6 +2343,48 @@ void main() {
       );
       expect((attachment['attachment']! as Map)['data'], imageData);
 
+      await mcp.peer.call('internal.mcpShowExplainer', <String, Object?>{
+        'explainer': <String, Object?>{
+          'title': 'Flow',
+          'svg': '<svg viewBox="0 0 10 10"><rect id="a" width="4" height="4"/></svg>',
+          'steps': <Object?>[
+            <String, Object?>{'caption': 'Start'},
+            <String, Object?>{
+              'caption': 'Lit',
+              'set': <String, Object?>{
+                '#a': <String, Object?>{'fill': 'var(--accent)'},
+              },
+            },
+          ],
+        },
+      });
+      await untilRecorded(client, 'session.event', 2);
+      final Map<String, Object?> withExplainer = j(
+        await client.peer.call('sessions.history', <String, Object?>{
+          'sessionId': owner.id,
+        }),
+      );
+      final ExplainerEvent explainer = SessionEvent.fromJson(
+        ((withExplainer['events']! as List<Object?>).last! as Map)
+            .cast<String, Object?>(),
+      ) as ExplainerEvent;
+      expect(explainer.explainer.title, 'Flow');
+      expect(explainer.explainer.steps, hasLength(2));
+      await expectLater(
+        mcp.peer.call('internal.mcpShowExplainer', <String, Object?>{
+          'explainer': <String, Object?>{'svg': '<svg><blink/></svg>'},
+        }),
+        throwsA(
+          isA<DaemonError>()
+              .having((DaemonError error) => error.code, 'code', -32602)
+              .having(
+                (DaemonError error) => error.message,
+                'message',
+                contains('<blink>'),
+              ),
+        ),
+      );
+
       await mcp.close();
       await client.close();
     });
@@ -2430,7 +2472,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(9));
+        expect((listed['result']! as Map)['tools'], hasLength(10));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

@@ -401,6 +401,9 @@ String summarizeSessionEvent(SessionEvent event) {
   final summary = switch (event) {
     UserMessageEvent(:final text) => 'user: ${_oneLine(text)}',
     ImageEvent(:final attachment) => '[image] ${attachment.name}',
+    ExplainerEvent(:final explainer) =>
+      '[explainer] ${explainer.title ?? 'untitled'} '
+          '(${explainer.steps.length} steps)',
     AgentMessageChunkEvent(:final text) => _oneLine(text),
     AgentThoughtChunkEvent(:final text) => '[thought] ${_oneLine(text)}',
     ToolCallEvent(:final toolCall) =>

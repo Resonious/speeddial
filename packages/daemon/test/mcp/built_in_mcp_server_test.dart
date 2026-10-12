@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -128,6 +129,7 @@ void main() {
       'unarchive_session',
       'set_session_summary',
       'display_image',
+      'show_explainer',
       'workspace__read',
     ]);
     final Map<String, Object?> archiveTool = tools.singleWhere(
@@ -404,6 +406,78 @@ void main() {
       'name': 'workspace__read',
       'arguments': <String, Object?>{'path': 'README'},
     });
+  });
+
+  test('show_explainer validates, then forwards the explainer', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'show_explainer',
+        'arguments': <String, Object?>{
+          'title': 'Boxes',
+          'svg':
+              '<svg viewBox="0 0 10 10"><rect id="a" width="4" height="4" '
+              'filter="url(#f)"/></svg>',
+          'steps': <Object?>[
+            <String, Object?>{'caption': 'One'},
+            <String, Object?>{
+              'caption': 'Two',
+              'set': <String, Object?>{
+                '#a': <String, Object?>{'x': 5},
+              },
+            },
+          ],
+        },
+      },
+    );
+    final result = (response['result'] as Map).cast<String, Object?>();
+    expect(result['isError'], isFalse);
+    final String text =
+        ((result['content'] as List).single as Map)['text'] as String;
+    expect(text, contains('"Boxes" with 2 steps'));
+    expect(text, contains('filter'));
+    expect(calls.single.method, 'internal.mcpShowExplainer');
+    final explainer = (calls.single.params['explainer'] as Map)
+        .cast<String, Object?>();
+    expect(explainer['title'], 'Boxes');
+    expect(explainer['steps'], hasLength(2));
+  });
+
+  test('show_explainer reports every problem without displaying', () async {
+    final Map<String, Object?> response = await request(
+      1,
+      'tools/call',
+      <String, Object?>{
+        'name': 'show_explainer',
+        'arguments': <String, Object?>{
+          'svg':
+              '<svg viewBox="0 0 10 10"><circle id="c" cx="1" cy="1"/>'
+              '<image/></svg>',
+        },
+      },
+    );
+    final result = (response['result'] as Map).cast<String, Object?>();
+    expect(result['isError'], isTrue);
+    final String text =
+        ((result['content'] as List).single as Map)['text'] as String;
+    expect(text, contains('needs r'));
+    expect(text, contains('<image>'));
+    expect(calls, isEmpty);
+  });
+
+  test('the show_explainer description example is a valid explainer', () {
+    final String description = kShowExplainerDescription;
+    final String example = description.substring(
+      description.indexOf('Example: ') + 'Example: '.length,
+    );
+    final ExplainerDocument document = ExplainerDocument.parse(
+      ExplainerSpec.fromJson(
+        (jsonDecode(example.trim()) as Map).cast<String, Object?>(),
+      ),
+    );
+    expect(document.steps, hasLength(3));
+    expect(document.warnings, isEmpty);
   });
 
   test('display_image reads a session-relative file and returns MCP image content', () async {

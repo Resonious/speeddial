@@ -794,6 +794,10 @@ class CodexClient implements AgentClient, NativeCommandClient {
           'unavailability is not evidence; retry discovery when asked to retry. '
           'Credentials are held by the daemon; missing local credentials or '
           'MCP resource entries do not establish that tools are unavailable.',
+      'SpeedDial explainers: when a visual walkthrough would help the user '
+          'understand something (an architecture, a request flow, an '
+          'algorithm, a state machine), call speeddial show_explainer to show '
+          'a stepped, animated SVG diagram in the timeline.',
     ].join('\n\n');
   }
 

@@ -9,7 +9,9 @@ of per-frame work.
 
 ```
 packages/protocol/   pure Dart, zero deps beyond SDK. Implements PROTOCOL.md exactly:
-                     models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides).
+                     models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides),
+                     and the explainer SVG-subset parser/validator (`src/explainer/`) so
+                     the daemon rejects exactly what the app could not draw.
 packages/daemon/     Dart CLI + library. Spawns ACP and Ante agent CLIs, owns
                      session/project bookkeeping (SQLite), git/gh operations, WebSocket
                      JSON-RPC server.
@@ -115,8 +117,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     Built-in tools bridge over an authenticated, session-bound loopback
                     WebSocket to query projects/session history (including archived
                     sessions), browse message-only transcript pages, archive or restore
-                    other sessions, set the calling session’s summary/title, or persist an
-                    attachment and emit an image event.
+                    other sessions, set the calling session’s summary/title, persist an
+                    attachment and emit an image event, or validate and emit an explainer
+                    (`show_explainer`; its description is the agent-facing format spec,
+                    with a worked example that a test keeps valid).
                     McpProxySession owns
                     the matching managed upstreams for that bridge connection, starts stdio
                     servers in the session cwd, drives Streamable HTTP JSON/SSE sessions,
@@ -375,7 +379,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
                              natively (`chat/mermaid/`: subset parser, layered layout, painter;
-                             anything unsupported stays a code block), remote file links that
+                             anything unsupported stays a code block), MCP `show_explainer`
+                             explainers drawn natively (`chat/explainer/`: the shared
+                             `speeddial_protocol` SVG-subset parser validates in the daemon and
+                             parses again here; the scene bakes each settled step/toggle state
+                             into a Picture and tweens between states from the tree; steps,
+                             toggles, `<title>` tooltips, arrow keys, full-screen view; a parse
+                             failure shows a fallback card), remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
                              offer Download (system save picker) or Float (the shared-file card).
                              Transfers and dismissible completion/error receipts live in

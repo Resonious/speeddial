@@ -234,6 +234,7 @@ receive them. `sessions.history` returns events ordered by `seq` ascending.
 SessionEvent =
   | { type: "userMessage", text: string, attachments?: Attachment[] }  // attachments omitted when empty
   | { type: "image", attachment: Attachment }          // agent-requested image displayed in the UI
+  | { type: "explainer", explainer: Explainer }        // agent-requested interactive explainer (see Explainers)
   | { type: "agentMessageChunk", text: string, messageId?: string } // streaming delta;
                                                         // messageId is stable within the turn
   | { type: "agentThoughtChunk", text: string, messageId?: string } // streaming delta,
@@ -315,6 +316,56 @@ subagent. Codex sends one per subagent interaction, with the subagent's path as
 `ante-subagent-<toolCallId>`: `running` with the subagent type as `details[0]`
 when launched, then `completed` or `failed` with its report as `details[1]`.
 Each action the subagent takes is a further activity, `<that id>-step-<n>`.
+
+### Explainers
+
+An explainer is an SVG scene the user pages through. Agents author it with the
+`show_explainer` tool. The daemon validates it with the parser in
+`speeddial_protocol` (`ExplainerDocument.parse`) before emitting the event;
+clients render it natively with the same parser and show a fallback card when
+parsing fails, so a newer or older peer never breaks the timeline.
+
+```ts
+Explainer = {
+  title?: string,                 // ≤ 200 chars
+  svg: string,                    // one <svg> document in the subset below, ≤ 200 KiB
+  steps?: ExplainerStep[],        // ≤ 100; omitted = one static view
+  toggles?: ExplainerToggle[],    // ≤ 8
+}
+ExplainerStep = { caption: string, set?: ExplainerChanges }      // caption ≤ 2000 chars
+ExplainerToggle = { label: string, on?: boolean, set: ExplainerChanges } // label 1-60 chars
+ExplainerChanges = { [selector: string]: { [attribute: string]: string | number } }
+```
+
+- **SVG subset.** The root `<svg>` needs a `viewBox` (or numeric `width` and `height`).
+  Elements: `g`, `rect`, `circle`, `ellipse`, `line`, `polyline`, `polygon`, `path`
+  (all commands, including arcs), `text`, `tspan`, `defs`, `marker`, `title`
+  (tooltip for its parent), `style`, plus `desc`/`metadata` (ignored). Anything
+  else is an error that names the element, including gradients, filters, clip
+  paths, masks, images, `use`, `foreignObject`, scripts, event handlers, and SMIL.
+- **Attributes.** Presentation attributes: `fill`, `fill-opacity`, `stroke`,
+  `stroke-opacity`, `stroke-width`, `stroke-dasharray`, `stroke-linecap`,
+  `stroke-linejoin`, `opacity`, `display`, `visibility`, `font-size`,
+  `font-weight`, `font-family`, `font-style`, `text-anchor`, `dominant-baseline`,
+  `marker-start`, `marker-end`. Also `transform` and each element's geometry. Lengths
+  are plain viewBox units (`px` is accepted); `em` is accepted only for
+  `dx`/`dy`. Unknown attributes produce warnings and are ignored.
+- **Cascade.** Presentation attributes, then `<style>` rules ordered by specificity
+  and then source order, then inline `style=""`. Selectors are simple: `tag`, `#id`,
+  `.class`, `tag.class`, `*`, and comma lists. Rules with other selectors and
+  `@`-rules are skipped with a warning.
+- **Paint.** Hex, `rgb()`/`rgba()`, `hsl()`/`hsla()`, CSS named colors, `none`,
+  `currentColor` (= `var(--fg)`), `context-stroke`/`context-fill` (inside
+  markers), and theme tokens `var(--fg|muted|bg|surface|border|accent|success|warning|danger|info|purple|code)`.
+  Clients map tokens to their palette. Unset `fill` paints `var(--fg)`.
+- **Steps** accumulate: step *n* applies `steps[0..n].set` over the markup. A
+  selector that matches nothing, an attribute that does not apply to a matched
+  element, and an unparseable value are all errors. The `text` attribute
+  replaces a `text`/`tspan`'s content. **Toggles** apply their `set` over the
+  current step, in order, while on.
+- **Rendering.** Clients animate between states. Numbers, colors, opacity,
+  `points`, transforms (argument-wise when the function lists match, otherwise
+  matrix-wise), and same-shape path data tween; other values switch at the midpoint.
 
 For a request with nonempty `questions`, respond with `optionId: "answer"` and
 one `answers` entry per question, in order, or `optionId: "dismiss"` without answers.
@@ -422,6 +473,7 @@ The bridge's MCP initialization instructions describe managed tool discovery und
 `speeddial`, including the qualified naming scheme. Agents must inspect available tools
 (using their harness's tool discovery when needed) before reporting an integration unavailable;
 MCP resource listings and local environment credentials do not indicate tool availability.
+They also suggest `show_explainer` when a visual walkthrough would help.
 The always-advertised `discover_mcp_tools {query?: string}` MCP tool retries managed discovery
 and returns matching descriptors (case-insensitive name/description substring) plus all discovery
 warnings in model-visible text. Omit `query` to list all managed tools. The companion
@@ -432,7 +484,7 @@ automatically replayed. OAuth authorization and successful bridge startup do not
 an upstream's tool discovery succeeded. These are MCP tools, not public app/daemon RPC methods.
 When injecting `speeddial`, Codex thread creation and resume also receive explicit developer
 instructions to discover external integrations before falling back to web access or reporting
-unavailability. These append to the effective working-directory `developer_instructions` read
+unavailability, and to use `show_explainer` for visual walkthroughs. These append to the effective working-directory `developer_instructions` read
 from Codex configuration, preserving existing instructions. MCP initialization metadata alone
 is not relied on to guide model tool selection.
 
@@ -662,7 +714,7 @@ Agent task-progress `plan` events remain supported.
   `-32602` when it is not or when the session's provider advertises no thinking-level option. The
   returned session reflects the agent-reported state, which may differ from the requested level
   when the agent clamps it.
-- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, and activity details for compact clients. Legacy oversized tool snapshots are projected as same-id `history` activities, so clients fold a run of redundant snapshots into one bounded row.
+- `sessions.history {sessionId: string, limit?: int, beforeSeq?: int, detail?: "full" | "summary"}` → `{events: SessionEvent[], hasMore: boolean}` — default limit 200, max 1000; without `beforeSeq` returns the latest page. `detail` defaults to `full`; `summary` preserves event kinds, ordering, sequence/timestamp metadata, user/agent messages, and permission data while clearing verbose thought text, tool content/raw input/raw output/locations, plan text, activity details, and explainer scenes (`explainer` keeps only its `title`, with `svg: ""`) for compact clients. Legacy oversized tool snapshots are projected as same-id `history` activities, so clients fold a run of redundant snapshots into one bounded row.
 - `sessions.respondPermission {sessionId: string, requestId: string, optionId: string, answers?: UserQuestionAnswer[]}` → `{}` — errors `-32002` if request unknown/expired
 
 ### Attachments
@@ -702,6 +754,13 @@ home described above. It exposes:
   symlinks may point anywhere; relative paths resolve from the session cwd, including `..`.
   The decoded image is capped at 8 MiB, persisted as an attachment, and emitted as an `image`
   event; clients fetch it through `attachments.read`. The MCP result also includes MCP image content for the model.
+- `show_explainer {title?: string, svg: string, steps?: ExplainerStep[], toggles?: ExplainerToggle[]}`:
+  validates the arguments as an `Explainer` (see Explainers) and emits an
+  `explainer` event. When invalid, it shows nothing and returns `isError: true`
+  with every problem listed, so the agent can fix them all in one retry. On
+  success the text result reports the step and toggle counts plus any ignored
+  attributes. The tool description is the agent-facing copy of the format and
+  includes a worked example.
 
 The subprocess connects to `/ws` over loopback and must first call
 `internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret and the
@@ -713,8 +772,9 @@ receives that session-bound secret. It may then call
 `internal.mcpReadSessionTranscript {sessionId: string, limit?: int, beforeSeq?: int}`,
 `internal.mcpArchiveSession {sessionId: string, archived: boolean}`,
 `internal.mcpSetSessionSummary {summary: string}` → `{session: Session}` (the authenticated
-session only), and
-`internal.mcpDisplayImage`. It cannot call the public daemon API and receives no broadcasts. Public
+session only),
+`internal.mcpDisplayImage`, and `internal.mcpShowExplainer {explainer: Explainer}` → `{ok: true}`
+(revalidated; `-32602` with the errors when invalid). It cannot call the public daemon API and receives no broadcasts. Public
 clients cannot use the internal methods without the MCP secret.
 
 ### Files

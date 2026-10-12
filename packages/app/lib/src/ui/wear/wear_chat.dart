@@ -261,6 +261,14 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
                 icon: Icons.image_outlined,
               ),
             );
+          case ExplainerEvent(:final explainer):
+            result.add(
+              _WearActivityItem(
+                text:
+                    '${explainer.title ?? 'Explainer'} · open in the full app',
+                icon: Icons.slideshow_outlined,
+              ),
+            );
           case SessionErrorEvent(:final message):
             result.add(_WearErrorItem(message));
           case PermissionRequestEvent() ||
