@@ -1236,7 +1236,9 @@ class FakeDaemonClient implements DaemonClient {
         archived: archived,
         pinned: s.pinned,
         createdAt: s.createdAt,
-        lastActivityAt: s.lastActivityAt,
+        lastActivityAt: s.archived && !archived
+            ? DateTime.now().toUtc()
+            : s.lastActivityAt,
         updatedAt: s.updatedAt,
       ),
     );

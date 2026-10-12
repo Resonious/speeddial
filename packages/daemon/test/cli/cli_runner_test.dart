@@ -63,6 +63,26 @@ void main() {
       }
     });
 
+    test(
+      'serve validates auto-archive hours before starting the daemon',
+      () async {
+        for (final String hours in <String>[
+          '-1',
+          '1.5',
+          'never',
+          '',
+          '9223372036854775807',
+        ]) {
+          final StringBuffer err = StringBuffer();
+          expect(
+            await runCli(['serve', '--auto-archive-hours=$hours'], err: err),
+            Exit.usage,
+          );
+          expect(err.toString(), contains('Invalid --auto-archive-hours'));
+        }
+      },
+    );
+
     test('serve requires a topic and an absolute HTTP(S) app URL', () async {
       for (final List<String> args in [
         ['serve', '--ntfy-app-url', 'https://app.example/'],

@@ -50,6 +50,24 @@ dart run bin/speeddial.dart serve --host 0.0.0.0 --token "$(openssl rand -hex 16
 The daemon writes `~/.speeddial/daemon.json` (mode 0600) with host/port/token
 for CLI and UI discovery.
 
+Sessions are automatically archived after 72 hours without conversation activity.
+Pinned sessions, running turns, permission waits, and sessions still preparing are
+excluded. The daemon checks at startup and every minute, even with no UI connected.
+Background output between turns also counts as activity.
+Archiving preserves transcripts, attachments, and worktrees. Restoring or unpinning
+a session starts a fresh inactivity window.
+
+Set `"autoArchiveHours": 168` in `~/.speeddial/config.json` to use one week, or
+`"autoArchiveHours": 0` to disable automatic archival. This setting applies to
+both standalone and built-in desktop daemons; restart the daemon after changing it.
+The value must be a non-negative whole number. Invalid settings fail startup.
+For the standalone daemon, a flag overrides the file:
+
+```bash
+dart run bin/speeddial.dart serve --auto-archive-hours 168
+dart run bin/speeddial.dart serve --auto-archive-hours 0   # disable
+```
+
 To receive completed-turn notifications, subscribe to a topic in the ntfy app
 or at `https://ntfy.sh/<topic>`, then start the daemon with that topic:
 

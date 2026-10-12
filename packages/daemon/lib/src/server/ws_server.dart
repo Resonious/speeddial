@@ -1530,6 +1530,7 @@ class SpeedDialServer {
     return <String, Object?>{'session': session.toJson()};
   }
 
+  /// Restoring through the engine also refreshes the inactivity window.
   Future<Object?> _sessionsArchive(Map<String, Object?> params) async {
     final sessionId = _requiredString(params, 'sessionId');
     final archived = params['archived'];

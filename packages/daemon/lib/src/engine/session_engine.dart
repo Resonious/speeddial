@@ -156,10 +156,28 @@ class SessionEngine {
     required ProviderRegistry providers,
     GitService? git,
     Future<void> Function(Session session, String finalText)? onTurnComplete,
+    Duration autoArchiveAfter = const Duration(hours: 72),
+    Duration autoArchiveCheckInterval = const Duration(minutes: 1),
   }) : _store = store, // ignore: prefer_initializing_formals
        _providers = providers, // ignore: prefer_initializing_formals
        _git = git, // ignore: prefer_initializing_formals
-       _onTurnComplete = onTurnComplete; // ignore: prefer_initializing_formals
+       _onTurnComplete = onTurnComplete, // ignore: prefer_initializing_formals
+       _autoArchiveAfter = autoArchiveAfter,
+       _autoArchiveCheckInterval = autoArchiveCheckInterval {
+    if (autoArchiveAfter.isNegative) {
+      throw ArgumentError.value(autoArchiveAfter, 'autoArchiveAfter');
+    }
+    if (autoArchiveCheckInterval <= Duration.zero) {
+      throw ArgumentError.value(
+        autoArchiveCheckInterval,
+        'autoArchiveCheckInterval',
+      );
+    }
+  }
+
+  final Duration _autoArchiveAfter;
+  final Duration _autoArchiveCheckInterval;
+  Timer? _autoArchiveTimer;
 
   final DaemonStore _store;
   final ProviderRegistry _providers;
@@ -337,7 +355,7 @@ class SessionEngine {
           !session.preparing) {
         continue;
       }
-      final updated = _withStatus(session, SessionStatus.error);
+      final updated = _withStatus(session, SessionStatus.error, activity: true);
       _store.updateSession(updated);
       final int seq = _store.nextSeq(session.id);
       final SessionEvent event = _store.appendEvent(
@@ -355,6 +373,42 @@ class SessionEngine {
       if (!_sessionChangesController.isClosed) {
         _sessionChangesController.add(updated);
       }
+    }
+    _autoArchiveTimer?.cancel();
+    if (_autoArchiveAfter > Duration.zero && !_restarting) {
+      _checkAutoArchive();
+      _autoArchiveTimer = Timer.periodic(
+        _autoArchiveCheckInterval,
+        (_) => _checkAutoArchive(),
+      );
+    }
+  }
+
+  void _checkAutoArchive() {
+    try {
+      archiveInactiveSessions();
+    } on Object catch (error, stack) {
+      stderr.writeln('speeddial: automatic archival failed: $error\n$stack');
+    }
+  }
+
+  /// Archives eligible sessions using daemon-owned conversation activity.
+  /// Runs at startup and once a minute even without connected clients.
+  /// Selection and updates are synchronous so a turn or pin cannot interleave.
+  void archiveInactiveSessions({DateTime? now}) {
+    if (_restarting || _autoArchiveAfter == Duration.zero) return;
+    final DateTime cutoff = (now ?? DateTime.now().toUtc()).subtract(
+      _autoArchiveAfter,
+    );
+    for (final Session session in _store.autoArchiveCandidates(cutoff)) {
+      final _LiveSession? live = _live[session.id];
+      if (_preparations.containsKey(session.id) ||
+          _resuming.containsKey(session.id) ||
+          live?.turn != null ||
+          live?.pendingPermissions.isNotEmpty == true) {
+        continue;
+      }
+      _persistSession(_withArchived(session, true));
     }
   }
 
@@ -1779,6 +1833,8 @@ class SessionEngine {
 
   /// Kills every agent process and closes the broadcast streams.
   Future<void> dispose() async {
+    _autoArchiveTimer?.cancel();
+    _autoArchiveTimer = null;
     _restarting = true;
     final preparations = _preparations.values.toList();
     for (final preparation in preparations) {
@@ -2556,13 +2612,17 @@ class SessionEngine {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
     }
     final updated = transform(session);
+    _persistSession(updated);
+    return updated;
+  }
+
+  void _persistSession(Session updated) {
     _store.updateSession(updated);
-    final live = _live[sessionId];
+    final live = _live[updated.id];
     if (live != null) live.session = updated;
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(updated);
     }
-    return updated;
   }
 
   /// Persists [event] under the next sequence number and broadcasts it as a
@@ -2721,7 +2781,9 @@ class SessionEngine {
     archived: archived,
     pinned: session.pinned,
     createdAt: session.createdAt,
-    lastActivityAt: session.lastActivityAt,
+    lastActivityAt: session.archived && !archived
+        ? DateTime.now().toUtc()
+        : session.lastActivityAt,
     updatedAt: DateTime.now().toUtc(),
   );
 

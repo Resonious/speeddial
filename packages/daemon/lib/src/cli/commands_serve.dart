@@ -9,6 +9,7 @@ import 'dart:math';
 import 'package:args/command_runner.dart';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/client.dart';
+import 'package:speeddial_daemon/src/daemon_config.dart';
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
 import 'package:speeddial_daemon/src/git/pr_service.dart';
@@ -47,6 +48,12 @@ class ServeCommand extends Command<int> {
             'overridable with \$SPEEDIAL_DB).',
       )
       ..addOption(
+        'auto-archive-hours',
+        help:
+            'Archive unpinned inactive sessions after this many whole hours '
+            '(default: config.json autoArchiveHours, or 72; 0 disables).',
+      )
+      ..addOption(
         'ntfy-topic',
         help:
             'Send session titles and final replies to this ntfy.sh topic '
@@ -76,6 +83,23 @@ class ServeCommand extends Command<int> {
     final port = int.tryParse(portRaw);
     if (port == null) {
       throw UsageException('Invalid --port value: "$portRaw".', '');
+    }
+    final String? archiveRaw = argResults!['auto-archive-hours'] as String?;
+    final DaemonConfig config;
+    try {
+      if (archiveRaw == null) {
+        config = DaemonConfig.load();
+      } else {
+        config = DaemonConfig.fromJson(<String, Object?>{
+          'autoArchiveHours': int.tryParse(archiveRaw),
+        });
+      }
+    } on FormatException catch (error) {
+      throw UsageException(
+        '${archiveRaw == null ? 'Invalid config.json' : 'Invalid --auto-archive-hours'}: '
+        '${error.message}',
+        usage,
+      );
     }
     final String? ntfyTopic = argResults!['ntfy-topic'] as String?;
     final String? appUrlRaw = argResults!['ntfy-app-url'] as String?;
@@ -130,6 +154,7 @@ class ServeCommand extends Command<int> {
       providers: providers,
       git: git,
       onTurnComplete: notifier?.publish,
+      autoArchiveAfter: config.autoArchiveAfter,
     );
     final pr = PrService();
     await engine.restore();

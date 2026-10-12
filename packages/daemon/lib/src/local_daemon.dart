@@ -15,6 +15,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'client.dart';
+import 'daemon_config.dart';
 import 'engine/session_engine.dart';
 import 'git/git_service.dart';
 import 'git/pr_service.dart';
@@ -65,11 +66,14 @@ class LocalDaemon {
   /// policy) and throws [ArgumentError] otherwise. [port] defaults to 0
   /// (OS-assigned free port). [dbPath] defaults to
   /// `~/.speeddial/speeddial.db`.
+  /// [autoArchiveHours] overrides config.json's inactivity timeout (72 hours
+  /// by default). Zero disables automatic archival.
   static Future<LocalDaemon> start({
     String host = '127.0.0.1',
     int port = 0,
     String? authToken,
     String? dbPath,
+    int? autoArchiveHours,
   }) async {
     final String token = (authToken ?? '').trim();
     if (!_isLoopback(host) && token.isEmpty) {
@@ -79,6 +83,11 @@ class LocalDaemon {
         'binding a non-loopback interface requires a non-empty authToken',
       );
     }
+    final DaemonConfig config = autoArchiveHours == null
+        ? DaemonConfig.load()
+        : DaemonConfig.fromJson(<String, Object?>{
+            'autoArchiveHours': autoArchiveHours,
+          });
     final String resolvedDb =
         dbPath ??
         p.join(
@@ -93,7 +102,12 @@ class LocalDaemon {
       environmentProvider: store.daemonEnvironment,
     );
     final git = GitService();
-    final engine = SessionEngine(store: store, providers: providers, git: git);
+    final engine = SessionEngine(
+      store: store,
+      providers: providers,
+      git: git,
+      autoArchiveAfter: config.autoArchiveAfter,
+    );
     final pr = PrService();
     await engine.restore();
 
@@ -126,4 +140,3 @@ class LocalDaemon {
     _store.dispose();
   }
 }
-

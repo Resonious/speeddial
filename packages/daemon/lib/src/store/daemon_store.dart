@@ -217,6 +217,12 @@ class DaemonStore {
       );
     }
     _db.execute('''
+      CREATE INDEX IF NOT EXISTS sessions_auto_archive
+      ON sessions(last_activity_at)
+      WHERE archived = 0 AND pinned = 0 AND preparing = 0
+        AND status NOT IN ('running', 'waitingPermission');
+    ''');
+    _db.execute('''
       CREATE TABLE IF NOT EXISTS session_events (
         session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         seq INTEGER NOT NULL,
@@ -867,6 +873,21 @@ class DaemonStore {
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
       [projectId, projectId, includeArchived ? 1 : 0],
+    );
+    return rows.map(_sessionFromRow).toList(growable: false);
+  }
+
+  /// Unpinned, inactive sessions eligible for archival at or before [cutoff].
+  List<Session> autoArchiveCandidates(DateTime cutoff) {
+    final ResultSet rows = _db.select(
+      'SELECT * FROM sessions '
+      'WHERE archived = 0 AND pinned = 0 AND preparing = 0 '
+      "AND status NOT IN ('running', 'waitingPermission') "
+      'AND last_activity_at <= ? '
+      'AND COALESCE((SELECT timestamp FROM session_events '
+      'WHERE session_id = sessions.id ORDER BY seq DESC LIMIT 1), '
+      'last_activity_at) <= ? ORDER BY last_activity_at, id',
+      <Object?>[_ts(cutoff), _ts(cutoff)],
     );
     return rows.map(_sessionFromRow).toList(growable: false);
   }

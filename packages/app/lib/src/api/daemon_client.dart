@@ -186,6 +186,8 @@ abstract class DaemonClient {
 
   Future<Session> renameSession(String sessionId, String title);
   Future<Session> pinSession(String sessionId, bool pinned);
+
+  /// Restoring an archived session starts a fresh daemon inactivity window.
   Future<Session> archiveSession(String sessionId, bool archived);
 
   /// Clears an observed completed turn if [completionRevision] still

@@ -173,7 +173,20 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     provider resume, turn end, cancellation, or exit.
                     Handles permission requests (parked until respondPermission, or
                     auto-resolved as a yolo fallback), cancel, process exit, and turn
-                    lifecycle. The update subscription lives for the agent's lifetime
+                    lifecycle. After restoring sessions, it archives unpinned sessions
+                    inactive for 72 hours and repeats the check every minute without
+                    requiring clients. A partial SQLite activity index selects only
+                    eligible rows, with a latest-event lookup excluding recent
+                    background output; running/permission-waiting/preparing/resuming
+                    sessions and in-flight turns are excluded. Archival uses the
+                    normal metadata persistence/broadcast path and clears done.
+                    Disposal cancels the timer. DaemonConfig reads autoArchiveHours
+                    from ~/.speeddial/config.json for standalone and embedded startup
+                    (0 disables, default 72); --auto-archive-hours overrides it for
+                    serve. Invalid settings fail before opening the store. Restoring
+                    or unpinning starts a fresh activity window; restart errors also
+                    advance activity so interrupted turns remain visible.
+                    The update subscription lives for the agent's lifetime
                     rather than one turn, so updates arriving between client turns
                     (an OMP background wakeup after a finished subagent) are persisted
                     instead of dropped, and a prompt parked behind such an agent-busy
@@ -245,6 +258,9 @@ CLI (`speeddial <command>`), all bookkeeping commands talk to the running daemon
 WebSocket except `serve` and `token`:
 - `serve [--port 7331] [--host 127.0.0.1] [--token T] [--db PATH]` — runs the daemon.
   Writes PID + port + token to `~/.speeddial/daemon.json` for discovery.
+  `--auto-archive-hours HOURS` overrides config.json's `autoArchiveHours` (default
+  72; 0 disables automatic archival). Settings are read at startup; the supervisor
+  preserves the flag across worker restarts.
   `--ntfy-topic TOPIC` enables completed-turn pushes to ntfy.sh; omitted means
   disabled. `--ntfy-app-url URL` optionally links to a hosted HTTP(S) frontend
   instead of the mobile app. Both flags survive supervised worker restarts.

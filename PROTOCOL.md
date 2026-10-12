@@ -155,7 +155,7 @@ Session = {
   pinned: boolean,            // defaults to false when absent; pinned sessions sort first
   archived: boolean,
   createdAt: string,
-  lastActivityAt: string,     // last accepted user message, terminal turn outcome, or unpin
+  lastActivityAt: string,     // last accepted user message, terminal turn outcome, unpin, or restore
   updatedAt: string,
 }
 
@@ -640,7 +640,9 @@ Agent task-progress `plan` events remain supported.
   session with no agent process; errors not-found only for an unknown `sessionId`.
 - `sessions.rename {sessionId: string, title: string}` → `{session: Session}`
 - `sessions.pin {sessionId: string, pinned: boolean}` → `{session: Session}` — persists pin state and broadcasts `session.updated`; changing pinned from true to false refreshes `lastActivityAt`. Clients sort pinned sessions first, then by activity within each group.
-- `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}`
+- `sessions.archive {sessionId: string, archived: boolean}` → `{session: Session}` —
+  archiving clears `done`; restoring an archived session refreshes `lastActivityAt`.
+  Repeating the current archive state preserves activity.
 - `sessions.acknowledgeCompletion {sessionId: string, completionRevision: int}` →
   `{session: Session}` — clears `done` only when the supplied non-negative revision still matches
   the session's latest completion. A stale acknowledgement is a successful no-op returning the
@@ -772,6 +774,17 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 
 `seq` is a per-session monotonically increasing integer starting at 1. Clients use it for
 gap detection: on reconnect, refetch history with `beforeSeq` of the oldest known gap.
+
+The daemon automatically archives unpinned sessions after 72 hours without
+conversation activity, checking at startup and every minute even without clients.
+The timeout is configured at daemon startup through `autoArchiveHours` in
+`~/.speeddial/config.json` or the standalone `serve --auto-archive-hours` override;
+0 disables automatic archival. Running turns, permission waits, preparation, and
+resume operations are excluded. Automatic archival emits the existing
+`session.updated` notification with `archived: true` and `done: false`, and preserves
+history, attachments, and worktrees. Unpinning or restoring restarts the inactivity
+window. Recent persisted events, including background output between turns, also
+postpone archival. A restart error advances activity so an interrupted turn stays visible.
 
 ## Session links
 

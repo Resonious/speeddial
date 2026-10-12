@@ -1801,6 +1801,23 @@ void main() {
     expect(changes.last.status, SessionStatus.idle);
   });
 
+  test('automatic archival keeps live agent metadata in sync', () async {
+    final Session session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+      yolo: true,
+    );
+    engine.archiveInactiveSessions(
+      now: session.lastActivityAt.add(const Duration(hours: 73)),
+    );
+    expect(store.getSession(session.id)!.archived, isTrue);
+    await engine.sendMessage(session.id, 'please edit the file');
+    await waitFor(
+      () => events.any((tuple) => tuple.event is TurnCompleteEvent),
+    );
+    expect(store.getSession(session.id)!.archived, isTrue);
+  });
+
   test(
     'pin persists across metadata and turns; unpin refreshes activity',
     () async {

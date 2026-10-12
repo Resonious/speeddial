@@ -1088,6 +1088,25 @@ void main() {
                 .cast<String, Object?>();
         expect(archived['archived'], isTrue);
 
+        final restored = j(
+          await client.peer.call('sessions.archive', <String, Object?>{
+            'sessionId': session.id,
+            'archived': false,
+          }),
+        );
+        final Session restoredSession = Session.fromJson(
+          (restored['session']! as Map).cast<String, Object?>(),
+        );
+        expect(restoredSession.archived, isFalse);
+        expect(
+          restoredSession.lastActivityAt.isAfter(
+            Session.fromJson(archived).lastActivityAt,
+          ),
+          isTrue,
+        );
+        engine!.archiveInactiveSessions();
+        expect(store.getSession(session.id)!.archived, isFalse);
+
         // Delete removes the session and announces session.removed.
         await client.peer.call('sessions.delete', <String, Object?>{
           'sessionId': session.id,

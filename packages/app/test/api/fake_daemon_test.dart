@@ -719,6 +719,13 @@ void main() {
     expect(await fake.listSessions(), hasLength(2)); // archived hidden
     expect(await fake.listSessions(includeArchived: true), hasLength(3));
 
+    expect(archived.lastActivityAt, modelled.lastActivityAt);
+    final Session restored = await fake.archiveSession(created.id, false);
+    expect(restored.archived, isFalse);
+    expect(restored.lastActivityAt.isAfter(archived.lastActivityAt), isTrue);
+    final Session repeated = await fake.archiveSession(created.id, false);
+    expect(repeated.lastActivityAt, restored.lastActivityAt);
+
     await fake.deleteSession(created.id);
     expect(await fake.listSessions(includeArchived: true), hasLength(2));
   });
