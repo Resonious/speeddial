@@ -14,7 +14,7 @@ import '../../theme.dart';
 /// shows in reading order at a steady pace that quickens to work off a
 /// backlog, the message grows a line at a time, and sparks fly off the ember
 /// at the typing point. Freshly typed text glows behind it as if just out of
-/// the fire, cooling over a second, so even a message that lands all at once
+/// the fire, cooling within a second, so even a message that lands at once
 /// sweeps through in a wave of heat. The ember keeps glowing while [writing]
 /// (more may come); once the message is done and typed out, it goes out with
 /// a pop: a flash, a burst of sparks, and a few wisps of smoke like those off
@@ -452,7 +452,7 @@ class _RenderTypewriter extends RenderProxyBox {
   static const double _smokeLife = 1.0;
 
   /// How long freshly typed text takes to cool.
-  static const double _cool = 0.9;
+  static const double _cool = 0.75;
 
   /// How far typing had got ([_marks]) at recent frame times ([_times]),
   /// back to just before the oldest text still warm: the afterglow cools
@@ -862,7 +862,7 @@ class _RenderTypewriter extends RenderProxyBox {
     _ember,
     _afterglowHot,
     heat,
-  )!.withValues(alpha: 0.45 * _glowStrength * heat * heat);
+  )!.withValues(alpha: 0.3 * _glowStrength * heat * heat);
 
   void _paintEmber(Canvas canvas, Offset offset) {
     final Offset? cursor = _cursor;
