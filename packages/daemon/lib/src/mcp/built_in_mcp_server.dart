@@ -19,6 +19,8 @@ const String kMcpSecretEnv = 'SPEEDDIAL_MCP_SECRET';
 const String kMcpSessionIdEnv = 'SPEEDDIAL_MCP_SESSION_ID';
 const String kMcpSessionCwdEnv = 'SPEEDDIAL_MCP_SESSION_CWD';
 const String kMcpServerName = 'speeddial';
+const String kSessionSummaryInstruction =
+    'Call speeddial set_session_summary with a brief session title when the task is clear or changes.';
 const String _kLatestMcpVersion = '2025-11-25';
 const Set<String> _kSupportedMcpVersions = <String>{
   '2024-11-05',
@@ -119,6 +121,7 @@ class BuiltInMcpServer {
         'version': '0.1.0',
       },
       'instructions':
+          '$kSessionSummaryInstruction\n\n'
           'SpeedDial exposes tools from enabled MCP servers through this single '
           'speeddial server, alongside project/session search, transcript browsing, '
           'session archiving, and image display. Managed tools are named '
@@ -205,6 +208,7 @@ class BuiltInMcpServer {
         'read_session_transcript' => await _readSessionTranscript(arguments),
         'archive_session' => await _setSessionArchived(arguments, true),
         'unarchive_session' => await _setSessionArchived(arguments, false),
+        'set_session_summary' => await _setSessionSummary(arguments),
         'display_image' => await _displayImage(arguments),
         _ => await _callManagedTool(rawName, arguments),
       };
@@ -351,6 +355,20 @@ class BuiltInMcpServer {
     final Object? result = await _daemonCall(
       'internal.mcpArchiveSession',
       <String, Object?>{'sessionId': sessionId, 'archived': archived},
+    );
+    return _textResult(_pretty(result));
+  }
+
+  Future<Map<String, Object?>> _setSessionSummary(
+    Map<String, Object?> arguments,
+  ) async {
+    final String? summary = _optionalString(arguments, 'summary')?.trim();
+    if (summary == null || summary.isEmpty) {
+      throw ArgumentError('summary must be a non-empty string');
+    }
+    final Object? result = await _daemonCall(
+      'internal.mcpSetSessionSummary',
+      <String, Object?>{'summary': summary},
     );
     return _textResult(_pretty(result));
   }
@@ -611,6 +629,25 @@ class BuiltInMcpServer {
           },
         },
         'required': <String>['sessionId'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': false,
+        'idempotentHint': true,
+        'openWorldHint': false,
+      },
+    },
+    <String, Object?>{
+      'name': 'set_session_summary',
+      'title': 'Set this session summary',
+      'description': 'Set a brief summary of the current session as its title in the SpeedDial session list.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'summary': <String, Object?>{'type': 'string', 'minLength': 1},
+        },
+        'required': <String>['summary'],
         'additionalProperties': false,
       },
       'annotations': <String, Object?>{

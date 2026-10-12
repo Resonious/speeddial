@@ -2273,6 +2273,50 @@ void main() {
         ),
       );
 
+      await expectLater(
+        client.peer.call('internal.mcpSetSessionSummary', {
+          'summary': 'Denied',
+        }),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrUnauthenticated,
+          ),
+        ),
+      );
+      for (final Object? summary in <Object?>[null, '', '  ', 42]) {
+        await expectLater(
+          mcp.peer.call('internal.mcpSetSessionSummary', {'summary': summary}),
+          throwsA(
+            isA<DaemonError>().having(
+              (DaemonError error) => error.code,
+              'code',
+              -32602,
+            ),
+          ),
+        );
+      }
+      final int previousUpdates = client.of('session.updated').length;
+      final Map<String, Object?> summaryResult = j(
+        await mcp.peer.call('internal.mcpSetSessionSummary', {
+          'summary': '  Summarize the session  ',
+          'sessionId': other.id,
+        }),
+      );
+      expect((summaryResult['session']! as Map)['id'], owner.id);
+      expect(
+        (summaryResult['session']! as Map)['title'],
+        'Summarize the session',
+      );
+      expect(store.getSession(owner.id)!.title, 'Summarize the session');
+      expect(store.getSession(other.id)!.title, other.title);
+      await untilRecorded(client, 'session.updated', previousUpdates + 1);
+      expect(
+        (client.of('session.updated').last.params['session']! as Map)['title'],
+        'Summarize the session',
+      );
+
       const String imageData =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
       await mcp.peer.call('internal.mcpDisplayImage', <String, Object?>{
@@ -2386,7 +2430,7 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(8));
+        expect((listed['result']! as Map)['tools'], hasLength(9));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

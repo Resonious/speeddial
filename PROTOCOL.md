@@ -694,6 +694,9 @@ home described above. It exposes:
   API or CLI; the calling session cannot archive itself.
 - `unarchive_session {sessionId: string}` — revives an archived session so it returns to default
   session lists and `search_sessions`; the calling session cannot unarchive itself.
+- `set_session_summary {summary: string}` — sets the calling session’s title to a brief
+  summary, trims surrounding whitespace, and rejects empty text. Persists the title and
+  broadcasts the existing `session.updated` notification to UI clients.
 - `display_image {path?: string, data?: string, mimeType?: string, name?: string}` — requires
   exactly one of a filesystem path on the daemon host or a base64 payload. Absolute paths and
   symlinks may point anywhere; relative paths resolve from the session cwd, including `..`.
@@ -708,7 +711,9 @@ receives that session-bound secret. It may then call
 `internal.mcpCallTool {name: string, arguments: object}` → the upstream MCP call result,
 `internal.mcpSearchProjects`, `internal.mcpSearchSessions`,
 `internal.mcpReadSessionTranscript {sessionId: string, limit?: int, beforeSeq?: int}`,
-`internal.mcpArchiveSession {sessionId: string, archived: boolean}`, and
+`internal.mcpArchiveSession {sessionId: string, archived: boolean}`,
+`internal.mcpSetSessionSummary {summary: string}` → `{session: Session}` (the authenticated
+session only), and
 `internal.mcpDisplayImage`. It cannot call the public daemon API and receives no broadcasts. Public
 clients cannot use the internal methods without the MCP secret.
 

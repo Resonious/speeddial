@@ -103,6 +103,7 @@ const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpSearchSessions',
   'internal.mcpReadSessionTranscript',
   'internal.mcpArchiveSession',
+  'internal.mcpSetSessionSummary',
   'internal.mcpDisplayImage',
 ];
 
@@ -477,6 +478,10 @@ class SpeedDialServer {
           params,
         ),
         'internal.mcpArchiveSession' => _mcpArchiveSession(client, params),
+        'internal.mcpSetSessionSummary' => _mcpSetSessionSummary(
+          client,
+          params,
+        ),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
         _ => throw DaemonError(
           kErrUnauthenticated,
@@ -715,6 +720,18 @@ class SpeedDialServer {
     final Session session = existing.archived == rawArchived
         ? existing
         : await _engine.archive(sessionId, rawArchived);
+    return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _mcpSetSessionSummary(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final String summary = _requiredString(params, 'summary').trim();
+    if (summary.isEmpty) {
+      throw DaemonError(_kErrInvalidParams, 'summary must be non-empty');
+    }
+    final Session session = await _engine.rename(client.mcpSessionId!, summary);
     return <String, Object?>{'session': session.toJson()};
   }
 

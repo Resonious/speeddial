@@ -112,6 +112,7 @@ void main() {
     final result = (initialized['result'] as Map).cast<String, Object?>();
     expect(result['protocolVersion'], '2025-11-25');
     expect(result['capabilities'], contains('tools'));
+    expect(result['instructions'], contains(kSessionSummaryInstruction));
 
     final Map<String, Object?> listed = await request(2, 'tools/list');
     final listedResult = (listed['result'] as Map).cast<String, Object?>();
@@ -125,6 +126,7 @@ void main() {
       'read_session_transcript',
       'archive_session',
       'unarchive_session',
+      'set_session_summary',
       'display_image',
       'workspace__read',
     ]);
@@ -138,6 +140,28 @@ void main() {
       'offline: connection refused',
     );
   });
+
+  test(
+    'set_session_summary trims text and rejects invalid summaries',
+    () async {
+      final Map<String, Object?> response = await request(1, 'tools/call', {
+        'name': 'set_session_summary',
+        'arguments': {'summary': '  Add session summaries  '},
+      });
+      expect((response['result'] as Map)['isError'], isFalse);
+      expect(calls.single.method, 'internal.mcpSetSessionSummary');
+      expect(calls.single.params, {'summary': 'Add session summaries'});
+      calls.clear();
+      for (final Object? summary in <Object?>[null, '', '  ', 42]) {
+        final Map<String, Object?> invalid = await request(2, 'tools/call', {
+          'name': 'set_session_summary',
+          'arguments': {'summary': summary},
+        });
+        expect((invalid['result'] as Map)['isError'], isTrue);
+      }
+      expect(calls, isEmpty);
+    },
+  );
 
   test('discovery returns filtered schemas and visible warnings', () async {
     final Map<String, Object?> response = await request(1, 'tools/call', {

@@ -110,7 +110,8 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     Built-in tools bridge over an authenticated, session-bound loopback
                     WebSocket to query projects/session history (including archived
                     sessions), browse message-only transcript pages, archive or restore
-                    other sessions, or persist an attachment and emit an image event.
+                    other sessions, set the calling session’s summary/title, or persist an
+                    attachment and emit an image event.
                     McpProxySession owns
                     the matching managed upstreams for that bridge connection, starts stdio
                     servers in the session cwd, drives Streamable HTTP JSON/SSE sessions,

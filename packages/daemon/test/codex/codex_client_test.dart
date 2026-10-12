@@ -200,6 +200,7 @@ void main() {
         instructions,
         startsWith('Keep the configured project instructions.'),
       );
+      expect(instructions, contains('set_session_summary'));
       expect(instructions, contains('discover_mcp_tools'));
       expect(instructions, contains('call_mcp_tool'));
       expect(instructions, contains('before trying web access'));
