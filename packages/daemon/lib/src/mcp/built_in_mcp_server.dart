@@ -447,11 +447,27 @@ class BuiltInMcpServer {
   Future<Map<String, Object?>> _showExplainer(
     Map<String, Object?> arguments,
   ) async {
+    switch (arguments['help']) {
+      case true:
+        return _textResult(kShowExplainerReference);
+      case null || false:
+        break;
+      default:
+        throw ArgumentError('help must be a boolean');
+    }
+    if (!arguments.containsKey('svg')) {
+      return _explainerRejected(<String>[
+        'svg is required; call show_explainer with {"help": true} for the '
+            'format reference',
+      ]);
+    }
+    final Map<String, Object?> spec = Map<String, Object?>.of(arguments)
+      ..remove('help');
     // Validate here first so the agent gets every problem in one result; the
     // daemon validates again before persisting.
     final ExplainerDocument document;
     try {
-      document = ExplainerDocument.parse(ExplainerSpec.fromJson(arguments));
+      document = ExplainerDocument.parse(ExplainerSpec.fromJson(spec));
     } on FormatException catch (error) {
       return _explainerRejected(<String>[error.message]);
     } on ExplainerException catch (error) {
@@ -750,10 +766,18 @@ class BuiltInMcpServer {
       'inputSchema': <String, Object?>{
         'type': 'object',
         'properties': <String, Object?>{
+          'help': <String, Object?>{
+            'type': 'boolean',
+            'description':
+                'true returns the format reference and a worked example; '
+                'nothing is displayed.',
+          },
           'title': <String, Object?>{'type': 'string', 'maxLength': 200},
           'svg': <String, Object?>{
             'type': 'string',
-            'description': 'The scene: one <svg viewBox="..."> document in the subset described above.',
+            'description':
+                'The scene: one <svg viewBox="..."> document in the subset '
+                'the help reference describes.',
           },
           'steps': <String, Object?>{
             'type': 'array',
@@ -783,7 +807,6 @@ class BuiltInMcpServer {
             },
           },
         },
-        'required': <String>['svg'],
         'additionalProperties': false,
       },
       'annotations': <String, Object?>{
@@ -808,10 +831,23 @@ const Map<String, Object?> _kExplainerChangesSchema = <String, Object?>{
   },
 };
 
+/// Kept short: harnesses truncate long tool descriptions, so the full format
+/// lives in [kShowExplainerReference], returned by `{"help": true}`.
+const String kShowExplainerDescription =
+    "Show an interactive explainer in the user's SpeedDial timeline: an SVG "
+    'diagram the user steps through, with animated transitions, toggles, and '
+    'hover/tap tooltips. Use it when a visual walkthrough explains better '
+    'than prose: architectures, request flows, algorithms, data structures, '
+    'state machines. Before your first explainer in a session, call it with '
+    '{"help": true} alone. That returns the format reference (SVG subset, '
+    'theme colors, steps, toggles) and a worked example, and displays '
+    'nothing. Invalid explainers are rejected with every problem listed; fix '
+    'them all and call again.';
+
 /// The agent-facing explainer format. Keep in sync with PROTOCOL.md
 /// "Explainers" and the parser in speeddial_protocol.
-const String kShowExplainerDescription = r'''
-Show an interactive explainer in the user's SpeedDial timeline: an SVG diagram the user pages through step by step, with animated transitions, optional toggles, and hover/tap tooltips. Use it when a visual walkthrough explains better than prose: architectures, request flows, algorithms, data structures, state machines. Invalid input is rejected with every problem listed; fix them all and call again.
+const String kShowExplainerReference = r'''
+show_explainer format reference. Arguments: {"title"?, "svg", "steps"?, "toggles"?}. Invalid input is rejected with every problem listed; fix them all and call again.
 
 SVG subset. Root <svg viewBox="0 0 W H"> is required (W 600-800 suits the chat column). Elements: g, rect, circle, ellipse, line, polyline, polygon, path (all commands incl. arcs), text, tspan (x/y/dx/dy; dy may use em), defs, marker (arrowheads via marker-end="url(#id)"), title (tooltip for its parent element), style (simple selectors only: tag, .class, #id, tag.class). Attributes: fill, stroke, stroke-width, stroke-dasharray, stroke-linecap, stroke-linejoin, opacity, fill-opacity, stroke-opacity, font-size, font-weight, font-family (sans or monospace), font-style, text-anchor, dominant-baseline, display, visibility, transform, and geometry. Not supported: gradients, filters, clipPath, mask, image, use, foreignObject, scripts, event handlers, CSS/SMIL animation, % and em lengths (except dy/dx).
 

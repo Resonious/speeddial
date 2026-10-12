@@ -466,10 +466,52 @@ void main() {
     expect(calls, isEmpty);
   });
 
-  test('the show_explainer description example is a valid explainer', () {
-    final String description = kShowExplainerDescription;
-    final String example = description.substring(
-      description.indexOf('Example: ') + 'Example: '.length,
+  test(
+    'show_explainer help returns the reference without displaying',
+    () async {
+      final Map<String, Object?> response = await request(
+        1,
+        'tools/call',
+        <String, Object?>{
+          'name': 'show_explainer',
+          'arguments': <String, Object?>{'help': true},
+        },
+      );
+      final result = (response['result'] as Map).cast<String, Object?>();
+      expect(result['isError'], isFalse);
+      expect(
+        ((result['content'] as List).single as Map)['text'],
+        kShowExplainerReference,
+      );
+      expect(calls, isEmpty);
+
+      final Map<String, Object?> missing = await request(
+        2,
+        'tools/call',
+        <String, Object?>{
+          'name': 'show_explainer',
+          'arguments': <String, Object?>{'title': 'No scene'},
+        },
+      );
+      final missingResult = (missing['result'] as Map).cast<String, Object?>();
+      expect(missingResult['isError'], isTrue);
+      expect(
+        ((missingResult['content'] as List).single as Map)['text'],
+        contains('{"help": true}'),
+      );
+      expect(calls, isEmpty);
+    },
+  );
+
+  test('the show_explainer description stays short enough not to truncate', () {
+    expect(kShowExplainerDescription.length, lessThan(800));
+    expect(kShowExplainerDescription, contains('{"help": true}'));
+  });
+
+  test('the show_explainer reference example is a valid explainer', () {
+    final String reference = kShowExplainerReference;
+    final String example = reference.substring(
+      reference.indexOf('Example: ') + 'Example: '.length,
     );
     final ExplainerDocument document = ExplainerDocument.parse(
       ExplainerSpec.fromJson(

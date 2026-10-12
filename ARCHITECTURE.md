@@ -119,8 +119,9 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     sessions), browse message-only transcript pages, archive or restore
                     other sessions, set the calling session’s summary/title, persist an
                     attachment and emit an image event, or validate and emit an explainer
-                    (`show_explainer`; its description is the agent-facing format spec,
-                    with a worked example that a test keeps valid).
+                    (`show_explainer`; a short description points agents at
+                    `{"help": true}`, which returns the format reference with a worked
+                    example that a test keeps valid).
                     McpProxySession owns
                     the matching managed upstreams for that bridge connection, starts stdio
                     servers in the session cwd, drives Streamable HTTP JSON/SSE sessions,

@@ -754,13 +754,16 @@ home described above. It exposes:
   symlinks may point anywhere; relative paths resolve from the session cwd, including `..`.
   The decoded image is capped at 8 MiB, persisted as an attachment, and emitted as an `image`
   event; clients fetch it through `attachments.read`. The MCP result also includes MCP image content for the model.
-- `show_explainer {title?: string, svg: string, steps?: ExplainerStep[], toggles?: ExplainerToggle[]}`:
+- `show_explainer {help?: boolean, title?: string, svg?: string, steps?: ExplainerStep[], toggles?: ExplainerToggle[]}`:
+  with `help: true`, returns the agent-facing format reference and a worked
+  example as text and displays nothing. The tool description stays short
+  (harnesses truncate long descriptions) and tells agents to request help
+  before their first explainer. Otherwise `svg` is required: the tool
   validates the arguments as an `Explainer` (see Explainers) and emits an
   `explainer` event. When invalid, it shows nothing and returns `isError: true`
   with every problem listed, so the agent can fix them all in one retry. On
   success the text result reports the step and toggle counts plus any ignored
-  attributes. The tool description is the agent-facing copy of the format and
-  includes a worked example.
+  attributes.
 
 The subprocess connects to `/ws` over loopback and must first call
 `internal.mcpAuthenticate {secret: string, sessionId: string}`. A distinct random secret and the
