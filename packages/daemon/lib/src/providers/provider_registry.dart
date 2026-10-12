@@ -36,6 +36,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../paths.dart';
+import 'claude_instructions.dart';
 
 /// Runs a provider's model-listing command and returns the parsed ids.
 ///
@@ -71,6 +72,7 @@ class ProviderSpec {
     required this.name,
     required this.command,
     this.yoloCommand,
+    this.systemPromptAppend,
     this.protocol = ProviderProtocol.acp,
     this.models = const <String>[],
     this.modelsCommand,
@@ -92,6 +94,10 @@ class ProviderSpec {
   /// to select a permission policy, so the engine's request handler remains
   /// their provider-neutral yolo fallback.
   final List<String>? yoloCommand;
+
+  /// Guidance appended to the native Claude Code prompt through ACP metadata.
+  /// Null for providers without support for that adapter extension.
+  final String? systemPromptAppend;
 
   /// The subprocess command for a session with the requested permission mode.
   List<String> commandFor({required bool yolo}) =>
@@ -151,6 +157,7 @@ class ProviderRegistry {
         id: 'claude',
         name: 'Claude Code',
         command: <String>['npx', '-y', '@agentclientprotocol/claude-agent-acp'],
+        systemPromptAppend: claudeSystemPromptAppend,
       ),
       'codex': const ProviderSpec(
         id: 'codex',
@@ -559,6 +566,7 @@ class ProviderRegistry {
         id: id,
         name: name,
         command: rawCommand.cast<String>(),
+        systemPromptAppend: previous?.systemPromptAppend,
         protocol: switch (specMap['protocol']) {
           'ante' => ProviderProtocol.ante,
           'codex' => ProviderProtocol.codex,

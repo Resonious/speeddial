@@ -686,6 +686,76 @@ void main() {
     expect(history.whereType<SessionErrorEvent>(), isEmpty);
   });
 
+  for (final String providerId in <String>['claude', 'fake']) {
+    test(
+      '$providerId system prompt guidance survives provider resume',
+      () async {
+        final ProviderRegistry providers = ProviderRegistry(
+          configOverrides: <String, Object?>{
+            'providers': <String, Object?>{
+              for (final String id in <String>['claude', 'fake'])
+                id: <String, Object?>{
+                  'name': 'Fake $id',
+                  'command': <String>[
+                    Platform.resolvedExecutable,
+                    resolveFixture(),
+                  ],
+                },
+            },
+          },
+        );
+        await engine.dispose();
+        engine = SessionEngine(store: store, providers: providers);
+        await engine.restore();
+        File(p.join(tempDir.path, 'agent.capture_session'))
+            .writeAsStringSync('');
+
+        final Session session = await engine.createSession(
+          projectId: project.id,
+          providerId: providerId,
+        );
+        final Map<String, Object?> created = jsonDecode(
+          File(p.join(tempDir.path, 'agent.session_new.json'))
+              .readAsStringSync(),
+        ) as Map<String, Object?>;
+        if (providerId == 'claude') {
+          final Map<String, Object?> metadata =
+              created['_meta']! as Map<String, Object?>;
+          final Map<String, Object?> prompt =
+              metadata['systemPrompt']! as Map<String, Object?>;
+          expect(prompt['type'], 'preset');
+          expect(prompt['preset'], 'claude_code');
+          final String instructions = prompt['append']! as String;
+          expect(instructions, contains('TaskOutput with block: true'));
+          expect(instructions, contains('finish the dependent work'));
+          expect(instructions, contains('persistent service'));
+          expect(instructions, contains('stop or pause'));
+        } else {
+          expect(created, isNot(contains('_meta')));
+        }
+        expect(store.listEvents(session.id).events, isEmpty);
+
+        await engine.dispose();
+        engine = SessionEngine(store: store, providers: providers);
+        await engine.restore();
+        await engine.sendMessage(session.id, 'weird');
+        await waitFor(
+          () => store.getSession(session.id)!.status == SessionStatus.idle,
+        );
+        final Map<String, Object?> loaded = jsonDecode(
+          File(p.join(tempDir.path, 'agent.session_load.json'))
+              .readAsStringSync(),
+        ) as Map<String, Object?>;
+        expect(loaded['sessionId'], store.providerSessionIdOf(session.id));
+        expect(loaded['_meta'], created['_meta']);
+        final List<SessionEvent> history = store.listEvents(session.id).events;
+        expect(history.whereType<UserMessageEvent>().single.text, 'weird');
+        expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+        expect(history.whereType<SessionErrorEvent>(), isEmpty);
+      },
+    );
+  }
+
   test('ACP request errors do not claim the process exited', () async {
     final session = await engine.createSession(
       projectId: project.id,

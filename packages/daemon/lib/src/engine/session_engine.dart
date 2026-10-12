@@ -882,6 +882,7 @@ class SessionEngine {
         command,
         cwd: session.cwd,
         environment: environment,
+        systemPromptAppend: spec.systemPromptAppend,
         requestPermission: permissionHandler,
         readTextFile: (providerSessionId, path) =>
             _readTextFile(session.id, path),

@@ -60,6 +60,11 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
                     Session creation/resume uses existing provider credentials; advertised
                     login methods are not automatically invoked (Claude uses terminal login).
+                    Claude Code creation and resume append SpeedDial guidance through the
+                    adapter's `_meta.systemPrompt` preset extension, preserving its native
+                    system prompt. The guidance tells Claude to wait for finite background
+                    work, inspect its results, and finish dependent work before ending the
+                    turn; intentionally persistent services may remain running.
                     Explicit busy prompt rejections (the agent is running its own
                     background turn — OMP continues subagent-driven work after
                     yielding) are retried with backoff until the agent accepts or
