@@ -448,7 +448,9 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              "Search “retry” in src") — over the command cleaned of login-shell
                              wrappers, `cd <dir> &&`, env assignments and long paths, or the
                              file's path (tool_call_summary.dart); expandable raw
-                             input/content/diff),
+                             input/content/diff, capped in height with a scrollbar of its own;
+                             a run's latest line left open fades through from one call's
+                             details to the next as the box eases to its new height),
                              including lazily loaded image outputs. Rows stay collapsed until
                              tapped. Tool calls and the thinking among them fold into one run
                              (`ToolRunItem`, tool_run.dart; providers think between calls more

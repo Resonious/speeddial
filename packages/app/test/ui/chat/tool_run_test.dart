@@ -146,6 +146,79 @@ void main() {
       expect(find.text('flutter test').hitTestable(), findsOneWidget);
       expect(find.text('All passed').hitTestable(), findsOneWidget);
     });
+
+    ToolCall shell(String id, String description, int lines) => ToolCall(
+      id: id,
+      title: description,
+      kind: 'execute',
+      status: ToolCallStatus.completed,
+      content: <ToolCallContent>[
+        ToolCallText(
+          text: List<String>.generate(lines, (int i) => '$id $i').join('\n'),
+        ),
+      ],
+      locations: const <String>[],
+    );
+    final Finder details = find.byKey(const Key('tool-details-scroll'));
+
+    testWidgets('an open latest line glides from one call\'s details to the '
+        'next', (WidgetTester tester) async {
+      // Already counted, so only the details can change the card's height.
+      final ToolCallTimelineItem earlier = item(_call('a', 'Read a'));
+      final ToolCallTimelineItem first = item(shell('check', 'Check it', 2));
+      final ToolCallTimelineItem next = item(shell('suite', 'Run it', 200));
+      await tester.pumpWidget(app(<ToolCallTimelineItem>[earlier, first]));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Check it'));
+      await tester.pumpAndSettle();
+      final double before = height(tester);
+
+      await tester.pumpWidget(
+        app(<ToolCallTimelineItem>[earlier, first, next]),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      // The next call's details fade in over the last one's while the card
+      // eases toward its new height.
+      expect(details, findsNWidgets(2));
+      final double midway = height(tester);
+      await tester.pumpAndSettle();
+      expect(details, findsOneWidget);
+      expect(midway, greaterThan(before));
+      expect(midway, lessThan(height(tester)));
+      // However long the output, the box stops at its cap and scrolls.
+      expect(find.textContaining('suite 199'), findsOneWidget);
+      expect(tester.getSize(details).height, lessThanOrEqualTo(280));
+      final ScrollPosition scroll = tester
+          .state<ScrollableState>(
+            find
+                .descendant(of: details, matching: find.byType(Scrollable))
+                .first,
+          )
+          .position;
+      expect(scroll.pixels, 0);
+      expect(scroll.maxScrollExtent, greaterThan(1000));
+    });
+
+    testWidgets('under reduced motion the next call\'s details show at once', (
+      WidgetTester tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      final ToolCallTimelineItem first = item(shell('check', 'Check it', 2));
+      await tester.pumpWidget(app(<ToolCallTimelineItem>[first]));
+      await tester.tap(find.text('Check it'));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        app(<ToolCallTimelineItem>[first, item(shell('suite', 'Run it', 3))]),
+      );
+      await tester.pump();
+      expect(details, findsOneWidget);
+      expect(find.textContaining('suite 0'), findsOneWidget);
+    });
   });
 
   group('thinking in runs', () {

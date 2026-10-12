@@ -818,7 +818,7 @@ void main() {
     );
   });
 
-  testWidgets('collapsing a large tool call removes its height immediately', (
+  testWidgets('a long tool output scrolls within a capped box', (
     WidgetTester tester,
   ) async {
     tester.view.physicalSize = const Size(800, 600);
@@ -852,13 +852,24 @@ void main() {
 
     await tester.tap(find.text('Long command'));
     await tester.pumpAndSettle();
-    expect(tester.getSize(find.byType(ToolCallCard)).height, greaterThan(500));
-    await tester.ensureVisible(find.text('Long command'));
+    // Five hundred lines, but the card stops at its cap.
+    final double open = tester.getSize(find.byType(ToolCallCard)).height;
+    expect(open, greaterThan(200));
+    expect(open, lessThan(320));
+    // Its output scrolls inside it instead.
+    final Finder details = find.byKey(const Key('tool-details-scroll'));
+    final ScrollPosition scroll = tester
+        .state<ScrollableState>(
+          find.descendant(of: details, matching: find.byType(Scrollable)).first,
+        )
+        .position;
+    await tester.drag(details, const Offset(0, -150));
     await tester.pumpAndSettle();
+    expect(scroll.pixels, greaterThan(0));
+
     await tester.tap(find.text('Long command'));
-    await tester.pump();
-    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
     await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
   });
 
   testWidgets('collapsing a large activity removes its height immediately', (

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -375,16 +376,108 @@ class _ToolCallCardState extends State<ToolCallCard>
                   ? CrossFadeState.showSecond
                   : CrossFadeState.showFirst,
               firstChild: const SizedBox(width: double.infinity, height: 0),
-              secondChild: _ToolCallContentList(
+              secondChild: _CappedDetails(
                 key: _detailsKey,
-                toolCall: toolCall,
-                command: widget.typed ? summary.detail : null,
-                approval: widget.approval,
-                inProgress: widget.active,
-                attachmentLoader: _expanded ? widget.attachmentLoader : null,
+                call: toolCall.id,
+                still: _still,
+                child: _ToolCallContentList(
+                  toolCall: toolCall,
+                  command: widget.typed ? summary.detail : null,
+                  approval: widget.approval,
+                  inProgress: widget.active,
+                  attachmentLoader: _expanded ? widget.attachmentLoader : null,
+                ),
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A call's details, no taller than a set height: longer ones scroll within,
+/// under their own scrollbar. When the call changes, as it does in a run's
+/// latest line left open, the next call's details fade in over the last
+/// one's while the box eases to its new height, so the timeline glides
+/// rather than jumps.
+class _CappedDetails extends StatelessWidget {
+  const _CappedDetails({
+    super.key,
+    required this.call,
+    required this.still,
+    required this.child,
+  });
+
+  /// Whose details these are.
+  final String call;
+  final bool still;
+  final Widget child;
+
+  /// The tallest the box grows; a smaller share of a short screen.
+  static double maxHeightFor(BuildContext context) =>
+      math.min(280, MediaQuery.sizeOf(context).height * 0.4);
+
+  @override
+  Widget build(BuildContext context) {
+    // A new call starts from the top of its own details.
+    final Widget details = _ScrollingDetails(
+      key: ValueKey<String>(call),
+      maxHeight: maxHeightFor(context),
+      child: child,
+    );
+    if (still) return details;
+    // Fading through, the last call's details out before the next one's
+    // in, so the two never blur together; the cross-fade that opens the
+    // details eases the box to its new height meanwhile.
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 260),
+      switchInCurve: const Interval(0.45, 1, curve: Curves.easeOut),
+      switchOutCurve: const Interval(0.45, 1, curve: Curves.easeIn),
+      layoutBuilder: (Widget? current, List<Widget> previous) => Stack(
+        alignment: Alignment.topCenter,
+        children: <Widget>[...previous, ?current],
+      ),
+      child: details,
+    );
+  }
+}
+
+class _ScrollingDetails extends StatefulWidget {
+  const _ScrollingDetails({
+    super.key,
+    required this.maxHeight,
+    required this.child,
+  });
+
+  final double maxHeight;
+  final Widget child;
+
+  @override
+  State<_ScrollingDetails> createState() => _ScrollingDetailsState();
+}
+
+class _ScrollingDetailsState extends State<_ScrollingDetails> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: widget.maxHeight),
+      child: Scrollbar(
+        controller: _scroll,
+        thumbVisibility: true,
+        child: SingleChildScrollView(
+          key: const Key('tool-details-scroll'),
+          controller: _scroll,
+          primary: false,
+          child: widget.child,
+        ),
       ),
     );
   }
@@ -418,7 +511,6 @@ class _StatusPill extends StatelessWidget {
 
 class _ToolCallContentList extends StatelessWidget {
   const _ToolCallContentList({
-    super.key,
     required this.toolCall,
     required this.command,
     required this.approval,
