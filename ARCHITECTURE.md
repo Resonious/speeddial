@@ -477,13 +477,18 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              provider delivers it (typewriter.dart: a clip and a cursor over the
                              laid-out markdown, measured in paint; the bubble grows a line at a
                              time; progress is kept per row so scrolling back does not retype).
-                             Freshly typed text glows behind it like hot metal, amber cooling
-                             to nothing over a second, so a message that lands at once sweeps
-                             through in a wave of heat; sparks stay sparse at speed rather than
-                             spraying dust. The ember waits at the end while the message may go
-                             on, then goes out with a pop once it is done: a flash, a burst of
-                             sparks the air soon slows, and wisps of smoke like a delivered
-                             message's steam;
+                             Freshly typed text glows behind it like hot metal, a soft amber
+                             cooling to nothing within a second, so a message that lands at
+                             once sweeps through in a wave of heat; sparks stay sparse at speed
+                             rather than spraying dust. The ember waits at the end while the
+                             message may go on, then goes out with a pop once it is done: a
+                             flash, a burst of sparks the air soon slows, and wisps of smoke
+                             like a delivered message's steam; a compaction, by any harness, as
+                             a divider (`CompactionItem`, compaction.dart: "Reducing the
+                             conversation…" shimmering while bubbles rise off the line, then
+                             "Conversation reduced · 313k → 48k tokens" from the harness's
+                             counts or the usage around it, opening to the summary when there
+                             is one);
                              plan panel, permission banner with option buttons, composer
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips,

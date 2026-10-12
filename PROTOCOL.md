@@ -333,6 +333,13 @@ subagent. Codex sends one per subagent interaction, with the subagent's path as
 when launched, then `completed` or `failed` with its report as `details[1]`.
 Each action the subagent takes is a further activity, `<that id>-step-<n>`.
 
+`compaction` activities mark the agent condensing its context, one id per
+compaction: `running` while it works, then `completed` or `failed`. Ante's
+settle with the summary as `details[0]`. Claude's harness reports its own as a
+"Compact conversation" tool call instead, whose `rawOutput` once completed
+carries `trigger`, `preTokens` and `postTokens`. Clients show each as a divider
+in the timeline, sized by those counts or by the `usage` events around it.
+
 ### Explainers
 
 An explainer is an SVG scene the user pages through. Agents author it with the

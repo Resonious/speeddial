@@ -63,6 +63,43 @@ void main() {
     expect(result.stopReason, 'end_turn');
   });
 
+  test(
+    'each compaction is its own activity, settled with its summary',
+    () async {
+      final AnteClient client = spawnAnte();
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+      final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+      final StreamSubscription<AcpSessionUpdate> subscription = client
+          .sessionUpdates(created.sessionId)
+          .listen(updates.add);
+      addTearDown(subscription.cancel);
+      final NativeCommand compact = (await client.availableCommands(
+        created.sessionId,
+      )).firstWhere((NativeCommand command) => command.name == 'compact');
+
+      for (int i = 0; i < 2; i++) {
+        await client.runNativeCommand(created.sessionId, compact, '');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final List<AcpAgentActivityUpdate> compactions = updates
+          .whereType<AcpAgentActivityUpdate>()
+          .where((AcpAgentActivityUpdate update) => update.kind == 'compaction')
+          .toList();
+      expect(compactions.map((AcpAgentActivityUpdate u) => u.status), <String>[
+        'running',
+        'completed',
+        'running',
+        'completed',
+      ]);
+      // Started and settled under one id, a new one each time.
+      expect(compactions[0].id, compactions[1].id);
+      expect(compactions[2].id, compactions[3].id);
+      expect(compactions[2].id, isNot(compactions[0].id));
+      expect(compactions[1].details, <String>['Compacted context']);
+    },
+  );
+
   test('starts a session and exposes Ante model and effort options', () async {
     final AnteClient client = spawnAnte();
     addTearDown(client.dispose);

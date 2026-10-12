@@ -834,7 +834,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
       case 'InfoBlockAppend':
         _handleInfoBlockAppend(_map(value));
       case 'CompactEnd':
-        _onCompactEnd(_map(value));
+        _onCompactEnd(eventId, _map(value));
         _completeCommand(parent);
       case 'ContextReport':
         _handleContextReport(eventId, _map(value));
@@ -1252,7 +1252,9 @@ class AnteClient implements AgentClient, NativeCommandClient {
   }
 
   void _onCompactStart(String eventId) {
-    final String id = 'ante-compact-${_session?.sessionId ?? eventId}';
+    // One activity per compaction: a session compacts again and again, and a
+    // shared id would fold every one into the first one's row.
+    final String id = 'ante-compact-$eventId';
     _compactionActivityId = id;
     final AcpAgentActivityUpdate activity = AcpAgentActivityUpdate(
       id: id,
@@ -1264,10 +1266,8 @@ class AnteClient implements AgentClient, NativeCommandClient {
     _publishActivity(activity);
   }
 
-  void _onCompactEnd(Map<String, Object?> value) {
-    final String id =
-        _compactionActivityId ??
-        'ante-compact-${_session?.sessionId ?? 'unknown'}';
+  void _onCompactEnd(String eventId, Map<String, Object?> value) {
+    final String id = _compactionActivityId ?? 'ante-compact-$eventId';
     final String? summary = value['summary'] as String?;
     final AcpAgentActivityUpdate activity = AcpAgentActivityUpdate(
       id: id,

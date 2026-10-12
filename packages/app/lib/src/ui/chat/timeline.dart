@@ -10,6 +10,7 @@ import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'catching_up.dart';
+import 'compaction.dart';
 import 'explainer/explainer_view.dart';
 import 'history_expansion.dart';
 import 'landing_sparks.dart';
@@ -247,6 +248,38 @@ class _SubagentPresentation {
   final List<String> details;
 }
 
+/// The agent boiled the conversation down to fit its context window, by
+/// whichever harness: Codex and Ante report a `compaction` activity (Ante's
+/// settles with its summary), Claude a "Compact conversation" call carrying
+/// its token counts.
+class CompactionItem extends TimelineItem {
+  const CompactionItem({
+    super.id,
+    required this.status,
+    this.active = false,
+    this.summary,
+    this.before,
+    this.after,
+    this.automatic,
+  });
+
+  final AgentActivityStatus status;
+
+  /// Still reducing in a turn that is running.
+  final bool active;
+
+  /// What the conversation was boiled down to, when the harness says.
+  final String? summary;
+
+  /// Context tokens in use before and after: from the harness when it says,
+  /// otherwise from the usage reported around it.
+  final int? before;
+  final int? after;
+
+  /// Whether the agent compacted on its own rather than on request.
+  final bool? automatic;
+}
+
 /// A full-replacement plan view.
 class PlanTimelineItem extends TimelineItem {
   const PlanTimelineItem({super.id, required this.entries});
@@ -414,6 +447,10 @@ List<TimelineItem> deriveTimelineItems(
     member(key, _subagentName(key)).add(activity);
   }
 
+  // The fold leaves usage out; the raw events say what each compaction did
+  // to the context.
+  final Map<String, (int?, int?)> reduced = _contextAroundCompactions(events);
+
   int turnIndex = 0;
   final List<FoldedSessionEntry> folded = foldSessionEvents(events);
 
@@ -476,6 +513,26 @@ List<TimelineItem> deriveTimelineItems(
             active: running && index == folded.length - 1,
           ),
         );
+      case FoldedToolCall(:final ToolCall latest) when _isCompaction(latest):
+        final Object? output = latest.rawOutput;
+        final Map<Object?, Object?> report = output is Map<Object?, Object?>
+            ? output
+            : const <Object?, Object?>{};
+        final AgentActivityStatus status = _activityStatusFor(latest.status);
+        items.add(
+          CompactionItem(
+            id: ('compaction', latest.id),
+            status: status,
+            active: running && status == AgentActivityStatus.running,
+            before: _count(report['preTokens']) ?? reduced[latest.id]?.$1,
+            after: _count(report['postTokens']) ?? reduced[latest.id]?.$2,
+            automatic: switch (report['trigger']) {
+              'automatic' || 'auto' => true,
+              'manual' => false,
+              _ => null,
+            },
+          ),
+        );
       case FoldedToolCall e:
         if (_isLegacySubagentTool(e.latest)) {
           for (final ToolCall snapshot in e.snapshots) {
@@ -492,6 +549,19 @@ List<TimelineItem> deriveTimelineItems(
             ),
           );
         }
+      case FoldedAgentActivity(:final AgentActivity activity)
+          when activity.kind == 'compaction':
+        final String summary = activity.details.join('\n\n').trim();
+        items.add(
+          CompactionItem(
+            id: ('compaction', activity.id),
+            status: activity.status,
+            active: running && activity.status == AgentActivityStatus.running,
+            summary: summary.isEmpty ? null : summary,
+            before: reduced[activity.id]?.$1,
+            after: reduced[activity.id]?.$2,
+          ),
+        );
       case FoldedAgentActivity(:final AgentActivity activity)
           when activity.kind == 'subagent':
         foldSubagentActivity(activity);
@@ -639,6 +709,54 @@ bool _isActiveToolStatus(ToolCallStatus status) => switch (status) {
   ToolCallStatus.pending || ToolCallStatus.running => true,
   ToolCallStatus.completed || ToolCallStatus.failed => false,
 };
+
+/// The context in use around each compaction, by its id: the last usage
+/// reported before it began, and the first after that came in lower (one
+/// taken before it took hold would not have shrunk).
+Map<String, (int?, int?)> _contextAroundCompactions(List<SessionEvent> events) {
+  final Map<String, (int?, int?)> around = <String, (int?, int?)>{};
+  final List<String> waiting = <String>[];
+  int? context;
+  void began(String id) {
+    if (around.containsKey(id)) return;
+    around[id] = (context, null);
+    waiting.add(id);
+  }
+
+  for (final SessionEvent event in events) {
+    switch (event) {
+      case AgentActivityEvent(:final AgentActivity activity)
+          when activity.kind == 'compaction':
+        began(activity.id);
+      case ToolCallEvent(:final ToolCall toolCall) when _isCompaction(toolCall):
+        began(toolCall.id);
+      case UsageEvent(:final UsageInfo usage):
+        final int? used = usage.contextUsedTokens;
+        if (used == null) break;
+        waiting.removeWhere((String id) {
+          final int? before = around[id]!.$1;
+          if (before != null && used >= before) return false;
+          around[id] = (before, used);
+          return true;
+        });
+        context = used;
+      default:
+        break;
+    }
+  }
+  return around;
+}
+
+/// Claude's compaction, which its harness reports as a tool call.
+bool _isCompaction(ToolCall toolCall) =>
+    _compactionTitle.hasMatch(toolCall.title.trim());
+
+final RegExp _compactionTitle = RegExp(
+  r'^compact(ing)?( the)? conversation',
+  caseSensitive: false,
+);
+
+int? _count(Object? value) => value is num ? value.toInt() : null;
 
 bool _isLegacySubagentTool(ToolCall toolCall) =>
     toolCall.title.toLowerCase() == 'agent';
@@ -1316,6 +1434,7 @@ class _TimelineRow extends StatelessWidget {
         attachmentLoader: attachmentLoader,
       ),
       AgentActivityItem i => _ActivityCard(activity: i.activity),
+      CompactionItem i => CompactionRow(key: ValueKey<Object?>(i.id), item: i),
       PlanTimelineItem i => PlanPanel(entries: i.entries),
       PermissionRequestItem i => _PermissionRecord(
         request: i.request,
