@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +9,7 @@ import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
+import 'catching_up.dart';
 import 'history_expansion.dart';
 import 'landing_sparks.dart';
 import 'latest_button.dart';
@@ -711,11 +714,17 @@ class Timeline extends StatefulWidget {
     this.activity = 0,
     this.cwd,
     this.unreachable,
+    this.catchingUp = false,
   });
 
   /// The session's working directory: tool rows show paths under it as
   /// relative ones.
   final String? cwd;
+
+  /// Set while missed events are refetched after a reconnect (see
+  /// [CatchingUpStrip]). The rows they bring rise into place once it lands,
+  /// and a view at the live end lands in sparks.
+  final bool catchingUp;
 
   /// Set while the session's daemon is out of reach (see
   /// [TurnFlameRow.unreachable]).
@@ -786,6 +795,52 @@ class _TimelineState extends State<Timeline> {
   /// Delivered messages whose row has been built, so the pop plays once.
   final Set<int> _popped = <int>{};
 
+  /// The rows showing as a catch-up began; whatever else it brings arrives.
+  Set<Object>? _beforeCatchUp;
+
+  /// Rows the last catch-up brought, with how long each waits to rise; only
+  /// for the frame it lands in, so rows scrolled to later just show.
+  Map<Object, Duration> _arrivals = const <Object, Duration>{};
+
+  /// How many of a catch-up's newest rows (about a screenful) rise one
+  /// after another.
+  static const int _stagger = 4;
+
+  Set<Object> _identities(List<TimelineItem> items) => <Object>{
+    for (int i = 0; i < items.length; i++) _identity(items[i], i),
+  };
+
+  void _arrive() {
+    final Set<Object>? before = _beforeCatchUp;
+    _beforeCatchUp = null;
+    if (before == null ||
+        (MediaQuery.maybeDisableAnimationsOf(context) ?? false)) {
+      return;
+    }
+    final List<Object> fresh = <Object>[
+      for (int i = 0; i < widget.items.length; i++)
+        if (!before.contains(_identity(widget.items[i], i)))
+          _identity(widget.items[i], i),
+    ];
+    if (fresh.isEmpty) return;
+    // In reading order from the first in view, the newest last; any further
+    // up rise at once.
+    final int staggered = math.min(fresh.length, _stagger);
+    _arrivals = <Object, Duration>{
+      for (int j = 0; j < fresh.length; j++)
+        fresh[j]: Duration(
+          milliseconds:
+              60 * math.max(0, staggered - 1 - (fresh.length - 1 - j)),
+        ),
+    };
+    final bool following = _controller.followLatest;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _arrivals = const <Object, Duration>{};
+      // A view at the live end lands in sparks as the rows come up.
+      if (following && mounted) _landings.value++;
+    });
+  }
+
   /// Null unless [item] is a delivered message; then whether its pop should
   /// still play.
   bool? _deliveryOf(TimelineItem item) {
@@ -810,6 +865,7 @@ class _TimelineState extends State<Timeline> {
     // History grows upward from this fixed boundary, live events downward.
     // Keeping that origin fixed prevents either end moving the reader.
     _initializeOrigin();
+    if (widget.catchingUp) _beforeCatchUp = _identities(widget.items);
     _controller.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
   }
@@ -833,6 +889,11 @@ class _TimelineState extends State<Timeline> {
     if (oldWidget.loadingOlder != widget.loadingOlder ||
         oldWidget.hasOlder != widget.hasOlder) {
       _requestedOlder = false;
+    }
+    if (widget.catchingUp && !oldWidget.catchingUp) {
+      _beforeCatchUp = _identities(widget.items);
+    } else if (!widget.catchingUp && oldWidget.catchingUp) {
+      _arrive();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
   }
@@ -971,6 +1032,7 @@ class _TimelineState extends State<Timeline> {
             item: item,
             onTouch: itemIndex == newest ? _touchedLiveEnd : null,
             delivery: _deliveryOf(item),
+            arrival: _arrivals[identities[itemIndex]],
             cwd: widget.cwd,
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
@@ -1144,6 +1206,7 @@ class _TimelineRow extends StatelessWidget {
     required this.item,
     this.onTouch,
     this.delivery,
+    this.arrival,
     this.cwd,
     this.attachmentLoader,
     this.onFork,
@@ -1161,6 +1224,10 @@ class _TimelineRow extends StatelessWidget {
   /// true while its pop should still play (see [DeliveredPop]).
   final bool? delivery;
 
+  /// Set when the row came in with a catch-up: how long it waits before
+  /// rising into place (see [ArrivalRise]).
+  final Duration? arrival;
+
   /// See [Timeline.cwd].
   final String? cwd;
 
@@ -1171,7 +1238,11 @@ class _TimelineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Listener(onPointerDown: onTouch, child: _content());
+    return Listener(
+      onPointerDown: onTouch,
+      // Always there, so a row keeps its state whether or not it rises.
+      child: ArrivalRise(delay: arrival, child: _content()),
+    );
   }
 
   Widget _content() {

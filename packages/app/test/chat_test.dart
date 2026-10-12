@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/catching_up.dart';
 import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
 import 'package:speeddial_app/src/ui/chat/composer.dart';
 import 'package:speeddial_app/src/ui/chat/permission_banner.dart';
@@ -628,9 +629,22 @@ void main() {
         () => find.text('Catching up…').evaluate().isNotEmpty,
       );
       expect(find.text('from disk'), findsOneWidget);
+      // The agent carried on while this client was away.
+      gated.seedHistory(sessionId, <SessionEvent>[
+        const AgentMessageChunkEvent(text: 'missed while away'),
+      ]);
 
       gated.blockHistory = false;
       gated.releaseHistory();
+      final Finder missed = find.text('missed while away', findRichText: true);
+      await pumpUntil(tester, () => missed.evaluate().isNotEmpty);
+      // It rises into place; what showed before stays put.
+      Finder riseOf(Finder content) => find.descendant(
+        of: find.ancestor(of: content, matching: find.byType(ArrivalRise)),
+        matching: find.byKey(const Key('arrival-rise')),
+      );
+      expect(riseOf(missed), findsOneWidget);
+      expect(riseOf(find.text('from disk')), findsNothing);
       await pumpUntil(
         tester,
         () => find.text('Catching up…').evaluate().isEmpty,

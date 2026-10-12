@@ -8,6 +8,7 @@ import '../../state/chat_store.dart';
 import '../../state/file_transfer_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
+import 'catching_up.dart';
 import 'composer.dart';
 import 'file_action_dialog.dart';
 import 'file_transfer_banner.dart';
@@ -343,6 +344,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               _ => null,
             },
             followLatestRequest: _followLatestRequest.value,
+            catchingUp: catchingUp,
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),
             olderError: chat.olderHistoryErrorFor(sessionId),
@@ -364,7 +366,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
           children: <Widget>[
             const FileTransferBanner(),
             Expanded(child: _SurfaceSwitcher(child: surface)),
-            if (catchingUp) const _CatchingUp(),
+            CatchingUpStrip(active: catchingUp),
             if (pending != null && pending.questions.isNotEmpty)
               QuestionBanner(
                 key: ValueKey(pending.requestId),
@@ -707,44 +709,6 @@ class _HistoryError extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Shown while the daemon reconnects and the watched session's history is
-/// refetched to backfill events missed offline: the rendered timeline is
-/// stale for that window. Auto-dismisses once the backfill lands.
-class _CatchingUp extends StatelessWidget {
-  const _CatchingUp();
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme scheme = theme.colorScheme;
-    return Material(
-      color: scheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        child: Row(
-          children: <Widget>[
-            const SizedBox(
-              width: 12,
-              height: 12,
-              child: CircularProgressIndicator(strokeWidth: 1.5),
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'Catching up…',
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

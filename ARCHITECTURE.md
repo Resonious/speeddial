@@ -359,7 +359,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              (history_skeleton.dart: faint bubbles from the bottom up under a
                              warm glint, shown only once the wait outlasts a blink, going cold
                              under the retry card if the fetch fails; the conversation
-                             crossfades in over it),
+                             crossfades in over it), a catch-up after a reconnect
+                             (catching_up.dart: past a blink, a strip rises from the composer
+                             with a small flame and a shimmering "Catching up…" while a warm
+                             haze breathes over the stale timeline; when the missed events land
+                             the haze blooms, the strip folds away, the rows they brought rise
+                             into place in reading order and a view at the live end lands in
+                             sparks; rows already showing stay put),
                              MCP-displayed images with lazy attachment payload loading,
                              markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
                              natively (`chat/mermaid/`: subset parser, layered layout, painter;
