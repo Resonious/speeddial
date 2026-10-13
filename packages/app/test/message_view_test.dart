@@ -788,6 +788,44 @@ void main() {
       expect(tester.hasRunningAnimations, isFalse);
     });
 
+    testWidgets('a message completed before its first paint keeps its height', (
+      WidgetTester tester,
+    ) async {
+      final ThemeData theme = buildSpeedDialTheme();
+      final ValueNotifier<bool> visible = ValueNotifier<bool>(false);
+      addTearDown(visible.dispose);
+      Widget host({required bool writing}) => MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              ValueListenableBuilder<bool>(
+                valueListenable: visible,
+                builder: (BuildContext context, bool shown, Widget? child) =>
+                    Opacity(opacity: shown ? 1 : 0, child: child),
+                child: AgentMessageView(text: reply, writing: writing),
+              ),
+              const Text('Next tool call'),
+            ],
+          ),
+        ),
+      );
+
+      // Cached timeline rows can lay out and finish before being painted.
+      await tester.pumpWidget(host(writing: true));
+      await tester.pumpWidget(host(writing: false));
+      await frames(tester, 90);
+      expect(typed(tester), whole(tester));
+      visible.value = true;
+      await tester.pump();
+      expect(typed(tester), whole(tester));
+      expect(
+        tester.getTopLeft(find.text('Next tool call')).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(body).dy),
+      );
+    });
+
     testWidgets('reduced motion shows the message whole', (
       WidgetTester tester,
     ) async {

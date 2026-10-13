@@ -540,6 +540,9 @@ class _RenderTypewriter extends RenderProxyBox {
         _shown.isFinite) {
       // Done for good: stop measuring, and let later text show at once.
       _shown = double.infinity;
+      // A cached row may finish before its first paint/measurement. Both
+      // states have line -1, but revealing the child still needs its height.
+      _resizeDue = true;
     }
     _pace
       ..typed = _shown
