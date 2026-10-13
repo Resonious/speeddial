@@ -286,7 +286,7 @@ class _TurnFlameRowState extends State<TurnFlameRow>
           row,
           // AnimatedSize cannot take no time (it would relayout itself in
           // the middle of its own layout), so a still list just appears.
-          if (_still)
+          if (_still || !animateSubagentList(crew))
             crewList
           else
             AnimatedSize(

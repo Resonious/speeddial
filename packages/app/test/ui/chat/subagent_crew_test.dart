@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/oven.dart';
+import 'package:speeddial_app/src/ui/chat/subagent_crew.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -285,6 +286,7 @@ void main() {
       expect(spot, findsNothing);
       expect(find.text('2 subagents · 3 updates'), findsOneWidget);
       expect(find.text('audit_references'), findsNothing);
+      expect(tester.getSize(find.byType(SubagentCrewRow)).height, lessThan(50));
 
       await tester.tap(row);
       await tester.pumpAndSettle();
@@ -294,6 +296,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Sub-agent launch'), findsOneWidget);
       expect(find.textContaining('01a0f964'), findsNothing);
+
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(SubagentCrewRow)).height, lessThan(50));
     });
 
     testWidgets('Ante\'s crew line counts subagents, not their actions', (
@@ -447,6 +453,27 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Resuming is safe.'), findsOneWidget);
       expect(find.text('Search “step 39”'), findsOneWidget);
+      final ScrollPosition position = tester
+          .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+          .controller!
+          .position;
+      position.jumpTo(position.pixels - tester.getTopLeft(row).dy + 100);
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Assess resume safety'));
+      await tester.pump();
+      expect(
+        tester.getSize(find.byType(SubagentCrewRow)).height,
+        lessThan(200),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Assess resume safety'));
+      await tester.pumpAndSettle();
+      await tester.tap(row);
+      await tester.pump();
+      // Hiding a long log must release its height in the same frame.
+      expect(tester.getSize(find.byType(SubagentCrewRow)).height, lessThan(50));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(SubagentCrewRow)).height, lessThan(50));
     });
 
     testWidgets('a subagent opened in a live crew stays open past the screen', (
@@ -465,6 +492,15 @@ void main() {
       await tester.tap(find.textContaining('Assess resume safety'));
       await _frames(tester, 30);
       expect(find.text('Search “step 39”'), findsOneWidget);
+      final ScrollPosition position = tester
+          .widget<CustomScrollView>(find.byKey(const Key('chat-timeline')))
+          .controller!
+          .position;
+      position.jumpTo(position.pixels - tester.getTopLeft(spot).dy + 100);
+      await _frames(tester, 30);
+      await tester.tap(spot);
+      await tester.pump();
+      expect(tester.getSize(find.byType(TurnFlameRow)).height, lessThan(60));
     });
 
     testWidgets('the newest row is the one above a live crew', (

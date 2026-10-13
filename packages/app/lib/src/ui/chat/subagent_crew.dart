@@ -13,6 +13,18 @@ import 'tool_call_summary.dart';
 /// "3 subagents".
 String subagentCount(int count) => '$count subagent${count == 1 ? '' : 's'}';
 
+/// Long logs should not leave a screenful of empty space while collapsing.
+bool animateSubagentList(List<Subagent> subagents) {
+  int rows = subagents.length;
+  for (final Subagent subagent in subagents) {
+    rows += subagent.updates.length;
+    if (rows > 8 || !animateHistoryDetails(<String>[subagent.report ?? ''])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// A little flame per subagent, flaring each time it reports; past [shown]
 /// the rest are counted. [cold] flames are grey and still: the crew is done.
 class CrewFlames extends StatelessWidget {
@@ -276,7 +288,7 @@ class _SubagentCrewRowState extends State<SubagentCrewRow> {
           ),
           // AnimatedSize cannot take no time (it would relayout itself in
           // the middle of its own layout), so a still list just appears.
-          if (still)
+          if (still || !animateSubagentList(crew.subagents))
             list
           else
             AnimatedSize(
@@ -538,7 +550,7 @@ class _SubagentTileState extends State<_SubagentTile> {
             ),
           ),
         ),
-        if (still || !animateHistoryDetails(<String>[report]))
+        if (still || !animateSubagentList(<Subagent>[subagent]))
           details
         else
           AnimatedSize(
