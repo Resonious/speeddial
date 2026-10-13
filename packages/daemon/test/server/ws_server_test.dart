@@ -1427,7 +1427,46 @@ void main() {
           );
         }
         expect(upstream!.calls, hasLength(4));
-        await mcp.close();
+
+        // Keep the authenticated bridge open across reconnects. Discovery and
+        // direct invocation must use current credentials without reauthenticating.
+        final TestMcpConnection oldUpstream = upstream!;
+        await client.peer.call('mcp.update', <String, Object?>{
+          'id': profileId,
+          'name': 'filesystem',
+          'transport': 'stdio',
+          'enabled': true,
+          'command': '/bin/filesystem-mcp',
+          'secrets': <String, String>{'API_TOKEN': 'new-secret'},
+        });
+        final Map<String, Object?> refreshedCall = j(
+          await mcp.peer.call('internal.mcpCallTool', <String, Object?>{
+            'name': 'filesystem__echo',
+            'arguments': <String, Object?>{'value': 8},
+          }),
+        );
+        expect(refreshedCall['structuredContent'], {'value': 8});
+        expect(connected!.secrets['API_TOKEN'], 'new-secret');
+        expect(upstream, isNot(same(oldUpstream)));
+
+        await client.peer.call('mcp.create', <String, Object?>{
+          'name': 'Resend',
+          'transport': 'http',
+          'enabled': true,
+          'url': 'https://example.test/mcp',
+        });
+        final Map<String, Object?> refreshedTools = j(
+          await mcp.peer.call('internal.mcpListTools'),
+        );
+        expect(
+          (refreshedTools['tools']! as List).map((tool) => tool['name']),
+          containsAll(['filesystem__echo', 'Resend__echo']),
+        );
+        final String resendId = store
+            .listMcpServers()
+            .singleWhere((profile) => profile.name == 'Resend')
+            .id;
+        await client.peer.call('mcp.delete', {'id': resendId});
 
         await client.peer.call('mcp.update', <String, Object?>{
           'id': profileId,
@@ -1438,6 +1477,11 @@ void main() {
           'args': <String>['--stdio'],
           'removeSecretNames': <String>['API_TOKEN'],
         });
+        expect(
+          j(await mcp.peer.call('internal.mcpListTools'))['tools'],
+          isEmpty,
+        );
+        await mcp.close();
         final Map<String, Object?> updated = j(
           await client.peer.call('mcp.list'),
         );
@@ -1960,7 +2004,6 @@ void main() {
         oauthUpstream?.secrets['Authorization'],
         'Bearer oauth-refreshed-token',
       );
-      await mcp.close();
       expect(tokenForms, hasLength(2));
       expect(tokenForms.last['grant_type'], 'refresh_token');
       expect(tokenForms.last['refresh_token'], 'oauth-refresh-token');
@@ -1971,6 +2014,29 @@ void main() {
         }),
       );
       expect((disconnected['server']! as Map)['oauthStatus'], 'not_connected');
+      expect(j(await mcp.peer.call('internal.mcpListTools'))['tools'], isEmpty);
+      final Map reconnect =
+          j(
+                await client.peer.call('mcp.oauth.begin', <String, Object?>{
+                  'id': profileId,
+                  'redirectUri': redirectUri,
+                }),
+              )['flow']!
+              as Map;
+      final HttpClientResponse reconnected = await browser
+          .getUrl(Uri.parse(reconnect['authorizationUrl']! as String))
+          .then((request) => request.close());
+      await reconnected.drain<void>();
+      expect(reconnected.statusCode, HttpStatus.ok);
+      expect(
+        j(await mcp.peer.call('internal.mcpListTools'))['tools'],
+        hasLength(1),
+      );
+      expect(
+        oauthUpstream?.secrets['Authorization'],
+        'Bearer oauth-access-token',
+      );
+      await mcp.close();
       final Map<String, Object?> deniedBegin = j(
         await client.peer.call('mcp.oauth.begin', <String, Object?>{
           'id': profileId,

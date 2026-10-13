@@ -136,7 +136,11 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     connections are closed and subsequent listings can retry. Always-advertised
                     discovery and invocation tools let agents retry missing upstreams, read
                     discovery warnings, and invoke recovered tools despite a cached harness
-                    catalog.
+                    catalog. LiveMcpProxy checks matching saved profiles and effective credentials
+                    before each bridge listing/invocation, replacing stale McpProxySession
+                    snapshots even during running turns or for agents that cannot resume.
+                    In-flight operations retain their old snapshot until they finish; retired
+                    upstreams then close without interrupting or replaying calls.
                     OAuth callbacks can
                     terminate at the daemon or at a temporary native-app localhost listener;
                     app-received callbacks are validated and completed through authenticated RPC.

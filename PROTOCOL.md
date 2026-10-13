@@ -505,7 +505,11 @@ warnings in model-visible text. Omit `query` to list all managed tools. The comp
 `call_mcp_tool {name: string, arguments: object}` invokes a discovered managed tool through the
 existing authenticated bridge, preserving its result and error status. These tools allow recovery
 when a harness has cached a startup catalog that omitted an unavailable upstream; calls are never
-automatically replayed. OAuth authorization and successful bridge startup do not guarantee that
+automatically replayed. Each bridge listing or invocation checks the current enabled profiles for
+its project, including effective OAuth credentials. Changed configuration replaces its upstream
+snapshot without requiring the agent to resume or the bridge to reauthenticate. Operations already
+in flight finish on their original snapshot, whose connections then close; subsequent operations
+use the new configuration. OAuth authorization and successful bridge startup do not guarantee that
 an upstream's tool discovery succeeded. These are MCP tools, not public app/daemon RPC methods.
 When injecting `speeddial`, Codex thread creation and resume also receive explicit developer
 instructions to discover external integrations before falling back to web access or reporting
@@ -519,8 +523,9 @@ back to the user's real home, preserving auth, sessions, memory, skills, and log
 transient home when Ante exits. Ante-native MCP entries remain direct and available. A daemon-wide
 profile change reloads every compatible session; a project change reloads only that project's
 sessions. Idle resume-capable agents are parked immediately and running agents before their
-following turn. Agents without resume support retain their current connections; all new sessions
-receive the saved configuration. OAuth refresh failures remain retryable, but an unchanged repeated
+following turn. Agents without resume support retain their process and harness tool catalog, but
+bridge discovery and invocation still pick up saved changes. All new sessions receive the saved
+configuration. OAuth refresh failures remain retryable, but an unchanged repeated
 failure does not trigger another agent reload.
 
 Because `ante serve` ignores the settings default provider/model when `StartSession` carries no

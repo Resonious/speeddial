@@ -21,6 +21,7 @@ import '../git/git_service.dart';
 import '../git/pr_service.dart';
 import '../harnesses/harness_service.dart';
 import '../mcp/built_in_mcp_server.dart';
+import '../mcp/live_mcp_proxy.dart';
 import '../mcp/mcp_proxy.dart';
 import '../paths.dart';
 import '../git/summary_watcher.dart';
@@ -124,7 +125,7 @@ class _Client {
   final WebSocket socket;
   bool authenticated;
   String? mcpSessionId;
-  McpProxySession? mcpProxy;
+  LiveMcpProxy? mcpProxy;
 }
 
 /// Implements the SpeedDial daemon wire API over WebSocket JSON-RPC.
@@ -435,7 +436,7 @@ class SpeedDialServer {
 
   void _dropClient(_Client client, StreamController<Object?> incoming) {
     _clients.remove(client);
-    final McpProxySession? proxy = client.mcpProxy;
+    final LiveMcpProxy? proxy = client.mcpProxy;
     client.mcpProxy = null;
     if (proxy != null) unawaited(proxy.close());
     client.peer.close();
@@ -575,12 +576,12 @@ class SpeedDialServer {
     if (credential == null || credential.secret != secret) {
       throw DaemonError(kErrUnauthenticated, 'invalid MCP credentials');
     }
-    final McpProxySession? previous = client.mcpProxy;
+    final LiveMcpProxy? previous = client.mcpProxy;
     if (previous != null) unawaited(previous.close());
     client.authenticated = false;
     client.mcpSessionId = sessionId;
-    client.mcpProxy = McpProxySession(
-      servers: _store.listEnabledMcpServersFor(credential.projectId),
+    client.mcpProxy = LiveMcpProxy(
+      servers: () => _store.listEnabledMcpServersFor(credential.projectId),
       cwd: credential.cwd,
       connector: _mcpConnector,
     );
