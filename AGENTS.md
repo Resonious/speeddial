@@ -2,7 +2,8 @@
 
 Fast agent development environment: Dart daemon + Flutter UI. Read this, then
 [PROTOCOL.md](PROTOCOL.md) (wire API — authoritative) and
-[ARCHITECTURE.md](ARCHITECTURE.md) (layout + conventions) before editing.
+[ARCHITECTURE.md](ARCHITECTURE.md) (layout + conventions) before editing. For anything users see,
+also read [DESIGN.md](DESIGN.md) (the look, motion and theming).
 
 ## Layout
 
@@ -75,3 +76,13 @@ cd packages/app && flutter run -d linux --dart-define=demo=true
 Boring code wins. Final fields, explicit types, small files. Performance matters: no per-frame
 allocation in build methods; cache syntax highlighting; chunk-merge via StringBuffer (see
 `chat_store.dart`); stores coalesce notifications.
+
+## Look and feel
+
+The UI has a deliberate theme: the agent is an oven. Turns burn as a flame, sent messages bake and
+pop, fresh text glows and cools, compaction simmers. [DESIGN.md](DESIGN.md) sets out the metaphor,
+palette and motion rules, and the reusable effects. Follow it, and give new features eye candy in
+the same spirit: mark real moments, reuse the existing pieces, honour reduced motion and both
+themes, keep the daemon-unreachable state still, and look at rendered frames before calling it
+done. Polish is part of the feature, not a follow-up. When you add a new kind of effect, add it to
+DESIGN.md.

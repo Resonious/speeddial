@@ -163,4 +163,5 @@ dart analyze packages/protocol packages/daemon packages/app
 ```
 
 Conventions (no codegen, hand-written JSON, ChangeNotifier stores) are in
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[ARCHITECTURE.md](ARCHITECTURE.md); the look and motion (the "oven" theme) are in
+[DESIGN.md](DESIGN.md).
