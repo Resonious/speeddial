@@ -155,6 +155,8 @@ class TestDaemonServer {
         'server': <String, Object?>{
           'id': 'mcp-1',
           'projectId': params['projectId'],
+          if (params.containsKey('projectIds'))
+            'projectIds': params['projectIds'],
           'name': params['name'],
           'transport': params['transport'],
           'enabled': params['enabled'],
@@ -176,6 +178,8 @@ class TestDaemonServer {
         'server': <String, Object?>{
           'id': params['id'],
           'projectId': params['projectId'],
+          if (params.containsKey('projectIds'))
+            'projectIds': params['projectIds'],
           'name': params['name'],
           'transport': params['transport'],
           'enabled': params['enabled'],
@@ -560,6 +564,19 @@ void main() {
     );
     expect(updatedMcp.projectId, isNull);
     expect(server.mcpUpdates.single, containsPair('projectId', null));
+    final McpServerProfile sharedMcp = await client.updateMcpServer(
+      id: mcp.id,
+      name: mcp.name,
+      projectId: null,
+      projectIds: ['proj-1', 'proj-2'],
+      transport: mcp.transport,
+      enabled: true,
+      command: mcp.command,
+    );
+    expect(sharedMcp.projectIds, ['proj-1', 'proj-2']);
+    expect(server.mcpUpdates.last['projectIds'], ['proj-1', 'proj-2']);
+    expect(server.mcpUpdates.last['projectId'], 'proj-1');
+
     final Session created = await client.createSession(
       projectId: 'proj-1',
       providerId: 'codex',

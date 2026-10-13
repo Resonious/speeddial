@@ -1633,6 +1633,60 @@ void main() {
         containsAll(<String>['global-tools', 'first-project-tools']),
       );
       expect(connectedByCwd[secondDir.path], <String>['global-tools']);
+      final String scopedId = (scoped['server']! as Map)['id']! as String;
+      final Map<String, Object?> edit = {
+        'id': scopedId,
+        'name': 'first-project-tools',
+        'transport': 'stdio',
+        'enabled': true,
+        'command': '/bin/project-mcp',
+      };
+      await expectLater(
+        client.peer.call('mcp.update', {
+          ...edit,
+          'projectIds': [firstProjectId, 'missing'],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+      );
+      final Map<String, Object?> shared = j(
+        await client.peer.call('mcp.update', {
+          ...edit,
+          'projectIds': [firstProjectId, secondProjectId, firstProjectId],
+        }),
+      );
+      expect((shared['server']! as Map)['projectIds'], [
+        firstProjectId,
+        secondProjectId,
+      ]);
+      expect(
+        await proxiedNames(first, firstDir),
+        contains('first-project-tools__echo'),
+      );
+      expect(
+        await proxiedNames(second, secondDir),
+        contains('first-project-tools__echo'),
+      );
+      await client.peer.call('mcp.update', edit);
+      await client.peer.call('mcp.update', {
+        ...edit,
+        'projectId': firstProjectId,
+      });
+      expect(store.getMcpServer(scopedId)!.projectIds, [
+        firstProjectId,
+        secondProjectId,
+      ]);
+      await client.peer.call('mcp.update', {
+        ...edit,
+        'projectIds': [secondProjectId],
+      });
+      expect(
+        await proxiedNames(first, firstDir),
+        isNot(contains('first-project-tools__echo')),
+      );
+      expect(
+        await proxiedNames(second, secondDir),
+        contains('first-project-tools__echo'),
+      );
       await client.close();
     });
 

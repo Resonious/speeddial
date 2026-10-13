@@ -830,6 +830,24 @@ void main() {
       expect(decoded.data, 'AAE=');
       expect(decoded.toJson(), model.toJson());
     });
+    test('MCP scope roundtrips multiple projects and reads legacy scopes', () {
+      final model = McpServerProfile(
+        id: 'shared',
+        name: 'Shared',
+        projectIds: ['a', 'b'],
+        transport: McpTransport.http,
+        enabled: true,
+        secretNames: [],
+        createdAt: DateTime.utc(2026),
+        updatedAt: DateTime.utc(2026),
+      );
+      expect(McpServerProfile.fromJson(model.toJson()).projectIds, ['a', 'b']);
+      final legacy = model.toJson()..remove('projectIds');
+      expect(McpServerProfile.fromJson(legacy).projectIds, ['a']);
+      legacy.remove('projectId');
+      expect(McpServerProfile.fromJson(legacy).projectIds, isEmpty);
+    });
+
     test('McpServerProfile redacted credential roundtrip', () {
       final McpServerProfile model = McpServerProfile(
         id: 'mcp-1',

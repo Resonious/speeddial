@@ -146,8 +146,10 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     app-received callbacks are validated and completed through authenticated RPC.
                     The same hidden
                     subprocess entry works from the daemon CLI and native Flutter
-                    executable. Profiles are daemon-wide or project-scoped; a project
-                    receives both matching sets. HTTP OAuth 2.1 authorization-code + S256
+                    executable. Profiles are daemon-wide or scoped to multiple selected projects; a project
+                    receives both matching sets. The persisted project_ids JSON array migrates
+                    existing single-project scopes without changing access. Settings show explicit
+                    “Available to” labels and a multi-select project editor. HTTP OAuth 2.1 authorization-code + S256
                     PKCE discovery, registration, callback handling, and refresh live in
                     server/mcp_oauth_service.dart. Repeated identical refresh failures remain
                     retryable without repeatedly parking the project's agent sessions.

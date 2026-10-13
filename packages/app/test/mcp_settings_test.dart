@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/oauth/localhost_oauth_callback.dart';
 import 'package:speeddial_app/src/scope.dart';
+import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/settings/mcp_settings_page.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -32,7 +33,9 @@ void main() {
     await tester.enterText(find.byKey(const Key('mcp-name')), 'Filesystem');
     await tester.tap(find.byKey(const Key('mcp-scope')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Demo Project').last);
+    await tester.tap(find.text('Selected projects').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('mcp-project-proj-demo')));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('mcp-endpoint')),
@@ -55,7 +58,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Filesystem'), findsOneWidget);
-    expect(find.text('Demo Project'), findsOneWidget);
+    expect(find.text('Available to: Demo Project'), findsOneWidget);
     expect(find.text('/usr/local/bin/filesystem-mcp --stdio'), findsOneWidget);
     final profiles = await client.listMcpServers();
     expect(profiles.single.projectId, 'proj-demo');
@@ -63,51 +66,80 @@ void main() {
     expect(profiles.single.toJson().toString(), isNot(contains('top-secret')));
   });
 
-  testWidgets('changes an existing MCP server from global to project scope', (
-    WidgetTester tester,
-  ) async {
-    final FakeDaemonClient client = FakeDaemonClient();
-    final McpServerProfile original = await client.createMcpServer(
-      name: 'Global tools',
-      transport: McpTransport.stdio,
-      enabled: true,
-      command: '/usr/local/bin/global-mcp',
-      secrets: const <String, String>{'API_TOKEN': 'top-secret'},
-    );
-    final AppData data = AppData()..registerClient('daemon', client);
-    addTearDown(data.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: AppScope(
-          data: data,
-          child: const McpSettingsPage(
-            daemonId: 'daemon',
-            daemonName: 'Test daemon',
+  testWidgets(
+    'changes an existing MCP server from global to multiple projects',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final FakeDaemonClient client = FakeDaemonClient();
+      final Project other = await client.addProject(
+        '/backoffice',
+        name: 'Backoffice',
+      );
+      final McpServerProfile original = await client.createMcpServer(
+        name: 'Global tools',
+        transport: McpTransport.stdio,
+        enabled: true,
+        command: '/usr/local/bin/global-mcp',
+        secrets: const <String, String>{'API_TOKEN': 'top-secret'},
+      );
+      final AppData data = AppData()..registerClient('daemon', client);
+      addTearDown(data.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: AppScope(
+            data: data,
+            child: const McpSettingsPage(
+              daemonId: 'daemon',
+              daemonName: 'Test daemon',
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('MCP server actions'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Edit'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('mcp-scope')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Demo Project').last);
-    await tester.pumpAndSettle();
-    final Finder save = find.byKey(const Key('mcp-save'));
-    await tester.ensureVisible(save);
-    await tester.tap(save);
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('MCP server actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('mcp-scope')));
+      await tester.tap(find.byKey(const Key('mcp-scope')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Selected projects').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('mcp-save')));
+      await tester.pumpAndSettle();
+      expect(find.text('Select at least one project'), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const Key('mcp-project-proj-demo')),
+      );
+      await tester.tap(find.byKey(const Key('mcp-project-proj-demo')));
+      await tester.tap(find.byKey(Key('mcp-project-${other.id}')));
+      await tester.pumpAndSettle();
+      final Finder save = find.byKey(const Key('mcp-save'));
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
 
-    final McpServerProfile updated = (await client.listMcpServers()).single;
-    expect(updated.id, original.id);
-    expect(updated.projectId, 'proj-demo');
-    expect(updated.secretNames, const <String>['API_TOKEN']);
-    expect(find.text('Demo Project'), findsOneWidget);
-  });
+      final McpServerProfile updated = (await client.listMcpServers()).single;
+      expect(updated.id, original.id);
+      expect(updated.projectIds, ['proj-demo', other.id]);
+      expect(updated.secretNames, const <String>['API_TOKEN']);
+      expect(
+        find.text('Available to: Demo Project, Backoffice'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byType(Switch).first);
+      await tester.pumpAndSettle();
+      expect((await client.listMcpServers()).single.projectIds, [
+        'proj-demo',
+        other.id,
+      ]);
+    },
+  );
 
   testWidgets('authorizes and disconnects an HTTP OAuth server', (
     WidgetTester tester,

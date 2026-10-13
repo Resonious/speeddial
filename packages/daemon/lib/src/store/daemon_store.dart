@@ -279,6 +279,21 @@ class DaemonStore {
         'REFERENCES projects(id)',
       );
     }
+    if (!mcpServerColumns.contains('project_ids')) {
+      _db.execute('BEGIN');
+      try {
+        _db.execute(
+          "ALTER TABLE mcp_servers ADD COLUMN project_ids TEXT NOT NULL DEFAULT '[]'",
+        );
+        _db.execute(
+          'UPDATE mcp_servers SET project_ids = json_array(project_id) WHERE project_id IS NOT NULL',
+        );
+        _db.execute('COMMIT');
+      } on Object {
+        _db.execute('ROLLBACK');
+        rethrow;
+      }
+    }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS mcp_secrets (
         server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
@@ -391,7 +406,7 @@ class DaemonStore {
 
   List<McpServerProfile> listMcpServers() {
     final rows = _db.select(
-      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'SELECT id, project_id, project_ids, name, transport, enabled, command, args, url, '
       'auth_type, created_at, updated_at FROM mcp_servers',
     );
     return rows
@@ -401,9 +416,10 @@ class DaemonStore {
 
   List<StoredMcpServer> listEnabledMcpServersFor(String projectId) {
     final rows = _db.select(
-      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'SELECT id, project_id, project_ids, name, transport, enabled, command, args, url, '
       'auth_type, created_at, updated_at FROM mcp_servers '
-      'WHERE enabled = 1 AND (project_id IS NULL OR project_id = ?) '
+      'WHERE enabled = 1 AND (json_array_length(project_ids) = 0 OR EXISTS '
+      '(SELECT 1 FROM json_each(project_ids) WHERE value = ?)) '
       'ORDER BY name COLLATE NOCASE, id',
       <Object?>[projectId],
     );
@@ -426,7 +442,7 @@ class DaemonStore {
 
   McpServerProfile? getMcpServer(String id) {
     final rows = _db.select(
-      'SELECT id, project_id, name, transport, enabled, command, args, url, '
+      'SELECT id, project_id, project_ids, name, transport, enabled, command, args, url, '
       'auth_type, created_at, updated_at FROM mcp_servers WHERE id = ?',
       <Object?>[id],
     );
@@ -438,12 +454,13 @@ class DaemonStore {
     try {
       _db.execute(
         'INSERT INTO mcp_servers '
-        '(id, project_id, name, transport, enabled, command, args, url, '
+        '(id, project_id, project_ids, name, transport, enabled, command, args, url, '
         'auth_type, created_at, updated_at) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         <Object?>[
           profile.id,
           profile.projectId,
+          jsonEncode(profile.projectIds),
           profile.name,
           profile.transport.wire,
           profile.enabled ? 1 : 0,
@@ -480,11 +497,12 @@ class DaemonStore {
     _db.execute('BEGIN');
     try {
       _db.execute(
-        'UPDATE mcp_servers SET project_id = ?, name = ?, transport = ?, enabled = ?, '
+        'UPDATE mcp_servers SET project_id = ?, project_ids = ?, name = ?, transport = ?, enabled = ?, '
         'command = ?, args = ?, url = ?, auth_type = ?, updated_at = ? '
         'WHERE id = ?',
         <Object?>[
           profile.projectId,
+          jsonEncode(profile.projectIds),
           profile.name,
           profile.transport.wire,
           profile.enabled ? 1 : 0,
@@ -538,7 +556,7 @@ class DaemonStore {
     }
     return McpServerProfile(
       id: id,
-      projectId: row['project_id'] as String?,
+      projectIds: _models(row['project_ids'] as String?),
       name: row['name'] as String,
       transport: McpTransport.parse(row['transport'] as String),
       enabled: (row['enabled'] as int) != 0,
@@ -795,7 +813,20 @@ class DaemonStore {
   /// keeping its archived sessions around, which is exactly what the FK would
   /// forbid. Inserts keep full enforcement (unknown project ids fail).
   void removeProject(String id) {
-    _db.execute('DELETE FROM mcp_servers WHERE project_id = ?', <Object?>[id]);
+    for (final McpServerProfile profile in listMcpServers()) {
+      if (!profile.projectIds.contains(id)) continue;
+      final List<String> remaining = profile.projectIds
+          .where((value) => value != id)
+          .toList();
+      if (remaining.isEmpty) {
+        deleteMcpServer(profile.id);
+      } else {
+        _db.execute(
+          'UPDATE mcp_servers SET project_id = ?, project_ids = ? WHERE id = ?',
+          [remaining.first, jsonEncode(remaining), profile.id],
+        );
+      }
+    }
     _db.execute('PRAGMA foreign_keys = OFF;');
     try {
       _db.execute('BEGIN;');

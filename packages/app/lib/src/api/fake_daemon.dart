@@ -412,12 +412,20 @@ class FakeDaemonClient implements DaemonClient {
     }
     final List<String> removedMcpServers = <String>[
       for (final McpServerProfile profile in _mcpServers.values)
-        if (profile.projectId == id) profile.id,
+        if (profile.projectIds.length == 1 && profile.projectIds.contains(id))
+          profile.id,
     ];
     for (final String serverId in removedMcpServers) {
       _mcpServers.remove(serverId);
       _mcpSecrets.remove(serverId);
       _mcpOAuthRedirects.remove(serverId);
+    }
+    for (final profile in _mcpServers.values.toList()) {
+      if (!profile.projectIds.contains(id)) continue;
+      _mcpServers[profile.id] = McpServerProfile.fromJson({
+        ...profile.toJson(),
+        'projectIds': profile.projectIds.where((value) => value != id).toList(),
+      });
     }
     _projectsChangedController.add(null);
   }
@@ -435,6 +443,7 @@ class FakeDaemonClient implements DaemonClient {
     required McpTransport transport,
     required bool enabled,
     String? projectId,
+    List<String>? projectIds,
     String? command,
     List<String> args = const <String>[],
     String? url,
@@ -443,13 +452,16 @@ class FakeDaemonClient implements DaemonClient {
     String? oauthClientId,
     String? oauthClientSecret,
   }) async {
-    if (projectId != null) _project(projectId);
+    for (final id in projectIds ?? [?projectId]) {
+      _project(id);
+    }
     final DateTime now = DateTime.now().toUtc();
     final String id = 'mcp-${_mcpServerCounter++}';
     _mcpSecrets[id] = Map<String, String>.of(secrets);
     final McpServerProfile profile = McpServerProfile(
       id: id,
       projectId: projectId,
+      projectIds: projectIds,
       name: name,
       transport: transport,
       enabled: enabled,
@@ -475,6 +487,7 @@ class FakeDaemonClient implements DaemonClient {
     required McpTransport transport,
     required bool enabled,
     required String? projectId,
+    List<String>? projectIds,
     String? command,
     List<String> args = const <String>[],
     String? url,
@@ -488,7 +501,9 @@ class FakeDaemonClient implements DaemonClient {
     if (current == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
-    if (projectId != null) _project(projectId);
+    for (final id in projectIds ?? [?projectId]) {
+      _project(id);
+    }
     final Map<String, String> stored = _mcpSecrets.putIfAbsent(
       id,
       () => <String, String>{},
@@ -503,6 +518,7 @@ class FakeDaemonClient implements DaemonClient {
         (oauthClientId != null && oauthClientId != current.oauthClientId);
     final McpServerProfile profile = McpServerProfile(
       projectId: projectId,
+      projectIds: projectIds,
       id: id,
       name: name,
       transport: transport,
@@ -639,7 +655,7 @@ class FakeDaemonClient implements DaemonClient {
     String? error,
   }) => McpServerProfile(
     id: profile.id,
-    projectId: profile.projectId,
+    projectIds: profile.projectIds,
     name: profile.name,
     transport: profile.transport,
     enabled: profile.enabled,

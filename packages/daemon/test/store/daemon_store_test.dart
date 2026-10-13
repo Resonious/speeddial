@@ -252,6 +252,74 @@ void main() {
     expect(store.listMcpServers(), isEmpty);
   });
 
+  test('legacy MCP scopes migrate without changing credentials or access', () {
+    store.insertProject(project());
+    final now = DateTime.utc(2026);
+    for (final id in ['global', 'scoped']) {
+      store.insertMcpServer(
+        McpServerProfile(
+          id: id,
+          name: id,
+          projectId: id == 'scoped' ? 'p1' : null,
+          transport: McpTransport.stdio,
+          enabled: true,
+          command: '/fake',
+          secretNames: [],
+          createdAt: now,
+          updatedAt: now,
+        ),
+        {'TOKEN': id},
+      );
+    }
+    store.dispose();
+    final Database db = sqlite3.open(p.join(tempDir.path, 'speeddial.db'));
+    db.execute('ALTER TABLE mcp_servers DROP COLUMN project_ids');
+    db.close();
+    store = openStore(tempDir);
+    expect(store.getMcpServer('global')!.projectIds, isEmpty);
+    expect(store.getMcpServer('scoped')!.projectIds, ['p1']);
+    expect(store.listEnabledMcpServersFor('p1'), hasLength(2));
+    expect(store.listEnabledMcpServersFor('other').single.secrets, {
+      'TOKEN': 'global',
+    });
+  });
+
+  test(
+    'multi-project MCP scopes persist and never broaden on project removal',
+    () {
+      for (final id in ['p1', 'p2', 'p3']) {
+        store.insertProject(project(id: id));
+      }
+      final now = DateTime.utc(2026);
+      store.insertMcpServer(
+        McpServerProfile(
+          id: 'shared',
+          name: 'Shared',
+          projectIds: ['p1', 'p2'],
+          transport: McpTransport.http,
+          enabled: true,
+          url: 'https://example.test/mcp',
+          secretNames: [],
+          createdAt: now,
+          updatedAt: now,
+        ),
+        {'Authorization': 'secret'},
+      );
+      expect(store.getMcpServer('shared')!.projectIds, ['p1', 'p2']);
+      expect(store.listEnabledMcpServersFor('p1'), hasLength(1));
+      expect(store.listEnabledMcpServersFor('p2'), hasLength(1));
+      expect(store.listEnabledMcpServersFor('p3'), isEmpty);
+      store.removeProject('p1');
+      expect(store.getMcpServer('shared')!.projectIds, ['p2']);
+      expect(store.listEnabledMcpServersFor('p2').single.secrets, {
+        'Authorization': 'secret',
+      });
+      store.removeProject('p2');
+      expect(store.getMcpServer('shared'), isNull);
+      expect(store.listEnabledMcpServersFor('p3'), isEmpty);
+    },
+  );
+
   test('project MCP profiles filter by project and delete with it', () {
     store.insertProject(project());
     store.insertProject(project(id: 'p2'));

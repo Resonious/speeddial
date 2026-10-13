@@ -85,6 +85,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
         transport: profile.transport,
         enabled: enabled,
         projectId: profile.projectId,
+        projectIds: profile.projectIds,
         command: profile.command,
         args: profile.args,
         url: profile.url,
@@ -266,10 +267,9 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
                         ) ...<Widget>[
                           _McpServerTile(
                             profile: servers[index],
-                            scopeLabel: servers[index].projectId == null
-                                ? 'All projects'
-                                : projectNames[servers[index].projectId] ??
-                                      'Project unavailable',
+                            scopeLabel: servers[index].projectIds.isEmpty
+                                ? 'Available to: All projects'
+                                : 'Available to: ${servers[index].projectIds.map((id) => projectNames[id] ?? 'Unavailable project').join(', ')}',
                             onEnabledChanged: (bool value) =>
                                 _toggle(servers[index], value),
                             onEdit: () => _openEditor(servers[index]),
@@ -341,7 +341,16 @@ class _McpServerTile extends StatelessWidget {
     subtitle: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(scopeLabel, style: Theme.of(context).textTheme.labelMedium),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Text(
+            scopeLabel,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
         Text(
           profile.transport == McpTransport.stdio
               ? <String>[profile.command!, ...profile.args].join(' ')
@@ -565,7 +574,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
   late final TextEditingController _oauthClientId;
   late final TextEditingController _oauthClientSecret;
   late McpAuthType _authType;
-  late String _scopeProjectId;
+  late bool _allProjects;
+  late Set<String> _scopeProjectIds;
   late McpTransport _transport;
   late bool _enabled;
   late final Set<String> _storedSecrets;
@@ -580,7 +590,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
     final McpServerProfile? existing = widget.existing;
     _transport = existing?.transport ?? McpTransport.stdio;
     _enabled = existing?.enabled ?? true;
-    _scopeProjectId = existing?.projectId ?? '';
+    _scopeProjectIds = {...?existing?.projectIds};
+    _allProjects = _scopeProjectIds.isEmpty;
     _authType = existing?.authType ?? McpAuthType.none;
     _name = TextEditingController(text: existing?.name);
     _endpoint = TextEditingController(
@@ -650,7 +661,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           name: _name.text.trim(),
           transport: _transport,
           enabled: _enabled,
-          projectId: _scopeProjectId.isEmpty ? null : _scopeProjectId,
+          projectId: null,
+          projectIds: _allProjects ? const [] : _scopeProjectIds.toList(),
           command: _transport == McpTransport.stdio
               ? _endpoint.text.trim()
               : null,
@@ -677,7 +689,8 @@ class _McpServerDialogState extends State<_McpServerDialog> {
           name: _name.text.trim(),
           transport: _transport,
           enabled: _enabled,
-          projectId: _scopeProjectId.isEmpty ? null : _scopeProjectId,
+          projectId: null,
+          projectIds: _allProjects ? const [] : _scopeProjectIds.toList(),
           command: _transport == McpTransport.stdio
               ? _endpoint.text.trim()
               : null,
@@ -735,30 +748,62 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                       : null,
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
+                DropdownButtonFormField<bool>(
                   key: const Key('mcp-scope'),
-                  initialValue: _scopeProjectId,
-                  decoration: const InputDecoration(labelText: 'Available to'),
-                  items: <DropdownMenuItem<String>>[
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text('All projects'),
+                  isExpanded: true,
+                  initialValue: _allProjects,
+                  decoration: const InputDecoration(
+                    labelText: 'Project access',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: true, child: Text('All projects')),
+                    DropdownMenuItem(
+                      value: false,
+                      child: Text('Selected projects'),
                     ),
-                    for (final Project project in widget.projects)
-                      DropdownMenuItem(
-                        value: project.id,
-                        child: Text(project.name),
-                      ),
                   ],
-                  onChanged: (String? value) {
-                    if (value != null) {
-                      setState(() => _scopeProjectId = value);
-                    }
+                  onChanged: (value) {
+                    if (value != null) setState(() => _allProjects = value);
                   },
+                  validator: (_) => !_allProjects && _scopeProjectIds.isEmpty
+                      ? 'Select at least one project'
+                      : null,
                 ),
+                const SizedBox(height: 8),
+                Text(
+                  _allProjects
+                      ? 'Every project on this daemon can use this server, including new projects.'
+                      : 'Only checked projects can use this server. Other projects cannot discover its tools.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (!_allProjects)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final Project project in widget.projects)
+                          FilterChip(
+                            key: ValueKey('mcp-project-${project.id}'),
+                            label: Text(project.name),
+                            showCheckmark: true,
+                            selected: _scopeProjectIds.contains(project.id),
+                            onSelected: (selected) => setState(() {
+                              if (selected) {
+                                _scopeProjectIds.add(project.id);
+                              } else {
+                                _scopeProjectIds.remove(project.id);
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<McpTransport>(
                   key: const Key('mcp-transport'),
+                  isExpanded: true,
                   initialValue: _transport,
                   decoration: const InputDecoration(labelText: 'Transport'),
                   items: const <DropdownMenuItem<McpTransport>>[
@@ -805,6 +850,7 @@ class _McpServerDialogState extends State<_McpServerDialog> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<McpAuthType>(
                     key: const Key('mcp-auth-type'),
+                    isExpanded: true,
                     initialValue: _authType,
                     decoration: const InputDecoration(
                       labelText: 'Authentication',

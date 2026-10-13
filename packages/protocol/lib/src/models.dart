@@ -1351,7 +1351,8 @@ class McpServerProfile {
     required this.secretNames,
     required this.createdAt,
     required this.updatedAt,
-    this.projectId,
+    String? projectId,
+    List<String>? projectIds,
     this.command,
     this.args = const <String>[],
     this.url,
@@ -1362,12 +1363,20 @@ class McpServerProfile {
     this.oauthScopes = const <String>[],
     this.oauthExpiresAt,
     this.oauthError,
-  });
+  }) : _legacyProjectId = projectId,
+       _projectIds = projectIds; // ignore: prefer_initializing_formals
 
   final String id;
 
-  /// Project receiving this server, or null when daemon-wide.
-  final String? projectId;
+  final String? _legacyProjectId;
+  final List<String>? _projectIds;
+
+  /// Empty means all projects; otherwise only these projects receive tools.
+  List<String> get projectIds =>
+      _projectIds ?? [if (_legacyProjectId != null) _legacyProjectId];
+
+  /// Compatibility view for clients supporting only one project.
+  String? get projectId => projectIds.firstOrNull;
   final String name;
   final McpTransport transport;
   final bool enabled;
@@ -1389,6 +1398,7 @@ class McpServerProfile {
       McpServerProfile(
         id: json['id']! as String,
         projectId: json['projectId'] as String?,
+        projectIds: (json['projectIds'] as List?)?.cast<String>(),
         name: json['name']! as String,
         transport: McpTransport.parse(json['transport']! as String),
         enabled: json['enabled']! as bool,
@@ -1420,6 +1430,7 @@ class McpServerProfile {
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
     'projectId': ?projectId,
+    'projectIds': projectIds,
     'name': name,
     'transport': transport.wire,
     'enabled': enabled,

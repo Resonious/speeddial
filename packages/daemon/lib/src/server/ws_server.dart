@@ -332,8 +332,8 @@ class SpeedDialServer {
     );
     _oauth = McpOAuthService(
       store: _store,
-      onChanged: (String serverId) => _engine.reloadMcpServers(
-        projectId: _store.getMcpServer(serverId)?.projectId,
+      onChanged: (String serverId) => _reloadMcpScopes(
+        _store.getMcpServer(serverId)?.projectIds ?? const [],
       ),
     );
     _engine.configureMcpAuth(prepare: _oauth!.refreshEnabled);
@@ -903,14 +903,14 @@ class SpeedDialServer {
     final McpServerProfile profile = _mcpProfileFromParams(
       params,
       id: _uuid.v4(),
-      projectId: _mcpProjectIdFromParams(params),
+      projectIds: _mcpProjectIdsFromParams(params),
       createdAt: now,
       updatedAt: now,
     );
     _validateMcpOAuthParams(profile, params);
     _store.insertMcpServer(profile, _mcpSecretsParam(params));
     _configureMcpOAuth(profile, params, reset: true);
-    await _engine.reloadMcpServers(projectId: profile.projectId);
+    await _reloadMcpScopes(profile.projectIds);
     return <String, Object?>{
       'server': _store.getMcpServer(profile.id)!.toJson(),
     };
@@ -922,13 +922,21 @@ class SpeedDialServer {
     if (existing == null) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
-    final String? projectId = params.containsKey('projectId')
-        ? _mcpProjectIdFromParams(params)
-        : existing.projectId;
+    // Old clients echo the first project when toggling or editing a profile.
+    // Preserve the full selection unless they actually choose a different scope.
+    final bool legacyScopeUnchanged =
+        !params.containsKey('projectIds') &&
+        params['projectId'] == existing.projectId;
+    final List<String> projectIds =
+        legacyScopeUnchanged ||
+            (!params.containsKey('projectIds') &&
+                !params.containsKey('projectId'))
+        ? existing.projectIds
+        : _mcpProjectIdsFromParams(params);
     final McpServerProfile profile = _mcpProfileFromParams(
       params,
       id: id,
-      projectId: projectId,
+      projectIds: projectIds,
       createdAt: existing.createdAt,
       updatedAt: DateTime.now().toUtc(),
     );
@@ -958,27 +966,28 @@ class SpeedDialServer {
     );
     _configureMcpOAuth(profile, params, reset: resetOAuth);
     await _reloadMcpServersAfterScopeChange(
-      existing.projectId,
-      profile.projectId,
+      existing.projectIds,
+      profile.projectIds,
     );
     return <String, Object?>{'server': _store.getMcpServer(id)!.toJson()};
   }
 
-  Future<void> _reloadMcpServersAfterScopeChange(
-    String? previousProjectId,
-    String? projectId,
-  ) async {
-    if (previousProjectId == projectId) {
-      await _engine.reloadMcpServers(projectId: projectId);
-      return;
-    }
-    if (previousProjectId == null || projectId == null) {
+  Future<void> _reloadMcpScopes(List<String> projectIds) async {
+    if (projectIds.isEmpty) {
       await _engine.reloadMcpServers();
-      return;
+    } else {
+      for (final String projectId in projectIds.toSet()) {
+        await _engine.reloadMcpServers(projectId: projectId);
+      }
     }
-    await _engine.reloadMcpServers(projectId: previousProjectId);
-    await _engine.reloadMcpServers(projectId: projectId);
   }
+
+  Future<void> _reloadMcpServersAfterScopeChange(
+    List<String> previous,
+    List<String> current,
+  ) => _reloadMcpScopes(
+    previous.isEmpty || current.isEmpty ? const [] : [...previous, ...current],
+  );
 
   Future<Object?> _mcpDelete(Map<String, Object?> params) async {
     final String id = _requiredString(params, 'id');
@@ -986,7 +995,7 @@ class SpeedDialServer {
     if (existing == null || !_store.deleteMcpServer(id)) {
       throw DaemonError(kErrNotFound, 'Unknown MCP server: $id');
     }
-    await _engine.reloadMcpServers(projectId: existing.projectId);
+    await _reloadMcpScopes(existing.projectIds);
     return const <String, Object?>{'ok': true};
   }
 
@@ -1140,7 +1149,7 @@ class SpeedDialServer {
   McpServerProfile _mcpProfileFromParams(
     Map<String, Object?> params, {
     required String id,
-    required String? projectId,
+    required List<String> projectIds,
     required DateTime createdAt,
     required DateTime updatedAt,
   }) {
@@ -1202,7 +1211,7 @@ class SpeedDialServer {
       );
     }
     return McpServerProfile(
-      projectId: projectId,
+      projectIds: projectIds,
       id: id,
       name: name,
       transport: transport,
@@ -1217,16 +1226,30 @@ class SpeedDialServer {
     );
   }
 
-  String? _mcpProjectIdFromParams(Map<String, Object?> params) {
-    final Object? raw = params['projectId'];
-    if (raw == null) return null;
-    if (raw is! String || raw.isEmpty) {
-      throw DaemonError(_kErrInvalidParams, 'projectId must be a string');
+  List<String> _mcpProjectIdsFromParams(Map<String, Object?> params) {
+    final Object? raw = params['projectIds'];
+    final List<String> ids;
+    if (params.containsKey('projectIds')) {
+      if (raw is! List || raw.any((id) => id is! String || id.isEmpty)) {
+        throw DaemonError(
+          _kErrInvalidParams,
+          'projectIds must be an array of project IDs',
+        );
+      }
+      ids = raw.cast<String>().toSet().toList();
+    } else {
+      final Object? legacy = params['projectId'];
+      if (legacy != null && (legacy is! String || legacy.isEmpty)) {
+        throw DaemonError(_kErrInvalidParams, 'projectId must be a string');
+      }
+      ids = [if (legacy != null) legacy as String];
     }
-    if (_store.getProject(raw) == null) {
-      throw DaemonError(kErrNotFound, 'Unknown project: $raw');
+    for (final String id in ids) {
+      if (_store.getProject(id) == null) {
+        throw DaemonError(kErrNotFound, 'Unknown project: $id');
+      }
     }
-    return raw;
+    return ids;
   }
 
   Map<String, String> _mcpSecretsParam(Map<String, Object?> params) {

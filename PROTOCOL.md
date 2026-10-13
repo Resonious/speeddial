@@ -94,7 +94,8 @@ McpOAuthStatus = "not_connected" | "authorizing" | "authorized" | "expired" | "e
 
 McpServerProfile = {
   id: string,
-  projectId: string | null,   // null = every project on this daemon
+  projectIds: string[],      // [] = every project; otherwise the selected project IDs
+  projectId: string | null,   // legacy first project, or null when daemon-wide
   name: string,
   transport: McpTransport,
   enabled: boolean,
@@ -433,11 +434,11 @@ with the new environment; harnesses that cannot resume keep their original envir
 - `projects.rename {id: string, name: string}` → `{project: Project}`
 ### MCP servers
 - `mcp.list {}` → `{servers: McpServerProfile[]}`
-- `mcp.create {name: string, projectId?: string, transport: McpTransport, enabled: boolean,
+- `mcp.create {name: string, projectIds?: string[], projectId?: string, transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   authType?: McpAuthType, oauthClientId?: string, oauthClientSecret?: string}` →
   `{server: McpServerProfile}`
-- `mcp.update {id: string, projectId?: string | null, name: string,
+- `mcp.update {id: string, projectIds?: string[], projectId?: string | null, name: string,
   transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   removeSecretNames?: string[], authType?: McpAuthType, oauthClientId?: string,
@@ -456,10 +457,16 @@ with the new environment; harnesses that cannot resume keep their original envir
 `stdio` requires a command; each entry in `secrets` becomes an environment variable. `http`
 requires an absolute HTTP(S) URL; each secret becomes an HTTP header. Secret values are stored only
 on the daemon and never returned—`secretNames` lets clients replace or remove them. When creating a
-profile, an absent `projectId` applies it daemon-wide; when present it must name an existing project
-and applies only to that project's sessions. On update, omitting `projectId` preserves the current
-scope for compatibility, an explicit `null` makes the profile daemon-wide, and a project ID moves it
-to that project. Changing scope retains the profile's stored secrets and OAuth credentials.
+profile, `projectIds` selects the projects that can use its tools; an empty array (or omitted scope)
+applies it daemon-wide, including future projects. Every selected ID must exist; duplicates are
+collapsed. On update, omitting both scope fields preserves the current scope. An explicit empty
+`projectIds` makes the profile daemon-wide. `projectIds` takes precedence over the legacy `projectId`
+field (one project or null for all). Responses include both the full array and a legacy first-project
+view. A legacy update echoing that first project preserves the full selection (for example,
+when an older client toggles a server); use `projectIds` to explicitly narrow it.
+Existing single-project profiles migrate to a one-element array. Changing scope retains stored
+secrets and OAuth credentials. Removing a project removes it from each selected scope; a profile
+whose last selected project is removed is deleted, never made daemon-wide.
 Daemon-wide and matching project profiles are combined. Names remain unique case-insensitively
 across the daemon, and `speeddial` is reserved for the built-in bridge.
 
@@ -521,8 +528,8 @@ Ante still needs a private transient `ANTE_HOME` (0700 with a 0600 settings file
 server mode can discover the single `speeddial` descriptor. The daemon links non-settings Ante data
 back to the user's real home, preserving auth, sessions, memory, skills, and logs, and removes the
 transient home when Ante exits. Ante-native MCP entries remain direct and available. A daemon-wide
-profile change reloads every compatible session; a project change reloads only that project's
-sessions. Idle resume-capable agents are parked immediately and running agents before their
+profile change reloads every compatible session; a selected-project change reloads sessions
+in the union of its previous and new project scopes. Idle resume-capable agents are parked immediately and running agents before their
 following turn. Agents without resume support retain their process and harness tool catalog, but
 bridge discovery and invocation still pick up saved changes. All new sessions receive the saved
 configuration. OAuth refresh failures remain retryable, but an unchanged repeated
