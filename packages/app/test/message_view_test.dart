@@ -10,8 +10,66 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/mermaid/mermaid_diagram.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
+import 'package:speeddial_app/src/ui/chat/message_highlighter.dart';
 
 void main() {
+  testWidgets('highlighted code follows theme changes in both directions', (
+    WidgetTester tester,
+  ) async {
+    const String code = 'void main() { final value = 42; }';
+    final Map<Brightness, TextSpan> expected = <Brightness, TextSpan>{};
+    await tester.runAsync(() async {
+      for (final Brightness brightness in Brightness.values) {
+        expected[brightness] = (await MessageHighlighter.instance.highlight(
+          <String, String>{code: 'dart'},
+          brightness: brightness,
+          background:
+              (brightness == Brightness.light
+                      ? buildSpeedDialLightTheme()
+                      : buildSpeedDialTheme())
+                  .speedDialColors
+                  .codeBackground,
+        ))[code]!;
+      }
+    });
+    final ThemeData light = buildSpeedDialLightTheme();
+    final ThemeData dark = buildSpeedDialTheme();
+    for (final Brightness brightness in <Brightness>[
+      Brightness.light,
+      Brightness.dark,
+      Brightness.light,
+    ]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: light,
+          darkTheme: dark,
+          themeMode: brightness == Brightness.light
+              ? ThemeMode.light
+              : ThemeMode.dark,
+          home: const Scaffold(
+            body: AgentMessageView(text: '```dart\n$code\n```'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(AgentMessageView.settleDelay);
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pumpAndSettle();
+      final RichText rendered = tester.widget<RichText>(
+        find.byWidgetPredicate(
+          (Widget widget) =>
+              widget is RichText && widget.text.toPlainText() == code,
+        ),
+      );
+      expect(
+        (rendered.text as TextSpan).children!.single,
+        same(expected[brightness]),
+      );
+    }
+  });
+
   testWidgets('message colors settle after animated theme changes', (
     WidgetTester tester,
   ) async {

@@ -417,6 +417,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
   Timer? _renderTimer;
   int _highlightRevision = 0;
+  Brightness _highlightBrightness = Brightness.dark;
   final _MessageSelectionDelegate _selectionDelegate =
       _MessageSelectionDelegate();
   late final Map<String, MarkdownElementBuilder> _elementBuilders;
@@ -431,6 +432,17 @@ class _AgentMessageViewState extends State<AgentMessageView> {
       'a': _LinkElementBuilder(onActivate: _activateLink),
       'pre': _CodeBlockBuilder(this),
     };
+    _restartSettleTimer();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Brightness brightness = Theme.of(context).brightness;
+    if (brightness == _highlightBrightness) return;
+    _highlightBrightness = brightness;
+    _highlightCache.clear();
+    _highlightRevision++;
     _restartSettleTimer();
   }
 
@@ -478,6 +490,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
   Future<void> _highlight() async {
     final String text = _renderedText;
+    final Brightness brightness = _highlightBrightness;
     final Map<String, String> languages = <String, String>{};
     for (final String code in _codeBlocks) {
       if (code.length > MessageHighlighter.maxBlockLength) continue;
@@ -489,12 +502,18 @@ class _AgentMessageViewState extends State<AgentMessageView> {
       final Map<String, TextSpan> spans = await MessageHighlighter.instance
           .highlight(
             languages,
+            brightness: brightness,
+            background: context.speedDialColors.codeBackground,
             isCurrent: () =>
-                mounted && !widget.streaming && widget.text == text,
+                mounted &&
+                !widget.streaming &&
+                widget.text == text &&
+                _highlightBrightness == brightness,
           );
       if (!mounted ||
           widget.streaming ||
           widget.text != text ||
+          _highlightBrightness != brightness ||
           spans.isEmpty) {
         return;
       }

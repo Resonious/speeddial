@@ -557,7 +557,9 @@ Performance rules for the app:
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Diff/code highlighting: compute once per event, cache on the event object; never in
-  `build`.
+  `build`. Chat syntax spans are cached by language, brightness and code background;
+  theme changes discard stale spans, and token colors (including the library's fixed
+  bracket palette) maintain at least 4.5:1 contrast against the code background.
 - Animations: continuous ones (flame, timer ping, shimmer, a tool call's heat) run only
   while a turn is active, repaint through painters/render objects behind repaint
   boundaries rather than rebuilding, and hold still when the platform requests reduced
