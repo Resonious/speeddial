@@ -816,6 +816,37 @@ void main() {
     },
   );
 
+  test('environment changes reach a live session on its next turn', () async {
+    final String reportPath = p.join(tempDir.path, 'agent.environment');
+    store.updateDaemonEnvironment(
+      set: <String, String>{'FAKE_ACP_ENV_REPORT': reportPath},
+    );
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    expect(File(reportPath).readAsStringSync(), '<missing>');
+
+    store.updateDaemonEnvironment(
+      set: <String, String>{'SPEEDIAL_TEST_ENV': 'added-later'},
+    );
+    await engine.reloadEnvironment();
+    final Completer<void> completed = Completer<void>();
+    final StreamSubscription<({String sessionId, int seq, SessionEvent event})>
+    completionSub = engine.events.listen((update) {
+      if (update.sessionId == session.id &&
+          update.event is TurnCompleteEvent &&
+          !completed.isCompleted) {
+        completed.complete();
+      }
+    });
+    await engine.sendMessage(session.id, 'weird');
+    await completed.future;
+    await completionSub.cancel();
+
+    expect(File(reportPath).readAsStringSync(), 'added-later');
+  });
+
   for (final String scenario in <String>['empty', 'fork', 'legacy fork']) {
     test('Codex $scenario starts a replacement after restart', () async {
       await eventsSub.cancel();

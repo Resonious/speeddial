@@ -290,6 +290,7 @@ class SessionEngine {
   }
 
   final Set<String> _mcpReloadPending = <String>{};
+  final Set<String> _environmentReloadPending = <String>{};
 
   /// Disconnects idle, reload-capable agents so their next turn resumes with
   /// the current daemon-managed MCP list. Running turns are marked and parked
@@ -302,18 +303,41 @@ class SessionEngine {
         _mcpReloadPending.add(live.session.id);
         continue;
       }
-      await _parkForMcpReload(live);
+      await _parkForReload(live, environment: false);
     }
   }
 
-  Future<bool> _parkForMcpReload(_LiveSession live) async {
+  /// Disconnects idle, resume-capable agents so their next turn respawns the
+  /// harness with the current daemon-managed environment. Running turns are
+  /// marked and parked before their next prompt. Agents without
+  /// `session/load` keep their process (and its environment) until they end.
+  Future<void> reloadEnvironment() async {
+    for (final _LiveSession live in _live.values.toList(growable: false)) {
+      if (live.turn != null) {
+        _environmentReloadPending.add(live.session.id);
+        continue;
+      }
+      await _parkForReload(live, environment: true);
+    }
+  }
+
+  /// Parks [live] so the next turn resumes it in a fresh process. An MCP-only
+  /// reload is pointless for agents that take no MCP servers; an environment
+  /// reload applies to any agent that can resume.
+  Future<bool> _parkForReload(
+    _LiveSession live, {
+    required bool environment,
+  }) async {
     final InitializeResult info = await live.client.initialized;
-    if (info.agentCapabilities['mcpServers'] == false) return false;
+    if (!environment && info.agentCapabilities['mcpServers'] == false) {
+      return false;
+    }
     if (info.agentCapabilities['loadSession'] != true) return false;
     final String sessionId = live.session.id;
     if (!identical(_live[sessionId], live)) return false;
     _live.remove(sessionId);
     _mcpReloadPending.remove(sessionId);
+    _environmentReloadPending.remove(sessionId);
     live.closed = true;
     await live.updatesSubscription?.cancel();
     await live.client.dispose();
@@ -1104,15 +1128,23 @@ class SessionEngine {
       // cannot start a replacement while the old transport is being disposed.
       live = null;
     }
-    if (live != null && _mcpReloadPending.contains(sessionId)) {
+    final bool environmentReload = _environmentReloadPending.contains(
+      sessionId,
+    );
+    if (live != null &&
+        (environmentReload || _mcpReloadPending.contains(sessionId))) {
       if (live.turn != null) {
         throw DaemonError(
           kErrConflict,
           'A turn is already running for session "$sessionId"',
         );
       }
-      final bool parked = await _parkForMcpReload(live);
+      final bool parked = await _parkForReload(
+        live,
+        environment: environmentReload,
+      );
       _mcpReloadPending.remove(sessionId);
+      _environmentReloadPending.remove(sessionId);
       if (parked) live = null;
     }
     live ??= await _resuming.putIfAbsent(
@@ -1412,6 +1444,7 @@ class SessionEngine {
     if (dead != null && dead.client.isClosed && dead.turn == null) {
       _live.remove(sessionId);
       _mcpReloadPending.remove(sessionId);
+      _environmentReloadPending.remove(sessionId);
       dead.closed = true;
       _expirePendingPermissions(dead, 'Agent process ended');
       await dead.updatesSubscription?.cancel();
@@ -1959,6 +1992,7 @@ class SessionEngine {
     _toolCalls.clear();
     _toolCallImages.clear();
     _mcpReloadPending.clear();
+    _environmentReloadPending.clear();
     if (!_eventsController.isClosed) _eventsController.close();
     if (!_sessionChangesController.isClosed) _sessionChangesController.close();
     if (!_sessionRemovalsController.isClosed) {

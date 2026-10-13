@@ -422,7 +422,9 @@ Environment values are write-only and remain in daemon SQLite; public clients re
 names. Names must match `[A-Za-z_][A-Za-z0-9_]*`. `environment.update` atomically removes requested
 names and sets/replaces supplied values (a name in both inputs is set). The saved values overlay the
 daemon process environment for every harness process started after the update, including new and
-resumed sessions; already-running harness processes are not restarted.
+resumed sessions. Live harnesses that support `session/load` are disconnected (idle ones
+immediately, running ones before their next prompt) so their next turn resumes in a fresh process
+with the new environment; harnesses that cannot resume keep their original environment.
 
 ### Projects
 - `projects.list {}` → `{projects: Project[]}`

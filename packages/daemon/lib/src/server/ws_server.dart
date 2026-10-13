@@ -838,7 +838,7 @@ class SpeedDialServer {
     'names': _store.daemonEnvironmentNames(),
   };
 
-  Object? _environmentUpdate(Map<String, Object?> params) {
+  Future<Object?> _environmentUpdate(Map<String, Object?> params) async {
     final Map<String, String> set = _environmentSetParam(params);
     final List<String> remove = _stringListParam(params, 'remove');
     for (final String name in remove) {
@@ -846,6 +846,7 @@ class SpeedDialServer {
     }
     _store.updateDaemonEnvironment(set: set, remove: remove);
     _providers.environmentChanged();
+    await _engine.reloadEnvironment();
     return _environmentList();
   }
 
