@@ -532,6 +532,11 @@ lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with
                              per-file diff view, commit field + button, push, create PR)
 ```
 
+Idle session dots use `lastActivityAt` for a three-hour ember cooldown, refreshed
+once per minute only while warm and visible, with no animation ticker. Restoring
+or unpinning refreshes that activity timestamp too. Offline dots are gray; the
+Done badge remains independent of the cooling dot.
+
 Performance rules for the app:
 - Session search: the rail opens a daemon-scoped modal. Queries debounce for 250 ms and
   coalesce while a request is outstanding; stale replies cannot replace newer text or filters.

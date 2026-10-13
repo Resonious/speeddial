@@ -5,20 +5,25 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
 import '../flame.dart';
+import 'idle_session_ember.dart';
 
 /// Leading status mark of a session row: a live flame while the agent works,
-/// an oven-timer ping while the turn waits on the user, otherwise a dot in
-/// the status color. Ignites, rings and settles with a short transition.
+/// an oven-timer ping while the turn waits on the user, a cooling idle ember,
+/// otherwise a dot in the status color. Ignites, rings and settles with a short transition.
 class SessionStatusGlyph extends StatelessWidget {
   const SessionStatusGlyph({
     super.key,
     required this.status,
     required this.color,
+    this.lastActivityAt,
     this.phase = 0,
     this.dormant = false,
   });
 
   final SessionStatus status;
+
+  /// Persisted activity time used to cool idle dots across app restarts.
+  final DateTime? lastActivityAt;
 
   /// Dot color for the resting states (the row's status or done color).
   final Color color;
@@ -48,13 +53,22 @@ class SessionStatusGlyph extends StatelessWidget {
         key: const ValueKey<String>('session-ping'),
         color: colors.waitingPermission,
       ),
+      SessionStatus.idle when lastActivityAt != null => IdleSessionEmber(
+        key: const ValueKey<String>('session-idle-ember'),
+        lastActivityAt: lastActivityAt!,
+        dormant: dormant,
+      ),
       _ => _Dot(key: ValueKey<Color>(color), color: color),
     };
     return SizedBox.square(
       dimension: 18,
       child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 360),
-        reverseDuration: const Duration(milliseconds: 240),
+        duration: (MediaQuery.maybeDisableAnimationsOf(context) ?? false)
+            ? Duration.zero
+            : const Duration(milliseconds: 360),
+        reverseDuration: (MediaQuery.maybeDisableAnimationsOf(context) ?? false)
+            ? Duration.zero
+            : const Duration(milliseconds: 240),
         transitionBuilder: _ignite,
         child: glyph,
       ),

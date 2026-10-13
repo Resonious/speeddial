@@ -332,11 +332,12 @@ class SessionRow extends StatelessWidget {
           child: Center(
             child: SessionStatusGlyph(
               status: session.status,
+              lastActivityAt: session.lastActivityAt,
               color: done
                   ? context.speedDialColors.success
                   : sessionStatusColor(context.speedDialColors, session.status),
               phase: (session.id.hashCode % 997) / 997,
-              dormant: dormant,
+              dormant: link.outOfReach,
             ),
           ),
         ),
