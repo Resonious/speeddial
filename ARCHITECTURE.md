@@ -562,6 +562,9 @@ Performance rules for the app:
   append through a `StringBuffer`, while the shared timeline fold joins identified
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
+- Markdown selection: inline code paints its background outside the text span so it cannot
+  cover selection. Quotes reuse the markdown AST renderer; quotes and fenced code have
+  dedicated copy headers excluded from selection, with brief clipboard confirmation.
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`. Chat syntax spans are cached by language, brightness and code background;
   theme changes discard stale spans, and token colors (including the library's fixed

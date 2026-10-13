@@ -14,6 +14,7 @@ import 'active_pulse.dart';
 import 'external_link_launcher.dart';
 import 'history_expansion.dart';
 import 'message_highlighter.dart';
+import 'markdown_blocks.dart';
 import 'mermaid/mermaid_diagram.dart';
 import 'mermaid/mermaid_parser.dart';
 import 'typewriter.dart';
@@ -431,7 +432,13 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     _elementBuilders = <String, MarkdownElementBuilder>{
       'a': _LinkElementBuilder(onActivate: _activateLink),
       'pre': _CodeBlockBuilder(this),
+      'code': InlineCodeBuilder(),
     };
+    _elementBuilders['blockquote'] = QuoteBuilder(
+      builders: _elementBuilders,
+      styleSheet: (context) =>
+          _styleSheetFor(context, Theme.of(context).textTheme.bodyMedium),
+    );
     _restartSettleTimer();
   }
 
@@ -629,10 +636,14 @@ class _CodeBlockBuilder extends MarkdownElementBuilder {
       context,
       Theme.of(context).textTheme.bodyMedium,
     );
-    final Widget codeBlock = _CodeBlock(
-      span: _message._spanFor(code) ?? TextSpan(text: code),
-      padding: styleSheet.codeblockPadding ?? EdgeInsets.zero,
-      textStyle: styleSheet.code ?? context.speedDialColors.mono,
+    final Widget codeBlock = CopyableMarkdownBlock(
+      text: code,
+      label: 'Copy code',
+      child: _CodeBlock(
+        span: _message._spanFor(code) ?? TextSpan(text: code),
+        padding: styleSheet.codeblockPadding ?? EdgeInsets.zero,
+        textStyle: styleSheet.code ?? context.speedDialColors.mono,
+      ),
     );
     if (!_isMermaid(element, code) || !_message._fenceClosed(code)) {
       return codeBlock;

@@ -15,6 +15,7 @@ Every effect marks something that actually happened. Reuse these before writing 
 
 | Moment | Effect | Where (`packages/app/lib/src/ui/`) |
 |---|---|---|
+| Quote/code copied | Copy action becomes an ember-colored check and “Copied” for two seconds; no layout movement or continuous animation | `chat/markdown_blocks.dart` |
 | Message sent, not yet confirmed | Pale "dough" bubble under a veil, a warm glint sweeping it | `chat/oven.dart` (`BakingBubble`) |
 | Message confirmed | Pops: a small bounce, a warm halo, wisps of steam | `chat/oven.dart` (`DeliveredPop`) |
 | Agent's turn | Flame row at the live end: "Preheating…", then a per-turn cooking verb ("Baking…", "Caramelizing…"), "Keeping warm…" with a blue pilot light while waiting on the user; goes out in smoke | `chat/oven.dart` (`TurnFlameRow`), `flame.dart` (`Flame`) |

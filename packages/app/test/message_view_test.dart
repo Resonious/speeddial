@@ -13,6 +13,129 @@ import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/message_highlighter.dart';
 
 void main() {
+  for (final bool quoted in <bool>[true, false]) {
+    for (final bool dark in <bool>[true, false]) {
+      testWidgets(
+        'inline code paints selection (quoted: $quoted, ${dark ? 'dark' : 'light'})',
+        (tester) async {
+          SelectedContent? selected;
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: dark ? buildSpeedDialTheme() : buildSpeedDialLightTheme(),
+              home: Scaffold(
+                body: SelectionArea(
+                  onSelectionChanged: (value) => selected = value,
+                  child: RepaintBoundary(
+                    key: Key('inline-selection'),
+                    child: AgentMessageView(
+                      text: quoted
+                          ? '> Before the identifier.\n>\n> `alpha beta gamma`\n>\n> After the identifier.'
+                          : 'Before the identifier.\n\n`alpha beta gamma`\n\nAfter the identifier.',
+                      streaming: true,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          final Finder code = find.text('alpha beta gamma');
+          final RenderRepaintBoundary boundary = tester.renderObject(
+            find.byKey(const Key('inline-selection')),
+          );
+          Future<Uint8List> pixels() async {
+            final ui.Image image = await boundary.toImage();
+            final ByteData data = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            image.dispose();
+            return data.buffer.asUint8List();
+          }
+
+          final Uint8List before = (await tester.runAsync(pixels))!;
+          final Offset start = tester.getTopLeft(code) + const Offset(1, 8);
+          final TestGesture gesture = await tester.startGesture(
+            start,
+            kind: PointerDeviceKind.mouse,
+          );
+          await gesture.moveTo(tester.getTopRight(code) + const Offset(-1, 8));
+          await tester.pump();
+          await gesture.up();
+          await tester.pump();
+          expect(selected?.plainText, contains('alpha beta'));
+          final Uint8List after = (await tester.runAsync(pixels))!;
+          final Rect rect = tester
+              .getRect(code)
+              .shift(
+                -tester.getTopLeft(find.byKey(const Key('inline-selection'))),
+              );
+          int changed = 0;
+          for (int y = rect.top.ceil(); y < rect.bottom.floor(); y++) {
+            for (int x = rect.left.ceil(); x < rect.right.floor(); x++) {
+              final int pixel = (y * boundary.size.width.toInt() + x) * 4;
+              if ((before[pixel] - after[pixel]).abs() > 15 ||
+                  (before[pixel + 1] - after[pixel + 1]).abs() > 15 ||
+                  (before[pixel + 2] - after[pixel + 2]).abs() > 15) {
+                changed++;
+              }
+            }
+          }
+          expect(changed, greaterThan(200));
+        },
+      );
+    }
+  }
+
+  testWidgets('block copy preserves paragraphs, links and code indentation', (
+    tester,
+  ) async {
+    final List<String> copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add(
+            (call.arguments as Map<Object?, Object?>)['text']! as String,
+          );
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: const Scaffold(
+          body: SelectionArea(
+            child: AgentMessageView(
+              streaming: true,
+              text: '> A **bold** [link](https://example.com).\n>\n> Sender: `person@example.com`  \n> Subject: Hello\n>\n> 3. First task\n> 4. Second task\n>\n> ```\n> first\n>   second\n> ```',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Copy quote'));
+    await tester.pump();
+    expect(
+      copied.single,
+      'A bold link.\n\nSender: person@example.com\nSubject: Hello\n\n3. First task\n4. Second task\n\nfirst\n  second',
+    );
+    expect(find.text('Copied'), findsOneWidget);
+    await tester.tap(find.text('Copy code'));
+    await tester.pump();
+    expect(copied.last, 'first\n  second');
+    expect(find.text('Copied'), findsNWidgets(2));
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Copied'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('highlighted code follows theme changes in both directions', (
     WidgetTester tester,
   ) async {
@@ -249,7 +372,7 @@ void main() {
         r'Start of message with `ops-${environment_prefix}@${base_domain}` '
         'and **bold text** plus [link text](https://example.com) that wraps '
         'across multiple lines.\n\n'
-        '```dart\nvoid main() {}\n```\n\n'
+        '> Quoted instructions.\n>\n> ```dart\n> void main() {}\n> ```\n\n'
         'What I verified:\n\n'
         '- First item in the list spans multiple lines of text.\n'
         '- Second item in the list spans multiple lines of text.\n\n'
@@ -352,6 +475,9 @@ void main() {
     expect(copied, contains('bold text'));
     expect(copied, contains('link text'));
     expect(copied, contains('void main() {}'));
+    expect(copied, contains('Quoted instructions.'));
+    expect(copied, isNot(contains('Copy quote')));
+    expect(copied, isNot(contains('Copy code')));
     expect(copied, contains('First item in the list'));
     expect(copied, contains('Second item in the list'));
     expect(copied, contains('End of message'));
