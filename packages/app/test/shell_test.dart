@@ -218,6 +218,42 @@ void main() {
     expect(find.text('Add daemon'), findsOneWidget);
   });
 
+  testWidgets('mobile: right swipes across the session open navigation', (
+    WidgetTester tester,
+  ) async {
+    final AppData data = await pumpFakeShell(
+      tester,
+      size: const Size(390, 844),
+    );
+    data.selection.selectedSessionId =
+        data.sessions.sessionsFor('proj-demo', daemonId: 'fake').first.id;
+    await tester.pumpAndSettle();
+    final ScaffoldState scaffold = tester.state<ScaffoldState>(
+      find.byType(Scaffold).first,
+    );
+
+    // Vertical reading gestures and left swipes must leave navigation closed.
+    await tester.dragFrom(const Offset(195, 400), const Offset(0, -200));
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isFalse);
+    await tester.flingFrom(const Offset(195, 400), const Offset(-150, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(scaffold.isDrawerOpen, isFalse);
+
+    await tester.tap(messageInput());
+    await tester.enterText(messageInput(), 'Draft stays editable');
+    expect(find.text('Draft stays editable'), findsOneWidget);
+
+    for (final double startX in <double>[195, 300]) {
+      await tester.flingFrom(Offset(startX, 400), const Offset(80, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(scaffold.isDrawerOpen, isTrue);
+      expect(find.byType(LeftRail), findsOneWidget);
+      scaffold.closeDrawer();
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets(
     'mobile: creating a session closes the drawer and focuses the message input',
     (WidgetTester tester) async {

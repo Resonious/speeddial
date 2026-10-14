@@ -387,6 +387,8 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              draggable from 240–480px, chat flexible, right 360;
                              side panes collapsible); <1000px →
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
+                             On mobile, right swipes across the full session width
+                             reveal the left drawer using its native drag transition.
 lib/src/ui/flame.dart        hand-painted flame glyph (flickering seamless loop, blaze or
                              blue pilot light) marking agent work in the rail and chat
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session

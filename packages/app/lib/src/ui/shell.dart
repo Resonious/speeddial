@@ -309,6 +309,8 @@ class _ShellState extends State<_Shell> {
         }
         return Scaffold(
           key: _narrowScaffoldKey,
+          // Let a right swipe reveal navigation from anywhere in the session.
+          drawerEdgeDragWidth: constraints.maxWidth,
           appBar: AppBar(
             leading: IconButton(
               tooltip: 'Open navigation menu',
