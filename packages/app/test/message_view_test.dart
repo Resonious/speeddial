@@ -86,6 +86,58 @@ void main() {
     }
   }
 
+  for (final double width in <double>[390, 1440]) {
+    for (final bool quoted in <bool>[false, true]) {
+      testWidgets('inline code flows into prose ($width, quoted: $quoted)', (
+        WidgetTester tester,
+      ) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildSpeedDialTheme(),
+            home: Scaffold(
+              body: SelectionArea(
+                child: AgentMessageView(
+                  text:
+                      '${quoted ? '> ' : ''}Pull `main`, rebuild with the '
+                      'existing secrets, and reinstall on the phone. '
+                      'Check the build and device setup.',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final RenderParagraph paragraph = tester.renderObject(
+          find.byWidgetPredicate(
+            (Widget widget) =>
+                widget is RichText &&
+                widget.text.toPlainText().startsWith('Pull '),
+          ),
+        );
+        final String text = paragraph.text.toPlainText();
+        // The comma and subsequent words must share the code's line when
+        // there is room, even when the rest of the sentence needs to wrap.
+        expect(text, contains(', rebuild'));
+        final int comma = text.indexOf(',');
+        final Rect commaRect = paragraph
+            .getBoxesForSelection(
+              TextSelection(baseOffset: comma, extentOffset: comma + 1),
+            )
+            .single
+            .toRect()
+            .shift(paragraph.localToGlobal(Offset.zero));
+        final Rect codeRect = tester.getRect(find.text('main'));
+        expect(commaRect.center.dy, closeTo(codeRect.center.dy, 4));
+        expect(commaRect.left, closeTo(codeRect.right, 1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('block copy preserves paragraphs, links and code indentation', (
     tester,
   ) async {

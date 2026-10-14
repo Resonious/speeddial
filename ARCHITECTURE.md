@@ -568,7 +568,8 @@ Performance rules for the app:
   content across interleaved replacement snapshots. Notify once per animation frame at
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Markdown selection: inline code paints its background outside the text span so it cannot
-  cover selection. Quotes reuse the markdown AST renderer; quotes and fenced code have
+  cover selection. Its decorated widget sits in a paragraph span so following text
+  wraps naturally on the same line. Quotes reuse the markdown AST renderer; quotes and fenced code have
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`. Chat syntax spans are cached by language, brightness and code background;

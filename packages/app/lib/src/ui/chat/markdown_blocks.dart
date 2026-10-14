@@ -17,13 +17,26 @@ class InlineCodeBuilder extends MarkdownElementBuilder {
     md.Element element,
     TextStyle? preferredStyle,
     TextStyle? parentStyle,
-  ) => DecoratedBox(
-    decoration: BoxDecoration(color: context.speedDialColors.codeBackground),
-    child: Text(
-      element.textContent,
-      style: parentStyle
-          ?.merge(preferredStyle)
-          .copyWith(backgroundColor: Colors.transparent),
+  ) => Text.rich(
+    TextSpan(
+      children: <InlineSpan>[
+        // Return a text widget so Markdown merges this into the surrounding
+        // paragraph instead of laying out the remainder as a separate Wrap child.
+        WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: context.speedDialColors.codeBackground,
+            ),
+            child: Text(
+              element.textContent,
+              style: (parentStyle?.merge(preferredStyle) ?? preferredStyle)
+                  ?.copyWith(backgroundColor: Colors.transparent),
+            ),
+          ),
+        ),
+      ],
     ),
   );
 }
