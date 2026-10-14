@@ -39,11 +39,22 @@ dart pub get   # once, at repo root (pub workspace resolves all packages)
 ```bash
 dart analyze packages/protocol packages/daemon packages/app
 (cd packages/protocol && dart test)
-(cd packages/daemon && dart test)    # MUST run with cwd = packages/daemon
+(cd packages/daemon && env -u SPEEDIAL_TOKEN dart test) # MUST run with cwd = packages/daemon
 (cd packages/app && flutter test)
 ```
 
 Known traps:
+- Agent sessions may inherit `SPEEDIAL_TOKEN`. Run daemon tests with it removed from the
+  test process environment using `env -u SPEEDIAL_TOKEN` (the spelling is intentional).
+  Otherwise `test/e2e/daemon_e2e_test.dart` can fail with exit code 3 and
+  `speeddial: error (-32001): invalid token` when its CLI subprocess runs `sessions list`.
+  The CLI gives the environment token precedence over the sandbox daemon's discovery token.
+  Removing the key from a subprocess's `environment` map alone does not isolate it:
+  Dart's `Process.run`/`Process.start` inherit the parent environment by default.
+  For an isolated reproduction, run from `packages/daemon/`:
+  `env -u SPEEDIAL_TOKEN dart test test/e2e/daemon_e2e_test.dart`.
+  Keep the token removal scoped to the test command so the agent's live daemon connection
+  is unaffected; never print the token while diagnosing this failure.
 - Run daemon tests from `packages/daemon/` (some tests resolve fixtures relative to cwd).
 - `dart test packages/daemon` from the repo root also works (tests handle both), but don't assume.
 - One flaky-looking broadcast race was real before; if `ws_server_test` fails, rerun once — then
