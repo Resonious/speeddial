@@ -145,8 +145,11 @@ Session = {
                               // null when the provider exposes no thinking-level option
   thinkingLevels: string[],   // selectable levels advertised by the agent (ACP config
                               // option); empty when the provider has none. Ante mirrors
-                              // the selected catalog model's effort_options and prepends
-                              // "default", which clears an explicit effort override.
+                              // the selected model's supported_efforts and prepends
+                              // "default", which clears an explicit effort override. Legacy
+                              // effort_options is accepted; explicit empty lists disable the
+                              // control. With no live or catalog declaration, Ante accepts
+                              // min/low/medium/high/xhigh/max and resolves them internally.
   sandboxMode: SessionSandboxMode | null, // selected provider isolation; null when provider-managed
   yolo: boolean,              // native no-prompt mode where supported; daemon fallback otherwise
   shortPrompt: boolean,       // Ante's compact prompt set; other providers ignore it

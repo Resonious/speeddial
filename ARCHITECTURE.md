@@ -94,8 +94,8 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolv
                     their first send. Starts/resumes sessions, sends `UserInput`,
                     handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
-                    info blocks, shell output, compaction, and errors into the shared agent
-                    update stream. Native `Agent` tool progress is flattened into tagged
+                    info blocks, shell output, background TaskEnd completion receipts,
+                    compaction, and errors into the shared agent update stream. Native `Agent` tool progress is flattened into tagged
                     top-level subagent activities instead of one growing output block.
                     Native `TodoWrite` calls become shared plan updates so
                     every provider uses the same checklist UI. Catalog data comes from
@@ -106,7 +106,10 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolv
                     and the transient directory is removed on process exit. New sessions
                     are seeded with the settings default model/provider (serve mode
                     ignores them when StartSession omits a model). Effort controls mirror
-                    the selected catalog model's `effort_options`; `default` clears an
+                    live model's `supported_efforts` (legacy `effort_options` also supported),
+                    falling back to its catalog declaration. Empty lists disable the control;
+                    absent declarations expose Ante's six ordinal levels (min through max),
+                    which Ante resolves against the provider's built-in ladder. `default` clears an
                     override instead of forcing reasoning onto models that omit one. Ante
                     always uses the plain server launch because that subcommand rejects
                     default-run permission flags; yolo is selected per session so approval

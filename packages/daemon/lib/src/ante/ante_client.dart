@@ -814,6 +814,28 @@ class AnteClient implements AgentClient, NativeCommandClient {
         if (!_suppressReplay) _handleToolUpdate(_map(value));
       case 'ToolEnd':
         if (!_suppressReplay) _handleToolEnd(_map(value));
+      case 'TaskEnd':
+        final Map<String, Object?> task = _map(value);
+        final String id = task['tool_use_id'] as String? ?? '';
+        final int? exitCode = _int(task['exit_code']);
+        if (id.isNotEmpty) {
+          _publishActivity(
+            AcpAgentActivityUpdate(
+              id: 'ante-task-$id',
+              kind: 'task',
+              title: 'Background task finished',
+              status: exitCode == null || exitCode == 0
+                  ? 'completed'
+                  : 'failed',
+              details: <String>[
+                'Tool call: $id',
+                exitCode == null
+                    ? 'Exit code unavailable'
+                    : 'Exit code: $exitCode',
+              ],
+            ),
+          );
+        }
       case 'UsageUpdate':
         if (!_suppressReplay) _handleUsage(_map(value));
       case 'ExtensionRefreshed':
@@ -1604,21 +1626,33 @@ class AnteClient implements AgentClient, NativeCommandClient {
     ];
   }
 
-  /// Ante reports effort choices on the live session in current releases.
-  /// Fall back to the catalog for older serve versions that omitted them.
+  /// Explicit live declarations win, including an empty ladder. Fall back to
+  /// the catalog, then Ante's ordinal API when neither declares a ladder.
   static List<String> _effortOptionsFor(
     _AnteSessionState state,
     List<_AnteCatalogProvider> catalog,
   ) {
-    if (state.effortOptions.isNotEmpty) return state.effortOptions;
+    final List<String>? live = state.effortOptions;
+    if (live != null) return live;
     for (final _AnteCatalogProvider provider in catalog) {
       if (provider.id != state.providerId) continue;
       for (final _AnteCatalogModel model in provider.models) {
-        if (model.id == state.modelId) return model.effortOptions;
+        if (model.id == state.modelId && model.effortOptions != null) {
+          return model.effortOptions!;
+        }
       }
       break;
     }
-    return const <String>[];
+    // Modern Ante omits the ladder for built-in profiles. Its ordinal effort
+    // API accepts all six levels and resolves them to the provider's ladder.
+    return const <String>['min', 'low', 'medium', 'high', 'xhigh', 'max'];
+  }
+
+  static List<String>? _modelEfforts(Map<String, Object?> model) {
+    final Object? levels =
+        model['supported_efforts'] ?? model['effort_options'];
+    // Preserve an explicit empty list: it disables effort for this model.
+    return levels is List ? _strings(levels) : null;
   }
 
   Future<String> _textFromPromptBlocks(
@@ -2010,7 +2044,7 @@ class _AnteSessionState {
       modelId: modelId,
       modelDescription: model['description'] as String?,
       effort: model['effort'] as String?,
-      effortOptions: AnteClient._strings(model['effort_options']),
+      effortOptions: AnteClient._modelEfforts(model),
       contextLimit: AnteClient._int(model['context_limit']),
       providerId: providerId,
       providerName: provider['display_name'] as String? ?? providerId,
@@ -2023,7 +2057,7 @@ class _AnteSessionState {
   final String modelId;
   final String? modelDescription;
   final String? effort;
-  final List<String> effortOptions;
+  final List<String>? effortOptions;
   final int? contextLimit;
   final String providerId;
   final String providerName;
@@ -2058,17 +2092,17 @@ class _AnteCatalogModel {
   const _AnteCatalogModel({
     required this.id,
     this.description,
-    this.effortOptions = const <String>[],
+    this.effortOptions,
   });
 
   factory _AnteCatalogModel.fromJson(Map<String, Object?> json) =>
       _AnteCatalogModel(
         id: json['id'] as String? ?? '',
         description: json['description'] as String?,
-        effortOptions: AnteClient._strings(json['effort_options']),
+        effortOptions: AnteClient._modelEfforts(json),
       );
 
   final String id;
   final String? description;
-  final List<String> effortOptions;
+  final List<String>? effortOptions;
 }

@@ -192,6 +192,98 @@ void main() {
     },
   );
 
+  for (final String mode in <String>[
+    'legacy',
+    'catalog-only',
+    'absent',
+    'live-empty',
+  ]) {
+    test('effort discovery handles $mode declarations', () async {
+      final AnteClient client = spawnAnte(
+        environment: <String, String>{'FAKE_ANTE_EFFORTS': mode},
+      );
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+      final Iterable<AcpConfigOption> options = created.configOptions.where(
+        (AcpConfigOption option) => option.id == 'thinking',
+      );
+      if (mode == 'live-empty') {
+        expect(options, isEmpty, reason: 'Live empty overrides catalog levels');
+        await expectLater(
+          client.setConfigOption(created.sessionId, 'thinking', 'high'),
+          throwsArgumentError,
+        );
+      } else {
+        expect(
+          options.single.options.map((AcpConfigOptionValue v) => v.value),
+          <String>[
+            'default',
+            'min',
+            'low',
+            'medium',
+            'high',
+            if (mode == 'absent') ...<String>['xhigh', 'max'],
+          ],
+        );
+        final String chosen = mode == 'absent' ? 'max' : 'high';
+        final List<AcpConfigOption> updated = await client.setConfigOption(
+          created.sessionId,
+          'thinking',
+          chosen,
+        );
+        expect(updated.last.currentValue, chosen);
+      }
+    });
+  }
+
+  test('switching models removes and restores effort choices', () async {
+    final AnteClient client = spawnAnte();
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    final without = await client.setConfigOption(
+      created.sessionId,
+      'model',
+      'fake-large',
+    );
+    expect(
+      without.map((AcpConfigOption o) => o.id),
+      isNot(contains('thinking')),
+    );
+    final restored = await client.setConfigOption(
+      created.sessionId,
+      'model',
+      'fake-model',
+    );
+    expect(restored.last.id, 'thinking');
+  });
+
+  test(
+    'reports background task success, failure, and unknown exit code',
+    () async {
+      final AnteClient client = spawnAnte();
+      addTearDown(client.dispose);
+      final created = await client.newSession(cwd: Directory.current.path);
+      final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+      final subscription = client
+          .sessionUpdates(created.sessionId)
+          .listen(updates.add);
+      addTearDown(subscription.cancel);
+      await client.prompt(created.sessionId, textBlocks('background tasks'));
+      final tasks = updates
+          .whereType<AcpAgentActivityUpdate>()
+          .where((AcpAgentActivityUpdate a) => a.kind == 'task')
+          .toList();
+      expect(tasks.map((AcpAgentActivityUpdate a) => a.status), <String>[
+        'completed',
+        'failed',
+        'completed',
+      ]);
+      expect(tasks.first.id, 'ante-task-job-0');
+      expect(tasks[1].details, contains('Exit code: 7'));
+      expect(tasks.last.details, contains('Exit code unavailable'));
+    },
+  );
+
   test('native yolo mode prevents Ante approval pauses', () async {
     var permissionRequests = 0;
     final AnteClient client = spawnAnte(

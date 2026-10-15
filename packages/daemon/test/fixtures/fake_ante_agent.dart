@@ -14,8 +14,26 @@ int _eventCounter = 0;
 Future<void> _writeQueue = Future<void>.value();
 ({String parent, String turnId})? _pendingTurn;
 
+bool _catalogMode = false;
+
+Map<String, Object?> _effortFields() {
+  final String mode = Platform.environment['FAKE_ANTE_EFFORTS'] ?? 'modern';
+  if (mode == 'live-empty' && !_catalogMode) {
+    return <String, Object?>{'supported_efforts': <String>[]};
+  }
+  if (mode == 'catalog-only' && !_catalogMode) return <String, Object?>{};
+  if (mode == 'absent') return <String, Object?>{};
+  return <String, Object?>{
+    if (mode == 'legacy')
+      'effort_options': <String>['min', 'low', 'medium', 'high']
+    else
+      'supported_efforts': <String>['min', 'low', 'medium', 'high'],
+  };
+}
+
 Future<void> main(List<String> args) async {
-  if (args.firstOrNull == 'catalog') {
+  _catalogMode = args.firstOrNull == 'catalog';
+  if (_catalogMode) {
     stdout.writeln(
       jsonEncode(<String, Object?>{
         'providers': <Object?>[
@@ -32,11 +50,12 @@ Future<void> main(List<String> args) async {
                   'id': 'fake-model',
                   'description': 'Fake model',
                   'effort': 'medium',
-                  'effort_options': <String>['min', 'low', 'medium', 'high'],
+                  ..._effortFields(),
                 },
                 <String, Object?>{
                   'id': 'fake-large',
                   'description': 'Large fake model',
+                  'supported_efforts': <String>[],
                 },
               ],
             },
@@ -153,6 +172,8 @@ Future<void> _dispatch(Map<String, Object?> message) async {
                   'low',
                   'medium',
                   'high',
+                  'xhigh',
+                  'max',
                 ].contains(effort))) {
           await _event(<String, Object?>{
             'Error': 'Unsupported fake effort: $effort',
@@ -278,7 +299,9 @@ Map<String, Object?> _sessionPayload() => <String, Object?>{
     'context_limit': 200000,
     if (_effort != null) 'effort': _effort,
     if (_model == 'fake-model')
-      'effort_options': <String>['min', 'low', 'medium', 'high'],
+      ..._effortFields()
+    else
+      'supported_efforts': <String>[],
     'support_vision': false,
     'weight_class': 'middle',
   },
@@ -383,6 +406,20 @@ Future<void> _runTurn(String parent, String text) async {
         },
       }, parent);
     }
+    return;
+  }
+  if (text == 'background tasks') {
+    for (final int? code in <int?>[0, 7, null]) {
+      await _event(<String, Object?>{
+        'TaskEnd': <String, Object?>{
+          'tool_use_id': 'job-$code',
+          'exit_code': code,
+        },
+      }, parent);
+    }
+    await _event(<String, Object?>{
+      'TurnEnd': <String, Object?>{'turn_id': parent, 'status': 'Completed'},
+    }, parent);
     return;
   }
   if (text == 'die') exit(15);
