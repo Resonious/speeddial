@@ -573,6 +573,8 @@ Performance rules for the app:
   cover selection. Its decorated widget sits in a paragraph span so following text
   wraps naturally on the same line. Quotes reuse the markdown AST renderer; quotes and fenced code have
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
+  Tables size columns to their contents and scroll horizontally with a visible scrollbar
+  when wider than the message, keeping identifiers and multilingual names readable.
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`. Chat syntax spans are cached by language, brightness and code background;
   theme changes discard stale spans, and token colors (including the library's fixed

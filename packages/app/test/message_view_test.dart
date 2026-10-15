@@ -13,6 +13,83 @@ import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/message_highlighter.dart';
 
 void main() {
+  for (final double width in <double>[390, 720, 1440]) {
+    for (final bool dark in <bool>[false, true]) {
+      testWidgets('table cells stay contained ($width, dark: $dark)', (
+        WidgetTester tester,
+      ) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: dark ? buildSpeedDialTheme() : buildSpeedDialLightTheme(),
+            home: const Scaffold(
+              body: SelectionArea(
+                child: AgentMessageView(
+                  text:
+                      '| # | Live Merchant Name | Company Name | `live_merchant.uuid` | Captured (2w) | Size Tier |\n'
+                      '| --: | :-- | :-- | :-- | --: | :-- |\n'
+                      '| 1 | Steam (Korea) | Steam (Korea) | `6kray9w0s2cj2wjcc66737` | 780,706 | Enterprise |\n'
+                      '| 2 | Weverse Shop JAPAN(V.2) | ＷＥＶＥＲＳＥ ＪＡＰＡＮ株式会社 | `0g4f7rlnbdv0i7ri4mmg4iaa` | 134,771 | Enterprise |\n'
+                      '| 3 | TikTok (2) | PIPO (SG) PTE. LTD. | `7taib0ci288nzfnf32txx1mku` | 38,798 | Large |',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final Finder table = find.byType(Table);
+        final Finder cells = find.descendant(
+          of: table,
+          matching: find.byType(TableCell),
+        );
+        for (final Element cell in cells.evaluate()) {
+          final Rect bounds = tester.getRect(
+            find.byElementPredicate((e) => e == cell),
+          );
+          final Finder paragraphs = find.descendant(
+            of: find.byElementPredicate((e) => e == cell),
+            matching: find.byType(RichText),
+          );
+          for (final Element paragraph in paragraphs.evaluate()) {
+            final Rect textBounds = tester.getRect(
+              find.byElementPredicate((e) => e == paragraph),
+            );
+            expect(bounds.inflate(0.1).contains(textBounds.topLeft), isTrue);
+            expect(
+              bounds.inflate(0.1).contains(textBounds.bottomRight),
+              isTrue,
+            );
+          }
+        }
+        // A rank column should not consume as much room as an identifier.
+        expect(
+          tester.getSize(cells.at(0)).width,
+          lessThan(tester.getSize(cells.at(3)).width / 2),
+        );
+        final Finder scrollable = find.descendant(
+          of: find.byType(AgentMessageView),
+          matching: find.byType(Scrollable),
+        );
+        final ScrollPosition position = tester
+            .state<ScrollableState>(scrollable)
+            .position;
+        if (width < 1000) {
+          expect(position.maxScrollExtent, greaterThan(0));
+          await tester.drag(
+            find.byType(SingleChildScrollView),
+            const Offset(-300, 0),
+          );
+          await tester.pumpAndSettle();
+          expect(position.pixels, greaterThan(0));
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   for (final bool quoted in <bool>[true, false]) {
     for (final bool dark in <bool>[true, false]) {
       testWidgets(

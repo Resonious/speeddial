@@ -1016,6 +1016,12 @@ MarkdownStyleSheet _styleSheetFor(BuildContext context, TextStyle? bodyStyle) {
       _cachedBodyStyle != bodyStyle) {
     _cachedStyleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
       p: bodyStyle,
+      // Intrinsic columns also enable the renderer's horizontal scroll view.
+      // Equal flex columns crush identifiers into multiline inline widgets.
+      tableColumnWidth: const IntrinsicColumnWidth(),
+      tableScrollbarThumbVisibility: true,
+      tablePadding: const EdgeInsets.only(bottom: 12),
+      tableVerticalAlignment: TableCellVerticalAlignment.top,
       code: context.speedDialColors.mono.copyWith(fontSize: 12.5),
       codeblockPadding: const EdgeInsets.all(10),
       codeblockDecoration: BoxDecoration(
