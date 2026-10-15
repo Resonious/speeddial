@@ -7,6 +7,22 @@ import '../../theme.dart';
 /// keyboard-navigation scroll math.
 const double _rowHeight = 44;
 
+Future<void> showModelPicker(
+  BuildContext context, {
+  required List<String> models,
+  required String? model,
+  required ValueChanged<String> onChanged,
+  bool providerQualified = false,
+}) => showDialog<void>(
+  context: context,
+  builder: (_) => _ModelPickerDialog(
+    models: models,
+    model: model,
+    onChanged: onChanged,
+    providerQualified: providerQualified,
+  ),
+);
+
 /// Compact model selector for the composer's controls row.
 ///
 /// Renders like the row's other dropdowns (monospace 11px, chevron, no
@@ -20,6 +36,7 @@ class ModelPickerButton extends StatelessWidget {
     required this.models,
     required this.model,
     required this.onChanged,
+    this.providerQualified = false,
   });
 
   /// Selectable model ids advertised by the agent (ACP config option).
@@ -30,25 +47,23 @@ class ModelPickerButton extends StatelessWidget {
   final String? model;
 
   /// Fires with the newly selected model id.
-  final ValueChanged<String> onChanged;
+  final ValueChanged<String>? onChanged;
+  final bool providerQualified;
 
-  Future<void> _open(BuildContext context) {
-    return showDialog<void>(
-      context: context,
-      builder: (BuildContext dialogContext) => _ModelPickerDialog(
-        models: models,
-        model: model,
-        onChanged: onChanged,
-      ),
-    );
-  }
+  Future<void> _open(BuildContext context) => showModelPicker(
+    context,
+    models: models,
+    model: model,
+    onChanged: onChanged!,
+    providerQualified: providerQualified,
+  );
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     return TextButton(
       key: const Key('composer-model'),
-      onPressed: () => _open(context),
+      onPressed: onChanged == null ? null : () => _open(context),
       style: ButtonStyle(
         visualDensity: VisualDensity.compact,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -89,11 +104,13 @@ class _ModelPickerDialog extends StatefulWidget {
     required this.models,
     required this.model,
     required this.onChanged,
+    this.providerQualified = false,
   });
 
   final List<String> models;
   final String? model;
   final ValueChanged<String> onChanged;
+  final bool providerQualified;
 
   @override
   State<_ModelPickerDialog> createState() => _ModelPickerDialogState();
@@ -109,6 +126,12 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
   final ScrollController _scroll = ScrollController();
   late List<String> _matches;
   int _active = 0;
+  String? _provider;
+  late final List<String> _providers = widget.providerQualified
+      ? (widget.models.map((id) => id.split('/').first).toSet().toList()
+          ..sort())
+      : const [];
+  double get _itemHeight => widget.providerQualified ? 56 : _rowHeight;
 
   @override
   void initState() {
@@ -154,7 +177,11 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
     final String needle = _query.text.toLowerCase().trim();
     setState(() {
       _matches = widget.models
-          .where((String id) => id.toLowerCase().contains(needle))
+          .where(
+            (String id) =>
+                (_provider == null || id.startsWith('$_provider/')) &&
+                id.toLowerCase().contains(needle),
+          )
           .toList(growable: false);
       _active = _activeFor(widget.model);
     });
@@ -168,13 +195,13 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
     // Keep the active row on screen. With the fixed row height the target
     // offset is direct arithmetic — no measuring needed.
     if (!_scroll.hasClients) return;
-    final double target = _active * _rowHeight;
+    final double target = _active * _itemHeight;
     final double lowestVisible =
-        _scroll.offset + _scroll.position.viewportDimension - _rowHeight;
+        _scroll.offset + _scroll.position.viewportDimension - _itemHeight;
     if (target < _scroll.offset) {
       _scroll.jumpTo(target);
     } else if (target > lowestVisible) {
-      _scroll.jumpTo(target - _scroll.position.viewportDimension + _rowHeight);
+      _scroll.jumpTo(target - _scroll.position.viewportDimension + _itemHeight);
     }
   }
 
@@ -202,16 +229,41 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
                   controller: _query,
                   focusNode: _queryFocus,
                   autofocus: true,
-                  decoration: const InputDecoration(
-                    hintText: 'Search models',
-                    prefixIcon: Icon(Icons.search, size: 18),
-                    prefixIconConstraints: BoxConstraints(minWidth: 36),
+                  decoration: InputDecoration(
+                    hintText: widget.providerQualified
+                        ? 'Search providers and models'
+                        : 'Search models',
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    prefixIconConstraints: const BoxConstraints(minWidth: 36),
                   ),
                   onSubmitted: (String _) {
                     if (_matches.isNotEmpty) _select(_matches[_active]);
                   },
                 ),
               ),
+              if (_providers.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        for (final provider in <String?>[null, ..._providers])
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              label: Text(provider ?? 'All providers'),
+                              selected: _provider == provider,
+                              onSelected: (_) {
+                                _provider = provider;
+                                _refilter();
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               Flexible(
                 child: _matches.isEmpty
                     ? const SizedBox(
@@ -220,7 +272,7 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
                       )
                     : ListView.builder(
                         controller: _scroll,
-                        itemExtent: _rowHeight,
+                        itemExtent: _itemHeight,
                         itemCount: _matches.length,
                         padding: const EdgeInsets.only(bottom: 8),
                         itemBuilder: (BuildContext context, int index) =>
@@ -264,15 +316,36 @@ class _ModelPickerDialogState extends State<_ModelPickerDialog> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    id,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.speedDialColors.mono.copyWith(
-                      fontSize: 13,
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
+                  child: widget.providerQualified && id.contains('/')
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              id.substring(id.indexOf('/') + 1),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            Text(
+                              id.substring(0, id.indexOf('/')),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: context.speedDialColors.mono.copyWith(
+                            fontSize: 13,
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
                 ),
               ],
             ),

@@ -30,7 +30,7 @@ const commands = <NativeCommand>[
 ];
 
 void main() {
-  for (final double width in <double>[390, 1440]) {
+  for (final double width in <double>[390, 441, 1440]) {
     for (final bool light in <bool>[false, true]) {
       testWidgets('Ante UI and slash aliases share actions ($width, $light)', (
         tester,
@@ -63,23 +63,52 @@ void main() {
           AppScope(
             data: app,
             child: MaterialApp(
-              theme: light ? buildSpeedDialLightTheme() : buildSpeedDialTheme(),
+              theme:
+                  (light ? buildSpeedDialLightTheme() : buildSpeedDialTheme())
+                      .copyWith(platform: TargetPlatform.linux),
               home: const Scaffold(body: ChatPane()),
             ),
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Switch provider'));
+        await tester.tap(find.byKey(const Key('composer-model')));
         await tester.pumpAndSettle();
-        expect(find.text('openai-subscription'), findsOneWidget);
-        await tester.tap(find.text('openai-subscription'));
+        expect(find.text('gpt-5.6-luna'), findsOneWidget);
+        expect(find.text('glm-5.2'), findsOneWidget);
+        expect(
+          app.sessions.byId(source.id)!.model,
+          'cerebras/gemma-4-31b',
+          reason: 'Browsing must not switch providers',
+        );
+        await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'cerebras'));
+        await tester.tap(find.widgetWithText(ChoiceChip, 'cerebras'));
         await tester.pumpAndSettle();
-        expect(app.sessions.byId(source.id)!.model, 'gpt-5.6-sol');
+        expect(find.text('gpt-5.6-luna'), findsNothing);
+        expect(find.text('gemma-4-31b'), findsOneWidget);
+        await tester.ensureVisible(
+          find.widgetWithText(ChoiceChip, 'All providers'),
+        );
+        await tester.tap(find.widgetWithText(ChoiceChip, 'All providers'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const Key('model-picker-query')),
+          'gpt-5.6',
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('glm-5.2'), findsNothing);
+        await tester.tap(find.text('gpt-5.6-luna'));
+        await tester.pumpAndSettle();
+        expect(
+          app.sessions.byId(source.id)!.model,
+          'openai-subscription/gpt-5.6-luna',
+        );
         await tester.enterText(find.byType(TextField), '/provider zai');
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
-        expect(app.sessions.byId(source.id)!.model, 'glm-5.2');
-        await tester.tap(find.byTooltip('Fork conversation'));
+        expect(app.sessions.byId(source.id)!.model, 'zai/glm-5.2');
+        await tester.tap(find.byTooltip('Conversation actions'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Fork conversation'));
         await tester.pumpAndSettle();
         final buttonFork = app.selection.selectedSessionId!;
         expect(buttonFork, isNot(source.id));
@@ -96,7 +125,9 @@ void main() {
           (await fake.history(buttonFork)).events
               .map((e) => e.toJson()..remove('timestamp')),
         );
-        await tester.tap(find.byTooltip('Rewind last turn'));
+        await tester.tap(find.byTooltip('Conversation actions'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Rewind last turn'));
         await tester.pumpAndSettle();
         expect(find.text('First answer'), findsNothing);
         app.selection.selectedSessionId = buttonFork;
@@ -119,7 +150,9 @@ void main() {
           final sent = <String>[];
           await tester.pumpWidget(
             MaterialApp(
-              theme: light ? buildSpeedDialLightTheme() : buildSpeedDialTheme(),
+              theme:
+                  (light ? buildSpeedDialLightTheme() : buildSpeedDialTheme())
+                      .copyWith(platform: TargetPlatform.linux),
               home: Scaffold(
                 body: Composer(
                   status: SessionStatus.idle,
@@ -132,7 +165,6 @@ void main() {
                   onThinkingChanged: (_) {},
                   sessionControls: AnteControls(
                     enabled: true,
-                    onProvider: () {},
                     onRewind: () {},
                     onFork: () {},
                   ),

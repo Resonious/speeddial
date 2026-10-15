@@ -821,25 +821,8 @@ class FakeDaemonClient implements DaemonClient {
     final String? resolvedModel;
     final List<String> sessionModels;
     if (providerId == 'ante') {
-      // Mirror the daemon: a provider-qualified request pins the upstream
-      // provider; the session reports the bare model id plus that
-      // provider's own (bare) preferred list, with the current model kept
-      // selectable even when the catalog does not prefer it (custom ids).
-      final List<String> qualified = models;
-      final String? bare = (model != null && model.isNotEmpty)
-          ? model.split('/').last
-          : null;
-      resolvedModel = bare;
-      final String? pinnedProvider = (model != null && model.contains('/'))
-          ? model.split('/').first
-          : null;
-      sessionModels = <String>[
-        ?bare,
-        for (final String entry in qualified)
-          if (entry.split('/').first == pinnedProvider &&
-              entry.split('/').last != bare)
-            entry.split('/').last,
-      ];
+      resolvedModel = model ?? models.first;
+      sessionModels = <String>{...models, resolvedModel}.toList();
     } else {
       // falls back to the omp default (mirrors the agent's best-effort
       // adoption of an unlisted model id). Providers without a model option
@@ -1124,13 +1107,9 @@ class FakeDaemonClient implements DaemonClient {
             (parts.length == 2 && !models.contains(parts.last))) {
           throw const DaemonError(-32602, 'Unknown provider or model');
         }
-        _updateSession(
+        await setModel(
           sessionId,
-          (s) => Session.fromJson({
-            ...s.toJson(),
-            'model': parts.length == 2 ? parts.last : models.first,
-            'models': models,
-          }),
+          '${parts.first}/${parts.length == 2 ? parts.last : models.first}',
         );
       } else if (name == 'fork') {
         final seq = args.isEmpty ? null : int.tryParse(args);
@@ -1502,6 +1481,9 @@ class FakeDaemonClient implements DaemonClient {
     _ensureSeeded();
     _requireSession(sessionId);
     final Session current = _sessions[sessionId]!;
+    if (current.providerId == 'ante' && !current.models.contains(model)) {
+      model = '${current.model?.split('/').first}/$model';
+    }
     if (current.models.isNotEmpty && !current.models.contains(model)) {
       throw DaemonError(
         -32602,

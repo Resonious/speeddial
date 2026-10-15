@@ -915,7 +915,10 @@ class SessionEngine {
       var adoptedOptions = created.configOptions;
       if (modelOption != null &&
           requestedModel != null &&
-          modelOption.current != requestedModel) {
+          modelOption.current != requestedModel &&
+          !(client is AnteClient &&
+              modelOption.current ==
+                  '${client.upstreamProvider}/$requestedModel')) {
         try {
           adoptedOptions = await client.setConfigOption(
             providerSessionId,
@@ -1524,16 +1527,7 @@ class SessionEngine {
           model: parts.length == 2 ? parts.last : null,
         );
         echo();
-        live.modelConfigId = _modelOptionOf(options)?.configId;
-        live.thinkingConfigId = _thinkingOptionOf(options)?.configId;
-        _store.setAnteProvider(sessionId, client.upstreamProvider);
-        if (oldProvider != client.upstreamProvider) {
-          _store.clearAnteTurns(sessionId);
-        }
-        await _updateSession(
-          sessionId,
-          (current) => _withConfigOptions(current, _configSnapshotOf(options)),
-        );
+        await _adoptAnteOptions(live, client, oldProvider, options);
       case 'rewind':
         final int? seq = arguments.isEmpty ? null : int.tryParse(arguments);
         if (arguments.isNotEmpty && (seq == null || seq < 1)) {
@@ -1577,6 +1571,61 @@ class SessionEngine {
         await _updateSession(sessionId, (current) => _withDone(current, false));
     }
   }
+
+  Future<Session> _adoptAnteOptions(
+    _LiveSession live,
+    AnteClient client,
+    String? oldProvider,
+    List<AcpConfigOption> options,
+  ) {
+    live.modelConfigId = _modelOptionOf(options)?.configId;
+    live.thinkingConfigId = _thinkingOptionOf(options)?.configId;
+    _store.setAnteProvider(live.sessionId, client.upstreamProvider);
+    if (oldProvider != client.upstreamProvider) {
+      _store.clearAnteTurns(live.sessionId);
+    }
+    return _updateSession(
+      live.sessionId,
+      (current) => _withConfigOptions(current, _configSnapshotOf(options)),
+    );
+  }
+
+  Future<Session> _setAnteModel(String sessionId, String model) =>
+      _withSessionOperation(() async {
+        final live = await _commandSession(sessionId);
+        if (live.turn != null) {
+          throw DaemonError(
+            kErrConflict,
+            'Wait for the current turn before switching models',
+          );
+        }
+        final client = live.client as AnteClient;
+        final choices = _store.getSession(sessionId)!.models;
+        final selected = choices.contains(model)
+            ? model
+            : '${client.upstreamProvider}/$model';
+        if (!choices.contains(selected)) {
+          throw DaemonError(_kErrInvalidParams, 'Unknown Ante model: $model');
+        }
+        final lock = Completer<void>();
+        live.turn = lock.future;
+        live.maintaining = true;
+        try {
+          final oldProvider = client.upstreamProvider;
+          final options = await client.setConfigOption(
+            live.providerSessionId,
+            'model',
+            selected,
+          );
+          return await _adoptAnteOptions(live, client, oldProvider, options);
+        } on AnteTurnException catch (error) {
+          throw DaemonError(kErrAgentProcess, error.message);
+        } finally {
+          live.turn = null;
+          live.maintaining = false;
+          lock.complete();
+        }
+      });
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
   /// [sendMessage] calls from each spawning their own agent process.
@@ -1769,7 +1818,12 @@ class SessionEngine {
         final created = await client.newSession(
           cwd: session.cwd,
           mcpServers: _mcpServersFor(session, info),
-          model: session.model,
+          model:
+              client is AnteClient &&
+                  upstreamProvider != null &&
+                  (session.model?.startsWith('$upstreamProvider/') ?? false)
+              ? session.model!.substring(upstreamProvider.length + 1)
+              : session.model,
           provider: upstreamProvider,
           sandboxMode: session.sandboxMode,
           yolo: session.yolo,
@@ -1839,7 +1893,12 @@ class SessionEngine {
     // fail the resume — the next explicit call tries again. The store is
     // only touched when model/models/thinkingLevel/thinkingLevels actually
     // changed, so a resume does not spam session.updated.
-    final String? persistedModel = session.model;
+    final String? persistedModel =
+        client is AnteClient &&
+            session.model != null &&
+            !reported.models.contains(session.model)
+        ? '${client.upstreamProvider}/${session.model}'
+        : session.model;
     if (persistedModel != null &&
         persistedModel != reported.model &&
         reported.models.contains(persistedModel) &&
@@ -2029,6 +2088,10 @@ class SessionEngine {
     }
     if (session.preparing) {
       throw DaemonError(kErrConflict, 'Session is still preparing');
+    }
+    if (_providers.byId(session.providerId)?.protocol ==
+        ProviderProtocol.ante) {
+      return _setAnteModel(sessionId, model);
     }
     final models = session.models;
     if (models.isNotEmpty && !models.contains(model)) {

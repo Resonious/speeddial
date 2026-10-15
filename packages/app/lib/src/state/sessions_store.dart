@@ -437,7 +437,13 @@ class SessionsStore extends StoreBase {
   /// current selection is `Session.model`.
   Future<void> setModel(String daemonId, String sessionId, String model) async {
     _ensureDaemonSubscriptions(daemonId);
-    _replace(daemonId, await _clientFor(daemonId).setModel(sessionId, model));
+    try {
+      _replace(daemonId, await _clientFor(daemonId).setModel(sessionId, model));
+    } on Object catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   // ---------------------------------------------------------------------

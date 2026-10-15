@@ -89,7 +89,10 @@ lib/src/codex/      Codex's native `codex app-server --stdio` JSONL transport. I
                     and lifecycle notifications into the shared agent update stream.
 lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolved upstream
                     provider to the engine, which persists that identity separately from
-                    the bare public model id. Forks copy it before lazy startup; legacy
+                    the provider-qualified public model id. The active model picker exposes the usable
+                    catalog across providers, with provider filters and model search. Choosing a
+                    row updates provider/model together and adopts effort options atomically.
+                    Forks copy the upstream before lazy startup; legacy
                     forks retain the source native session id for a provider lookup on
                     their first send. Starts/resumes sessions, sends `UserInput`,
                     handles approval pauses, and maps message/thought
@@ -703,4 +706,4 @@ Interrupted preparation is retryable by sending again, without automatically rep
 old queued message. The new-session sheet warms the selected base branch fetch, sharing its
 in-flight result with worktree creation (30-second freshness, consumed on use).
 
-Ante provider and rewind controls invoke the same session command operation as their slash aliases. The fork button and `/fork [seq]` share `forkSession`, inclusive message boundaries, and navigation to the child. Complete idle Ante conversations use native snapshots; arbitrary message cuts use the portable transcript handoff.
+Ante provider/model selection and `/provider` share provider switching and state adoption; bare `/provider` opens the model picker. Rewind controls invoke the same session command operation as `/rewind`. The fork button and `/fork [seq]` share `forkSession`, inclusive message boundaries, and navigation to the child. Complete idle Ante conversations use native snapshots; arbitrary message cuts use the portable transcript handoff.

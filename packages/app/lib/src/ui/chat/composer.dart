@@ -78,6 +78,7 @@ class Composer extends StatefulWidget {
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
     this.sessionControls,
+    this.providerQualifiedModels = false,
     this.usage,
     this.model,
     this.models = const <String>[],
@@ -111,6 +112,7 @@ class Composer extends StatefulWidget {
   final List<NativeCommand> commands;
   final VoidCallback? onSlashStarted;
   final Widget? sessionControls;
+  final bool providerQualifiedModels;
 
   /// Latest turn usage, shown in the footer when non-null.
   final UsageInfo? usage;
@@ -588,6 +590,7 @@ class _ComposerState extends State<Composer>
             ),
           _ControlsRow(
             sessionControls: widget.sessionControls,
+            providerQualifiedModels: widget.providerQualifiedModels,
             model: widget.model,
             models: widget.models,
             onModelChanged: widget.onModelChanged,
@@ -761,6 +764,7 @@ class _ControlsRow extends StatelessWidget {
   const _ControlsRow({
     required this.model,
     this.sessionControls,
+    this.providerQualifiedModels = false,
     required this.models,
     required this.onModelChanged,
     required this.thinkingLevel,
@@ -770,6 +774,7 @@ class _ControlsRow extends StatelessWidget {
 
   final String? model;
   final Widget? sessionControls;
+  final bool providerQualifiedModels;
   final List<String> models;
   final ValueChanged<String>? onModelChanged;
   final String? thinkingLevel;
@@ -820,21 +825,27 @@ class _ControlsRow extends StatelessWidget {
             ),
             const SizedBox(width: 10),
           ],
-          if (models.isNotEmpty && onModel != null)
+          if (models.isNotEmpty && (onModel != null || providerQualifiedModels))
             Flexible(
+              fit: sessionControls == null ? FlexFit.loose : FlexFit.tight,
               // Raw model ids as labels: they are the agent's config values,
               // not display names. IntrinsicWidth keeps the button compact
               // (its natural width) yet lets it shrink to the row's remaining
               // space, where the Flexible label ellipsizes instead of
               // overflowing the row. The picker itself is searchable —
               // openrouter-scale model lists don't fit a flat dropdown menu.
-              child: Tooltip(
-                message: 'Model',
-                child: IntrinsicWidth(
-                  child: ModelPickerButton(
-                    models: models,
-                    model: model,
-                    onChanged: onModel,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                widthFactor: 1,
+                child: Tooltip(
+                  message: 'Model',
+                  child: IntrinsicWidth(
+                    child: ModelPickerButton(
+                      models: models,
+                      providerQualified: providerQualifiedModels,
+                      model: model,
+                      onChanged: onModel,
+                    ),
                   ),
                 ),
               ),

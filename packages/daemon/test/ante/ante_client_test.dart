@@ -157,7 +157,7 @@ void main() {
       model: 'fake-large',
     );
     expect(client.upstreamProvider, 'other-provider');
-    expect(options.first.currentValue, 'fake-large');
+    expect(options.first.currentValue, 'other-provider/fake-large');
     await expectLater(
       client.switchProvider(created.sessionId, 'missing'),
       throwsA(isA<AnteTurnException>()),
@@ -235,10 +235,10 @@ void main() {
     final AcpConfigOption model = created.configOptions.firstWhere(
       (AcpConfigOption option) => option.id == 'model',
     );
-    expect(model.currentValue, 'fake-model');
+    expect(model.currentValue, 'fake-provider/fake-model');
     expect(model.options.map((AcpConfigOptionValue item) => item.value), [
-      'fake-model',
-      'fake-large',
+      'fake-provider/fake-model',
+      'fake-provider/fake-large',
     ]);
     final AcpConfigOption effort = created.configOptions.firstWhere(
       (AcpConfigOption option) => option.id == 'thinking',
@@ -512,7 +512,7 @@ void main() {
     final AcpConfigOption model = created.configOptions.firstWhere(
       (AcpConfigOption option) => option.id == 'model',
     );
-    expect(model.currentValue, 'gemma-4-31b');
+    expect(model.currentValue, 'cerebras/gemma-4-31b');
   });
 
   test(

@@ -10,6 +10,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
 import '../agents/native_commands.dart';
+import '../providers/provider_registry.dart';
 import '../mcp/built_in_mcp_server.dart'
     show kMcpServerName, kSessionSummaryInstruction;
 
@@ -264,9 +265,22 @@ class AnteClient implements AgentClient, NativeCommandClient {
     final Map<String, Object?> update;
     switch (configId) {
       case 'model':
-        update = <String, Object?>{
-          'model': <String, Object?>{'id': value},
-        };
+        final choices = _configOptions(
+          state,
+          catalog,
+        ).first.options.map((o) => o.value);
+        final selected = choices.contains(value)
+            ? value
+            : '${state.providerId}/$value';
+        if (!choices.contains(selected)) {
+          throw ArgumentError.value(value, 'value', 'unknown Ante model');
+        }
+        final slash = selected.indexOf('/');
+        return switchProvider(
+          sessionId,
+          selected.substring(0, slash),
+          model: selected.substring(slash + 1),
+        );
       case 'thinking':
         final List<String> effortOptions = _effortOptionsFor(state, catalog);
         if (effortOptions.isEmpty ||
@@ -807,8 +821,10 @@ class AnteClient implements AgentClient, NativeCommandClient {
       if (decoded is! Map || decoded['providers'] is! List) {
         return const <_AnteCatalogProvider>[];
       }
-      return (decoded['providers'] as List<Object?>)
-          .whereType<Map>()
+      return ProviderRegistry.usableAnteCatalogProviders(
+            decoded['providers'] as List<Object?>,
+            {...Platform.environment, ...?_environment},
+          )
           .map(
             (Map<Object?, Object?> value) =>
                 _AnteCatalogProvider.fromJson(Map<String, Object?>.from(value)),
@@ -1692,25 +1708,24 @@ class AnteClient implements AgentClient, NativeCommandClient {
     _AnteSessionState state,
     List<_AnteCatalogProvider> catalog,
   ) {
-    _AnteCatalogProvider? provider;
-    for (final _AnteCatalogProvider candidate in catalog) {
-      if (candidate.id == state.providerId) {
-        provider = candidate;
-        break;
-      }
-    }
-    final List<_AnteCatalogModel> models = <_AnteCatalogModel>[
-      ...?provider?.models,
-    ];
-    if (!models.any((_AnteCatalogModel model) => model.id == state.modelId)) {
-      models.insert(
-        0,
-        _AnteCatalogModel(
-          id: state.modelId,
-          description: state.modelDescription,
-        ),
-      );
-    }
+    final current = '${state.providerId}/${state.modelId}';
+    final models = <String, AcpConfigOptionValue>{
+      for (final provider in catalog)
+        for (final model in provider.models)
+          '${provider.id}/${model.id}': AcpConfigOptionValue(
+            value: '${provider.id}/${model.id}',
+            name: '${provider.id}/${model.id}',
+            description: model.description,
+          ),
+    };
+    models.putIfAbsent(
+      current,
+      () => AcpConfigOptionValue(
+        value: current,
+        name: current,
+        description: state.modelDescription,
+      ),
+    );
     final List<String> effortOptions = _effortOptionsFor(state, catalog);
     return <AcpConfigOption>[
       AcpConfigOption(
@@ -1718,15 +1733,8 @@ class AnteClient implements AgentClient, NativeCommandClient {
         name: 'Model',
         category: 'model',
         type: 'select',
-        currentValue: state.modelId,
-        options: <AcpConfigOptionValue>[
-          for (final _AnteCatalogModel model in models)
-            AcpConfigOptionValue(
-              value: model.id,
-              name: model.id,
-              description: model.description,
-            ),
-        ],
+        currentValue: current,
+        options: models.values.toList(growable: false),
       ),
       if (effortOptions.isNotEmpty)
         AcpConfigOption(

@@ -14,6 +14,7 @@ import 'composer.dart';
 import 'file_action_dialog.dart';
 import 'file_transfer_banner.dart';
 import 'history_skeleton.dart';
+import 'model_picker.dart';
 import 'permission_banner.dart';
 import 'question_banner.dart';
 import 'timeline.dart';
@@ -423,7 +424,6 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                             !_controlling &&
                             !(session?.preparing ?? false) &&
                             !data.connections.statusOf(daemonId).outOfReach,
-                        onProvider: () => unawaited(_chooseProvider()),
                         onRewind: () => unawaited(_runControl('rewind')),
                         onFork: () => unawaited(_forkFrom(null)),
                       )
@@ -434,11 +434,16 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 commands: _commands,
                 onSlashStarted: () => unawaited(_loadCommands()),
                 usage: usage,
+                providerQualifiedModels: session?.providerId == 'ante',
                 model: session?.model,
                 models: session?.models ?? const <String>[],
-                onModelChanged: (String model) {
-                  unawaited(_setModel(model));
-                },
+                onModelChanged:
+                    session?.providerId == 'ante' &&
+                        (running || sending || _controlling || _forking)
+                    ? null
+                    : (String model) {
+                        unawaited(_setModel(model));
+                      },
                 thinkingLevel: session?.thinkingLevel,
                 thinkingLevels: session?.thinkingLevels ?? const <String>[],
                 onThinkingChanged: (String level) {
@@ -490,25 +495,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   }
 
   Future<void> _chooseProvider() async {
-    final providers =
-        widget.data.daemonConfig.infoFor(widget.daemonId)?.providers ??
-        const <ProviderInfo>[];
-    final choices =
-        providers
-            .where((p) => p.id == 'ante')
-            .expand((p) => p.models)
-            .where((m) => m.contains('/'))
-            .map((m) => m.split('/').first)
-            .toSet()
-            .toList()
-          ..sort();
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (_) => AnteProviderDialog(providers: choices),
+    final session = widget.data.sessions.byId(widget.sessionId);
+    if (session == null) return;
+    await showModelPicker(
+      context,
+      models: session.models,
+      model: session.model,
+      providerQualified: true,
+      onChanged: (model) => unawaited(_setModel(model)),
     );
-    if (selected != null && mounted) {
-      await _runControl('provider', arguments: selected);
-    }
   }
 
   Future<void> _forkFrom(int? seq, {bool rethrowFailure = false}) async {
@@ -652,6 +647,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   }
 
   Future<void> _setModel(String model) async {
+    if (_controlling) return;
+    setState(() => _controlling = true);
     try {
       await widget.data.sessions.setModel(
         widget.daemonId,
@@ -660,6 +657,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       );
     } on DaemonError catch (error) {
       await _showError(error);
+    } finally {
+      if (mounted) setState(() => _controlling = false);
     }
   }
 

@@ -298,12 +298,14 @@ void main() {
     await tester.tap(find.byKey(const Key('new-session-submit')));
     await tester.pumpAndSettle();
 
-    // The daemon splits the qualified id: the session carries the bare
-    // model and the pinned provider's model list.
+    // The qualified choice pins the upstream and stays qualified in the session.
     final Session created = createdSession(app, projectId);
     expect(created.providerId, 'ante');
-    expect(created.model, 'gemma-4-31b');
-    expect(created.models, <String>['gemma-4-31b']);
+    expect(created.model, 'cerebras/gemma-4-31b');
+    expect(
+      created.models,
+      containsAll(<String>['cerebras/gemma-4-31b', 'zai/glm-5.2']),
+    );
   });
 
   testWidgets('a custom model id reaches the Ante provider provider-pinned', (
@@ -334,8 +336,8 @@ void main() {
 
     final Session created = createdSession(app, projectId);
     expect(created.providerId, 'ante');
-    expect(created.model, 'my-custom-model');
-    expect(created.models, <String>['my-custom-model']);
+    expect(created.model, 'openai-compatible/my-custom-model');
+    expect(created.models, contains('openai-compatible/my-custom-model'));
   });
 
   testWidgets('yolo mode is off by default and sent when checked', (

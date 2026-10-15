@@ -133,10 +133,10 @@ Session = {
                              // true + error means preparation failed; send retries
   model: string | null,       // current model id — agent-reported when the provider
                               // advertises a model config option, else a local preference
-                              // (for Ante: the bare id on its current upstream provider)
+                              // (for Ante: provider-qualified, e.g. openrouter/google/gemini-4-argon)
   models: string[],           // selectable model ids advertised by the agent (ACP config
                               // option); empty when the provider has none (for Ante: the
-                              // session provider's own catalog models, bare)
+                              // qualified models across usable catalog providers)
   cwd: string,                // working dir of the agent (project path or worktree)
   baseBranch: string | null,  // base branch the session's worktree was created from
   thinkingLevel: string | null,   // current agent thinking level (e.g. omp's "auto");
@@ -612,13 +612,11 @@ Agent task-progress `plan` events remain supported.
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as
   `openai-compatible/<model>`); the daemon pins that upstream provider in
-  `StartSession` and the session reports the bare model id plus that
-  provider's own model list. Catalog providers with no preferred models
-  (e.g. a custom OpenAI-compatible upstream) cannot be enumerated, so
-  clients may submit any `provider/model` pair the provider's API accepts —
-  the model id passes through to that provider. Mid-session model switches
-  (`sessions.setModel`) stay within the session's provider — Ante's
-  `UpdateSession` cannot change it.
+  `StartSession`. The session reports provider-qualified `model` and `models`, spanning
+  the usable providers' advertised catalog plus its current model (even if custom).
+  A slash inside a model id is preserved; only the first slash separates the upstream.
+  Providers with no advertised models cannot be enumerated; a custom creation choice
+  remains selectable. `sessions.setModel` can switch provider and model together.
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is
@@ -779,9 +777,12 @@ Agent task-progress `plan` events remain supported.
   level/levels, since those can be model-dependent); without a live agent the choice is persisted
   and reapplied on resume. Providers without a model option keep the legacy local-preference
   behavior (any string is stored verbatim).
-  For Ante, `Session.models` contains only the session provider's models (bare ids), so any
-  validated pick forwards as-is. The provider control and `/provider` switch upstreams through
-  `UpdateSession`, adopting the new model and effort options atomically.
+  For Ante, choices are qualified `provider/model` ids across usable catalog providers.
+  A selection applies both fields with `UpdateSession`, adopts the returned model and effort
+  options, and persists the upstream for forks. Ante must be idle; a stopped session is
+  resumed before applying the selection, and a busy session rejects with `-32003`.
+  Legacy bare ids are accepted on the current upstream. `/provider` uses the same state
+  adoption; without arguments the app opens the same searchable model picker.
 - `sessions.setThinkingLevel {sessionId: string, level: string}` → `{session: Session}` — sets the
   agent's thinking level (forwarded to a live agent through the provider transport; otherwise
   persisted and reapplied on resume). `level` must be one of the session's `thinkingLevels`;

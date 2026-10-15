@@ -645,11 +645,12 @@ class Session {
 
   /// Current model id — agent-reported when the provider advertises a model
   /// config option (ACP), otherwise a locally persisted preference; null
-  /// while unset.
+  /// while unset. Ante uses `upstream/model`, splitting only the first slash.
   final String? model;
 
   /// Selectable model ids advertised by the agent (ACP config option);
-  /// empty when the provider has no model option.
+  /// empty when the provider has no model option. Ante includes qualified
+  /// models across all usable catalog upstreams, plus the current model.
   final List<String> models;
 
   /// Working dir of the agent (project path or worktree).

@@ -500,6 +500,27 @@ class ProviderRegistry {
   /// in the process environment or stored in `auth/api_keys.json`;
   /// `oauth_preset` auth needs a token file under `auth/`; settings-listed
   /// providers are always kept.
+  /// Shared availability policy for creation and active-session model pickers.
+  static List<Map<String, Object?>> usableAnteCatalogProviders(
+    List<Object?> providers,
+    Map<String, String> environment,
+  ) {
+    final auth = _readAnteAuthState(environment);
+    return [
+      for (final entry in providers)
+        if (entry is Map &&
+            entry['id'] is String &&
+            (entry['id'] as String).isNotEmpty &&
+            _anteProviderUsable(
+              entry,
+              entry['id'] as String,
+              environment,
+              auth,
+            ))
+          Map<String, Object?>.from(entry),
+    ];
+  }
+
   static bool _anteProviderUsable(
     Map<Object?, Object?> rawProvider,
     String providerId,

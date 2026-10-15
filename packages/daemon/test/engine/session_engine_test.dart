@@ -1326,7 +1326,10 @@ void main() {
       );
       expect(config['provider'], expectedProvider);
       expect(config['model'], 'fake-model');
-      expect(store.getSession(nested.id)!.model, 'fake-model');
+      expect(
+        store.getSession(nested.id)!.model,
+        '$expectedProvider/fake-model',
+      );
       expect(store.providerSessionIdOf(nested.id), isNot(nativeId));
       expect(store.anteProviderOf(nested.id).provider, expectedProvider);
       expect(store.anteProviderOf(nested.id).sourceSessionId, isNull);
@@ -1598,13 +1601,22 @@ void main() {
         throwsA(isA<DaemonError>()),
       );
       expect(store.nextSeq(session.id), beforeFailure);
-      await engine.runCommand(
-        session.id,
-        'provider',
-        arguments: 'other-provider fake-large',
+      expect(
+        store.getSession(session.id)!.models,
+        containsAll([
+          'fake-provider/fake-model',
+          'other-provider/fake-model',
+          'other-provider/fake-large',
+        ]),
       );
+      await expectLater(
+        engine.setModel(session.id, 'missing/model'),
+        throwsA(isA<DaemonError>()),
+      );
+      expect(store.anteProviderOf(session.id).provider, 'fake-provider');
+      await engine.setModel(session.id, 'other-provider/fake-large');
       expect(store.anteProviderOf(session.id).provider, 'other-provider');
-      expect(store.getSession(session.id)!.model, 'fake-large');
+      expect(store.getSession(session.id)!.model, 'other-provider/fake-large');
       await engine.runCommand(
         session.id,
         'provider',
@@ -1687,117 +1699,124 @@ void main() {
       providerId: 'fakeAnte',
       model: 'fake-provider/fake-large',
     );
-    // The qualified prefix pins the upstream provider; the session carries
-    // the bare model id and that provider's advertised list.
-    expect(session.model, 'fake-large');
-    expect(session.models, <String>['fake-model', 'fake-large']);
-  });
-
-  test('Ante process death resumes the saved session on the next send', () async {
-    await eventsSub.cancel();
-    await changesSub.cancel();
-    await removalsSub.cancel();
-    await engine.dispose();
-    final File report = File(p.join(tempDir.path, 'ante-session.json'));
-    final File failResume = File(p.join(tempDir.path, 'ante-resume.fail'));
-    store.updateDaemonEnvironment(
-      set: <String, String>{
-        'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
-        'FAKE_ANTE_RESUME_FAILURE_FILE': failResume.path,
-      },
-    );
-    engine = SessionEngine(store: store, providers: fakeAnteProviders());
-    await engine.restore();
-    eventsSub = engine.events.listen(events.add);
-    changesSub = engine.sessionChanges.listen(changes.add);
-    removalsSub = engine.sessionRemovals.listen(removals.add);
-
-    final Session session = await engine.createSession(
-      projectId: project.id,
-      providerId: 'fakeAnte',
-      shortPrompt: true,
-    );
-    final String? providerSessionId = store.providerSessionIdOf(session.id);
-    await engine.sendMessage(session.id, 'die');
-    await waitFor(
-      () => store.getSession(session.id)!.status == SessionStatus.error,
-    );
-    final List<SessionEvent> failedHistory = store
-        .listEvents(session.id)
-        .events;
-    expect(
-      failedHistory.whereType<SessionErrorEvent>().single.message,
-      contains('Ante process exited'),
-    );
-    expect(failedHistory.whereType<TurnCompleteEvent>(), isEmpty);
-
-    // Settings remain editable while the transport is dead, and are reapplied.
-    await engine.setThinkingLevel(session.id, 'high');
-    await engine.setModel(session.id, 'fake-large');
-
-    // A failed restart must reject before accepting the user's message and
-    // leave the saved session available for another recovery attempt.
-    await failResume.writeAsString('fail');
-    await expectLater(
-      engine.sendMessage(session.id, 'not accepted'),
-      throwsA(
-        isA<DaemonError>().having(
-          (DaemonError error) => error.code,
-          'code',
-          kErrAgentProcess,
-        ),
-      ),
-    );
-    expect(
-      store.listEvents(session.id).events.whereType<UserMessageEvent>(),
-      hasLength(1),
-    );
-    await failResume.delete();
-
-    final Future<PermissionRequestEvent> permission =
-        waitForPermissionRequest();
-    final List<Object?> sends = await Future.wait(<Future<Object?>>[
-      for (final String text in <String>['continue', 'concurrent'])
-        engine
-            .sendMessage(session.id, text)
-            .then<Object?>((_) => null, onError: (Object error) => error),
+    // The qualified prefix pins the upstream provider and remains in the
+    // public model ids so the picker can distinguish upstreams.
+    expect(session.model, 'fake-provider/fake-large');
+    expect(session.models, <String>[
+      'fake-provider/fake-model',
+      'fake-provider/fake-large',
     ]);
-    expect(sends.where((Object? result) => result == null), hasLength(1));
-    expect(sends.whereType<DaemonError>().single.code, kErrConflict);
-    final PermissionRequestEvent request = await permission.timeout(
-      const Duration(seconds: 5),
-    );
-    await engine.respondPermission(
-      session.id,
-      request.request.requestId,
-      'Accept',
-    );
-    await waitFor(
-      () => store.getSession(session.id)!.status == SessionStatus.idle,
-    );
-    final Map<String, Object?> resumed = Map<String, Object?>.from(
-      jsonDecode(await report.readAsString()) as Map,
-    );
-    expect(resumed['session_id'], providerSessionId);
-    expect(resumed['short_prompt'], isTrue);
-    expect(store.providerSessionIdOf(session.id), providerSessionId);
-    expect(store.getSession(session.id)!.model, 'fake-large');
-    final List<SessionEvent> history = store.listEvents(session.id).events;
-    expect(
-      history.take(failedHistory.length).map((event) => event.toJson()),
-      failedHistory.map((event) => event.toJson()),
-    );
-    expect(history.whereType<UserMessageEvent>(), hasLength(2));
-    expect(history.whereType<SessionErrorEvent>(), hasLength(1));
-    expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
-    expect(
-      history
-          .whereType<AgentMessageChunkEvent>()
-          .map((event) => event.text)
-          .join(),
-      'Hello world',
-    );
   });
+
+  test(
+    'Ante process death resumes the saved session on the next send',
+    () async {
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      final File report = File(p.join(tempDir.path, 'ante-session.json'));
+      final File failResume = File(p.join(tempDir.path, 'ante-resume.fail'));
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_ANTE_SESSION_CONFIG_REPORT': report.path,
+          'FAKE_ANTE_RESUME_FAILURE_FILE': failResume.path,
+        },
+      );
+      engine = SessionEngine(store: store, providers: fakeAnteProviders());
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeAnte',
+        shortPrompt: true,
+      );
+      final String? providerSessionId = store.providerSessionIdOf(session.id);
+      await engine.sendMessage(session.id, 'die');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      final List<SessionEvent> failedHistory = store
+          .listEvents(session.id)
+          .events;
+      expect(
+        failedHistory.whereType<SessionErrorEvent>().single.message,
+        contains('Ante process exited'),
+      );
+      expect(failedHistory.whereType<TurnCompleteEvent>(), isEmpty);
+
+      // Effort remains editable while the transport is dead and is reapplied.
+      await engine.setThinkingLevel(session.id, 'high');
+
+      // A failed restart must reject before accepting the user's message and
+      // leave the saved session available for another recovery attempt.
+      await failResume.writeAsString('fail');
+      await expectLater(
+        engine.sendMessage(session.id, 'not accepted'),
+        throwsA(
+          isA<DaemonError>().having(
+            (DaemonError error) => error.code,
+            'code',
+            kErrAgentProcess,
+          ),
+        ),
+      );
+      expect(
+        store.listEvents(session.id).events.whereType<UserMessageEvent>(),
+        hasLength(1),
+      );
+      await failResume.delete();
+      // Model selection resumes the transport to validate the provider/model.
+      await engine.setModel(session.id, 'fake-large');
+
+      final Future<PermissionRequestEvent> permission =
+          waitForPermissionRequest();
+      final List<Object?> sends = await Future.wait(<Future<Object?>>[
+        for (final String text in <String>['continue', 'concurrent'])
+          engine
+              .sendMessage(session.id, text)
+              .then<Object?>((_) => null, onError: (Object error) => error),
+      ]);
+      expect(sends.where((Object? result) => result == null), hasLength(1));
+      expect(sends.whereType<DaemonError>().single.code, kErrConflict);
+      final PermissionRequestEvent request = await permission.timeout(
+        const Duration(seconds: 5),
+      );
+      await engine.respondPermission(
+        session.id,
+        request.request.requestId,
+        'Accept',
+      );
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final Map<String, Object?> resumed = Map<String, Object?>.from(
+        jsonDecode(await report.readAsString()) as Map,
+      );
+      expect(resumed['session_id'], providerSessionId);
+      expect(resumed['short_prompt'], isTrue);
+      expect(store.providerSessionIdOf(session.id), providerSessionId);
+      expect(store.getSession(session.id)!.model, 'fake-provider/fake-large');
+      final List<SessionEvent> history = store.listEvents(session.id).events;
+      expect(
+        history.take(failedHistory.length).map((event) => event.toJson()),
+        failedHistory.map((event) => event.toJson()),
+      );
+      expect(history.whereType<UserMessageEvent>(), hasLength(2));
+      expect(history.whereType<SessionErrorEvent>(), hasLength(1));
+      expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+      expect(
+        history
+            .whereType<AgentMessageChunkEvent>()
+            .map((event) => event.text)
+            .join(),
+        'Hello world',
+      );
+    },
+  );
 
   test('Ante sessions stream rich events and attachments', () async {
     await eventsSub.cancel();
@@ -1814,8 +1833,11 @@ void main() {
       projectId: project.id,
       providerId: 'fakeAnte',
     );
-    expect(session.model, 'fake-model');
-    expect(session.models, <String>['fake-model', 'fake-large']);
+    expect(session.model, 'fake-provider/fake-model');
+    expect(session.models, <String>[
+      'fake-provider/fake-model',
+      'fake-provider/fake-large',
+    ]);
     expect(session.thinkingLevel, 'medium');
     expect(session.thinkingLevels, <String>[
       'default',

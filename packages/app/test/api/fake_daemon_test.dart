@@ -856,18 +856,25 @@ void main() {
       expect(local.models, isEmpty);
 
       // Ante sessions mirror the daemon: a qualified create pins the
-      // provider and reports the bare model plus that provider's list…
+      // provider and reports qualified models across usable providers…
       final Session ante = await fake.createSession(
         projectId: projectId,
         providerId: 'ante',
         model: 'openai-subscription/gpt-5.6-sol',
       );
-      expect(ante.model, 'gpt-5.6-sol');
-      expect(ante.models, <String>['gpt-5.6-sol', 'gpt-5.6-luna']);
+      expect(ante.model, 'openai-subscription/gpt-5.6-sol');
+      expect(
+        ante.models,
+        containsAll([
+          'openai-subscription/gpt-5.6-sol',
+          'openai-subscription/gpt-5.6-luna',
+          'zai/glm-5.2',
+        ]),
+      );
 
       // …so mid-session switching within the provider works…
       final Session switchedAnte = await fake.setModel(ante.id, 'gpt-5.6-luna');
-      expect(switchedAnte.model, 'gpt-5.6-luna');
+      expect(switchedAnte.model, 'openai-subscription/gpt-5.6-luna');
 
       // …and a typed custom id (provider with no preferred models) stays
       // selectable on the session.
@@ -876,8 +883,8 @@ void main() {
         providerId: 'ante',
         model: 'openai-compatible/my-custom-model',
       );
-      expect(custom.model, 'my-custom-model');
-      expect(custom.models, <String>['my-custom-model']);
+      expect(custom.model, 'openai-compatible/my-custom-model');
+      expect(custom.models, contains('openai-compatible/my-custom-model'));
     },
   );
 
