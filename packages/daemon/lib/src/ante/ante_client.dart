@@ -10,6 +10,8 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../acp/acp_types.dart';
 import '../agents/agent_client.dart';
 import '../agents/native_commands.dart';
+import '../mcp/built_in_mcp_server.dart'
+    show kMcpServerName, kSessionSummaryInstruction;
 
 /// A failure reported by Ante for one turn.
 class AnteTurnException implements Exception {
@@ -72,6 +74,9 @@ class AnteClient implements AgentClient, NativeCommandClient {
   // subscription, so newSession reseeds them explicitly.
   String? _settingsModel;
   String? _settingsProvider;
+  String? _settingsAppendSystemPrompt;
+  bool _hasSpeedDialMcp = false;
+  bool _resumed = false;
   Directory? _attachmentDirectory;
   int _attachmentFileIndex = 0;
   final StreamController<String> _stderrController =
@@ -153,6 +158,17 @@ class AnteClient implements AgentClient, NativeCommandClient {
       'cwd': cwd,
       'permission_mode': yolo ? 'yolo' : 'strict',
       if (shortPrompt) 'short_prompt': true,
+      if (_hasSpeedDialMcp)
+        'append_system_prompt': <String>[
+          if (_settingsAppendSystemPrompt case final String existing
+              when existing.isNotEmpty)
+            existing,
+          if (!(_settingsAppendSystemPrompt?.contains(
+                kSessionSummaryInstruction,
+              ) ??
+              false))
+            kSessionSummaryInstruction,
+        ].join('\n\n'),
     };
     // Seed the Ante settings default when the caller did not pick a model:
     // serve mode otherwise resolves the subscription instead of the
@@ -186,6 +202,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
       final _AnteSessionState state = await completer.future.timeout(
         initTimeout,
       );
+      _resumed = false;
       return (
         sessionId: state.sessionId,
         configOptions: _configOptions(state, catalog),
@@ -226,6 +243,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
           'ResumeSession returned ${state.sessionId}, expected $sessionId',
         );
       }
+      _resumed = true;
       return _configOptions(state, await _catalogFuture);
     } on Object {
       _suppressReplay = false;
@@ -358,7 +376,13 @@ class AnteClient implements AgentClient, NativeCommandClient {
     if (_currentTurnOp != null) {
       throw StateError('An Ante turn is already running.');
     }
-    final String text = await _textFromPromptBlocks(promptBlocks);
+    final String userText = await _textFromPromptBlocks(promptBlocks);
+    // Resume restores Ante's saved system prompt; it cannot be amended on
+    // the wire. A turn-scoped reminder also covers snapshots made before
+    // SpeedDial added the instruction, without replacing their conversation.
+    final String text = _hasSpeedDialMcp && _resumed
+        ? '<speeddial_context>\n$kSessionSummaryInstruction\n</speeddial_context>\n\n$userText'
+        : userText;
     final String opId = _nextOpId();
     final Completer<PromptResult> completer = Completer<PromptResult>();
     _turnWaiters[opId] = completer;
@@ -529,6 +553,9 @@ class AnteClient implements AgentClient, NativeCommandClient {
       ...Platform.environment,
       ...?_environment,
     };
+    _hasSpeedDialMcp = mcpServers.any(
+      (server) => server['name'] == kMcpServerName,
+    );
     if (mcpServers.isEmpty) return environment;
 
     final String? configuredAnteHome = environment['ANTE_HOME'];
@@ -566,6 +593,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
     }
     _settingsModel = settings['model'] as String?;
     _settingsProvider = settings['provider'] as String?;
+    _settingsAppendSystemPrompt = settings['append_system_prompt'] as String?;
 
     final Map<String, Object?> mergedServers =
         switch (settings['mcp_servers']) {

@@ -126,6 +126,11 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolv
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
+                    Ante fresh sessions append the shared session-title instruction to the
+                    configured system-prompt append, preserving user text. Resume restores
+                    saved prompts without overrides, so resumed user turns carry a short
+                    title-tool reminder as transport context (not a separate user event).
+                    This guidance is only injected when the built-in MCP server is configured.
                     Built-in tools bridge over an authenticated, session-bound loopback
                     WebSocket to query projects/session history (including archived
                     sessions), browse message-only transcript pages, archive or restore

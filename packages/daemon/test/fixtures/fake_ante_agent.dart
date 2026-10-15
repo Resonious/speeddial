@@ -406,6 +406,11 @@ Future<void> _extensions(String parent) {
 
 Future<void> _runTurn(String parent, String text) async {
   await _captureUserInput(text);
+  // Keep scenario selection independent of transport-supplied context.
+  const contextEnd = '</speeddial_context>\n\n';
+  if (text.startsWith('<speeddial_context>\n') && text.contains(contextEnd)) {
+    text = text.substring(text.indexOf(contextEnd) + contextEnd.length);
+  }
   _turnIds.add(parent);
   await _persistState();
   await _event(<String, Object?>{'UserInput': text}, parent);

@@ -9,6 +9,8 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
 import 'package:speeddial_daemon/src/agents/agent_client.dart';
 import 'package:speeddial_daemon/src/ante/ante_client.dart';
+import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart'
+    show kSessionSummaryInstruction;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
@@ -43,6 +45,89 @@ List<Map<String, Object?>> textBlocks(String text) => <Map<String, Object?>>[
 ];
 
 void main() {
+  for (final resume in [false, true]) {
+    for (final short in [false, true]) {
+      for (final builtIn in [false, true]) {
+        test(
+          'title guidance (resume: $resume, short: $short, built-in: $builtIn)',
+          () async {
+            final home = await Directory.systemTemp.createTemp(
+              'ante_title_test',
+            );
+            addTearDown(() => home.delete(recursive: true));
+            final settings = File(p.join(home.path, 'work.settings.json'));
+            final original = jsonEncode({
+              'system_prompt': 'Custom base instructions',
+              'append_system_prompt': 'Keep my appended instructions.',
+            });
+            await settings.writeAsString(original);
+            final config = File(p.join(home.path, 'request.json'));
+            final input = File(p.join(home.path, 'input.txt'));
+            final client = spawnAnte(
+              environment: {
+                'ANTE_HOME': home.path,
+                'ANTE_PROFILE': 'work',
+                'FAKE_ANTE_SESSION_CONFIG_REPORT': config.path,
+                'FAKE_ANTE_USER_INPUT_REPORT': input.path,
+              },
+            );
+            addTearDown(client.dispose);
+            final servers = <Map<String, Object?>>[
+              {
+                'name': builtIn ? 'speeddial' : 'another-server',
+                'command': 'fake-mcp',
+                'args': <String>[],
+              },
+            ];
+            final String sessionId;
+            if (resume) {
+              sessionId = 'ses_01M0H000000000000000000000';
+              await client.loadSession(
+                sessionId: sessionId,
+                cwd: home.path,
+                mcpServers: servers,
+                shortPrompt: short,
+              );
+            } else {
+              sessionId = (await client.newSession(
+                cwd: home.path,
+                mcpServers: servers,
+                shortPrompt: short,
+              )).sessionId;
+            }
+            final request = jsonDecode(await config.readAsString()) as Map;
+            if (builtIn && !resume) {
+              expect(
+                request['append_system_prompt'],
+                'Keep my appended instructions.\n\n$kSessionSummaryInstruction',
+              );
+            } else {
+              expect(request.containsKey('append_system_prompt'), isFalse);
+            }
+            expect(
+              request.containsKey('system_prompt'),
+              isFalse,
+              reason: 'Never replace the configured base prompt',
+            );
+            for (final message in ['normal', 'A different task']) {
+              await client.prompt(sessionId, textBlocks(message));
+              final sent = await input.readAsString();
+              if (builtIn && resume) {
+                expect(
+                  sent,
+                  '<speeddial_context>\n$kSessionSummaryInstruction\n</speeddial_context>\n\n$message',
+                );
+              } else {
+                expect(sent, message);
+              }
+            }
+            expect(await settings.readAsString(), original);
+          },
+        );
+      }
+    }
+  }
+
   test('native provider switch, fork and rewind round trip', () async {
     final turns = <String>[];
     final String script = fakeAnteScript();

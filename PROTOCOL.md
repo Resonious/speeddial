@@ -800,7 +800,11 @@ Agent task-progress `plan` events remain supported.
 
 Every compatible provider session includes a daemon-owned stdio MCP server named `speeddial`.
 ACP receives it directly in `session/new`/`session/load`; Ante receives it through the transient
-home described above. It exposes:
+home described above. When this server is configured, new Ante sessions append the
+session-title instruction to their system prompt, preserving any configured append text.
+Resumed Ante sessions receive the reminder alongside user input because `ResumeSession`
+restores saved instructions without a prompt override. This transport context does not
+alter the user's persisted message or add a turn. It exposes:
 
 - `search_projects {query?: string}` — lists projects whose name/path contains the
   case-insensitive query; an empty query lists all known projects.
