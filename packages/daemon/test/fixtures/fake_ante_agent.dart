@@ -9,6 +9,8 @@ String _sessionId = 'ses_01M0H000000000000000000000';
 String _model = 'fake-model';
 String? _effort = 'medium';
 String _provider = 'fake-provider';
+final List<String> _turnIds = [];
+int _forkCounter = 0;
 String _permissionMode = 'strict';
 int _eventCounter = 0;
 Future<void> _writeQueue = Future<void>.value();
@@ -158,7 +160,58 @@ Future<void> _dispatch(Map<String, Object?> message) async {
           'steps': 1,
         },
       }, 'op_old');
+    case 'RewindSession':
+      final String turnId = value['to'] as String;
+      final int index = _turnIds.indexOf(turnId);
+      if (index < 0 || Platform.environment['FAKE_ANTE_REJECT_REWIND'] == '1') {
+        await _event(<String, Object?>{
+          'Error': 'Turn is no longer reachable',
+        }, parent);
+        return;
+      }
+      _turnIds.removeRange(index, _turnIds.length);
+      await _persistState();
+      await _event(<String, Object?>{
+        'SessionRewound': <String, Object?>{'to': turnId},
+      }, parent);
+    case 'ForkSession':
+      final String? at = value['at'] as String?;
+      final originalTurns = List<String>.of(_turnIds);
+      if (at != null) {
+        final index = _turnIds.indexOf(at);
+        if (index < 0) {
+          await _event(<String, Object?>{
+            'Error': 'Turn is no longer reachable',
+          }, parent);
+          return;
+        }
+        _turnIds.removeRange(index, _turnIds.length);
+      }
+      final String source = _sessionId;
+      final String child = '${source}_fork_${++_forkCounter}';
+      _sessionId = child;
+      await _persistState();
+      _sessionId = source;
+      _turnIds
+        ..clear()
+        ..addAll(originalTurns);
+      await _event(<String, Object?>{
+        'SessionForked': <String, Object?>{
+          'forked_from': source,
+          'session_id': child,
+        },
+      }, parent);
     case 'UpdateSession':
+      final String? provider = value['provider'] as String?;
+      if (provider != null) {
+        if (!<String>['fake-provider', 'other-provider'].contains(provider)) {
+          await _event(<String, Object?>{'Error': 'Unknown provider'}, parent);
+          return;
+        }
+        if (provider != _provider) _turnIds.clear();
+        _provider = provider;
+        _model = 'fake-model';
+      }
       final Map<String, Object?> model = value['model'] is Map
           ? Map<String, Object?>.from(value['model'] as Map)
           : <String, Object?>{};
@@ -182,6 +235,7 @@ Future<void> _dispatch(Map<String, Object?> message) async {
         }
         _effort = effort as String?;
       }
+      await _persistState();
       await _event(<String, Object?>{
         'SessionUpdated': _sessionPayload(),
       }, parent);
@@ -229,8 +283,15 @@ Future<void> _saveSession() async {
   if (stateDir == null) return;
   await Directory(stateDir).create(recursive: true);
   _sessionId = 'ses_fake_$pid';
-  await File(p.join(stateDir, '$_sessionId.json'))
-      .writeAsString(jsonEncode(_sessionPayload()));
+  await _persistState();
+}
+
+Future<void> _persistState() async {
+  final String? stateDir = Platform.environment['FAKE_ANTE_STATE_DIR'];
+  if (stateDir == null) return;
+  await File(p.join(stateDir, '$_sessionId.json')).writeAsString(
+    jsonEncode(<String, Object?>{..._sessionPayload(), 'turn_ids': _turnIds}),
+  );
 }
 
 Future<void> _loadSession(String sessionId) async {
@@ -240,6 +301,9 @@ Future<void> _loadSession(String sessionId) async {
     await File(p.join(stateDir, '$sessionId.json')).readAsString(),
   ) as Map<String, dynamic>;
   _sessionId = sessionId;
+  _turnIds
+    ..clear()
+    ..addAll((state['turn_ids'] as List? ?? []).cast<String>());
   _provider = (state['provider'] as Map)['id'] as String;
   _model = (state['model'] as Map)['id'] as String;
   _effort = (state['model'] as Map)['effort'] as String?;
@@ -342,6 +406,8 @@ Future<void> _extensions(String parent) {
 
 Future<void> _runTurn(String parent, String text) async {
   await _captureUserInput(text);
+  _turnIds.add(parent);
+  await _persistState();
   await _event(<String, Object?>{'UserInput': text}, parent);
   await _event(<String, Object?>{
     'TurnStart': <String, Object?>{'turn_id': parent},

@@ -899,7 +899,7 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<Session> forkSession(String sessionId, int seq) async {
+  Future<Session> forkSession(String sessionId, int? seq) async {
     _ensureSeeded();
     _requireSession(sessionId);
     final Session source = _sessions[sessionId]!;
@@ -912,7 +912,9 @@ class FakeDaemonClient implements DaemonClient {
         break;
       }
     }
-    if (boundary is! UserMessageEvent && boundary is! AgentMessageChunkEvent) {
+    if (seq != null &&
+        boundary is! UserMessageEvent &&
+        boundary is! AgentMessageChunkEvent) {
       throw const DaemonError(
         -32602,
         'seq must identify a user or agent message event',
@@ -976,7 +978,7 @@ class FakeDaemonClient implements DaemonClient {
 
     for (final SessionEvent event in sourceHistory) {
       final int? eventSeq = event.seq;
-      if (eventSeq == null || eventSeq > seq) break;
+      if (eventSeq == null || (seq != null && eventSeq > seq)) break;
       final SessionEvent copy;
       if (event case UserMessageEvent(:final text, :final attachments)) {
         copy = UserMessageEvent(
@@ -1020,7 +1022,7 @@ class FakeDaemonClient implements DaemonClient {
 
     _sessions[id] = fork;
     _history[id] = copiedEvents;
-    _seqBySession[id] = seq;
+    _seqBySession[id] = seq ?? (_seqBySession[sessionId] ?? 0);
     if (copiedAttachments.isNotEmpty) {
       _attachmentsBySession[id] = copiedAttachments;
       _attachmentCounters[id] = attachmentCounter;
@@ -1048,6 +1050,21 @@ class FakeDaemonClient implements DaemonClient {
       ],
       'ante' => const <NativeCommand>[
         NativeCommand(
+          name: 'provider',
+          description: 'Show or switch the Ante upstream provider',
+          argumentHint: '[provider] [model]',
+        ),
+        NativeCommand(
+          name: 'rewind',
+          description: 'Rewind before a user turn (latest by default); files stay unchanged',
+          argumentHint: '[message sequence]',
+        ),
+        NativeCommand(
+          name: 'fork',
+          description: 'Fork the conversation through a message',
+          argumentHint: '[message sequence]',
+        ),
+        NativeCommand(
           name: 'compact',
           description: 'Compact conversation context',
           argumentHint: 'instructions',
@@ -1070,6 +1087,64 @@ class FakeDaemonClient implements DaemonClient {
     final List<NativeCommand> commands = await listCommands(sessionId);
     if (!commands.any((NativeCommand command) => command.name == name)) {
       throw DaemonError(kErrConflict, 'Unknown native command: /$name');
+    }
+    if (_sessions[sessionId]!.providerId == 'ante' &&
+        {'provider', 'rewind', 'fork'}.contains(name)) {
+      if (_runningScripts.contains(sessionId)) {
+        throw const DaemonError(kErrConflict, 'A turn is already running');
+      }
+      final args = arguments.trim();
+      if (name == 'rewind') {
+        final seq = args.isEmpty ? null : int.tryParse(args);
+        final turns = (_history[sessionId] ?? [])
+            .whereType<UserMessageEvent>()
+            .where(
+              (e) => !e.text.startsWith('/') && (seq == null || e.seq == seq),
+            )
+            .toList();
+        if ((args.isNotEmpty && seq == null) || turns.isEmpty) {
+          throw const DaemonError(
+            kErrConflict,
+            'No recorded turn at this boundary',
+          );
+        }
+        final boundary = turns.last.seq!;
+        _history[sessionId]!.removeWhere((e) => e.seq! >= boundary);
+        _emit(sessionId, HistoryRewoundEvent(beforeSeq: boundary));
+      } else if (name == 'provider' && args.isNotEmpty) {
+        final parts = args.split(RegExp(r'\s+'));
+        final models = (await info()).providers
+            .firstWhere((p) => p.id == 'ante')
+            .models
+            .where((m) => m.startsWith('${parts.first}/'))
+            .map((m) => m.substring(parts.first.length + 1))
+            .toList();
+        if (models.isEmpty ||
+            parts.length > 2 ||
+            (parts.length == 2 && !models.contains(parts.last))) {
+          throw const DaemonError(-32602, 'Unknown provider or model');
+        }
+        _updateSession(
+          sessionId,
+          (s) => Session.fromJson({
+            ...s.toJson(),
+            'model': parts.length == 2 ? parts.last : models.first,
+            'models': models,
+          }),
+        );
+      } else if (name == 'fork') {
+        final seq = args.isEmpty ? null : int.tryParse(args);
+        if (args.isNotEmpty && seq == null) {
+          throw const DaemonError(-32602, 'Invalid message sequence');
+        }
+        await forkSession(sessionId, seq);
+      }
+      _emit(
+        sessionId,
+        UserMessageEvent(text: '/$name${args.isEmpty ? '' : ' $args'}'),
+      );
+      _emit(sessionId, const TurnCompleteEvent(stopReason: 'command'));
+      return;
     }
     await sendMessage(
       sessionId,
@@ -2251,6 +2326,11 @@ class FakeDaemonClient implements DaemonClient {
 
   SessionEvent _withSeq(SessionEvent event, int seq, DateTime timestamp) =>
       switch (event) {
+        HistoryRewoundEvent e => HistoryRewoundEvent(
+          beforeSeq: e.beforeSeq,
+          seq: seq,
+          timestamp: timestamp,
+        ),
         UserMessageEvent e => UserMessageEvent(
           text: e.text,
           attachments: e.attachments,

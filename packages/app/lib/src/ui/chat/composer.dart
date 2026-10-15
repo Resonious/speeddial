@@ -77,6 +77,7 @@ class Composer extends StatefulWidget {
     this.preparing = false,
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
+    this.sessionControls,
     this.usage,
     this.model,
     this.models = const <String>[],
@@ -109,6 +110,7 @@ class Composer extends StatefulWidget {
   /// Native commands advertised by the active harness session.
   final List<NativeCommand> commands;
   final VoidCallback? onSlashStarted;
+  final Widget? sessionControls;
 
   /// Latest turn usage, shown in the footer when non-null.
   final UsageInfo? usage;
@@ -585,6 +587,7 @@ class _ComposerState extends State<Composer>
               ),
             ),
           _ControlsRow(
+            sessionControls: widget.sessionControls,
             model: widget.model,
             models: widget.models,
             onModelChanged: widget.onModelChanged,
@@ -757,6 +760,7 @@ class _ComposerState extends State<Composer>
 class _ControlsRow extends StatelessWidget {
   const _ControlsRow({
     required this.model,
+    this.sessionControls,
     required this.models,
     required this.onModelChanged,
     required this.thinkingLevel,
@@ -765,6 +769,7 @@ class _ControlsRow extends StatelessWidget {
   });
 
   final String? model;
+  final Widget? sessionControls;
   final List<String> models;
   final ValueChanged<String>? onModelChanged;
   final String? thinkingLevel;
@@ -846,6 +851,7 @@ class _ControlsRow extends StatelessWidget {
                 ),
               ),
             ),
+          ?sessionControls,
         ],
       ),
     );

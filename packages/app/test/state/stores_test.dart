@@ -67,6 +67,28 @@ class _InstrumentedFake extends FakeDaemonClient {
   }
 }
 
+class _StalePageFake extends FakeDaemonClient {
+  final Completer<void> release = Completer<void>();
+  final Completer<void> captured = Completer<void>();
+  @override
+  Future<({List<SessionEvent> events, bool hasMore})> history(
+    String sessionId, {
+    int limit = 200,
+    int? beforeSeq,
+  }) async {
+    final snapshot = await super.history(
+      sessionId,
+      limit: limit,
+      beforeSeq: beforeSeq,
+    );
+    if (beforeSeq != null) {
+      captured.complete();
+      await release.future;
+    }
+    return snapshot;
+  }
+}
+
 /// Delivers the ready notification while the original create reply is in flight.
 class _PreparingCreateFake extends FakeDaemonClient {
   final StreamController<Session> updates =
@@ -695,6 +717,110 @@ void main() {
   });
 
   group('chat', () {
+    test('rewind filters an older history page already in flight', () async {
+      final stale = _StalePageFake();
+      app.registerClient('stale', stale);
+      stale.seedHistory('sess-1', <SessionEvent>[
+        for (int i = 0; i < 600; i++) UserMessageEvent(text: 'message $i'),
+      ]);
+      app.chat.watchSession('stale', 'sess-1');
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+      final pending = app.chat.loadOlderHistory('stale', 'sess-1');
+      await stale.captured.future;
+      stale.emitBackgroundEvent(
+        'sess-1',
+        const HistoryRewoundEvent(beforeSeq: 50),
+      );
+      await _waitUntil(
+        () => app.chat
+            .eventsFor('sess-1')
+            .whereType<HistoryRewoundEvent>()
+            .isNotEmpty,
+      );
+      stale.release.complete();
+      await pending;
+      final events = app.chat.eventsFor('sess-1');
+      expect(events.whereType<UserMessageEvent>(), hasLength(49));
+      expect(
+        events.whereType<UserMessageEvent>().every((e) => e.seq! < 50),
+        isTrue,
+      );
+    });
+
+    for (final bool offline in <bool>[false, true]) {
+      test('rewind removes cached conversation (offline: $offline)', () async {
+        fake.seedHistory('sess-1', const <SessionEvent>[
+          UserMessageEvent(text: 'keep'),
+          AgentMessageChunkEvent(text: 'kept answer'),
+          UserMessageEvent(text: 'undo'),
+          AgentMessageChunkEvent(text: 'reverted answer'),
+        ]);
+        app.chat.watchSession('fake', 'sess-1');
+        await _waitUntil(
+          () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+        );
+        final boundary = app.chat
+            .eventsFor('sess-1')
+            .whereType<UserMessageEvent>()
+            .last
+            .seq!;
+        if (offline) {
+          fake.seedHistory('sess-1', <SessionEvent>[
+            HistoryRewoundEvent(beforeSeq: boundary),
+          ]);
+          fake.triggerResync();
+        } else {
+          fake.emitBackgroundEvent(
+            'sess-1',
+            HistoryRewoundEvent(beforeSeq: boundary),
+          );
+        }
+        await _waitUntil(
+          () => app.chat
+              .eventsFor('sess-1')
+              .whereType<HistoryRewoundEvent>()
+              .isNotEmpty,
+        );
+        expect(
+          app.chat
+              .eventsFor('sess-1')
+              .whereType<UserMessageEvent>()
+              .map((e) => e.text),
+          ['keep'],
+        );
+        expect(
+          app.chat
+              .eventsFor('sess-1')
+              .whereType<AgentMessageChunkEvent>()
+              .single
+              .text,
+          'kept answer',
+        );
+
+        expect(
+          app.chat
+              .eventsFor('sess-1')
+              .whereType<UserMessageEvent>()
+              .map((e) => e.text),
+          ['keep'],
+        );
+        fake.emitBackgroundEvent(
+          'sess-1',
+          const UserMessageEvent(text: 'new branch'),
+        );
+        await _waitUntil(
+          () =>
+              app.chat
+                  .eventsFor('sess-1')
+                  .whereType<UserMessageEvent>()
+                  .length ==
+              2,
+        );
+      });
+    }
+
     test('does not merge adjacent chunks with different message ids', () async {
       fake.seedHistory('sess-1', const <SessionEvent>[
         AgentMessageChunkEvent(text: 'First', messageId: 'message-1'),

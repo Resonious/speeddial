@@ -1425,16 +1425,16 @@ class SpeedDialServer {
   Future<Object?> _sessionsFork(Map<String, Object?> params) async {
     final sessionId = _requiredString(params, 'sessionId');
     final rawSeq = params['seq'];
-    if (rawSeq is! int || rawSeq < 1) {
+    if (rawSeq != null && (rawSeq is! int || rawSeq < 1)) {
       throw DaemonError(
         _kErrInvalidParams,
         'Missing or invalid parameter: seq',
       );
     }
-    // The engine copies history locally; provider startup waits for send.
+    // The engine selects native snapshots at completed Ante boundaries.
     final session = await _engine.forkSession(
       sourceSessionId: sessionId,
-      throughSeq: rawSeq,
+      throughSeq: rawSeq as int?,
     );
     _broadcast('session.created', <String, Object?>{
       'session': session.toJson(),

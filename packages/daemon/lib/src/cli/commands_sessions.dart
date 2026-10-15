@@ -399,6 +399,8 @@ class SessionsAttachCommand extends Command<int> {
 /// One-line human summary of a session event (attach/history rendering).
 String summarizeSessionEvent(SessionEvent event) {
   final summary = switch (event) {
+    HistoryRewoundEvent(:final beforeSeq) =>
+      '[rewound] before message $beforeSeq; files unchanged',
     UserMessageEvent(:final text) => 'user: ${_oneLine(text)}',
     ImageEvent(:final attachment) => '[image] ${attachment.name}',
     ExplainerEvent(:final explainer) =>

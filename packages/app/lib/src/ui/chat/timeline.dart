@@ -609,6 +609,7 @@ List<TimelineItem> deriveTimelineItems(
             items.add(TurnCompleteItem(id: e.seq, stopReason: e.stopReason));
           case SessionErrorEvent e:
             items.add(SessionErrorItem(id: e.seq, message: e.message));
+          case HistoryRewoundEvent _:
           case UsageEvent _:
             break;
           case AgentMessageChunkEvent _ ||
@@ -828,6 +829,7 @@ class Timeline extends StatefulWidget {
     required this.items,
     this.attachmentLoader,
     this.onFork,
+    this.onRewind,
     this.openLocalFile,
     this.hasOlder = false,
     this.loadingOlder = false,
@@ -890,6 +892,7 @@ class Timeline extends StatefulWidget {
 
   /// Forks the selected session through the message event at [seq].
   final void Function(int seq)? onFork;
+  final void Function(int seq)? onRewind;
 
   /// Offers Download or Float for a path linked from an agent message.
   final Future<void> Function(String path)? openLocalFile;
@@ -1163,6 +1166,7 @@ class _TimelineState extends State<Timeline> {
             cwd: widget.cwd,
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
+            onRewind: widget.onRewind,
             openLocalFile: widget.openLocalFile,
           );
         },
@@ -1337,6 +1341,7 @@ class _TimelineRow extends StatelessWidget {
     this.cwd,
     this.attachmentLoader,
     this.onFork,
+    this.onRewind,
     this.openLocalFile,
   });
 
@@ -1361,6 +1366,7 @@ class _TimelineRow extends StatelessWidget {
   /// See [Timeline.attachmentLoader].
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
   final void Function(int seq)? onFork;
+  final void Function(int seq)? onRewind;
   final Future<void> Function(String path)? openLocalFile;
 
   @override
@@ -1379,6 +1385,7 @@ class _TimelineRow extends StatelessWidget {
         text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
+        onRewind: onRewind,
         child: _deliveredBubble(
           UserMessageBubble(
             text: i.text,
@@ -1403,6 +1410,7 @@ class _TimelineRow extends StatelessWidget {
         text: i.text,
         seq: i.forkSeq,
         onFork: onFork,
+        onRewind: onRewind,
         child: AgentMessageView(
           text: i.text,
           streaming: i.streaming,
@@ -1611,6 +1619,7 @@ class _MessageWithActions extends StatelessWidget {
     required this.text,
     required this.seq,
     required this.onFork,
+    this.onRewind,
     this.reserveFork = false,
   });
 
@@ -1619,6 +1628,7 @@ class _MessageWithActions extends StatelessWidget {
   final String text;
   final int? seq;
   final void Function(int seq)? onFork;
+  final void Function(int seq)? onRewind;
 
   /// Holds the fork button's space while there is nothing to fork yet.
   final bool reserveFork;
@@ -1639,6 +1649,17 @@ class _MessageWithActions extends StatelessWidget {
       );
     }
     final int? messageSeq = seq;
+    if (isUser && messageSeq != null && onRewind != null) {
+      buttons.add(
+        IconButton(
+          tooltip: 'Rewind before this turn',
+          visualDensity: VisualDensity.compact,
+          iconSize: 18,
+          onPressed: () => onRewind!(messageSeq),
+          icon: const Icon(Icons.undo),
+        ),
+      );
+    }
     final void Function(int seq)? callback = onFork;
     if (messageSeq != null && callback != null) {
       buttons.add(

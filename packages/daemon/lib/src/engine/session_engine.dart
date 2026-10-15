@@ -75,14 +75,15 @@ class _LiveSession {
 
   /// The config option id of the provider's model, null when the provider
   /// exposes none.
-  final String? modelConfigId;
+  String? modelConfigId;
 
   /// The config option id of the provider's thinking/effort level, null when
   /// the provider exposes none.
-  final String? thinkingConfigId;
+  String? thinkingConfigId;
 
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
+  bool maintaining = false;
 
   /// Present only for an active turn when completion notifications are on.
   FinalReply? finalReply;
@@ -675,16 +676,115 @@ class SessionEngine {
   /// Creates a fresh provider session whose visible history is copied from
   /// [sourceSessionId] through the user/agent message event [throughSeq].
   ///
-  /// The provider itself starts empty. The copied conversation is retained as
-  /// a pending inherited context and injected with the fork's first new turn,
-  /// which makes arbitrary-message forks independent of ACP `session/fork`.
+  /// Completed Ante turn boundaries preserve native state. Other cuts retain
+  /// copied context for the first new turn. Commands and UI share this policy.
   Future<Session> forkSession({
+    required String sourceSessionId,
+    int? throughSeq,
+  }) => _withSessionOperation(() async {
+    final source = _store.getSession(sourceSessionId);
+    if (source == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sourceSessionId');
+    }
+    final events = _store.eventsThrough(
+      sourceSessionId,
+      _store.nextSeq(sourceSessionId) - 1,
+    );
+    final messages = events
+        .where((e) => e is UserMessageEvent || e is AgentMessageChunkEvent)
+        .toList();
+    final int boundary =
+        throughSeq ?? (messages.isEmpty ? 0 : messages.last.seq!);
+    if (throughSeq != null && !messages.any((e) => e.seq == throughSeq)) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'seq must identify a user or agent message event',
+      );
+    }
+    final bool ante =
+        _providers.byId(source.providerId)?.protocol == ProviderProtocol.ante;
+    if (ante && (source.preparing || _live[sourceSessionId]?.turn != null)) {
+      throw DaemonError(
+        kErrConflict,
+        'Wait for the current turn before forking',
+      );
+    }
+    final nextTurn = throughSeq == null
+        ? null
+        : _store.nextAnteTurn(sourceSessionId, throughSeq);
+    final tail = events.where(
+      (e) => e.seq! > boundary && (nextTurn == null || e.seq! < nextTurn.seq),
+    );
+    final precedingPrompt = messages
+        .whereType<UserMessageEvent>()
+        .where((e) => e.seq! <= boundary)
+        .lastOrNull;
+    final bool complete =
+        throughSeq == null ||
+        (precedingPrompt != null &&
+            _store.anteTurn(sourceSessionId, precedingPrompt.seq) != null &&
+            _store.eventAt(sourceSessionId, boundary)
+                is AgentMessageChunkEvent &&
+            tail.any((e) => e is TurnCompleteEvent) &&
+            !tail.any(
+              (e) =>
+                  e is AgentMessageChunkEvent ||
+                  e is AgentThoughtChunkEvent ||
+                  e is ToolCallEvent ||
+                  (e is UserMessageEvent &&
+                      _store.anteTurn(sourceSessionId, e.seq) != null),
+            ));
+    if (!ante ||
+        !complete ||
+        _store.forkContextSeqOf(sourceSessionId) != null) {
+      return _forkSession(
+        sourceSessionId: sourceSessionId,
+        throughSeq: boundary,
+      );
+    }
+    final live = await _commandSession(sourceSessionId);
+    if (live.turn != null) {
+      throw DaemonError(
+        kErrConflict,
+        'Wait for the current turn before forking',
+      );
+    }
+    final lock = Completer<void>();
+    live.turn = lock.future;
+    live.maintaining = true;
+    try {
+      final nativeId = await (live.client as AnteClient).fork(
+        live.providerSessionId,
+        at: nextTurn?.turnId,
+      );
+      return await _forkSession(
+        sourceSessionId: sourceSessionId,
+        throughSeq: throughSeq ?? _store.nextSeq(sourceSessionId) - 1,
+        nativeSessionId: nativeId,
+      );
+    } on AnteTurnException catch (error) {
+      throw DaemonError(kErrAgentProcess, error.message);
+    } finally {
+      live.turn = null;
+      live.maintaining = false;
+      lock.complete();
+    }
+  });
+
+  Future<Session> _forkSession({
+    String? nativeSessionId,
     required String sourceSessionId,
     required int throughSeq,
   }) => _withSessionOperation(() async {
     final Session? source = _store.getSession(sourceSessionId);
     if (source == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sourceSessionId');
+    }
+    if (nativeSessionId == null && _live[source.id]?.maintaining == true) {
+      throw DaemonError(
+        kErrConflict,
+        'A conversation operation is in progress',
+      );
     }
     if (source.preparing) {
       throw DaemonError(
@@ -693,7 +793,9 @@ class SessionEngine {
       );
     }
     final SessionEvent? boundary = _store.eventAt(sourceSessionId, throughSeq);
-    if (boundary is! UserMessageEvent && boundary is! AgentMessageChunkEvent) {
+    if (nativeSessionId == null &&
+        boundary is! UserMessageEvent &&
+        boundary is! AgentMessageChunkEvent) {
       throw DaemonError(
         _kErrInvalidParams,
         'seq must identify a user or agent message event',
@@ -735,6 +837,9 @@ class SessionEngine {
     // harness/MCP startup latency even when the user never continues it.
     _store.insertFork(baseSession, throughSeq, () {
       _copyForkHistory(source.id, baseSession.id, throughSeq);
+      if (nativeSessionId != null) {
+        _store.copyAnteTurns(source.id, baseSession.id, throughSeq);
+      }
       if (spec.protocol == ProviderProtocol.ante) {
         final inherited = _store.anteProviderOf(source.id);
         final AgentClient? sourceClient = _live[source.id]?.client;
@@ -750,7 +855,7 @@ class SessionEngine {
               : null,
         );
       }
-    });
+    }, providerSessionId: nativeSessionId);
     if (!_sessionChangesController.isClosed) {
       _sessionChangesController.add(baseSession);
     }
@@ -998,6 +1103,7 @@ class SessionEngine {
         catalogCommand: spec.catalogCommand,
         environment: environment,
         requestPermission: permissionHandler,
+        onTurnStarted: (turnId) => _store.recordAnteTurn(session.id, turnId),
         requestQuestions: (toolId, questions, expired) => _onPermissionRequest(
           session.id,
           toolId,
@@ -1272,13 +1378,64 @@ class SessionEngine {
         'A turn is already running for session "$sessionId"',
       );
     }
-    if (_store.forkContextSeqOf(sessionId) != null) {
+    if (name != 'fork' && _store.forkContextSeqOf(sessionId) != null) {
       throw DaemonError(
         kErrConflict,
         'Send a message to this fork before running a native command',
       );
     }
     final AgentClient client = live.client;
+    if (client is AnteClient && name == 'fork') {
+      final raw = arguments.trim();
+      final int? seq = raw.isEmpty ? null : int.tryParse(raw);
+      if (raw.isNotEmpty && (seq == null || seq < 1)) {
+        throw DaemonError(_kErrInvalidParams, 'Use /fork [message sequence]');
+      }
+      final fork = await forkSession(
+        sourceSessionId: sessionId,
+        throughSeq: seq,
+      );
+      _emit(live, UserMessageEvent(text: '/fork${raw.isEmpty ? '' : ' $raw'}'));
+      _emit(
+        live,
+        AgentActivityEvent(
+          activity: AgentActivity(
+            id: _uuid.v4(),
+            kind: 'session',
+            title: 'Conversation forked',
+            status: AgentActivityStatus.completed,
+            details: [
+              'Open "${fork.title}" in the session list to continue.',
+              'Session: ${fork.id}',
+            ],
+          ),
+        ),
+      );
+      _emit(live, const TurnCompleteEvent(stopReason: 'command'));
+      return;
+    }
+    if (client is AnteClient && <String>{'provider', 'rewind'}.contains(name)) {
+      final Completer<void> lock = Completer<void>();
+      live.turn = lock.future;
+      live.maintaining = true;
+      try {
+        await _runAnteControl(
+          live,
+          client,
+          name,
+          arguments.trim(),
+          '/$name${arguments.isEmpty ? '' : ' $arguments'}',
+        );
+        _emit(live, const TurnCompleteEvent(stopReason: 'command'));
+      } on AnteTurnException catch (error) {
+        throw DaemonError(kErrAgentProcess, error.message);
+      } finally {
+        live.turn = null;
+        live.maintaining = false;
+        lock.complete();
+      }
+      return;
+    }
     if (client is! NativeCommandClient) {
       throw DaemonError(
         _kErrInvalidParams,
@@ -1316,6 +1473,110 @@ class SessionEngine {
       ),
     ).whenComplete(() => live.turn = null);
   });
+
+  Future<void> _runAnteControl(
+    _LiveSession live,
+    AnteClient client,
+    String name,
+    String arguments,
+    String commandText,
+  ) async {
+    final String sessionId = live.sessionId;
+    void echo() => _emit(live, UserMessageEvent(text: commandText));
+    switch (name) {
+      case 'provider':
+        if (arguments.isEmpty) {
+          echo();
+          final providers = await _providers.list();
+          final choices = providers
+              .where((p) => p.id == live.session.providerId)
+              .expand((p) => p.models)
+              .map((m) => m.split('/').first)
+              .toSet();
+          _emit(
+            live,
+            AgentActivityEvent(
+              activity: AgentActivity(
+                id: _uuid.v4(),
+                kind: 'session',
+                title: 'Ante provider: ${client.upstreamProvider}',
+                status: AgentActivityStatus.completed,
+                details: <String>[
+                  'Use /provider <provider> [model] to switch.',
+                  ...choices,
+                ],
+              ),
+            ),
+          );
+          return;
+        }
+        final parts = arguments.split(RegExp(r'\s+'));
+        if (parts.length > 2) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Use /provider <provider> [model]',
+          );
+        }
+        final oldProvider = client.upstreamProvider;
+        final options = await client.switchProvider(
+          live.providerSessionId,
+          parts.first,
+          model: parts.length == 2 ? parts.last : null,
+        );
+        echo();
+        live.modelConfigId = _modelOptionOf(options)?.configId;
+        live.thinkingConfigId = _thinkingOptionOf(options)?.configId;
+        _store.setAnteProvider(sessionId, client.upstreamProvider);
+        if (oldProvider != client.upstreamProvider) {
+          _store.clearAnteTurns(sessionId);
+        }
+        await _updateSession(
+          sessionId,
+          (current) => _withConfigOptions(current, _configSnapshotOf(options)),
+        );
+      case 'rewind':
+        final int? seq = arguments.isEmpty ? null : int.tryParse(arguments);
+        if (arguments.isNotEmpty && (seq == null || seq < 1)) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Use /rewind [user message sequence]',
+          );
+        }
+        final boundary = _store.anteTurn(sessionId, seq);
+        if (boundary == null) {
+          throw DaemonError(
+            kErrConflict,
+            'No recorded Ante turn at this boundary; send a new message first',
+          );
+        }
+        await client.rewind(live.providerSessionId, boundary.turnId);
+        final marker = _store.rewindHistory(sessionId, boundary.seq);
+        _toolCalls.remove(sessionId);
+        _toolCallImages.remove(sessionId);
+        _breakSyntheticContent(live);
+        _eventsController.add((
+          sessionId: sessionId,
+          seq: marker.seq!,
+          event: marker,
+        ));
+        echo();
+        _emit(
+          live,
+          AgentActivityEvent(
+            activity: AgentActivity(
+              id: _uuid.v4(),
+              kind: 'session',
+              title: 'Conversation rewound',
+              status: AgentActivityStatus.completed,
+              details: <String>[
+                'Removed message ${boundary.seq} and subsequent conversation. Files are unchanged.',
+              ],
+            ),
+          ),
+        );
+        await _updateSession(sessionId, (current) => _withDone(current, false));
+    }
+  }
 
   /// In-flight resume attempts, keyed by session id; prevents concurrent
   /// [sendMessage] calls from each spawning their own agent process.
@@ -1756,6 +2017,12 @@ class SessionEngine {
   /// Errors `-32602` when the provider advertises a model option but
   /// [model] is not among the advertised models.
   Future<Session> setModel(String sessionId, String model) async {
+    if (_live[sessionId]?.maintaining == true) {
+      throw DaemonError(
+        kErrConflict,
+        'A conversation operation is in progress',
+      );
+    }
     final session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
@@ -1784,6 +2051,7 @@ class SessionEngine {
         live.modelConfigId!,
         model,
       );
+      live.thinkingConfigId = _thinkingOptionOf(configOptions)?.configId;
       // The agent may adjust more than the requested option (a model switch
       // can carry new thinking levels); its report is adopted wholesale.
       return _updateSession(
@@ -1807,6 +2075,12 @@ class SessionEngine {
   /// Errors `-32602` when the provider exposes no thinking level option or
   /// [level] is not among the advertised levels.
   Future<Session> setThinkingLevel(String sessionId, String level) async {
+    if (_live[sessionId]?.maintaining == true) {
+      throw DaemonError(
+        kErrConflict,
+        'A conversation operation is in progress',
+      );
+    }
     final session = _store.getSession(sessionId);
     if (session == null) {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');

@@ -48,6 +48,7 @@ sealed class SessionEvent {
 
   factory SessionEvent.fromJson(Map<String, Object?> json) =>
       switch (json['type']) {
+        'historyRewound' => HistoryRewoundEvent.fromJson(json),
         'userMessage' => UserMessageEvent.fromJson(json),
         'image' => ImageEvent.fromJson(json),
         'explainer' => ExplainerEvent.fromJson(json),
@@ -529,4 +530,28 @@ class SessionErrorEvent extends SessionEvent {
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };
   }
+}
+
+/// A durable tombstone for events removed by a native rewind. Sequence numbers
+/// never restart: remove cached events in [beforeSeq, seq), then keep this marker.
+class HistoryRewoundEvent extends SessionEvent {
+  const HistoryRewoundEvent({
+    required this.beforeSeq,
+    super.seq,
+    super.timestamp,
+  });
+  final int beforeSeq;
+  factory HistoryRewoundEvent.fromJson(Map<String, Object?> json) =>
+      HistoryRewoundEvent(
+        beforeSeq: json['beforeSeq'] as int,
+        seq: json['seq'] as int?,
+        timestamp: _parseTimestamp(json['timestamp']),
+      );
+  @override
+  Map<String, Object?> toJson() => <String, Object?>{
+    'type': 'historyRewound',
+    'beforeSeq': beforeSeq,
+    if (seq != null) 'seq': seq,
+    if (timestamp != null) 'timestamp': _formatTimestamp(timestamp!),
+  };
 }

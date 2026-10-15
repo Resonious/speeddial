@@ -43,6 +43,43 @@ List<Map<String, Object?>> textBlocks(String text) => <Map<String, Object?>>[
 ];
 
 void main() {
+  test('native provider switch, fork and rewind round trip', () async {
+    final turns = <String>[];
+    final String script = fakeAnteScript();
+    final client = AnteClient.spawn(
+      <String>[Platform.resolvedExecutable, script, 'serve'],
+      cwd: Directory.current.path,
+      onTurnStarted: turns.add,
+      catalogCommand: <String>[Platform.resolvedExecutable, script, 'catalog'],
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(
+      cwd: Directory.current.path,
+      yolo: true,
+    );
+    await client.prompt(created.sessionId, textBlocks('normal'));
+    expect(turns, hasLength(1));
+    final String child = await client.fork(created.sessionId);
+    expect(child, isNot(created.sessionId));
+    await client.rewind(created.sessionId, turns.single);
+    await expectLater(
+      client.rewind(created.sessionId, turns.single),
+      throwsA(isA<AnteTurnException>()),
+    );
+    final options = await client.switchProvider(
+      created.sessionId,
+      'other-provider',
+      model: 'fake-large',
+    );
+    expect(client.upstreamProvider, 'other-provider');
+    expect(options.first.currentValue, 'fake-large');
+    await expectLater(
+      client.switchProvider(created.sessionId, 'missing'),
+      throwsA(isA<AnteTurnException>()),
+    );
+    expect(client.upstreamProvider, 'other-provider');
+  });
+
   test('native operations use Ante protocol and discover skills', () async {
     final AnteClient client = spawnAnte();
     addTearDown(client.dispose);

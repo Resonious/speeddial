@@ -46,8 +46,8 @@ ProviderInfo = {
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)
   protocol: "acp" | "codex" | "ante", // wire protocol; tells clients where model
-                             // selection lives — Ante pins the upstream provider at
-                             // session creation, so its models are picked there;
+                             // selection lives — Ante initially selects the upstream provider at
+                             // session creation; /provider can switch it later;
                              // ACP/Codex advertise config options on the live session
   models: string[],           // selectable model ids, may be []
                              // Ante entries are provider-qualified
@@ -62,7 +62,7 @@ ProviderInfo = {
                              // providers with no auth descriptor. Entries are
                              // grouped by upstream provider in catalog order, with
                              // the settings-chosen default model first per provider
-                             // — Ante pins the provider at session creation, so
+                             // — Ante initially selects the provider at session creation, so
                              // clients present a provider picker and submit the
                              // provider's first entry.
   sandboxModes: SessionSandboxMode[], // selectable isolation modes; [] when provider-managed
@@ -133,8 +133,7 @@ Session = {
                              // true + error means preparation failed; send retries
   model: string | null,       // current model id — agent-reported when the provider
                               // advertises a model config option, else a local preference
-                              // (for Ante: the bare id; the upstream provider is fixed
-                              // at session creation)
+                              // (for Ante: the bare id on its current upstream provider)
   models: string[],           // selectable model ids advertised by the agent (ACP config
                               // option); empty when the provider has none (for Ante: the
                               // session provider's own catalog models, bare)
@@ -245,6 +244,16 @@ SessionGitSummary = {
 }
 ```
 
+### Rewind synchronization
+
+A successful native rewind deletes the user event at the chosen sequence and all
+subsequent events, then persists and broadcasts `historyRewound` at the original
+next sequence number. Sequence numbers are never reused. Clients must remove
+cached events in `[beforeSeq, marker.seq)`, including derived usage and permissions,
+and apply the marker during history catch-up as well as live delivery. The marker
+is retained in full and summary history so disconnected clients reconcile safely.
+Attachments remain stored for existing references; filesystem changes are never undone.
+
 ### SessionEvent (discriminated union on `type`)
 
 `seq` and `timestamp` are added by the daemon when persisting/broadcasting; clients always
@@ -252,6 +261,7 @@ receive them. `sessions.history` returns events ordered by `seq` ascending.
 
 ```ts
 SessionEvent =
+  | { type: "historyRewound", beforeSeq: int } // discard cached events beforeSeq <= seq < this marker
   | { type: "userMessage", text: string, attachments?: Attachment[] }  // attachments omitted when empty
   | { type: "image", attachment: Attachment }          // agent-requested image displayed in the UI
   | { type: "explainer", explainer: Explainer }        // agent-requested interactive explainer (see Explainers)
@@ -648,14 +658,15 @@ Agent task-progress `plan` events remain supported.
     local label as before.
   — without `title`, the session starts as `New session`; the first user message sent to it
     replaces that placeholder (see `sessions.send`).
-- `sessions.fork {sessionId: string, seq: int}` → `{session: Session}` — creates a new idle
+- `sessions.fork {sessionId: string, seq?: int}` → `{session: Session}` — creates a new idle
   session containing the source session's persisted history through `seq`. `seq` must identify a
   `userMessage` or `agentMessageChunk` event (`-32602` otherwise), so clients can fork from either
-  side of any visible exchange. The fork inherits the source provider (including Ante's pinned
+  side of any visible exchange. Omit `seq` to fork the complete conversation.
+  Ante uses a native snapshot for a complete, idle conversation or a completed assistant turn; arbitrary partial message cuts use the portable transcript handoff. The message button and `/fork [seq]` invoke this same operation. The fork inherits the source provider (including Ante's pinned
   upstream provider), project, cwd/worktree, base branch, model, thinking level, sandbox
   mode, yolo setting, and short prompt setting; it is titled `Fork of <source title>`.
   Attachment payloads referenced by copied user messages or image events are cloned into the new session.
-  Creation copies history locally without starting an agent. On the first send, the daemon
+  Portable creation copies history locally without starting an agent. On the first send, the daemon
   starts a fresh provider session and supplies the copied user/agent conversation as
   inherited context with the fork's first new turn. This provider-independent handoff makes
   arbitrary-message forks available even when the ACP agent has no native `session/fork` support.
@@ -673,8 +684,8 @@ Agent task-progress `plan` events remain supported.
   but does not replay it automatically; the error event explains that it was not sent.
   Native commands return an empty list until ready; command execution and model changes
   during preparation return `-32003`.
-- `sessions.commands {sessionId: string}` → `{commands: NativeCommand[]}` — lists native operations available on the live provider session. Codex exposes `compact`, `review`, and enabled skills from `skills/list`; Ante exposes `compact`, `context`, and discovered skills. Other providers return an empty list.
-- `sessions.command {sessionId: string, name: string, arguments?: string}` → `{}` — starts the named native operation. It persists `/name arguments` as the user event and streams provider activity and completion through the normal session event channel. Codex `compact` calls `thread/compact/start`, `review` calls `review/start` (uncommitted changes by default, custom instructions when provided), and skills use structured `skill` input in `turn/start`. Ante `compact`, `context`, and skills use its `Compact`, `ContextReport`, and `SlashCommand` operations. Unknown commands and unsupported providers fail with `-32602`; an active turn fails with `-32003`. Attachments are not accepted.
+- `sessions.commands {sessionId: string}` → `{commands: NativeCommand[]}` — lists native operations available on the live provider session. Codex exposes `compact`, `review`, and enabled skills from `skills/list`; Ante exposes `compact`, `context`, `provider`, `rewind`, `fork`, and discovered skills. Other providers return an empty list.
+- `sessions.command {sessionId: string, name: string, arguments?: string}` → `{}` — starts the named native operation. It persists `/name arguments` as the user event and streams provider activity and completion through the normal session event channel. Codex `compact` calls `thread/compact/start`, `review` calls `review/start` (uncommitted changes by default, custom instructions when provided), and skills use structured `skill` input in `turn/start`. Ante `compact`, `context`, and skills use its `Compact`, `ContextReport`, and `SlashCommand` operations. Ante conversation controls complete before acknowledgement and echo the command only on success: `provider [provider] [model]` reports the current/available upstreams or switches via `UpdateSession`; `rewind [seq]` rewinds before a recorded user turn (latest by default) via `RewindSession`; `fork [seq]` calls the same operation as `sessions.fork` (complete by default, or through the message at `seq`), announced through `session.updated` and a source activity receipt. These controls require an idle session. A native refusal leaves local conversation state untouched. Rewind does not undo file changes. Older turns without a recorded native boundary cannot be rewound. A provider switch invalidates earlier rewind boundaries. Unknown commands and unsupported providers fail with `-32602`; an active turn fails with `-32003`. Attachments are not accepted.
   An agent busy with its own background work (OMP keeps running subagent-driven turns
   after yielding to the user) does not fail the send: the daemon holds the prompt,
   surfaces the wait as a `session`-kind `agentActivity`, and delivers the message once
@@ -769,8 +780,8 @@ Agent task-progress `plan` events remain supported.
   and reapplied on resume. Providers without a model option keep the legacy local-preference
   behavior (any string is stored verbatim).
   For Ante, `Session.models` contains only the session provider's models (bare ids), so any
-  validated pick forwards as-is; switching upstream providers is impossible mid-session
-  (`UpdateSession` ignores provider changes) — choose the provider when creating the session.
+  validated pick forwards as-is. The provider control and `/provider` switch upstreams through
+  `UpdateSession`, adopting the new model and effort options atomically.
 - `sessions.setThinkingLevel {sessionId: string, level: string}` → `{session: Session}` — sets the
   agent's thinking level (forwarded to a live agent through the provider transport; otherwise
   persisted and reapplied on resume). `level` must be one of the session's `thinkingLevels`;

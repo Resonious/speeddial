@@ -315,9 +315,9 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
         ),
         const SizedBox(height: 4),
         // The sheet-level picker is Ante-only, and it picks the upstream
-        // PROVIDER: Ante pins it at session creation (UpdateSession cannot
-        // change it later), while the model within a provider switches
-        // freely from the composer. ACP/Codex advertise their config options
+        // PROVIDER: Ante selects it at session creation; /provider can
+        // switch it later. The model within a provider switches freely
+        // from the composer. ACP/Codex advertise their config options
         // on the live session, so their model selection stays in the
         // composer entirely. One dropdown entry per upstream provider; its
         // value is that provider's first catalog model (the daemon orders

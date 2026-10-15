@@ -1272,8 +1272,8 @@ class ProviderInfo {
   /// Wire protocol spoken by the provider: "acp" | "codex" | "ante".
   /// Clients use it to know where model selection lives: ACP and Codex
   /// advertise config options on the live session (composer picker), while
-  /// Ante pins the upstream provider at creation, so its models are picked
-  /// in the new-session sheet.
+  /// Ante selects an initial upstream in the new-session sheet and exposes
+  /// its models in the composer. The native /provider command can switch upstreams.
   final String protocol;
 
   /// Isolation modes selectable when creating sessions with this provider.

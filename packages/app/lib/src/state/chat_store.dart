@@ -81,6 +81,7 @@ class _SessionBuffer {
   /// in [pending] so they can never overtake (and shadow) the refetch.
   bool resyncing = false;
   int maxSeq = 0;
+  final List<HistoryRewoundEvent> rewinds = [];
 
   /// Open chunk-merge run, if the tail of [events] is a chunk delta family
   /// that is still accumulating text (see [_ChunkRun]).
@@ -161,6 +162,9 @@ class ChatStore extends StoreBase {
        assert(retainedSessionLimit >= 0),
        // ignore: prefer_initializing_formals
        _clientFor = clientFor;
+
+  Object? _lastError;
+  Object? get lastError => _lastError;
 
   final DaemonClient Function(String daemonId) _clientFor;
 
@@ -499,7 +503,9 @@ class ChatStore extends StoreBase {
     }
     try {
       await request();
-    } on Object {
+    } on Object catch (error) {
+      _lastError = error;
+      _scheduleNotify();
       if (message != null && buffer!.outgoing.remove(message)) {
         _scheduleNotify();
       }
@@ -782,6 +788,7 @@ class ChatStore extends StoreBase {
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     buffer.events.clear();
+    buffer.rewinds.clear();
     buffer.permissions.clear();
     buffer.chunkRun = null;
     buffer.maxSeq = 0;
@@ -834,7 +841,17 @@ class ChatStore extends StoreBase {
   /// timeline still renders them as one merged item.
   void _prependHistoryPage(_SessionBuffer buffer, List<SessionEvent> page) {
     if (page.isEmpty) return;
-    buffer.events.insertAll(0, page);
+    buffer.events.insertAll(
+      0,
+      page.where(
+        (event) => !buffer.rewinds.any(
+          (rewind) =>
+              event.seq != null &&
+              event.seq! >= rewind.beforeSeq &&
+              event.seq! < rewind.seq!,
+        ),
+      ),
+    );
     buffer.permissions.clear();
     for (final SessionEvent event in buffer.events) {
       _notePermission(buffer, event);
@@ -847,6 +864,25 @@ class ChatStore extends StoreBase {
   /// one buffered event, and records any derived state it carries. Every
   /// call is a buffer mutation, so it bumps the session's revision.
   void _append(_SessionBuffer buffer, SessionEvent event) {
+    if (event is HistoryRewoundEvent) {
+      if (event.seq != null) buffer.rewinds.add(event);
+      _closeChunkRun(buffer);
+      buffer.events.removeWhere(
+        (e) =>
+            e.seq != null &&
+            e.seq! >= event.beforeSeq &&
+            (event.seq == null || e.seq! < event.seq!),
+      );
+      buffer.permissions.clear();
+      buffer.deliveredSeqs.removeWhere((seq) => seq >= event.beforeSeq);
+      _usageById.remove(buffer.key);
+      for (final retained in buffer.events) {
+        _notePermission(buffer, retained);
+        if (retained is UsageEvent) _usageById[buffer.key] = retained.usage;
+      }
+      buffer.oldestSeq = buffer.events.firstOrNull?.seq ?? event.seq;
+    }
+
     _notePermission(buffer, event);
     _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + 1;
 

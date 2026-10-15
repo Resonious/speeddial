@@ -114,6 +114,15 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolv
                     always uses the plain server launch because that subcommand rejects
                     default-run permission flags; yolo is selected per session so approval
                     pauses are not generated.
+                    `/provider`, `/rewind`, and `/fork` use native idle-only controls.
+                    The engine persists Ante turn ids against user-message sequences;
+                    provider switches invalidate those boundaries. Native forks at completed turn boundaries resume
+                    their saved snapshots without reinjecting copied text. Rewind only
+                    truncates local history after Ante accepts it, and publishes a durable
+                    historyRewound marker with a monotonically increasing sequence.
+                    ChatStore applies that marker during live delivery and reconnect,
+                    removes stale cached conversation/derived state, and filters stale
+                    history pages. Message actions and slash aliases share the same operations; partial-message forks keep portable semantics.
 lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess injected
                     into every compatible provider session. ACP and Codex receive its
                     descriptor directly; Ante receives it through its transient home.
@@ -688,3 +697,5 @@ the queued turn, deletion/shutdown drain preparation, and errors remain in sessi
 Interrupted preparation is retryable by sending again, without automatically replaying an
 old queued message. The new-session sheet warms the selected base branch fetch, sharing its
 in-flight result with worktree creation (30-second freshness, consumed on use).
+
+Ante provider and rewind controls invoke the same session command operation as their slash aliases. The fork button and `/fork [seq]` share `forkSession`, inclusive message boundaries, and navigation to the child. Complete idle Ante conversations use native snapshots; arbitrary message cuts use the portable transcript handoff.

@@ -155,6 +155,12 @@ class DaemonStore {
         _db.execute('ALTER TABLE sessions ADD COLUMN $column TEXT');
       }
     }
+    _db.execute('''CREATE TABLE IF NOT EXISTS ante_turns (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      turn_id TEXT NOT NULL,
+      PRIMARY KEY (session_id, seq)
+    )''');
     if (!sessionColumns.contains('thinking_level')) {
       _db.execute('ALTER TABLE sessions ADD COLUMN thinking_level TEXT');
     }
@@ -1074,13 +1080,20 @@ class DaemonStore {
   void insertFork(
     Session session,
     int throughSeq,
-    void Function() copyHistory,
-  ) {
+    void Function() copyHistory, {
+    String? providerSessionId,
+  }) {
     _db.execute('BEGIN');
     try {
       insertSession(session);
       copyHistory();
-      setForkContextSeq(session.id, throughSeq);
+      setForkContextSeq(
+        session.id,
+        providerSessionId == null ? throughSeq : null,
+      );
+      if (providerSessionId != null) {
+        setProviderSessionId(session.id, providerSessionId);
+      }
       _db.execute('COMMIT');
     } on Object {
       _db.execute('ROLLBACK');
@@ -1262,6 +1275,84 @@ class DaemonStore {
     "AND json_extract(json, '\$.type') = 'userMessage' LIMIT 1",
     <Object?>[sessionId],
   ).isNotEmpty;
+
+  void recordAnteTurn(String sessionId, String turnId) {
+    final rows = _db.select(
+      "SELECT MAX(seq) AS seq FROM session_events WHERE session_id = ? "
+      "AND json_extract(json, '\$.type') = 'userMessage'",
+      [sessionId],
+    );
+    final int? seq = rows.first['seq'] as int?;
+    if (seq != null) {
+      _db.execute('INSERT OR REPLACE INTO ante_turns VALUES (?, ?, ?)', [
+        sessionId,
+        seq,
+        turnId,
+      ]);
+    }
+  }
+
+  ({int seq, String turnId})? anteTurn(String sessionId, int? seq) {
+    final rows = _db.select(
+      'SELECT seq, turn_id FROM ante_turns WHERE session_id = ? '
+      '${seq == null ? '' : 'AND seq = ? '}ORDER BY seq DESC LIMIT 1',
+      <Object?>[sessionId, ?seq],
+    );
+    if (rows.isEmpty) return null;
+    return (
+      seq: rows.first['seq'] as int,
+      turnId: rows.first['turn_id'] as String,
+    );
+  }
+
+  ({int seq, String turnId})? nextAnteTurn(String sessionId, int afterSeq) {
+    final rows = _db.select(
+      'SELECT seq, turn_id FROM ante_turns WHERE session_id = ? AND seq > ? ORDER BY seq LIMIT 1',
+      [sessionId, afterSeq],
+    );
+    if (rows.isEmpty) return null;
+    return (
+      seq: rows.first['seq'] as int,
+      turnId: rows.first['turn_id'] as String,
+    );
+  }
+
+  void copyAnteTurns(String sourceId, String targetId, int throughSeq) {
+    _db.execute(
+      'INSERT INTO ante_turns (session_id, seq, turn_id) '
+      'SELECT ?, seq, turn_id FROM ante_turns WHERE session_id = ? AND seq <= ?',
+      [targetId, sourceId, throughSeq],
+    );
+  }
+
+  void clearAnteTurns(String sessionId) {
+    _db.execute('DELETE FROM ante_turns WHERE session_id = ?', [sessionId]);
+  }
+
+  SessionEvent rewindHistory(String sessionId, int beforeSeq) {
+    final int markerSeq = nextSeq(sessionId);
+    _db.execute('BEGIN');
+    try {
+      _db.execute(
+        'DELETE FROM session_events WHERE session_id = ? AND seq >= ?',
+        [sessionId, beforeSeq],
+      );
+      _db.execute('DELETE FROM ante_turns WHERE session_id = ? AND seq >= ?', [
+        sessionId,
+        beforeSeq,
+      ]);
+      final event = appendEvent(
+        sessionId,
+        markerSeq,
+        HistoryRewoundEvent(beforeSeq: beforeSeq),
+      );
+      _db.execute('COMMIT');
+      return event;
+    } on Object {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
 
   /// The next sequence number for [sessionId] (`max(seq) + 1`, starting at 1).
   int nextSeq(String sessionId) {

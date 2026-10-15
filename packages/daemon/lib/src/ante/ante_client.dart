@@ -30,6 +30,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
     Map<String, String>? environment,
     AgentPermissionHandler? requestPermission,
     AgentQuestionHandler? requestQuestions,
+    this.onTurnStarted,
     this.initTimeout = const Duration(seconds: 30),
   }) : _command = List<String>.of(command),
        _catalogCommand = catalogCommand == null
@@ -48,6 +49,8 @@ class AnteClient implements AgentClient, NativeCommandClient {
 
   final List<String> _command;
   final List<String>? _catalogCommand;
+  final void Function(String turnId)? onTurnStarted;
+  final Map<String, Completer<Map<String, Object?>>> _controlWaiters = {};
   final String _cwd;
   final Map<String, String>? _environment;
   final AgentPermissionHandler? _permissionHandler;
@@ -279,6 +282,67 @@ class AnteClient implements AgentClient, NativeCommandClient {
     }
   }
 
+  Future<List<AcpConfigOption>> switchProvider(
+    String sessionId,
+    String provider, {
+    String? model,
+  }) async {
+    _requireSession(sessionId);
+    if (_currentTurnOp != null) throw StateError('An Ante turn is running');
+    final String opId = _nextOpId();
+    final completer = Completer<_AnteSessionState>();
+    _updateWaiters[opId] = completer;
+    try {
+      await _sendOp(<String, Object?>{
+        'UpdateSession': <String, Object?>{
+          'provider': provider,
+          if (model != null) 'model': <String, Object?>{'id': model},
+        },
+      }, opId);
+      final state = await completer.future.timeout(initTimeout);
+      return _configOptions(state, await _catalogFuture);
+    } finally {
+      _updateWaiters.remove(opId);
+    }
+  }
+
+  Future<Map<String, Object?>> _control(String sessionId, Object op) async {
+    _requireSession(sessionId);
+    if (_currentTurnOp != null) throw StateError('An Ante turn is running');
+    final String id = _nextOpId();
+    final completer = Completer<Map<String, Object?>>();
+    _controlWaiters[id] = completer;
+    try {
+      await _sendOp(op, id);
+      return await completer.future.timeout(initTimeout);
+    } finally {
+      _controlWaiters.remove(id);
+    }
+  }
+
+  Future<void> rewind(String sessionId, String turnId) async {
+    final reply = await _control(sessionId, <String, Object?>{
+      'RewindSession': <String, Object?>{'to': turnId},
+    });
+    if (reply['to'] != turnId) {
+      throw const FormatException('Wrong rewind boundary');
+    }
+  }
+
+  Future<String> fork(String sessionId, {String? at}) async {
+    final reply = await _control(sessionId, <String, Object?>{
+      'ForkSession': <String, Object?>{'at': ?at},
+    });
+    final String? id = reply['session_id'] as String?;
+    if (reply['forked_from'] != sessionId ||
+        id == null ||
+        id.isEmpty ||
+        id == sessionId) {
+      throw const FormatException('Invalid Ante fork response');
+    }
+    return id;
+  }
+
   @override
   Stream<AcpSessionUpdate> sessionUpdates(String sessionId) {
     _requireSession(sessionId);
@@ -318,6 +382,21 @@ class AnteClient implements AgentClient, NativeCommandClient {
   Future<List<NativeCommand>> availableCommands(String sessionId) async {
     _requireSession(sessionId);
     return <NativeCommand>[
+      const NativeCommand(
+        name: 'provider',
+        description: 'Show or switch the Ante upstream provider',
+        argumentHint: '[provider] [model]',
+      ),
+      const NativeCommand(
+        name: 'rewind',
+        description: 'Rewind before a user turn (latest by default); files stay unchanged',
+        argumentHint: '[message sequence]',
+      ),
+      const NativeCommand(
+        name: 'fork',
+        description: 'Fork the conversation through a message',
+        argumentHint: '[message sequence]',
+      ),
       const NativeCommand(
         name: 'compact',
         description: 'Compact conversation context',
@@ -764,11 +843,17 @@ class AnteClient implements AgentClient, NativeCommandClient {
           parent,
         );
         if (waiter != null && !waiter.isCompleted) waiter.complete(state);
+      case 'SessionRewound':
+      case 'SessionForked':
+        final waiter = _controlWaiters.remove(parent);
+        if (waiter != null && !waiter.isCompleted) waiter.complete(_map(value));
       case 'SessionEnd':
         break;
       case 'TurnStart':
         if (parent != null && parent == _currentTurnOp) {
           _suppressReplay = false;
+          final String? turnId = _map(value)['turn_id'] as String?;
+          if (turnId != null) onTurnStarted?.call(turnId);
         }
       case 'TurnPause':
         if (!_suppressReplay) {
@@ -1343,6 +1428,11 @@ class AnteClient implements AgentClient, NativeCommandClient {
 
   void _handleOperationError(String? parent, String message) {
     final AnteTurnException error = AnteTurnException(message);
+    final control = _controlWaiters.remove(parent);
+    if (control != null && !control.isCompleted) {
+      control.completeError(error);
+      return;
+    }
     final Completer<_AnteSessionState>? sessionWaiter = _sessionWaiters.remove(
       parent,
     );
@@ -1487,6 +1577,10 @@ class AnteClient implements AgentClient, NativeCommandClient {
   }
 
   void _fail(Object error, {int? exitCode}) {
+    for (final waiter in _controlWaiters.values) {
+      if (!waiter.isCompleted) waiter.completeError(error);
+    }
+    _controlWaiters.clear();
     for (final Completer<_AnteSessionState> waiter in _sessionWaiters.values) {
       if (!waiter.isCompleted) waiter.completeError(error);
     }

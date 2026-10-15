@@ -859,10 +859,10 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
-  Future<Session> forkSession(String sessionId, int seq) async {
+  Future<Session> forkSession(String sessionId, int? seq) async {
     final Object? result = await _requirePeer().call(
       'sessions.fork',
-      <String, Object?>{'sessionId': sessionId, 'seq': seq},
+      <String, Object?>{'sessionId': sessionId, 'seq': ?seq},
     );
     return Session.fromJson(_resultMap(_resultField(result, 'session')));
   }

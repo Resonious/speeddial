@@ -1462,6 +1462,215 @@ void main() {
     );
   }
 
+  test(
+    'Ante controls persist provider, rewind history and resume native forks',
+    () async {
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      store.updateDaemonEnvironment(
+        set: <String, String>{
+          'FAKE_ANTE_STATE_DIR': p.join(tempDir.path, 'native-state'),
+        },
+      );
+      engine = SessionEngine(store: store, providers: fakeAnteProviders());
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeAnte',
+        yolo: true,
+      );
+      await engine.sendMessage(session.id, 'normal');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final boundary = store.anteTurn(session.id, null)!;
+      final originalId = store.providerSessionIdOf(session.id);
+      await engine.runCommand(session.id, 'fork');
+      final child = store.listSessions().singleWhere((s) => s.id != session.id);
+      expect(store.providerSessionIdOf(child.id), isNot(originalId));
+      expect(store.forkContextSeqOf(child.id), isNull);
+      expect(
+        store.listEvents(child.id).events.whereType<AgentMessageChunkEvent>(),
+        isNotEmpty,
+      );
+      await engine.runCommand(session.id, 'fork', arguments: '${boundary.seq}');
+      final prefix = store.listSessions().singleWhere(
+        (s) => s.id != session.id && s.id != child.id,
+      );
+      expect(
+        store
+            .listEvents(prefix.id)
+            .events
+            .whereType<UserMessageEvent>()
+            .map((e) => e.text),
+        ['normal'],
+      );
+      expect(store.forkContextSeqOf(prefix.id), boundary.seq);
+      // The message button and slash alias use identical boundary semantics.
+      final buttonFork = await engine.forkSession(
+        sourceSessionId: session.id,
+        throughSeq: boundary.seq,
+      );
+      expect(
+        store
+            .listEvents(buttonFork.id)
+            .events
+            .map((e) => e.toJson()..remove('timestamp')),
+        store
+            .listEvents(prefix.id)
+            .events
+            .map((e) => e.toJson()..remove('timestamp')),
+      );
+      await expectLater(
+        engine.runCommand(session.id, 'fork', arguments: '999999'),
+        throwsA(isA<DaemonError>()),
+      );
+      await engine.runCommand(child.id, 'rewind', arguments: '${boundary.seq}');
+      expect(
+        store.listEvents(child.id).events.whereType<AgentMessageChunkEvent>(),
+        isEmpty,
+      );
+      expect(
+        store.listEvents(session.id).events.whereType<AgentMessageChunkEvent>(),
+        isNotEmpty,
+      );
+      store.updateDaemonEnvironment(
+        set: <String, String>{'FAKE_ANTE_REJECT_REWIND': '1'},
+      );
+      await engine.reloadEnvironment();
+      final beforeRefusal = store
+          .listEvents(session.id)
+          .events
+          .map((e) => e.toJson())
+          .toList();
+      await expectLater(
+        engine.runCommand(session.id, 'rewind'),
+        throwsA(isA<DaemonError>()),
+      );
+      expect(
+        store
+            .listEvents(session.id)
+            .events
+            .take(beforeRefusal.length)
+            .map((e) => e.toJson()),
+        beforeRefusal,
+      );
+      expect(
+        store.listEvents(session.id).events.whereType<HistoryRewoundEvent>(),
+        isEmpty,
+      );
+      expect(
+        store.listEvents(session.id).events.whereType<AgentMessageChunkEvent>(),
+        isNotEmpty,
+      );
+      store.updateDaemonEnvironment(
+        set: <String, String>{'FAKE_ANTE_REJECT_REWIND': '0'},
+      );
+      final int nextSeq = store.nextSeq(session.id);
+      // Restart the engine: the native turn boundary must survive.
+      await eventsSub.cancel();
+      await changesSub.cancel();
+      await removalsSub.cancel();
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeAnteProviders());
+      await engine.restore();
+      eventsSub = engine.events.listen(events.add);
+      changesSub = engine.sessionChanges.listen(changes.add);
+      removalsSub = engine.sessionRemovals.listen(removals.add);
+      await engine.runCommand(
+        session.id,
+        'rewind',
+        arguments: '${boundary.seq}',
+      );
+      final history = store.listEvents(session.id).events;
+      expect(history.whereType<AgentMessageChunkEvent>(), isEmpty);
+      final marker = history.whereType<HistoryRewoundEvent>().single;
+      expect(marker.beforeSeq, boundary.seq);
+      expect(marker.seq, greaterThanOrEqualTo(nextSeq));
+      final beforeFailure = store.nextSeq(session.id);
+      await expectLater(
+        engine.runCommand(session.id, 'rewind'),
+        throwsA(isA<DaemonError>()),
+      );
+      expect(store.nextSeq(session.id), beforeFailure);
+      await engine.runCommand(
+        session.id,
+        'provider',
+        arguments: 'other-provider fake-large',
+      );
+      expect(store.anteProviderOf(session.id).provider, 'other-provider');
+      expect(store.getSession(session.id)!.model, 'fake-large');
+      await engine.runCommand(
+        session.id,
+        'provider',
+        arguments: 'fake-provider fake-model',
+      );
+      await engine.setThinkingLevel(session.id, 'high');
+      expect(store.getSession(session.id)!.thinkingLevel, 'high');
+      await engine.sendMessage(child.id, 'normal');
+      await waitFor(
+        () => store.getSession(child.id)!.status == SessionStatus.idle,
+      );
+      expect(store.providerSessionIdOf(child.id), isNot(originalId));
+      expect(
+        File(p.join(tempDir.path, 'example.txt')).readAsStringSync(),
+        'hello from file\n',
+      );
+      await engine.sendMessage(session.id, 'normal');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final firstTurn = store.anteTurn(session.id, null)!;
+      final firstAnswer = store
+          .listEvents(session.id)
+          .events
+          .whereType<AgentMessageChunkEvent>()
+          .last
+          .seq!;
+      await engine.sendMessage(session.id, 'normal');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final nativePrefix = await engine.forkSession(
+        sourceSessionId: session.id,
+        throughSeq: firstAnswer,
+      );
+      expect(store.forkContextSeqOf(nativePrefix.id), isNull);
+      expect(store.anteTurn(nativePrefix.id, null)!.seq, firstTurn.seq);
+      await engine.runCommand(
+        nativePrefix.id,
+        'rewind',
+        arguments: '${firstTurn.seq}',
+      );
+      expect(
+        store
+            .listEvents(nativePrefix.id)
+            .events
+            .whereType<AgentMessageChunkEvent>(),
+        isEmpty,
+      );
+      await engine.sendMessage(session.id, 'cancel');
+      await expectLater(
+        engine.runCommand(session.id, 'provider', arguments: 'other-provider'),
+        throwsA(isA<DaemonError>()),
+      );
+      await expectLater(
+        engine.runCommand(session.id, 'rewind'),
+        throwsA(isA<DaemonError>()),
+      );
+      await expectLater(
+        engine.runCommand(session.id, 'fork'),
+        throwsA(isA<DaemonError>()),
+      );
+      await engine.cancel(session.id);
+    },
+  );
+
   test('Ante sessions pin the provider of a qualified model id', () async {
     await eventsSub.cancel();
     await changesSub.cancel();

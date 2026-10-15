@@ -152,8 +152,9 @@ abstract class DaemonClient {
   });
 
   /// Forks [sessionId] into a new session whose history ends at the message
-  /// event identified by [seq]. The provider starts on the first send.
-  Future<Session> forkSession(String sessionId, int seq);
+  /// event identified by [seq], or the full conversation when null. Ante
+  /// preserves native state at complete boundaries; other cuts copy context.
+  Future<Session> forkSession(String sessionId, int? seq);
 
   /// Starts a turn with [text]. Events stream via [sessionEvents].
   ///
@@ -172,7 +173,9 @@ abstract class DaemonClient {
   /// Native operations exposed by this session's harness.
   Future<List<NativeCommand>> listCommands(String sessionId);
 
-  /// Starts a native harness operation, returning after the daemon accepts it.
+  /// Starts a native harness operation. Ante provider/rewind/fork controls
+  /// complete before acknowledgement; rewind emits a HistoryRewoundEvent that
+  /// invalidates cached conversation. Other commands acknowledge turn startup.
   Future<void> runCommand(
     String sessionId,
     String name, {

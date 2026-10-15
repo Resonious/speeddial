@@ -1297,6 +1297,18 @@ void main() {
           ),
         ),
       );
+      final fullResult = j(
+        await client.peer.call('sessions.fork', <String, Object?>{
+          'sessionId': source.id,
+        }),
+      );
+      final full = Session.fromJson(
+        (fullResult['session']! as Map).cast<String, Object?>(),
+      );
+      expect(
+        store.listEvents(full.id).events.whereType<AgentMessageChunkEvent>(),
+        hasLength(1),
+      );
       await client.close();
     });
 

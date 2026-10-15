@@ -240,6 +240,8 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
         result.add(_WearActivityItem(text: activity.title, icon: Icons.sync));
       case FoldedSessionEvent(:final event):
         switch (event) {
+          case HistoryRewoundEvent():
+            break;
           case UserMessageEvent(:final text, :final attachments):
             final String display = text.isNotEmpty
                 ? text

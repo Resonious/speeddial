@@ -353,16 +353,26 @@ class SessionsStore extends StoreBase {
   }
 
   /// Creates a new session whose copied history ends at message event [seq].
-  Future<Session> fork(String daemonId, String sourceSessionId, int seq) async {
+  Future<Session> fork(
+    String daemonId,
+    String sourceSessionId,
+    int? seq,
+  ) async {
     _ensureDaemonSubscriptions(daemonId);
-    final Session session = await _clientFor(daemonId)
-        .forkSession(sourceSessionId, seq);
-    _sessionsByProject.putIfAbsent(
-      _scopedKey(daemonId, session.projectId),
-      () => <Session>[],
-    );
-    _replace(daemonId, session);
-    return session;
+    try {
+      final Session session = await _clientFor(daemonId)
+          .forkSession(sourceSessionId, seq);
+      _sessionsByProject.putIfAbsent(
+        _scopedKey(daemonId, session.projectId),
+        () => <Session>[],
+      );
+      _replace(daemonId, session);
+      return session;
+    } on Object catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> rename(String daemonId, String sessionId, String title) async {

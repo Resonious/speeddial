@@ -8,6 +8,7 @@ import '../../state/chat_store.dart';
 import '../../state/file_transfer_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
+import 'ante_controls.dart';
 import 'catching_up.dart';
 import 'composer.dart';
 import 'file_action_dialog.dart';
@@ -178,6 +179,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   SessionEvent? _tail;
   int _activity = 0;
   bool _forking = false;
+  bool _controlling = false;
   bool _draftErrorShown = false;
   final ValueNotifier<int> _followLatestRequest = ValueNotifier<int>(0);
   List<NativeCommand> _commands = const <NativeCommand>[];
@@ -343,6 +345,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 'Reconnecting…',
               _ => null,
             },
+            onRewind:
+                session?.providerId == 'ante' &&
+                    !running &&
+                    !_controlling &&
+                    !sending &&
+                    !data.connections.statusOf(daemonId).outOfReach
+                ? (int seq) =>
+                      unawaited(_runControl('rewind', arguments: '$seq'))
+                : null,
             followLatestRequest: _followLatestRequest.value,
             catchingUp: catchingUp,
             hasOlder: chat.hasOlderHistory(sessionId),
@@ -353,7 +364,9 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             },
             attachmentLoader: (String attachmentId) =>
                 chat.attachmentData(daemonId, sessionId, attachmentId),
-            onFork: _forking
+            onFork:
+                _forking ||
+                    (session?.providerId == 'ante' && (running || _controlling))
                 ? null
                 : (int seq) {
                     unawaited(_forkFrom(seq));
@@ -401,6 +414,20 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               ),
               child: Composer(
                 focusNode: widget.composerFocusNode,
+                sessionControls: session?.providerId == 'ante'
+                    ? AnteControls(
+                        enabled:
+                            !running &&
+                            !sending &&
+                            !_forking &&
+                            !_controlling &&
+                            !(session?.preparing ?? false) &&
+                            !data.connections.statusOf(daemonId).outOfReach,
+                        onProvider: () => unawaited(_chooseProvider()),
+                        onRewind: () => unawaited(_runControl('rewind')),
+                        onFork: () => unawaited(_forkFrom(null)),
+                      )
+                    : null,
                 status: status,
                 sending: sending,
                 preparing: session?.preparing ?? false,
@@ -445,7 +472,46 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     );
   }
 
-  Future<void> _forkFrom(int seq) async {
+  Future<void> _runControl(String name, {String arguments = ''}) async {
+    if (_controlling) return;
+    setState(() => _controlling = true);
+    try {
+      await widget.data.chat.runCommand(
+        widget.daemonId,
+        widget.sessionId,
+        name,
+        arguments: arguments,
+      );
+    } on Object catch (error) {
+      if (mounted) await _showMessage('Could not $name: $error');
+    } finally {
+      if (mounted) setState(() => _controlling = false);
+    }
+  }
+
+  Future<void> _chooseProvider() async {
+    final providers =
+        widget.data.daemonConfig.infoFor(widget.daemonId)?.providers ??
+        const <ProviderInfo>[];
+    final choices =
+        providers
+            .where((p) => p.id == 'ante')
+            .expand((p) => p.models)
+            .where((m) => m.contains('/'))
+            .map((m) => m.split('/').first)
+            .toSet()
+            .toList()
+          ..sort();
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (_) => AnteProviderDialog(providers: choices),
+    );
+    if (selected != null && mounted) {
+      await _runControl('provider', arguments: selected);
+    }
+  }
+
+  Future<void> _forkFrom(int? seq, {bool rethrowFailure = false}) async {
     if (_forking) return;
     setState(() => _forking = true);
     try {
@@ -459,6 +525,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         ..selectedSessionId = fork.id;
     } on DaemonError catch (error) {
       await _showError(error);
+      if (rethrowFailure) rethrow;
     } finally {
       if (mounted) setState(() => _forking = false);
     }
@@ -528,6 +595,18 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       throw error;
     }
     final String arguments = space < 0 ? '' : text.substring(space + 1).trim();
+    if (providerId == 'ante' && name == 'fork') {
+      final int? seq = arguments.isEmpty ? null : int.tryParse(arguments);
+      if (arguments.isNotEmpty && (seq == null || seq < 1)) {
+        throw const DaemonError(-32602, 'Use /fork [message sequence]');
+      }
+      await _forkFrom(seq, rethrowFailure: true);
+      return;
+    }
+    if (providerId == 'ante' && name == 'provider' && arguments.isEmpty) {
+      await _chooseProvider();
+      return;
+    }
     try {
       await widget.data.chat.runCommand(
         widget.daemonId,

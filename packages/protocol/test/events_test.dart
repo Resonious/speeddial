@@ -2,6 +2,14 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('rewind markers round trip and survive summary projection', () {
+    const marker = HistoryRewoundEvent(beforeSeq: 3, seq: 20);
+    final decoded =
+        SessionEvent.fromJson(marker.toJson()) as HistoryRewoundEvent;
+    expect(decoded.beforeSeq, 3);
+    expect(decoded.seq, 20);
+    expect(summarizeSessionEvent(decoded).toJson(), marker.toJson());
+  });
   test('events serialize AttachmentData as metadata only', () {
     const AttachmentData attachment = AttachmentData(
       id: 'image-1',
