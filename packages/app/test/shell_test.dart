@@ -13,7 +13,10 @@ import 'package:speeddial_app/src/ui/left/left_rail.dart';
 void main() {
   /// Pumps the real app with real stores over an empty shared_preferences
   /// mock at the given logical viewport size.
-  Future<AppData> pumpApp(WidgetTester tester, {Size size = const Size(1440, 900)}) async {
+  Future<AppData> pumpApp(
+    WidgetTester tester, {
+    Size size = const Size(1440, 900),
+  }) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final AppData data = AppData();
     await data.connections.init();
@@ -31,10 +34,13 @@ void main() {
   Future<AppData> pumpFakeShell(
     WidgetTester tester, {
     required Size size,
+    void Function(FakeDaemonClient fake)? setup,
   }) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake =
-        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    setup?.call(fake);
     final AppData data = AppData()..registerClient('fake', fake);
     await data.connections.addEndpoint(
       id: 'fake',
@@ -65,7 +71,9 @@ void main() {
         widget.decoration?.hintText == 'Message the agent…',
   );
 
-  testWidgets('desktop: all three panes visible at 1440x900', (WidgetTester tester) async {
+  testWidgets('desktop: all three panes visible at 1440x900', (
+    WidgetTester tester,
+  ) async {
     await pumpApp(tester);
 
     // Top bar title.
@@ -104,7 +112,9 @@ void main() {
     expect(statusSpinners, findsNothing);
   });
 
-  testWidgets('desktop: right panel toggle hides and restores it', (WidgetTester tester) async {
+  testWidgets('desktop: right panel toggle hides and restores it', (
+    WidgetTester tester,
+  ) async {
     await pumpApp(tester);
     expect(find.text('Files'), findsOneWidget);
 
@@ -178,11 +188,15 @@ void main() {
     await tester.pump();
 
     expect(tester.getSize(find.byType(LeftRail)).width, lessThanOrEqualTo(320));
-    expect(tester.getSize(find.byType(ChatPane)).width, greaterThanOrEqualTo(320));
+    expect(
+      tester.getSize(find.byType(ChatPane)).width,
+      greaterThanOrEqualTo(320),
+    );
   });
 
-  testWidgets('theme button cycles mode and updates MaterialApp',
-      (WidgetTester tester) async {
+  testWidgets('theme button cycles mode and updates MaterialApp', (
+    WidgetTester tester,
+  ) async {
     final AppData data = await pumpApp(tester);
 
     expect(data.settings.themeMode, ThemeMode.system);
@@ -203,7 +217,9 @@ void main() {
     );
   });
 
-  testWidgets('mobile: chat-only body, drawer reveals left rail', (WidgetTester tester) async {
+  testWidgets('mobile: chat-only body, drawer reveals left rail', (
+    WidgetTester tester,
+  ) async {
     await pumpApp(tester, size: const Size(390, 844));
 
     expect(find.byKey(const Key('left-rail-resize-handle')), findsNothing);
@@ -225,8 +241,10 @@ void main() {
       tester,
       size: const Size(390, 844),
     );
-    data.selection.selectedSessionId =
-        data.sessions.sessionsFor('proj-demo', daemonId: 'fake').first.id;
+    data.selection.selectedSessionId = data.sessions
+        .sessionsFor('proj-demo', daemonId: 'fake')
+        .first
+        .id;
     await tester.pumpAndSettle();
     final ScaffoldState scaffold = tester.state<ScaffoldState>(
       find.byType(Scaffold).first,
@@ -253,6 +271,81 @@ void main() {
       await tester.pumpAndSettle();
     }
   });
+
+  testWidgets(
+    'mobile: wide tables scroll sideways instead of opening navigation',
+    (WidgetTester tester) async {
+      final AppData data = await pumpFakeShell(
+        tester,
+        size: const Size(390, 844),
+        setup: (FakeDaemonClient fake) =>
+            fake.seedHistory('sess-1', const <SessionEvent>[
+              UserMessageEvent(text: 'Check the endpoints'),
+              AgentMessageChunkEvent(
+                text:
+                    '| Endpoint | Requests | p95 latency |\n'
+                    '| --- | ---: | ---: |\n'
+                    '| `/connection-health/events` | 1234 | 250 ms |\n'
+                    '| `/connection-health/calls` | 987 | 310 ms |\n',
+              ),
+              TurnCompleteEvent(stopReason: 'end_turn'),
+            ]),
+      );
+      // Edge-to-edge Android: the navigation bar overlays the bottom.
+      tester.view.padding = const FakeViewPadding(bottom: 96);
+      data.selection.selectedSessionId = 'sess-1';
+      await tester.pumpAndSettle();
+      final ScaffoldState scaffold = tester.state<ScaffoldState>(
+        find.byType(Scaffold).first,
+      );
+      final Finder table = find.byType(Table);
+      expect(table, findsOneWidget);
+      final Finder tableScroll = find
+          .ancestor(of: table, matching: find.byType(Scrollable))
+          .first;
+      final ScrollPosition position = tester
+          .state<ScrollableState>(tableScroll)
+          .position;
+      expect(position.maxScrollExtent, greaterThan(0));
+
+      // The scrollbar hugs the table, not the screen's system-bar inset.
+      final Finder scrollbar = find
+          .ancestor(of: table, matching: find.byType(Scrollbar))
+          .first;
+      final MediaQueryData media = MediaQuery.of(tester.element(scrollbar));
+      expect(media.padding, EdgeInsets.zero);
+      expect(media.viewPadding, EdgeInsets.zero);
+
+      // A finger moves in small steps, so the lower slop crosses first.
+      final Offset start = tester.getTopLeft(table) + const Offset(60, 40);
+      await tester.timedDragFrom(
+        start,
+        const Offset(-120, 0),
+        const Duration(milliseconds: 300),
+      );
+      await tester.pumpAndSettle();
+      expect(position.pixels, greaterThan(0));
+      expect(scaffold.isDrawerOpen, isFalse);
+
+      await tester.timedDragFrom(
+        start,
+        const Offset(120, 0),
+        const Duration(milliseconds: 300),
+      );
+      await tester.pumpAndSettle();
+      expect(position.pixels, 0);
+      expect(scaffold.isDrawerOpen, isFalse);
+
+      // Away from the table, a right swipe still opens navigation.
+      await tester.flingFrom(
+        Offset(195, tester.getTopLeft(table).dy - 60),
+        const Offset(80, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(scaffold.isDrawerOpen, isTrue);
+    },
+  );
 
   testWidgets(
     'mobile: creating a session closes the drawer and focuses the message input',
@@ -306,7 +399,9 @@ void main() {
     },
   );
 
-  testWidgets('add daemon dialog adds an endpoint visible in the rail', (WidgetTester tester) async {
+  testWidgets('add daemon dialog adds an endpoint visible in the rail', (
+    WidgetTester tester,
+  ) async {
     final AppData data = await pumpApp(tester);
 
     await tester.tap(find.text('Add daemon'));
@@ -315,7 +410,10 @@ void main() {
     expect(find.text('Add daemon'), findsNWidgets(2));
 
     await tester.enterText(find.byKey(const Key('add-daemon-name')), 'Local');
-    await tester.enterText(find.byKey(const Key('add-daemon-url')), 'localhost:7331');
+    await tester.enterText(
+      find.byKey(const Key('add-daemon-url')),
+      'localhost:7331',
+    );
     await tester.enterText(find.byKey(const Key('add-daemon-token')), 'secret');
     await tester.tap(find.byKey(const Key('add-daemon-submit')));
     await tester.pumpAndSettle();
@@ -325,10 +423,7 @@ void main() {
     expect(find.text('Add daemon'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget);
     expect(data.connections.endpoints, hasLength(1));
-    expect(
-      data.connections.endpoints.single.url,
-      'ws://localhost:7331/ws',
-    );
+    expect(data.connections.endpoints.single.url, 'ws://localhost:7331/ws');
     expect(data.connections.endpoints.single.token, 'secret');
     // Adding an endpoint triggers a connection attempt (AppData rewires the
     // endpoint to a WsDaemonClient). Nothing listens on localhost:7331, so
@@ -362,69 +457,81 @@ void main() {
     expect(store.endpoints[4].url, 'ws://host:1/ws'); // trimmed
   });
 
-  test('updateEndpoint replaces fields in place, normalizes, and persists',
-      () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final ConnectionsStore store = ConnectionsStore();
-    await store.addEndpoint(name: 'a', url: 'localhost:1', token: 't1');
-    final String id = store.endpoints.single.id;
+  test(
+    'updateEndpoint replaces fields in place, normalizes, and persists',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final ConnectionsStore store = ConnectionsStore();
+      await store.addEndpoint(name: 'a', url: 'localhost:1', token: 't1');
+      final String id = store.endpoints.single.id;
 
-    await store.updateEndpoint(
-        id: id, name: 'B', url: 'example:9000', token: 't2');
-    expect(store.endpoints.single.id, id);
-    expect(store.endpoints.single.name, 'B');
-    expect(store.endpoints.single.url, 'ws://example:9000/ws');
-    expect(store.endpoints.single.token, 't2');
+      await store.updateEndpoint(
+        id: id,
+        name: 'B',
+        url: 'example:9000',
+        token: 't2',
+      );
+      expect(store.endpoints.single.id, id);
+      expect(store.endpoints.single.name, 'B');
+      expect(store.endpoints.single.url, 'ws://example:9000/ws');
+      expect(store.endpoints.single.token, 't2');
 
-    // Persisted: a fresh store over the same prefs sees the edit.
-    final ConnectionsStore reloaded = ConnectionsStore();
-    await reloaded.init();
-    expect(reloaded.endpoints.single.name, 'B');
-    expect(reloaded.endpoints.single.url, 'ws://example:9000/ws');
+      // Persisted: a fresh store over the same prefs sees the edit.
+      final ConnectionsStore reloaded = ConnectionsStore();
+      await reloaded.init();
+      expect(reloaded.endpoints.single.name, 'B');
+      expect(reloaded.endpoints.single.url, 'ws://example:9000/ws');
 
-    // Unknown ids are a no-op.
-    await store.updateEndpoint(id: 'nope', name: 'x', url: 'y', token: '');
-    expect(store.endpoints, hasLength(1));
-    expect(store.endpoints.single.name, 'B');
-  });
+      // Unknown ids are a no-op.
+      await store.updateEndpoint(id: 'nope', name: 'x', url: 'y', token: '');
+      expect(store.endpoints, hasLength(1));
+      expect(store.endpoints.single.name, 'B');
+    },
+  );
 
-  test('replaceEndpoints applies an authoritative persistent snapshot', () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final ConnectionsStore store = ConnectionsStore();
-    await store.addEndpoint(
-      id: 'embedded',
-      name: 'This computer',
-      url: 'ws://127.0.0.1:7331/ws',
-      token: '',
-      persist: false,
-      embedded: true,
-    );
-    await store.addEndpoint(
-      id: 'old',
-      name: 'Old',
-      url: 'old.example:7331',
-      token: 'old',
-    );
+  test(
+    'replaceEndpoints applies an authoritative persistent snapshot',
+    () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final ConnectionsStore store = ConnectionsStore();
+      await store.addEndpoint(
+        id: 'embedded',
+        name: 'This computer',
+        url: 'ws://127.0.0.1:7331/ws',
+        token: '',
+        persist: false,
+        embedded: true,
+      );
+      await store.addEndpoint(
+        id: 'old',
+        name: 'Old',
+        url: 'old.example:7331',
+        token: 'old',
+      );
 
-    await store.replaceEndpoints(const <DaemonEndpoint>[
-      DaemonEndpoint(
-        id: 'new',
-        name: 'New',
-        url: 'new.example:9000',
-        token: 'new-token',
-      ),
-    ]);
+      await store.replaceEndpoints(const <DaemonEndpoint>[
+        DaemonEndpoint(
+          id: 'new',
+          name: 'New',
+          url: 'new.example:9000',
+          token: 'new-token',
+        ),
+      ]);
 
-    expect(store.endpoints.map((DaemonEndpoint endpoint) => endpoint.id),
-        <String>['embedded', 'new']);
-    expect(store.endpoints.last.url, 'ws://new.example:9000/ws');
-    final ConnectionsStore reloaded = ConnectionsStore();
-    await reloaded.init();
-    expect(reloaded.endpoints.single.id, 'new');
-  });
+      expect(
+        store.endpoints.map((DaemonEndpoint endpoint) => endpoint.id),
+        <String>['embedded', 'new'],
+      );
+      expect(store.endpoints.last.url, 'ws://new.example:9000/ws');
+      final ConnectionsStore reloaded = ConnectionsStore();
+      await reloaded.init();
+      expect(reloaded.endpoints.single.id, 'new');
+    },
+  );
 
-  testWidgets('demo mode: buildDemoAppData populates the tree without taps',
-      (WidgetTester tester) async {
+  testWidgets('demo mode: buildDemoAppData populates the tree without taps', (
+    WidgetTester tester,
+  ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final AppData data = buildDemoAppData();
     addTearDown(data.dispose);
@@ -452,57 +559,66 @@ void main() {
     // Drain the scripted turn (~9 events at the fake's 50ms event delay, and
     // its 2s tool call) so no timers outlive the test.
     await tester.pump(const Duration(seconds: 4));
-    expect(find.textContaining('Working on it', findRichText: true),
-        findsOneWidget);
-    expect(find.textContaining('Add retry logic', findRichText: true),
-        findsOneWidget);
-  });
-
-  testWidgets('mobile: tapping a session in the drawer selects it and closes the drawer',
-      (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake =
-        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
-    final AppData data = AppData()..registerClient('fake', fake);
-    await data.connections.addEndpoint(
-      id: 'fake',
-      name: 'Fake daemon',
-      url: 'fake://local',
-      token: '',
+    expect(
+      find.textContaining('Working on it', findRichText: true),
+      findsOneWidget,
     );
-    await data.projects.refresh('fake');
-    await data.sessions.refresh('fake');
-    data.selection.selectedDaemonId = 'fake';
-    addTearDown(data.dispose);
-
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(SpeedDialApp(data: data));
-    await tester.pump();
-
-    await tester.tap(find.byTooltip('Open navigation menu'));
-    await tester.pumpAndSettle();
-    expect(find.text('Demo Project'), findsOneWidget);
-
-    await tester.tap(find.text('Demo Project'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Build the feature'));
-    await tester.pumpAndSettle();
-
-    // The session was selected and the drawer dismissed; the AppBar title
-    // now shows the session title instead of the rail row.
-    expect(data.selection.selectedSessionId, 'sess-1');
-    expect(find.text('Daemons'), findsNothing);
-    expect(find.text('Build the feature'), findsOneWidget);
+    expect(
+      find.textContaining('Add retry logic', findRichText: true),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('top bar shows the selected session title and follows renames',
-      (WidgetTester tester) async {
+  testWidgets(
+    'mobile: tapping a session in the drawer selects it and closes the drawer',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final FakeDaemonClient fake = FakeDaemonClient(
+        eventDelay: const Duration(milliseconds: 1),
+      );
+      final AppData data = AppData()..registerClient('fake', fake);
+      await data.connections.addEndpoint(
+        id: 'fake',
+        name: 'Fake daemon',
+        url: 'fake://local',
+        token: '',
+      );
+      await data.projects.refresh('fake');
+      await data.sessions.refresh('fake');
+      data.selection.selectedDaemonId = 'fake';
+      addTearDown(data.dispose);
+
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(SpeedDialApp(data: data));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      expect(find.text('Demo Project'), findsOneWidget);
+
+      await tester.tap(find.text('Demo Project'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Build the feature'));
+      await tester.pumpAndSettle();
+
+      // The session was selected and the drawer dismissed; the AppBar title
+      // now shows the session title instead of the rail row.
+      expect(data.selection.selectedSessionId, 'sess-1');
+      expect(find.text('Daemons'), findsNothing);
+      expect(find.text('Build the feature'), findsOneWidget);
+    },
+  );
+
+  testWidgets('top bar shows the selected session title and follows renames', (
+    WidgetTester tester,
+  ) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake =
-        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
+    final FakeDaemonClient fake = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
     final AppData data = AppData()..registerClient('fake', fake);
     await data.connections.addEndpoint(
       id: 'fake',
@@ -548,44 +664,47 @@ void main() {
     expect(topBarTitle().data, 'SpeedDial');
   });
 
-  testWidgets('narrow layout with a session already selected keeps the timeline',
-      (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    final FakeDaemonClient fake =
-        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1));
-    final AppData data = AppData()..registerClient('fake', fake);
-    await data.connections.addEndpoint(
-      id: 'fake',
-      name: 'Fake daemon',
-      url: 'fake://local',
-      token: '',
-    );
-    await data.projects.refresh('fake');
-    await data.sessions.refresh('fake');
-    final Project project = (await fake.listProjects()).first;
-    final Session session = (await fake.listSessions()).first;
-    await fake.sendMessage(session.id, 'hello seeded');
-    await tester.pump(const Duration(seconds: 1)); // run the scripted turn
-    data.selection
-      ..selectedDaemonId = 'fake'
-      ..selectedProjectId = project.id
-      ..selectedSessionId = session.id;
-    addTearDown(data.dispose);
+  testWidgets(
+    'narrow layout with a session already selected keeps the timeline',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final FakeDaemonClient fake = FakeDaemonClient(
+        eventDelay: const Duration(milliseconds: 1),
+      );
+      final AppData data = AppData()..registerClient('fake', fake);
+      await data.connections.addEndpoint(
+        id: 'fake',
+        name: 'Fake daemon',
+        url: 'fake://local',
+        token: '',
+      );
+      await data.projects.refresh('fake');
+      await data.sessions.refresh('fake');
+      final Project project = (await fake.listProjects()).first;
+      final Session session = (await fake.listSessions()).first;
+      await fake.sendMessage(session.id, 'hello seeded');
+      await tester.pump(const Duration(seconds: 1)); // run the scripted turn
+      data.selection
+        ..selectedDaemonId = 'fake'
+        ..selectedProjectId = project.id
+        ..selectedSessionId = session.id;
+      addTearDown(data.dispose);
 
-    tester.view.physicalSize = const Size(1440, 900);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(SpeedDialApp(data: data));
-    await tester.pump();
+      await tester.pumpWidget(SpeedDialApp(data: data));
+      await tester.pump();
 
-    // Switch to the narrow (mobile) layout: the chat pane must not lose its
-    // session watch or its rendered timeline.
-    tester.view.physicalSize = const Size(390, 844);
-    await tester.pump();
-    await tester.pump();
+      // Switch to the narrow (mobile) layout: the chat pane must not lose its
+      // session watch or its rendered timeline.
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pump();
+      await tester.pump();
 
-    expect(find.text('hello seeded'), findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 350));
-  });
+      expect(find.text('hello seeded'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 350));
+    },
+  );
 }

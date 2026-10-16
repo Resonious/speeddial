@@ -409,6 +409,8 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              chat full-screen, left = Drawer, right = ModalBottomSheet.
                              On mobile, right swipes across the full session width
                              reveal the left drawer using its native drag transition.
+                             The chat gets a shorter touch slop than the drawer so
+                             wide tables and code blocks win sideways drags.
 lib/src/ui/flame.dart        hand-painted flame glyph (flickering seamless loop, blaze or
                              blue pilot light) marking agent work in the rail and chat
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
@@ -597,6 +599,7 @@ Performance rules for the app:
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
   Tables size columns to their contents and scroll horizontally with a visible scrollbar
   when wider than the message, keeping identifiers and multilingual names readable.
+  The timeline strips inherited safe-area padding so nested scrollbars hug their block.
 - Diff/code highlighting: compute once per event, cache on the event object; never in
   `build`. Chat syntax spans are cached by language, brightness and code background;
   theme changes discard stale spans, and token colors (including the library's fixed

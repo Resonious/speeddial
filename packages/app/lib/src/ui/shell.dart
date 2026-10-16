@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
@@ -9,6 +12,7 @@ import 'chat/chat_pane.dart';
 import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
 import 'right/right_panel.dart';
+import 'touch_slop.dart';
 
 /// Width at which the three-column desktop layout kicks in.
 const double kDesktopBreakpoint = 1000;
@@ -307,41 +311,61 @@ class _ShellState extends State<_Shell> {
             ),
           );
         }
-        return Scaffold(
-          key: _narrowScaffoldKey,
-          // Let a right swipe reveal navigation from anywhere in the session.
-          drawerEdgeDragWidth: constraints.maxWidth,
-          appBar: AppBar(
-            leading: IconButton(
-              tooltip: 'Open navigation menu',
-              icon: const Icon(Icons.menu),
-              onPressed: () => _narrowScaffoldKey.currentState?.openDrawer(),
-            ),
-            title: const _TopBarTitle(),
-            actions: <Widget>[
-              const _DaemonStatusChip(),
-              const _ThemeModeButton(),
-              const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Open right panel',
-                icon: const Icon(Icons.tune),
-                onPressed: () => _openRightSheet(context),
+        // The drawer swipe covers the whole screen and its recognizer sits
+        // ahead of the chat's in the gesture arena, so on equal slop it wins
+        // every sideways drag. The chat gets a shorter slop so wide tables
+        // and code blocks scroll; the drawer keeps the default, which still
+        // ties (and so beats) text selection's fixed touch drag.
+        final double? deviceSlop = MediaQuery.gestureSettingsOf(context)
+            .touchSlop;
+        final double chatSlop = math.min(
+          deviceSlop ?? kTouchSlop,
+          kTouchSlop / 2,
+        );
+        return TouchSlop(
+          slop: kTouchSlop,
+          child: Scaffold(
+            key: _narrowScaffoldKey,
+            // Let a right swipe reveal navigation from anywhere in the session.
+            drawerEdgeDragWidth: constraints.maxWidth,
+            appBar: AppBar(
+              leading: IconButton(
+                tooltip: 'Open navigation menu',
+                icon: const Icon(Icons.menu),
+                onPressed: () => _narrowScaffoldKey.currentState?.openDrawer(),
               ),
-            ],
-          ),
-          // The drawer surface extends under the status bar; only its
-          // content is padded down.
-          drawer: Drawer(
-            child: SafeArea(
-              bottom: false,
-              left: false,
-              right: false,
-              child: LeftRail(onSessionCreated: _onSessionCreated),
+              title: const _TopBarTitle(),
+              actions: <Widget>[
+                const _DaemonStatusChip(),
+                const _ThemeModeButton(),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Open right panel',
+                  icon: const Icon(Icons.tune),
+                  onPressed: () => _openRightSheet(context),
+                ),
+              ],
             ),
-          ),
-          body: ChatPane(
-            key: _chatPaneKey,
-            composerFocusNode: _composerFocusNode,
+            // The drawer surface extends under the status bar; only its
+            // content is padded down.
+            drawer: Drawer(
+              child: SafeArea(
+                bottom: false,
+                left: false,
+                right: false,
+                child: TouchSlop(
+                  slop: deviceSlop,
+                  child: LeftRail(onSessionCreated: _onSessionCreated),
+                ),
+              ),
+            ),
+            body: TouchSlop(
+              slop: chatSlop,
+              child: ChatPane(
+                key: _chatPaneKey,
+                composerFocusNode: _composerFocusNode,
+              ),
+            ),
           ),
         );
       },

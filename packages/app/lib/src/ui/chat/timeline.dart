@@ -1209,29 +1209,34 @@ class _TimelineState extends State<Timeline> {
                 },
                 child: PageStorage(
                   bucket: _storage,
-                  child: SelectionArea(
-                    child: CustomScrollView(
-                      key: const Key('chat-timeline'),
-                      controller: _controller,
-                      reverse: true,
-                      center: _historyKey,
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      slivers: <Widget>[
-                        SliverPadding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          sliver: SliverList(
-                            delegate: rows(split, widget.items.length),
+                  // The composer keeps clear of the system bars, so the
+                  // timeline has none. Leaving the insets in would push
+                  // nested scrollbars (wide tables, code) up into content.
+                  child: _WithoutPadding(
+                    child: SelectionArea(
+                      child: CustomScrollView(
+                        key: const Key('chat-timeline'),
+                        controller: _controller,
+                        reverse: true,
+                        center: _historyKey,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        slivers: <Widget>[
+                          SliverPadding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            sliver: SliverList(
+                              delegate: rows(split, widget.items.length),
+                            ),
                           ),
-                        ),
-                        SliverPadding(
-                          key: _historyKey,
-                          padding: const EdgeInsets.only(top: 8),
-                          sliver: SliverList(
-                            delegate: rows(0, split, reverse: true),
+                          SliverPadding(
+                            key: _historyKey,
+                            padding: const EdgeInsets.only(top: 8),
+                            sliver: SliverList(
+                              delegate: rows(0, split, reverse: true),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -2114,4 +2119,22 @@ class _ErrorBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Removes inherited safe-area padding from [child]. A separate widget so
+/// inset changes (keyboard animation) rebuild only this, not the timeline.
+class _WithoutPadding extends StatelessWidget {
+  const _WithoutPadding({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => MediaQuery.removePadding(
+    context: context,
+    removeLeft: true,
+    removeTop: true,
+    removeRight: true,
+    removeBottom: true,
+    child: child,
+  );
 }
