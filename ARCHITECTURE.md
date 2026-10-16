@@ -591,7 +591,9 @@ Performance rules for the app:
   most (batch via `scheduleMicrotask` coalescing in ChatStore).
 - Markdown selection: inline code paints its background outside the text span so it cannot
   cover selection. Its decorated widget sits in a paragraph span so following text
-  wraps naturally on the same line. Quotes reuse the markdown AST renderer; quotes and fenced code have
+  wraps naturally on the same line. Links are plain text spans with a per-href
+  `TapGestureRecognizer` (tap opens, secondary tap offers Copy URL) for the same reason:
+  any non-text inline widget splits the paragraph into separate lines. Quotes reuse the markdown AST renderer; quotes and fenced code have
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
   Tables size columns to their contents and scroll horizontally with a visible scrollbar
   when wider than the message, keeping identifiers and multilingual names readable.

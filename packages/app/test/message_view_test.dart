@@ -215,6 +215,57 @@ void main() {
     }
   }
 
+  for (final double width in <double>[390, 1440]) {
+    for (final bool quoted in <bool>[false, true]) {
+      testWidgets('links flow into prose ($width, quoted: $quoted)', (
+        WidgetTester tester,
+      ) async {
+        tester.view.physicalSize = Size(width, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildSpeedDialTheme(),
+            home: Scaffold(
+              body: SelectionArea(
+                child: AgentMessageView(
+                  text:
+                      '${quoted ? '> ' : ''}Schema design tailored to those '
+                      'queries ([documentation](https://example.com/docs)). '
+                      'For this incident, deploy this fix first.',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final RenderParagraph paragraph = tester.renderObject(
+          find.byWidgetPredicate(
+            (Widget widget) =>
+                widget is RichText &&
+                widget.text.toPlainText().startsWith('Schema '),
+          ),
+        );
+        final String text = paragraph.text.toPlainText();
+        expect(text, contains('(documentation). For this incident'));
+        Rect boxAt(int offset) => paragraph
+            .getBoxesForSelection(
+              TextSelection(baseOffset: offset, extentOffset: offset + 1),
+            )
+            .single
+            .toRect();
+        final int open = text.indexOf('(');
+        final int link = text.indexOf('documentation');
+        final int close = text.indexOf(')');
+        // Parentheses hug the link on its line instead of being split off.
+        expect(boxAt(open).center.dy, closeTo(boxAt(link).center.dy, 1));
+        expect(boxAt(close).center.dy, closeTo(boxAt(link).center.dy, 1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   testWidgets('block copy preserves paragraphs, links and code indentation', (
     tester,
   ) async {

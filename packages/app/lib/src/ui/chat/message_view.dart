@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -423,6 +424,10 @@ class _AgentMessageViewState extends State<AgentMessageView> {
       _MessageSelectionDelegate();
   late final Map<String, MarkdownElementBuilder> _elementBuilders;
 
+  /// One per href, reused across rebuilds and disposed with the state.
+  final Map<String, TapGestureRecognizer> _linkRecognizers =
+      <String, TapGestureRecognizer>{};
+
   Timer? _settleTimer;
 
   @override
@@ -430,7 +435,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     super.initState();
     _renderedText = widget.text;
     _elementBuilders = <String, MarkdownElementBuilder>{
-      'a': _LinkElementBuilder(onActivate: _activateLink),
+      'a': _LinkElementBuilder(recognizerFor: _linkRecognizer),
       'pre': _CodeBlockBuilder(this),
       'code': InlineCodeBuilder(),
     };
@@ -479,6 +484,9 @@ class _AgentMessageViewState extends State<AgentMessageView> {
     _settleTimer?.cancel();
     _renderTimer?.cancel();
     _selectionDelegate.dispose();
+    for (final TapGestureRecognizer recognizer in _linkRecognizers.values) {
+      recognizer.dispose();
+    }
     super.dispose();
   }
 
@@ -550,6 +558,13 @@ class _AgentMessageViewState extends State<AgentMessageView> {
   }
 
   static final RegExp _closingFence = RegExp(r'^\s*(```|~~~)', multiLine: true);
+
+  TapGestureRecognizer _linkRecognizer(String href) =>
+      _linkRecognizers[href] ??= TapGestureRecognizer()
+        ..onTap = (() => _activateLink(href))
+        ..onSecondaryTapDown = (TapDownDetails details) {
+          unawaited(_LinkMenu.show(context, href, details.globalPosition));
+        };
 
   void _activateLink(String href) {
     final Uri? uri = Uri.tryParse(href);
@@ -907,9 +922,9 @@ class _MessageSelectionDelegate extends StaticSelectionContainerDelegate {
 }
 
 class _LinkElementBuilder extends MarkdownElementBuilder {
-  _LinkElementBuilder({required this.onActivate});
+  _LinkElementBuilder({required this.recognizerFor});
 
-  final void Function(String href) onActivate;
+  final TapGestureRecognizer Function(String href) recognizerFor;
 
   @override
   Widget visitElementAfterWithContext(
@@ -922,51 +937,26 @@ class _LinkElementBuilder extends MarkdownElementBuilder {
     final String? href = element.attributes['href'];
     final TextStyle? style =
         parentStyle?.merge(preferredStyle) ?? preferredStyle;
-    if (href == null || href.isEmpty) return Text(label, style: style);
-    return _MarkdownLink(
-      label: label,
-      href: href,
-      style: style,
-      onActivate: () => onActivate(href),
+    // Return a text span, not a widget: Markdown only merges text widgets
+    // into the surrounding paragraph. Anything else becomes its own Wrap
+    // child and forces line breaks around the link. A recognizer also
+    // gives the span a click cursor and link semantics.
+    return Text.rich(
+      TextSpan(
+        text: label,
+        style: style,
+        recognizer: href == null || href.isEmpty ? null : recognizerFor(href),
+      ),
     );
   }
 }
 
 enum _LinkMenuAction { copyUrl }
 
-class _MarkdownLink extends StatelessWidget {
-  const _MarkdownLink({
-    required this.label,
-    required this.href,
-    required this.style,
-    required this.onActivate,
-  });
-
-  final String label;
-  final String href;
-  final TextStyle? style;
-  final VoidCallback onActivate;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      link: true,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onActivate,
-          onSecondaryTapDown: (TapDownDetails details) {
-            unawaited(_showContextMenu(context, details.globalPosition));
-          },
-          child: Text(label, style: style),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showContextMenu(
+abstract final class _LinkMenu {
+  static Future<void> show(
     BuildContext context,
+    String href,
     Offset globalPosition,
   ) async {
     final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(
