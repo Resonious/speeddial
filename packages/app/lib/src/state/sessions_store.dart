@@ -397,12 +397,23 @@ class SessionsStore extends StoreBase {
     }
   }
 
-  Future<void> archive(String daemonId, String sessionId, bool archived) async {
+  Future<Session> archive(
+    String daemonId,
+    String sessionId,
+    bool archived,
+  ) async {
     _ensureDaemonSubscriptions(daemonId);
-    _replace(
-      daemonId,
-      await _clientFor(daemonId).archiveSession(sessionId, archived),
-    );
+    _lastError = null;
+    try {
+      final Session session = await _clientFor(daemonId)
+          .archiveSession(sessionId, archived);
+      _replace(daemonId, session);
+      return session;
+    } catch (error) {
+      _lastError = error;
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> delete(String daemonId, String sessionId) async {

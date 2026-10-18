@@ -14,6 +14,19 @@ class SearchClient extends FakeDaemonClient {
   bool controlled = false;
   Object? failure;
   int historyCalls = 0;
+  int restoreCalls = 0;
+  Object? restoreFailure;
+  Completer<void>? restoreGate;
+
+  @override
+  Future<Session> archiveSession(String sessionId, bool archived) async {
+    if (!archived) {
+      restoreCalls++;
+      await restoreGate?.future;
+      if (restoreFailure != null) throw restoreFailure!;
+    }
+    return super.archiveSession(sessionId, archived);
+  }
 
   @override
   Future<SessionSearchPage> searchSessions({
@@ -75,6 +88,8 @@ Future<void> pumpSearch(
                     builder: (_) => SessionSearchDialog(
                       client: client,
                       daemonName: 'Test daemon',
+                      restoreSession: (String id) =>
+                          client.archiveSession(id, false),
                     ),
                   );
               onResult?.call(result);
@@ -110,6 +125,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(client.queries, ['release']);
     expect(client.historyCalls, 0);
+    expect(find.text('Restore'), findsNothing);
     expect(find.text('Investigate the release blocker'), findsOneWidget);
     await tester.tap(find.byKey(const Key('search-result-sess-2')));
     await tester.pumpAndSettle();
@@ -137,6 +153,84 @@ void main() {
     expect(find.byKey(const Key('search-result-sess-1')), findsNothing);
     await tester.tap(find.byTooltip('Close search'));
     await tester.pumpAndSettle();
+  });
+
+  testWidgets('restores an archived result and opens the active session', (
+    WidgetTester tester,
+  ) async {
+    final SearchClient client = SearchClient();
+    await client.archiveSession('sess-1', true);
+    SessionSearchResult? chosen;
+    await pumpSearch(tester, client, onResult: (result) => chosen = result);
+    await tester.enterText(find.byType(TextField), 'build');
+    await tester.tap(find.text('Include archived'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('restore-sess-1')));
+    await tester.pumpAndSettle();
+    expect(chosen?.session.id, 'sess-1');
+    expect(chosen?.session.archived, isFalse);
+    expect(client.restoreCalls, 1);
+    expect(find.byType(SessionSearchDialog), findsNothing);
+    expect(find.text('Session restored'), findsOneWidget);
+    expect(
+      (await client.listSessions()).any((Session s) => s.id == 'sess-1'),
+      isTrue,
+    );
+  });
+
+  testWidgets('restore disables repeated clicks and failure allows retry', (
+    WidgetTester tester,
+  ) async {
+    final SearchClient client = SearchClient();
+    await client.archiveSession('sess-1', true);
+    client.restoreGate = Completer<void>();
+    client.restoreFailure = DaemonError(-32003, 'Archive cleanup is running');
+    await pumpSearch(tester, client);
+    await tester.enterText(find.byType(TextField), 'build');
+    await tester.tap(find.text('Include archived'));
+    await tester.pumpAndSettle();
+    final Finder restore = find.byKey(const Key('restore-sess-1'));
+    await tester.tap(restore);
+    await tester.pump();
+    expect(find.text('Restoring…'), findsOneWidget);
+    expect(tester.widget<TextButton>(restore).onPressed, isNull);
+    await tester.tap(restore);
+    expect(client.restoreCalls, 1);
+    client.restoreGate!.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Could not restore session: Archive cleanup is running'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Archived'), findsOneWidget);
+    expect(find.byType(SessionSearchDialog), findsOneWidget);
+    client.restoreFailure = null;
+    await tester.tap(restore);
+    await tester.pumpAndSettle();
+    expect(client.restoreCalls, 2);
+    expect(find.text('Session restored'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('closing during restore does not navigate on late completion', (
+    WidgetTester tester,
+  ) async {
+    final SearchClient client = SearchClient();
+    await client.archiveSession('sess-1', true);
+    client.restoreGate = Completer<void>();
+    await pumpSearch(tester, client);
+    await tester.enterText(find.byType(TextField), 'build');
+    await tester.tap(find.text('Include archived'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('restore-sess-1')));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Close search'));
+    await tester.pumpAndSettle();
+    client.restoreGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Open search'), findsOneWidget);
+    expect(find.text('Session restored'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -209,12 +303,15 @@ void main() {
     WidgetTester tester,
   ) async {
     final SearchClient client = SearchClient();
+    await client.archiveSession('sess-1', true);
     await pumpSearch(tester, client, size: const Size(320, 568), keyboard: 260);
     await tester.enterText(find.byType(TextField), 'build');
+    await tester.tap(find.text('Include archived'));
     await tester.pump(const Duration(milliseconds: 250));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('Build the feature'), findsOneWidget);
+    expect(find.text('Restore'), findsOneWidget);
     await tester.tap(find.byTooltip('Close search'));
     await tester.pumpAndSettle();
   });

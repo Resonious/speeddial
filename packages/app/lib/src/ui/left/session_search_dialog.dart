@@ -6,16 +6,20 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../api/daemon_client.dart';
 import '../../state/session_search_store.dart';
+import '../daemon_error_text.dart';
+import '../session_restored_notice.dart';
 
 class SessionSearchDialog extends StatefulWidget {
   const SessionSearchDialog({
     super.key,
     required this.client,
     required this.daemonName,
+    required this.restoreSession,
   });
 
   final DaemonClient client;
   final String daemonName;
+  final Future<Session> Function(String sessionId) restoreSession;
 
   @override
   State<SessionSearchDialog> createState() => _SessionSearchDialogState();
@@ -28,6 +32,32 @@ class _SessionSearchDialogState extends State<SessionSearchDialog> {
   bool _inFlight = false;
   bool _pending = false;
   bool _more = false;
+  String? _restoringSessionId;
+  Object? _restoreError;
+
+  Future<void> _restore(SessionSearchResult result) async {
+    if (_restoringSessionId != null) return;
+    setState(() {
+      _restoringSessionId = result.session.id;
+      _restoreError = null;
+    });
+    try {
+      final Session session = await widget.restoreSession(result.session.id);
+      if (!mounted) return;
+      showSessionRestoredNotice(context);
+      Navigator.of(context).pop(
+        SessionSearchResult(
+          session: session,
+          projectName: result.projectName,
+          excerpt: result.excerpt,
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _restoreError = error);
+    } finally {
+      if (mounted) setState(() => _restoringSessionId = null);
+    }
+  }
 
   @override
   void dispose() {
@@ -196,6 +226,14 @@ class _SessionSearchDialogState extends State<SessionSearchDialog> {
                   ),
                 ),
               Expanded(child: _results(context)),
+              if (_restoreError != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                  child: Text(
+                    _restoreErrorMessage(_restoreError!),
+                    style: TextStyle(color: colors.error),
+                  ),
+                ),
             ],
           ),
         ),
@@ -270,9 +308,27 @@ class _SessionSearchDialogState extends State<SessionSearchDialog> {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
+              if (result.session.archived)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: ValueKey<String>('restore-${result.session.id}'),
+                    onPressed: _restoringSessionId == null
+                        ? () => _restore(result)
+                        : null,
+                    icon: const Icon(Icons.unarchive_outlined, size: 18),
+                    label: Text(
+                      _restoringSessionId == result.session.id
+                          ? 'Restoring…'
+                          : 'Restore',
+                    ),
+                  ),
+                ),
             ],
           ),
-          onTap: () => Navigator.of(context).pop(result),
+          onTap: _restoringSessionId == null
+              ? () => Navigator.of(context).pop(result)
+              : null,
         );
       },
     );
@@ -287,4 +343,10 @@ String _errorMessage(Object error) {
     return error.message;
   }
   return 'Could not search sessions. Check the daemon connection and retry.';
+}
+
+String _restoreErrorMessage(Object error) {
+  if (error is DaemonConnectionError) return kConnectionLostMessage;
+  final String message = error is DaemonError ? error.message : '$error';
+  return 'Could not restore session: $message';
 }

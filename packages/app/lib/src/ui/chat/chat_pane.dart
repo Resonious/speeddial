@@ -8,6 +8,7 @@ import '../../state/chat_store.dart';
 import '../../state/file_transfer_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
+import '../session_restored_notice.dart';
 import 'ante_controls.dart';
 import 'catching_up.dart';
 import 'composer.dart';
@@ -187,6 +188,28 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   bool _loadingCommands = false;
   bool _refreshCommandsAfterLoad = false;
   bool _choosingFile = false;
+  bool _restoring = false;
+
+  Future<void> _restore() async {
+    if (_restoring) return;
+    setState(() => _restoring = true);
+    try {
+      await widget.data.sessions.archive(
+        widget.daemonId,
+        widget.sessionId,
+        false,
+      );
+      if (mounted) showSessionRestoredNotice(context);
+    } on Object catch (error) {
+      if (error is DaemonError) {
+        await _showError(error);
+      } else {
+        await _showMessage('Could not restore session: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
 
   @override
   void initState() {
@@ -379,6 +402,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         return Column(
           children: <Widget>[
             const FileTransferBanner(),
+            _ArchivedSessionBanner(
+              archived: session?.archived ?? false,
+              restoring: _restoring,
+              onRestore: data.connections.statusOf(daemonId).outOfReach
+                  ? null
+                  : _restore,
+            ),
             Expanded(child: _SurfaceSwitcher(child: surface)),
             CatchingUpStrip(active: catchingUp),
             if (pending != null && pending.questions.isNotEmpty)
@@ -675,6 +705,49 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   Future<void> _showMessage(String text) async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+}
+
+/// The archived notice settles away once restoration returns the session.
+class _ArchivedSessionBanner extends StatelessWidget {
+  const _ArchivedSessionBanner({
+    required this.archived,
+    required this.restoring,
+    required this.onRestore,
+  });
+
+  final bool archived;
+  final bool restoring;
+  final VoidCallback? onRestore;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget child = archived
+        ? Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHigh,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+              child: Row(
+                children: <Widget>[
+                  const Expanded(child: Text('Archived session')),
+                  TextButton.icon(
+                    key: const Key('restore-session'),
+                    onPressed: restoring ? null : onRestore,
+                    icon: const Icon(Icons.unarchive_outlined, size: 18),
+                    label: Text(restoring ? 'Restoring…' : 'Restore'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: child,
+    );
   }
 }
 

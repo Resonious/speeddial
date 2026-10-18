@@ -490,6 +490,8 @@ class _ProjectTree extends StatelessWidget {
       builder: (BuildContext context) => SessionSearchDialog(
         client: data.clientFor(daemonId),
         daemonName: daemonName,
+        restoreSession: (String sessionId) =>
+            data.sessions.archive(daemonId, sessionId, false),
       ),
     );
     if (result == null || !context.mounted) return;

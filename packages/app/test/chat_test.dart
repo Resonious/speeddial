@@ -55,6 +55,22 @@ class _GatedFake extends FakeDaemonClient {
   }
 }
 
+class _RestoreFake extends FakeDaemonClient {
+  Object? restoreFailure;
+  Completer<void>? restoreGate;
+  int restoreCalls = 0;
+
+  @override
+  Future<Session> archiveSession(String sessionId, bool archived) async {
+    if (!archived) {
+      restoreCalls++;
+      await restoreGate?.future;
+      if (restoreFailure != null) throw restoreFailure!;
+    }
+    return super.archiveSession(sessionId, archived);
+  }
+}
+
 void main() {
   /// Pumps the chat pane at 1200x800 with a fake daemon registered (either
   /// [fake] or a fresh scripted one), and (optionally) a session selected.
@@ -95,6 +111,106 @@ void main() {
     await tester.pump();
     return (app, fakeClient);
   }
+
+  testWidgets('archived conversation restores to the session list', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(tester);
+    addTearDown(app.dispose);
+    await app.sessions.archive('fake', 'sess-1', true);
+    await tester.pumpAndSettle();
+    expect(find.text('Archived session'), findsOneWidget);
+    expect(
+      app.sessions.recentSessions().any((s) => s.session.id == 'sess-1'),
+      isFalse,
+    );
+    await tester.tap(find.byKey(const Key('restore-session')));
+    await tester.pumpAndSettle();
+    expect(app.sessions.byId('sess-1')!.archived, isFalse);
+    expect(
+      app.sessions.recentSessions().any((s) => s.session.id == 'sess-1'),
+      isTrue,
+    );
+    expect(app.selection.selectedSessionId, 'sess-1');
+    expect(find.text('Archived session'), findsNothing);
+    expect(find.text('Session restored'), findsOneWidget);
+    expect(tester.hasRunningAnimations, isFalse);
+  });
+
+  testWidgets('restoring with reduced motion removes the banner immediately', (
+    WidgetTester tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final (AppData app, _) = await pumpChat(tester);
+    addTearDown(app.dispose);
+    await app.sessions.archive('fake', 'sess-1', true);
+    await tester.pumpAndSettle();
+    final Finder restore = find.byKey(const Key('restore-session'));
+    expect(
+      find.ancestor(of: restore, matching: find.byType(AnimatedSize)),
+      findsNothing,
+    );
+    await tester.tap(restore);
+    await tester.pump();
+    expect(find.text('Archived session'), findsNothing);
+    await tester.pumpAndSettle();
+    expect(tester.hasRunningAnimations, isFalse);
+  });
+
+  testWidgets(
+    'restore failure is recorded and can be retried without duplicates',
+    (WidgetTester tester) async {
+      final _RestoreFake fake = _RestoreFake()
+        ..restoreGate = Completer<void>()
+        ..restoreFailure = DaemonError(-32003, 'Archive cleanup is running');
+      final (AppData app, _) = await pumpChat(tester, fake: fake);
+      addTearDown(app.dispose);
+      await app.sessions.archive('fake', 'sess-1', true);
+      await tester.pumpAndSettle();
+      final Finder restore = find.byKey(const Key('restore-session'));
+      await tester.tap(restore);
+      await tester.pump();
+      expect(find.text('Restoring…'), findsOneWidget);
+      expect(tester.widget<TextButton>(restore).onPressed, isNull);
+      await tester.tap(restore);
+      expect(fake.restoreCalls, 1);
+      fake.restoreGate!.complete();
+      await tester.pumpAndSettle();
+      expect(app.sessions.lastError, same(fake.restoreFailure));
+      expect(app.sessions.byId('sess-1')!.archived, isTrue);
+      expect(find.text('Archive cleanup is running'), findsOneWidget);
+      fake.restoreFailure = null;
+      await tester.tap(restore);
+      await tester.pumpAndSettle();
+      expect(app.sessions.lastError, isNull);
+      expect(app.sessions.byId('sess-1')!.archived, isFalse);
+      expect(fake.restoreCalls, 2);
+    },
+  );
+
+  testWidgets('restore stays disabled while the daemon is unreachable', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, _) = await pumpChat(tester);
+    addTearDown(app.dispose);
+    await app.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake',
+      url: 'fake://local',
+      token: '',
+    );
+    await app.sessions.archive('fake', 'sess-1', true);
+    app.connections.setStatus('fake', ConnectionStatus.failed);
+    await tester.pumpAndSettle();
+    final Finder restore = find.byKey(const Key('restore-session'));
+    expect(tester.widget<TextButton>(restore).onPressed, isNull);
+    expect(tester.hasRunningAnimations, isFalse);
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pump();
+    expect(tester.widget<TextButton>(restore).onPressed, isNotNull);
+  });
 
   /// Pumps frames until [condition] holds or [attempts] budget is spent.
   Future<void> pumpUntil(

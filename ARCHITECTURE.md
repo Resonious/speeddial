@@ -440,6 +440,8 @@ lib/src/ui/settings/         daemon-scoped MCP profile list/editor, installed
                              State and errors live in SessionsStore; partial failures
                              update removed-session caches before surfacing the error.
 lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, reversed), message bubbles,
+                             a Restore banner for archived sessions (search results also
+                             restore and open sessions through SessionsStore),
                              a placeholder conversation while a session's history first loads
                              (history_skeleton.dart: faint bubbles from the bottom up under a
                              warm glint, shown only once the wait outlasts a blink, going cold
