@@ -4,8 +4,5 @@ publish_to: none
 environment:
   sdk: ^3.13.0
 
-workspace:
-  - packages/protocol
-  - packages/daemon
-  - packages/app
-  - packages/wear
+# Keep package resolution independent so daemon installs need only the Dart SDK.
+# Flutter clients use path dependencies to share the daemon and protocol.

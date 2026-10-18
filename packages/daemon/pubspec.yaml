@@ -6,8 +6,6 @@ version: 0.1.0
 environment:
   sdk: ^3.13.0
 
-resolution: workspace
-
 dependencies:
   speeddial_protocol:
     path: ../protocol

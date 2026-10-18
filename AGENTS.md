@@ -31,7 +31,10 @@ Flutter SDK is NOT on PATH by default:
 
 ```bash
 export PATH="$HOME/p/flutter-sdk/bin:$PATH"
-dart pub get   # once, at repo root (pub workspace resolves all packages)
+(cd packages/protocol && dart pub get)
+(cd packages/daemon && dart pub get)
+(cd packages/app && flutter pub get)
+(cd packages/wear && flutter pub get)
 ```
 
 ## Gates — run before considering work done

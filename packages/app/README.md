@@ -4,10 +4,10 @@ See the repository README for daemon setup and desktop development.
 
 ## iPad and iPhone
 
-With Flutter on PATH, run `flutter pub get` at the repository root, then from
-`packages/app`:
+With Flutter on PATH, run these commands from `packages/app`:
 
 ```sh
+flutter pub get
 flutter build ios --release
 xcrun devicectl device install app --device <device-id> build/ios/iphoneos/Runner.app
 ```

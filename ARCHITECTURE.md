@@ -21,8 +21,10 @@ packages/wear/       Standalone Wear OS Flutter target. Reuses the app's daemon 
                      session creation, and compact chat/send/permission flows.
 ```
 
-Pub workspace: root `pubspec.yaml` lists all three in `workspace:`; every package sets
-`resolution: workspace`. One `dart pub get` at the root resolves everything.
+Packages resolve independently, connected by explicit path dependencies. Run
+`dart pub get` in `packages/daemon` or `packages/protocol`, and `flutter pub get`
+in `packages/app` or `packages/wear`. The daemon and protocol require only the
+Dart SDK; Flutter clients must never enter their dependency resolution.
 
 ## Package conventions
 

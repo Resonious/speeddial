@@ -42,6 +42,7 @@ Add or override providers in `~/.speeddial/config.json`:
 
 ```bash
 cd packages/daemon
+dart pub get  # Dart SDK only; Flutter is not required
 dart run bin/speeddial.dart serve --port 7331
 # non-loopback bind or --token enables auth:
 dart run bin/speeddial.dart serve --host 0.0.0.0 --token "$(openssl rand -hex 16)"
@@ -153,12 +154,17 @@ permission requests, usage) with per-session `seq` for gap detection.
 
 ## Development
 
-Pub workspace — one resolve at the root:
+Each package resolves independently. The daemon and protocol need only Dart;
+the app and watch client need Flutter:
 
 ```bash
-dart pub get
+(cd packages/protocol && dart pub get)
+(cd packages/daemon && dart pub get)
+(cd packages/app && flutter pub get)
+(cd packages/wear && flutter pub get)
 dart analyze packages/protocol packages/daemon packages/app
-(cd packages/protocol && dart test) && (cd packages/daemon && dart test)
+(cd packages/protocol && dart test)
+(cd packages/daemon && env -u SPEEDIAL_TOKEN dart test)
 (cd packages/app && flutter test)
 ```
 
