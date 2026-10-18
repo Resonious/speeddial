@@ -91,6 +91,9 @@ class _StalePageFake extends FakeDaemonClient {
 
 /// Delivers the ready notification while the original create reply is in flight.
 class _PreparingCreateFake extends FakeDaemonClient {
+  _PreparingCreateFake({required this.readyDelay});
+
+  final Duration readyDelay;
   final StreamController<Session> updates =
       StreamController<Session>.broadcast();
   final Completer<Session> ready = Completer<Session>();
@@ -124,9 +127,8 @@ class _PreparingCreateFake extends FakeDaemonClient {
       ...created.toJson(),
       'preparing': false,
       'status': 'running',
-      'updatedAt': created.updatedAt
-          .add(const Duration(seconds: 1))
-          .toIso8601String(),
+      'title': 'Ready session',
+      'updatedAt': created.updatedAt.add(readyDelay).toIso8601String(),
     });
     updates.add(prepared);
     ready.complete(prepared);
@@ -376,32 +378,42 @@ void main() {
   });
 
   group('sessions', () {
-    test(
-      'late create reply does not restore preparing after ready update',
-      () async {
-        final _PreparingCreateFake client = _PreparingCreateFake();
-        app.registerClient('preparing', client);
-        final Future<Session> creating = app.sessions.create(
-          'preparing',
-          projectId: 'proj-demo',
-          providerId: 'omp',
-        );
-        final Session prepared = await client.ready.future;
-        await _flushMicrotasks();
-        expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
-        client.release.complete();
-        await creating;
-        expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
-        expect(app.sessions.byId(prepared.id)!.status, SessionStatus.running);
-        expect(
-          app.sessions
-              .sessionsFor('proj-demo', daemonId: 'preparing')
-              .single
-              .preparing,
-          isFalse,
-        );
-      },
-    );
+    for (final Duration readyDelay in <Duration>[
+      Duration.zero,
+      const Duration(seconds: 1),
+    ]) {
+      test(
+        'late create reply preserves ready metadata with timestamp offset $readyDelay',
+        () async {
+          final _PreparingCreateFake client = _PreparingCreateFake(
+            readyDelay: readyDelay,
+          );
+          app.registerClient('preparing', client);
+          final Future<Session> creating = app.sessions.create(
+            'preparing',
+            projectId: 'proj-demo',
+            providerId: 'omp',
+          );
+          final Session prepared = await client.ready.future;
+          await _flushMicrotasks();
+          expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
+          client.release.complete();
+          final Session result = await creating;
+          expect(result.preparing, isFalse);
+          expect(result.title, 'Ready session');
+          expect(app.sessions.byId(prepared.id)!.preparing, isFalse);
+          expect(app.sessions.byId(prepared.id)!.title, 'Ready session');
+          expect(app.sessions.byId(prepared.id)!.status, SessionStatus.running);
+          expect(
+            app.sessions
+                .sessionsFor('proj-demo', daemonId: 'preparing')
+                .single
+                .preparing,
+            isFalse,
+          );
+        },
+      );
+    }
 
     test(
       'create/refresh/rename/archive/delete keep the cache consistent',

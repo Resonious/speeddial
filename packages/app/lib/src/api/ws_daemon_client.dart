@@ -43,6 +43,29 @@ class _WebSocketDaemonFrameChannel implements DaemonFrameChannel {
   Future<void> close() => _channel.sink.close();
 }
 
+/// Notification feeds belong to the configured endpoint, surviving edits to
+/// its connection parameters. Stores may subscribe for the app's lifetime.
+class _DaemonNotifications {
+  final StreamController<void> resynced = StreamController<void>.broadcast();
+  final StreamController<({String sessionId, SessionEvent event})> events =
+      StreamController.broadcast();
+  final StreamController<Session> sessions =
+      StreamController<Session>.broadcast();
+  final StreamController<String> git = StreamController<String>.broadcast();
+  final StreamController<String> removals =
+      StreamController<String>.broadcast();
+  final StreamController<void> projects = StreamController<void>.broadcast();
+
+  Future<void> close() async {
+    await sessions.close();
+    await git.close();
+    await events.close();
+    await removals.close();
+    await projects.close();
+    await resynced.close();
+  }
+}
+
 /// Live [DaemonClient] speaking PROTOCOL.md's JSON-RPC 2.0 envelope over a
 /// WebSocket. Transport is `package:web_socket_channel` (works on native and
 /// web; no `dart:io` import), decoded frames are fed to an [RpcPeer].
@@ -69,10 +92,41 @@ class WsDaemonClient implements DaemonClient {
     Duration reconnectBase = const Duration(milliseconds: 500),
     Duration livenessProbeTimeout = const Duration(seconds: 3),
     this.historyDetail = SessionHistoryDetail.full,
-  }) : _channelFactory = channelFactory ?? _WebSocketDaemonFrameChannel.new,
+  }) : _notifications = _DaemonNotifications(),
+       _channelFactory = channelFactory ?? _WebSocketDaemonFrameChannel.new,
        reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
        // ignore: prefer_initializing_formals
        livenessProbeTimeout = livenessProbeTimeout;
+
+  WsDaemonClient._replacement(
+    WsDaemonClient previous, {
+    required this.url,
+    this.token,
+  }) : _notifications = previous._notifications,
+       _channelFactory = previous._channelFactory,
+       reconnectBase = previous.reconnectBase,
+       livenessProbeTimeout = previous.livenessProbeTimeout,
+       historyDetail = previous.historyDetail {
+    _resyncNeeded = true;
+  }
+
+  final _DaemonNotifications _notifications;
+  bool _ownsNotifications = true;
+
+  /// Replaces the connection while keeping existing store subscriptions alive.
+  /// The next successful connect backfills state missed during the edit.
+  /// This instance is disposed and notification ownership moves to the result.
+  WsDaemonClient reconfigured({required String url, String? token}) {
+    if (_disposed) throw StateError('Daemon client is disposed');
+    final WsDaemonClient replacement = WsDaemonClient._replacement(
+      this,
+      url: url,
+      token: token,
+    );
+    _ownsNotifications = false;
+    unawaited(dispose());
+    return replacement;
+  }
 
   /// WebSocket endpoint, e.g. `ws://127.0.0.1:7331/ws`.
   final String url;
@@ -100,24 +154,22 @@ class WsDaemonClient implements DaemonClient {
   final ValueNotifier<DaemonConnectionState> connState =
       ValueNotifier<DaemonConnectionState>(DaemonConnectionState.connecting);
 
-  /// Emits after each successful reconnect (never on the first connect).
-  final StreamController<void> _resyncController =
-      StreamController<void>.broadcast();
+  /// Emits after reconnects, including the first connect after an endpoint edit.
+  StreamController<void> get _resyncController => _notifications.resynced;
 
   /// Every decoded `session.event` notification, keyed by session id.
-  final StreamController<({String sessionId, SessionEvent event})>
-  _sessionEventFeed = StreamController.broadcast();
-  final StreamController<Session> _sessionUpdatesController =
-      StreamController<Session>.broadcast();
+  StreamController<({String sessionId, SessionEvent event})>
+  get _sessionEventFeed => _notifications.events;
+  StreamController<Session> get _sessionUpdatesController =>
+      _notifications.sessions;
 
-  final StreamController<String> _gitChangedController =
-      StreamController<String>.broadcast();
+  StreamController<String> get _gitChangedController => _notifications.git;
 
-  final StreamController<String> _sessionRemovalsController =
-      StreamController<String>.broadcast();
+  StreamController<String> get _sessionRemovalsController =>
+      _notifications.removals;
 
-  final StreamController<void> _projectsChangedController =
-      StreamController<void>.broadcast();
+  StreamController<void> get _projectsChangedController =>
+      _notifications.projects;
 
   static const Duration _maxReconnectDelay = Duration(seconds: 15);
 
@@ -453,12 +505,7 @@ class WsDaemonClient implements DaemonClient {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     await _tearDownSocket();
-    await _sessionUpdatesController.close();
-    await _gitChangedController.close();
-    await _sessionEventFeed.close();
-    await _sessionRemovalsController.close();
-    await _projectsChangedController.close();
-    await _resyncController.close();
+    if (_ownsNotifications) await _notifications.close();
     connState.dispose();
   }
 

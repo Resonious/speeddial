@@ -342,14 +342,20 @@ class SessionsStore extends StoreBase {
       yolo: yolo,
       shortPrompt: shortPrompt,
     );
-    // Preparation can finish before the creation reply arrives. Preserve any
-    // newer notification rather than restoring the original preparing snapshot.
+    // Preparation can finish before the creation reply arrives. A notification
+    // with the same timestamp also wins: the reply is the original snapshot,
+    // and timestamps need not distinguish every startup transition.
+    final Session? current = sessionOnDaemon(daemonId, session.id);
+    final Session result =
+        current != null && !current.updatedAt.isBefore(session.updatedAt)
+        ? current
+        : session;
     _sessionsByProject.putIfAbsent(
       _scopedKey(daemonId, projectId),
       () => <Session>[],
     );
-    _replace(daemonId, session);
-    return session;
+    _replace(daemonId, result);
+    return result;
   }
 
   /// Creates a new session whose copied history ends at message event [seq].

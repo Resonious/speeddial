@@ -503,15 +503,19 @@ class AppData {
     };
     for (final String id in known) {
       if (_clients.containsKey(id)) continue; // registered fake: leave alone
-      // An edited endpoint (url/token changed) invalidates its live client:
-      // drop it so the reconnect below builds a fresh one with the new
-      // parameters.
+      // An edited endpoint needs a fresh connection, with the same feeds so
+      // stores keep receiving updates through their existing subscriptions.
       final WsDaemonClient? live = _websocketClients[id];
       if (live != null) {
         final DaemonEndpoint endpoint = _endpointFor(id)!;
         if (live.url != endpoint.url || (live.token ?? '') != endpoint.token) {
           _connectedEndpointIds.remove(id);
-          _disposeWebSocketClient(id);
+          final VoidCallback? listener = _statusListeners.remove(id);
+          if (listener != null) live.connState.removeListener(listener);
+          _registerWebSocketClient(
+            id,
+            live.reconfigured(url: endpoint.url, token: endpoint.token),
+          );
         }
       }
       if (!_connectedEndpointIds.add(id)) continue; // already connecting
@@ -546,6 +550,13 @@ class AppData {
       channelFactory: daemonChannelFactory,
       historyDetail: daemonHistoryDetail,
     );
+    return _registerWebSocketClient(daemonId, client);
+  }
+
+  WsDaemonClient _registerWebSocketClient(
+    String daemonId,
+    WsDaemonClient client,
+  ) {
     void listener() {
       connections.setStatus(daemonId, _mapClientState(client.connState.value));
     }

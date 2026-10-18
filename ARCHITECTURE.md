@@ -370,6 +370,10 @@ lib/src/api/daemon_client.dart    DaemonClient: WebSocket JSON-RPC client per PR
                                   (auth, reconnect with backoff, request map, notification
                                   stream, seq-gap detection + history refetch, resume
                                   liveness probe that catches half-dead sockets)
+                                  Endpoint address/token edits transfer the existing notification
+                                  feeds to the replacement connection and trigger a resync after
+                                  authentication. Stores and active chat watches keep their
+                                  subscriptions; final disposal closes the feeds.
 lib/src/api/fake_daemon.dart      FakeDaemonClient: in-memory scripted implementation used
                                   by widget tests AND by --demo mode; simulates streaming
 lib/src/files/                    Chunked file transfers and platform save pickers/browser downloads.
@@ -715,7 +719,9 @@ Git or harness I/O. SessionEngine owns background preparation and one accepted q
 the user message and attachments are persisted before acknowledgement. Cancellation drops
 the queued turn, deletion/shutdown drain preparation, and errors remain in session history.
 Interrupted preparation is retryable by sending again, without automatically replaying an
-old queued message. The new-session sheet warms the selected base branch fetch, sharing its
+old queued message. The app preserves ready notifications over a delayed creation reply,
+including equal timestamps, and returns the reconciled session to creation callers.
+The new-session sheet warms the selected base branch fetch, sharing its
 in-flight result with worktree creation (30-second freshness, consumed on use).
 
 Ante provider/model selection and `/provider` share provider switching and state adoption; bare `/provider` opens the model picker. Rewind controls invoke the same session command operation as `/rewind`. The fork button and `/fork [seq]` share `forkSession`, inclusive message boundaries, and navigation to the child. Complete idle Ante conversations use native snapshots; arbitrary message cuts use the portable transcript handoff.
