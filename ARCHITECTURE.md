@@ -562,6 +562,9 @@ or unpinning refreshes that activity timestamp too. Offline dots are gray; the
 Done badge remains independent of the cooling dot.
 
 Performance rules for the app:
+- Inbox search filters cached session titles (agent summaries) across configured daemons,
+  case-insensitively, without requests. It preserves activity ordering and updates with
+  session notifications; archived sessions remain outside the inbox.
 - Session search: the rail opens a daemon-scoped modal. Queries debounce for 250 ms and
   coalesce while a request is outstanding; stale replies cannot replace newer text or filters.
   Results use a virtualized list of bounded excerpts and keyset pages. Only the selected result

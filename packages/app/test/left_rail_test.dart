@@ -13,12 +13,15 @@ import 'package:speeddial_app/src/ui/left/session_list.dart';
 
 /// Pumps the left rail at a phone-ish viewport with one fake daemon
 /// registered as `'fake'` and visible as an endpoint tile.
-Future<AppData> pumpRail(WidgetTester tester) async {
+Future<AppData> pumpRail(
+  WidgetTester tester, {
+  FakeDaemonClient? client,
+}) async {
   SharedPreferences.setMockInitialValues(<String, Object>{});
   final AppData app = AppData()
     ..registerClient(
       'fake',
-      FakeDaemonClient(eventDelay: const Duration(milliseconds: 1)),
+      client ?? FakeDaemonClient(eventDelay: const Duration(milliseconds: 1)),
     );
   await app.connections.addEndpoint(
     id: 'fake',
@@ -91,6 +94,41 @@ Session testSession({
   lastActivityAt: lastActivityAt,
   updatedAt: lastActivityAt,
 );
+
+class _SearchCountingDaemon extends FakeDaemonClient {
+  int listCalls = 0;
+  int searchCalls = 0;
+
+  @override
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  }) {
+    listCalls++;
+    return super.listSessions(
+      projectId: projectId,
+      includeArchived: includeArchived,
+    );
+  }
+
+  @override
+  Future<SessionSearchPage> searchSessions({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  }) {
+    searchCalls++;
+    return super.searchSessions(
+      query: query,
+      projectId: projectId,
+      includeArchived: includeArchived,
+      limit: limit,
+      cursor: cursor,
+    );
+  }
+}
 
 void main() {
   testWidgets('mobile rail remembers taps and swipes after closing', (
@@ -360,6 +398,51 @@ void main() {
     expect(find.text('Other daemon'), findsOneWidget);
     expect(find.text('Other Project'), findsOneWidget);
   });
+
+  testWidgets(
+    'Inbox filters summaries across daemons and follows title updates',
+    (WidgetTester tester) async {
+      final _SearchCountingDaemon client = _SearchCountingDaemon();
+      final AppData app = await pumpRail(tester, client: client);
+      final FakeDaemonClient other = await addOtherDaemon(app);
+      await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+      await tester.pumpAndSettle();
+      final Finder search = find.byKey(const Key('inbox-search-field'));
+      final int initialListCalls = client.listCalls;
+
+      await tester.enterText(search, '  BUILD  ');
+      await tester.pumpAndSettle();
+      expect(find.text('Build the feature'), findsNWidgets(2));
+      expect(find.text('Plan the refactor'), findsNothing);
+
+      await other.renameSession('sess-2', 'Build another feature');
+      await tester.pumpAndSettle();
+      expect(find.text('Build another feature'), findsOneWidget);
+      await tester.tap(find.text('Build another feature'));
+      await tester.pumpAndSettle();
+      expect(app.selection.selectedDaemonId, 'other');
+      expect(app.selection.selectedSessionId, 'sess-2');
+
+      await tester.enterText(search, 'Demo Project');
+      await tester.pumpAndSettle();
+      expect(find.text('No matching summaries'), findsOneWidget);
+      expect(find.byType(SessionRow), findsNothing);
+
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pumpAndSettle();
+      expect(find.text('Build the feature'), findsNWidgets(2));
+      expect(find.text('Plan the refactor'), findsOneWidget);
+      expect(find.text('Build another feature'), findsOneWidget);
+      expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+
+      await tester.enterText(search, '   ');
+      await tester.pumpAndSettle();
+      expect(find.byType(SessionRow), findsNWidgets(4));
+      expect(client.listCalls, initialListCalls);
+      expect(client.searchCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('Inbox loads sessions from a daemon never selected', (
     WidgetTester tester,

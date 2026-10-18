@@ -19,6 +19,7 @@ class InboxTab extends StatefulWidget {
 
 class _InboxTabState extends State<InboxTab> {
   AppData? _data;
+  final TextEditingController _search = TextEditingController();
   final Set<String> _requested = <String>{};
   final Set<String> _loading = <String>{};
   final Map<String, Object> _errors = <String, Object>{};
@@ -44,6 +45,7 @@ class _InboxTabState extends State<InboxTab> {
   void dispose() {
     _data?.connections.removeListener(_scheduleRefresh);
     _loadRevision.dispose();
+    _search.dispose();
     super.dispose();
   }
 
@@ -119,15 +121,22 @@ class _InboxTabState extends State<InboxTab> {
         data.sessions,
         data.selection,
         _loadRevision,
+        _search,
       ]),
       builder: (BuildContext context, Widget? _) {
         final List<DaemonEndpoint> endpoints = data.connections.endpoints;
         final Set<String> daemonIds = <String>{
           for (final DaemonEndpoint endpoint in endpoints) endpoint.id,
         };
-        final List<RecentSession> sessions = data.sessions.recentSessions(
+        final String query = _search.text.trim().toLowerCase();
+        final List<RecentSession> allSessions = data.sessions.recentSessions(
           daemonIds: daemonIds,
         );
+        final List<RecentSession> sessions = query.isEmpty
+            ? allSessions
+            : allSessions.where((RecentSession entry) {
+                return entry.session.title.toLowerCase().contains(query);
+              }).toList();
         final bool waitingForConnection = endpoints.any((
           DaemonEndpoint endpoint,
         ) {
@@ -168,6 +177,25 @@ class _InboxTabState extends State<InboxTab> {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: TextField(
+                key: const Key('inbox-search-field'),
+                controller: _search,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Search summaries…',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  suffixIcon: _search.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Clear search',
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: _search.clear,
+                        ),
+                ),
+              ),
+            ),
             if (_errors.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
@@ -199,13 +227,13 @@ class _InboxTabState extends State<InboxTab> {
                         ),
                       ),
                     )
-                  : sessions.isEmpty &&
+                  : allSessions.isEmpty &&
                         (_loading.isNotEmpty || waitingForConnection)
                   ? const Center(child: CircularProgressIndicator())
                   : sessions.isEmpty
                   ? Center(
                       child: Text(
-                        'No sessions',
+                        query.isEmpty ? 'No sessions' : 'No matching summaries',
                         style: textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
