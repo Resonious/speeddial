@@ -566,8 +566,9 @@ lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with
 
 Idle session dots use `lastActivityAt` for a three-hour ember cooldown, refreshed
 once per minute only while warm and visible, with no animation ticker. Restoring
-or unpinning refreshes that activity timestamp too. Offline dots are gray; the
-Done badge remains independent of the cooling dot.
+or unpinning refreshes that activity timestamp too. Offline dots are gray. Done
+sessions replace the ember with a green success dot (keyed separately so the
+switcher animates the change).
 
 Performance rules for the app:
 - Inbox search filters cached session titles (agent summaries) across configured daemons,

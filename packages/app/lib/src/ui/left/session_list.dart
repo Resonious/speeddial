@@ -333,6 +333,7 @@ class SessionRow extends StatelessWidget {
             child: SessionStatusGlyph(
               status: session.status,
               lastActivityAt: session.lastActivityAt,
+              done: done,
               color: done
                   ? context.speedDialColors.success
                   : sessionStatusColor(context.speedDialColors, session.status),

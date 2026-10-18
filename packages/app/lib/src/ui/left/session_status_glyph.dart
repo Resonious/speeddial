@@ -8,14 +8,16 @@ import '../flame.dart';
 import 'idle_session_ember.dart';
 
 /// Leading status mark of a session row: a live flame while the agent works,
-/// an oven-timer ping while the turn waits on the user, a cooling idle ember,
-/// otherwise a dot in the status color. Ignites, rings and settles with a short transition.
+/// an oven-timer ping while the turn waits on the user, a green dot once the
+/// session is done, a cooling ember while it otherwise sits idle, else a dot
+/// in the status color. Ignites, rings and settles with a short transition.
 class SessionStatusGlyph extends StatelessWidget {
   const SessionStatusGlyph({
     super.key,
     required this.status,
     required this.color,
     this.lastActivityAt,
+    this.done = false,
     this.phase = 0,
     this.dormant = false,
   });
@@ -24,6 +26,9 @@ class SessionStatusGlyph extends StatelessWidget {
 
   /// Persisted activity time used to cool idle dots across app restarts.
   final DateTime? lastActivityAt;
+
+  /// The session is marked done: a settled green dot instead of the ember.
+  final bool done;
 
   /// Dot color for the resting states (the row's status or done color).
   final Color color;
@@ -52,6 +57,10 @@ class SessionStatusGlyph extends StatelessWidget {
       SessionStatus.waitingPermission => _TimerPing(
         key: const ValueKey<String>('session-ping'),
         color: colors.waitingPermission,
+      ),
+      SessionStatus.idle when done => _Dot(
+        key: const ValueKey<String>('session-done'),
+        color: colors.success,
       ),
       SessionStatus.idle when lastActivityAt != null => IdleSessionEmber(
         key: const ValueKey<String>('session-idle-ember'),
