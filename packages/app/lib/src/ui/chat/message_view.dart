@@ -617,12 +617,14 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           writing: widget.writing,
           child: SelectionContainer(
             delegate: _selectionDelegate,
-            child: MarkdownBody(
-              // Reparse once when an asynchronous highlight batch is ready.
-              key: ValueKey<int>(_highlightRevision),
-              data: _renderedText,
-              styleSheet: _styleSheetFor(context, bodyStyle),
-              builders: _elementBuilders,
+            child: MarkdownInlineLayout(
+              child: MarkdownBody(
+                // Reparse once when an asynchronous highlight batch is ready.
+                key: ValueKey<int>(_highlightRevision),
+                data: _renderedText,
+                styleSheet: _styleSheetFor(context, bodyStyle),
+                builders: _elementBuilders,
+              ),
             ),
           ),
         ),

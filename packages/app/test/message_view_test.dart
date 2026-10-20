@@ -13,6 +13,64 @@ import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/message_highlighter.dart';
 
 void main() {
+  for (final double width in <double>[390, 1440]) {
+    for (final double scale in <double>[1, 1.5]) {
+      testWidgets('wrapped code list items do not overlap ($width, $scale)', (
+        WidgetTester tester,
+      ) async {
+        tester.view.physicalSize = Size(width, 1400);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final List<String> paths = <String>[
+          for (final String day in <String>['06', '05', '02'])
+            '~/.codex/sessions/2026/10/$day/rollout-2026-10-${day}T08-04-09-019a0f90-c9eb-77b1-8c75-123456789abc.jsonl',
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildSpeedDialLightTheme(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            ),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: SelectionArea(
+                  child: AgentMessageView(
+                    text:
+                        "What's left:\n\n- **The Codex logs:** The most recent ones:\n"
+                        '${paths.map((path) => "  - `$path`").join("\n")}\n'
+                        '- **The branch** still exists.\n\nAfter the list.',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        for (int index = 0; index < paths.length; index++) {
+          final Rect code = tester.getRect(find.text(paths[index]));
+          final Rect next = index + 1 < paths.length
+              ? tester.getRect(find.text(paths[index + 1]))
+              : tester.getRect(
+                  find.byWidgetPredicate(
+                    (widget) =>
+                        widget is RichText &&
+                        widget.text.toPlainText().startsWith('The branch'),
+                  ),
+                );
+          expect(
+            code.bottom,
+            lessThanOrEqualTo(next.top),
+            reason: 'Wrapped path must not paint over the next list item',
+          );
+        }
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   for (final double width in <double>[390, 720, 1440]) {
     for (final bool dark in <bool>[false, true]) {
       testWidgets('table cells stay contained ($width, dark: $dark)', (

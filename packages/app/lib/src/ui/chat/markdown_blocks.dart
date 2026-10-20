@@ -2,11 +2,55 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme.dart';
+
+/// Allows embedded code to contribute its full wrapped height to a paragraph.
+/// flutter_markdown_plus forces a one-line strut even around WidgetSpans; its
+/// public builders cannot override the strut on the resulting merged Text.
+class MarkdownInlineLayout extends SingleChildRenderObjectWidget {
+  const MarkdownInlineLayout({super.key, required super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _MarkdownInlineLayout();
+}
+
+class _MarkdownInlineLayout extends RenderProxyBox {
+  void _allowPlaceholderHeight(RenderObject object) {
+    if (object is RenderParagraph &&
+        object.childCount > 0 &&
+        object.strutStyle?.forceStrutHeight == true) {
+      final StrutStyle strut = object.strutStyle!;
+      object.strutStyle = StrutStyle(
+        fontFamily: strut.fontFamily,
+        fontFamilyFallback: strut.fontFamilyFallback,
+        fontSize: strut.fontSize,
+        height: strut.height,
+        leading: strut.leading,
+        leadingDistribution: strut.leadingDistribution,
+        fontWeight: strut.fontWeight,
+        fontStyle: strut.fontStyle,
+        forceStrutHeight: false,
+      );
+    }
+    object.visitChildren(_allowPlaceholderHeight);
+  }
+
+  @override
+  void performLayout() {
+    // The callback permits descendant layout updates before measuring them.
+    // Repeat after rebuilds/resizes: Markdown can replace its paragraph spans.
+    invokeLayoutCallback<BoxConstraints>((_) {
+      if (child != null) _allowPlaceholderHeight(child!);
+    });
+    super.performLayout();
+  }
+}
 
 /// The background belongs behind the paragraph, never in its TextStyle:
 /// span backgrounds paint over Flutter's selection highlight.
