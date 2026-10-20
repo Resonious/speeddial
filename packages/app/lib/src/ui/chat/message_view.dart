@@ -14,6 +14,7 @@ import '../../theme.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
 import 'history_expansion.dart';
+import 'image_viewer.dart';
 import 'message_highlighter.dart';
 import 'markdown_blocks.dart';
 import 'mermaid/mermaid_diagram.dart';
@@ -265,7 +266,7 @@ class _ImageThumbnail extends StatelessWidget {
       return _AttachmentMetaRow(attachment: attachment);
     }
     return GestureDetector(
-      onTap: () => _showImageDialog(context, bytes, attachment.name),
+      onTap: () => showImageViewer(context, bytes, attachment.name),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Image.memory(
@@ -283,39 +284,6 @@ class _ImageThumbnail extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Full-screen dialog with the image, pan/zoom via [InteractiveViewer].
-void _showImageDialog(BuildContext context, Uint8List bytes, String name) {
-  showDialog<void>(
-    context: context,
-    builder: (BuildContext dialogContext) => Dialog.fullscreen(
-      child: Stack(
-        children: <Widget>[
-          Positioned.fill(
-            child: InteractiveViewer(
-              child: Center(
-                child: Image.memory(
-                  bytes,
-                  fit: BoxFit.contain,
-                  gaplessPlayback: true,
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: IconButton(
-              tooltip: 'Close',
-              icon: const Icon(Icons.close),
-              onPressed: () => Navigator.of(dialogContext).pop(),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 /// Formats [size] bytes compactly: B, KiB, or MiB (one decimal below 10).
