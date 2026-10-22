@@ -637,6 +637,9 @@ persistent daemon endpoint snapshot at `/speeddial/endpoints`; the watch consume
 persists it locally, and removes stale watch endpoints when the phone removes them. Embedded desktop
 endpoints are never synchronized.
 
+Phone startup registers companion listeners synchronously, then publishes in the
+background: Google Play Services delivery must never block the first Flutter frame.
+
 The phone also publishes a compact, activity-sorted session snapshot at `/speeddial/sessions`.
 Native watch storage keeps that snapshot available when Flutter is not running and merges live
 session changes observed by the open watch app. On launch and resume, the watch fetches a complete

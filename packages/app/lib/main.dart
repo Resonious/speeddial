@@ -34,7 +34,9 @@ Future<void> main(List<String> args) async {
     );
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       companionSync = CompanionEndpointSync();
-      await companionSync.startPhone(connections, data.sessions);
+      // Watch delivery depends on Google Play Services and may remain pending
+      // while it reconnects. It must never gate the phone's first frame.
+      unawaited(companionSync.startPhone(connections, data.sessions));
     }
     // Desktop builds start an in-process daemon for an out-of-the-box
     // experience; web/mobile skip this (unsupported) and rely on the user
