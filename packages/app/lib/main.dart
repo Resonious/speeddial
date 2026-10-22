@@ -11,6 +11,7 @@ import 'src/state/embedded_daemon_store.dart';
 import 'src/state/session_link_store.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
+import 'src/ui/native_title_bar.dart';
 import 'src/ui/shell.dart';
 
 Future<void> main(List<String> args) async {
@@ -90,7 +91,19 @@ Future<void> main(List<String> args) async {
     );
     unawaited(_refreshShareCatalog(data));
   }
-  runApp(SpeedDialApp(data: data, companionSync: companionSync));
+  // Attached before the first frame so the Flutter top bar never flashes up
+  // in a window that has a native one.
+  final NativeTitleBar? nativeTitleBar =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.linux
+      ? await NativeTitleBar.attach()
+      : null;
+  runApp(
+    SpeedDialApp(
+      data: data,
+      companionSync: companionSync,
+      nativeTitleBar: nativeTitleBar,
+    ),
+  );
 }
 
 Future<void> _refreshShareCatalog(AppData data) async {
@@ -118,10 +131,16 @@ Future<void> _connectAndRefreshSessions(AppData data) async {
 }
 
 class SpeedDialApp extends StatefulWidget {
-  const SpeedDialApp({super.key, required this.data, this.companionSync});
+  const SpeedDialApp({
+    super.key,
+    required this.data,
+    this.companionSync,
+    this.nativeTitleBar,
+  });
 
   final AppData data;
   final CompanionEndpointSync? companionSync;
+  final NativeTitleBar? nativeTitleBar;
 
   @override
   State<SpeedDialApp> createState() => _SpeedDialAppState();
@@ -249,7 +268,7 @@ class _SpeedDialAppState extends State<SpeedDialApp>
             theme: buildSpeedDialLightTheme(),
             darkTheme: buildSpeedDialTheme(),
             themeMode: widget.data.settings.themeMode,
-            home: const SpeedDialShell(),
+            home: SpeedDialShell(nativeTitleBar: widget.nativeTitleBar),
           );
         },
       ),
