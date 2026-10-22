@@ -68,12 +68,14 @@ build_all() {
 
   ( cd "$REPO_ROOT/packages/app" \
       && flutter build apk --release \
+      && python3 "$REPO_ROOT/scripts/check_android_jni.py" build/app/outputs/mapping/release/mapping.txt \
       && flutter build linux --release ) &
   local app_pid=$!
 
   ( cd "$REPO_ROOT/packages/wear" \
       && flutter pub get >/dev/null \
-      && flutter build apk --release ) &
+      && flutter build apk --release \
+      && python3 "$REPO_ROOT/scripts/check_android_jni.py" build/app/outputs/mapping/release/mapping.txt ) &
   local wear_pid=$!
 
   ( cd "$REPO_ROOT/packages/daemon" \
@@ -82,7 +84,10 @@ build_all() {
   local daemon_pid=$!
 
   local rc=0
-  wait "$app_pid" "$wear_pid" "$daemon_pid" || rc=$?
+  local pid
+  for pid in "$app_pid" "$wear_pid" "$daemon_pid"; do
+    wait "$pid" || rc=$?
+  done
   if [ "$rc" -ne 0 ]; then
     log "ERROR: one or more builds failed (rc=$rc); serving existing artifacts"
     return 1

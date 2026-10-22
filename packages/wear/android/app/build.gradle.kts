@@ -25,6 +25,8 @@ android {
 
     buildTypes {
         release {
+            // Preserve Kotlin names used by shared_preferences Android JNI.
+            proguardFiles(rootProject.file("../../android-jni.pro"))
             signingConfig = signingConfigs.getByName("debug")
         }
     }

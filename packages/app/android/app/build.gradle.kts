@@ -30,6 +30,8 @@ android {
 
     buildTypes {
         release {
+            // Preserve Kotlin names used by shared_preferences Android JNI.
+            proguardFiles(rootProject.file("../../android-jni.pro"))
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")

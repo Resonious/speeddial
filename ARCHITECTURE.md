@@ -628,6 +628,11 @@ Performance rules for the app:
 - No `setState` in panes; only store notifications through `ListenableBuilder` scoped to
   the narrowest widget.
 
+Android phone and watch release builds include `packages/android-jni.pro` to
+preserve Kotlin types referenced by the shared-preferences JNI bridge. The
+release build script checks the actual R8 mappings before staging APKs; debug
+builds and mocked preference tests cannot detect this class of startup failure.
+
 ## Wear OS companion app
 
 `packages/wear` is the watch build of the Android application (`sh.speeddial.speeddial`).
