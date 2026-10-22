@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -11,6 +12,7 @@ import '../theme.dart';
 import 'chat/chat_pane.dart';
 import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
+import 'native_title_bar.dart';
 import 'right/right_panel.dart';
 import 'touch_slop.dart';
 
@@ -35,7 +37,10 @@ const double _minimumChatWidth = 320;
 /// ([LeftRail]'s bottom action, [ChatPane]'s composer, [RightPanel]'s root)
 /// for everything that touches the bottom edge.
 class SpeedDialShell extends StatelessWidget {
-  const SpeedDialShell({super.key});
+  const SpeedDialShell({super.key, this.nativeTitleBar});
+
+  /// The GTK header bar on Linux; when set, it replaces the Flutter top bar.
+  final NativeTitleBar? nativeTitleBar;
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +57,12 @@ class SpeedDialShell extends StatelessWidget {
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarIconBrightness: icons,
       ),
-      child: Stack(children: const <Widget>[_Shell(), _FloatingShare()]),
+      child: Stack(
+        children: <Widget>[
+          _Shell(nativeTitleBar: nativeTitleBar),
+          const _FloatingShare(),
+        ],
+      ),
     );
   }
 }
@@ -150,7 +160,9 @@ class _FloatingShare extends StatelessWidget {
 }
 
 class _Shell extends StatefulWidget {
-  const _Shell();
+  const _Shell({required this.nativeTitleBar});
+
+  final NativeTitleBar? nativeTitleBar;
 
   @override
   State<_Shell> createState() => _ShellState();
@@ -159,6 +171,9 @@ class _Shell extends StatefulWidget {
 class _ShellState extends State<_Shell> {
   bool _leftOpen = true;
   bool _rightOpen = true;
+
+  /// Which layout the last build chose; native title bar presses act on it.
+  bool _wide = true;
   double _leftRailWidth = _initialLeftRailWidth;
   double? _resizeStartX;
   double? _resizeStartWidth;
@@ -174,9 +189,50 @@ class _ShellState extends State<_Shell> {
   final GlobalKey _chatPaneKey = GlobalKey();
 
   @override
+  void initState() {
+    super.initState();
+    widget.nativeTitleBar?.onAction = _onNativeAction;
+  }
+
+  @override
+  void didUpdateWidget(_Shell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nativeTitleBar != widget.nativeTitleBar) {
+      oldWidget.nativeTitleBar?.onAction = null;
+      widget.nativeTitleBar?.onAction = _onNativeAction;
+    }
+  }
+
+  @override
   void dispose() {
+    widget.nativeTitleBar?.onAction = null;
     _composerFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onNativeAction(NativeTitleBarAction action) {
+    switch (action) {
+      case NativeTitleBarAction.toggleLeft:
+        if (_wide) {
+          setState(() => _leftOpen = !_leftOpen);
+          return;
+        }
+        final ScaffoldState? scaffold = _narrowScaffoldKey.currentState;
+        if (scaffold == null) return;
+        if (scaffold.isDrawerOpen) {
+          scaffold.closeDrawer();
+        } else {
+          scaffold.openDrawer();
+        }
+      case NativeTitleBarAction.toggleRight:
+        if (_wide) {
+          setState(() => _rightOpen = !_rightOpen);
+        } else {
+          _openRightSheet(context);
+        }
+      case NativeTitleBarAction.cycleTheme:
+        unawaited(_cycleThemeMode(context));
+    }
   }
 
   void _onSessionCreated() {
@@ -224,19 +280,41 @@ class _ShellState extends State<_Shell> {
 
   @override
   Widget build(BuildContext context) {
+    final NativeTitleBar? nativeTitleBar = widget.nativeTitleBar;
+    final Widget layout = _buildLayout(context, nativeTitleBar == null);
+    if (nativeTitleBar == null) return layout;
+    return _NativeTitleBarSync(
+      bar: nativeTitleBar,
+      leftOpen: _wide && _leftOpen,
+      rightOpen: _wide && _rightOpen,
+      child: layout,
+    );
+  }
+
+  Widget _buildLayout(BuildContext context, bool flutterTopBar) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool wide = constraints.maxWidth >= kDesktopBreakpoint;
+        if (widget.nativeTitleBar != null && wide != _wide) {
+          // The native bar's toggle state depends on the layout; resync it
+          // after this frame rather than mid-layout.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() {});
+          });
+        }
+        _wide = wide;
         if (wide) {
           return Scaffold(
             body: Column(
               children: <Widget>[
-                _DesktopTopBar(
-                  leftOpen: _leftOpen,
-                  rightOpen: _rightOpen,
-                  onToggleLeft: () => setState(() => _leftOpen = !_leftOpen),
-                  onToggleRight: () => setState(() => _rightOpen = !_rightOpen),
-                ),
+                if (flutterTopBar)
+                  _DesktopTopBar(
+                    leftOpen: _leftOpen,
+                    rightOpen: _rightOpen,
+                    onToggleLeft: () => setState(() => _leftOpen = !_leftOpen),
+                    onToggleRight: () =>
+                        setState(() => _rightOpen = !_rightOpen),
+                  ),
                 Expanded(
                   // Side insets only (landscape cutouts); the top bar handles
                   // the top inset itself and the panes pad their own bottoms.
@@ -328,24 +406,27 @@ class _ShellState extends State<_Shell> {
             key: _narrowScaffoldKey,
             // Let a right swipe reveal navigation from anywhere in the session.
             drawerEdgeDragWidth: constraints.maxWidth,
-            appBar: AppBar(
-              leading: IconButton(
-                tooltip: 'Open navigation menu',
-                icon: const Icon(Icons.menu),
-                onPressed: () => _narrowScaffoldKey.currentState?.openDrawer(),
-              ),
-              title: const _TopBarTitle(),
-              actions: <Widget>[
-                const _DaemonStatusChip(),
-                const _ThemeModeButton(),
-                const SizedBox(width: 4),
-                IconButton(
-                  tooltip: 'Open right panel',
-                  icon: const Icon(Icons.tune),
-                  onPressed: () => _openRightSheet(context),
-                ),
-              ],
-            ),
+            appBar: flutterTopBar
+                ? AppBar(
+                    leading: IconButton(
+                      tooltip: 'Open navigation menu',
+                      icon: const Icon(Icons.menu),
+                      onPressed: () =>
+                          _narrowScaffoldKey.currentState?.openDrawer(),
+                    ),
+                    title: const _TopBarTitle(),
+                    actions: <Widget>[
+                      const _DaemonStatusChip(),
+                      const _ThemeModeButton(),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Open right panel',
+                        icon: const Icon(Icons.tune),
+                        onPressed: () => _openRightSheet(context),
+                      ),
+                    ],
+                  )
+                : null,
             // The drawer surface extends under the status bar; only its
             // content is padded down.
             drawer: Drawer(
@@ -474,32 +555,86 @@ class _ThemeModeButton extends StatelessWidget {
         return IconButton(
           tooltip: 'Theme: $label',
           icon: Icon(icon),
-          onPressed: () => _setThemeMode(context, settings, switch (mode) {
-            ThemeMode.system => ThemeMode.light,
-            ThemeMode.light => ThemeMode.dark,
-            ThemeMode.dark => ThemeMode.system,
-          }),
+          onPressed: () => _cycleThemeMode(context),
         );
       },
     );
   }
+}
 
-  Future<void> _setThemeMode(
-    BuildContext context,
-    SettingsStore settings,
-    ThemeMode mode,
-  ) async {
-    try {
-      await settings.setThemeMode(mode);
-    } catch (_) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('Could not save theme preference')),
-        );
-    }
+/// Advances the persisted theme mode: system → light → dark → system.
+Future<void> _cycleThemeMode(BuildContext context) async {
+  final SettingsStore settings = AppScope.of(context).settings;
+  try {
+    await settings.setThemeMode(switch (settings.themeMode) {
+      ThemeMode.system => ThemeMode.light,
+      ThemeMode.light => ThemeMode.dark,
+      ThemeMode.dark => ThemeMode.system,
+    });
+  } catch (_) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(content: Text('Could not save theme preference')),
+      );
   }
+}
+
+/// Mirrors the top bar's content — session title, daemon status, pane and
+/// theme state — into the native header bar. Renders [child] unchanged.
+class _NativeTitleBarSync extends StatelessWidget {
+  const _NativeTitleBarSync({
+    required this.bar,
+    required this.leftOpen,
+    required this.rightOpen,
+    required this.child,
+  });
+
+  final NativeTitleBar bar;
+  final bool leftOpen;
+  final bool rightOpen;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[
+        data.selection,
+        data.sessions,
+        data.connections,
+        data.settings,
+      ]),
+      builder: (BuildContext context, Widget? child) {
+        final String? daemonId = data.selection.selectedDaemonId;
+        final ConnectionStatus status = daemonId == null
+            ? ConnectionStatus.disconnected
+            : data.connections.statusOf(daemonId);
+        bar.show(
+          NativeTitleBarState(
+            title: _topBarTitle(data),
+            status: daemonId == null ? 'Not connected' : status.name,
+            statusColor: connectionStatusColor(context, status),
+            leftOpen: leftOpen,
+            rightOpen: rightOpen,
+            themeMode: data.settings.themeMode,
+            dark: Theme.of(context).brightness == Brightness.dark,
+          ),
+        );
+        return child!;
+      },
+      child: child,
+    );
+  }
+}
+
+/// The selected session's title, or the app name when no session is
+/// selected (or the store hasn't loaded it yet).
+String _topBarTitle(AppData data) {
+  final String? sessionId = data.selection.selectedSessionId;
+  if (sessionId == null) return 'SpeedDial';
+  return data.sessions.byId(sessionId)?.title ?? 'SpeedDial';
 }
 
 /// Top-bar title: the selected session's title, falling back to the app
@@ -517,12 +652,8 @@ class _TopBarTitle extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[data.selection, data.sessions]),
       builder: (BuildContext context, Widget? _) {
-        final String? sessionId = data.selection.selectedSessionId;
-        final String title = sessionId == null
-            ? 'SpeedDial'
-            : data.sessions.byId(sessionId)?.title ?? 'SpeedDial';
         return Text(
-          title,
+          _topBarTitle(data),
           key: const Key('top-bar-title'),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
