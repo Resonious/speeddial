@@ -5,6 +5,7 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "desktop_entry.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "native_title_bar.h"
 
@@ -15,6 +16,8 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Sets the X11 window icon and registers the icon for Wayland shells, which
+// only find it through the app ID's desktop entry.
 static void set_window_icon(GtkWindow* window) {
   g_autoptr(GError) path_error = nullptr;
   g_autofree gchar* executable_path =
@@ -34,6 +37,7 @@ static void set_window_icon(GtkWindow* window) {
   if (!gtk_window_set_icon_from_file(window, icon_path, &icon_error)) {
     g_warning("Failed to load the application icon: %s", icon_error->message);
   }
+  desktop_entry_ensure(executable_path, icon_path);
 }
 
 // Called when first Flutter frame received.
