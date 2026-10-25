@@ -713,6 +713,7 @@ class _WearNewSessionPageState extends State<_WearNewSessionPage> {
         widget.daemonId,
         projectId: widget.project.id,
         providerId: provider.id,
+        yolo: true,
       );
       widget.data.selection.selectedSessionId = session.id;
       if (mounted) Navigator.of(context).pop(session);

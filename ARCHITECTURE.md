@@ -685,6 +685,7 @@ screens down to 192 logical pixels without hardware-type checks.
 The reusable watch UI lives under `packages/app/lib/src/ui/wear/` and consumes the same
 `AppData`, `ProjectsStore`, `SessionsStore`, and `ChatStore` as the full client. The watch does
 not expose files, git mutations, MCP, worktree, project, or daemon settings.
+Sessions created on the watch always request YOLO mode (`yolo: true`).
 
 ## Verification gates (orchestrator runs these, subagents NEVER do)
 
