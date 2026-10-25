@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:speeddial_app/src/theme.dart';
@@ -987,6 +988,89 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.getSize(find.byType(ToolCallCard)).height, lessThan(100));
+  });
+
+  testWidgets('collapsed tool details stay out of the selection', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final List<String> copies = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          copies.add(
+            (call.arguments! as Map<Object?, Object?>)['text']! as String,
+          );
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: <TimelineItem>[
+              const AgentMessageItem(text: 'Before the call'),
+              ToolCallTimelineItem(
+                toolCall: ToolCall(
+                  id: 'hidden-output',
+                  title: 'Short command',
+                  kind: 'execute',
+                  status: ToolCallStatus.completed,
+                  content: <ToolCallContent>[
+                    ToolCallText(text: '<div class="hidden">markup</div>'),
+                  ],
+                  locations: const <String>[],
+                ),
+              ),
+              const AgentMessageItem(text: 'After the call'),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Future<String> copyAll() async {
+      tester
+          .state<SelectableRegionState>(find.byType(SelectableRegion))
+          .selectAll();
+      await tester.pump();
+      Actions.invoke(
+        tester.element(
+          find.textContaining('After the call', findRichText: true),
+        ),
+        CopySelectionTextIntent.copy,
+      );
+      await tester.pump();
+      return copies.last;
+    }
+
+    String copied = await copyAll();
+    expect(copied, contains('Before the call'));
+    expect(copied, contains('After the call'));
+    expect(copied, isNot(contains('markup')));
+
+    await tester.tap(find.text('Short command'));
+    await tester.pumpAndSettle();
+    copied = await copyAll();
+    expect(copied, contains('markup'));
+
+    await tester.tap(find.text('Short command'));
+    await tester.pumpAndSettle();
+    copied = await copyAll();
+    expect(copied, isNot(contains('markup')));
   });
 
   group('tool call details', () {

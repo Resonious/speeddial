@@ -376,16 +376,24 @@ class _ToolCallCardState extends State<ToolCallCard>
                   ? CrossFadeState.showSecond
                   : CrossFadeState.showFirst,
               firstChild: const SizedBox(width: double.infinity, height: 0),
-              secondChild: _CappedDetails(
-                key: _detailsKey,
-                call: toolCall.id,
-                still: _still,
-                child: _ToolCallContentList(
-                  toolCall: toolCall,
-                  command: widget.typed ? summary.detail : null,
-                  approval: widget.approval,
-                  inProgress: widget.active,
-                  attachmentLoader: _expanded ? widget.attachmentLoader : null,
+              // Collapsed, the cross-fade keeps the details laid out below
+              // the card, unseen. Out of the selection, a drag over the
+              // messages beneath cannot pick them up, nor a copy include them.
+              secondChild: _selectableIf(
+                _expanded,
+                _CappedDetails(
+                  key: _detailsKey,
+                  call: toolCall.id,
+                  still: _still,
+                  child: _ToolCallContentList(
+                    toolCall: toolCall,
+                    command: widget.typed ? summary.detail : null,
+                    approval: widget.approval,
+                    inProgress: widget.active,
+                    attachmentLoader: _expanded
+                        ? widget.attachmentLoader
+                        : null,
+                  ),
                 ),
               ),
             ),
@@ -393,6 +401,11 @@ class _ToolCallCardState extends State<ToolCallCard>
       ),
     );
   }
+
+  /// [child] carries a global key, so it keeps its state as it moves in and
+  /// out of the disabled container.
+  static Widget _selectableIf(bool selectable, Widget child) =>
+      selectable ? child : SelectionContainer.disabled(child: child);
 }
 
 /// A call's details, no taller than a set height: longer ones scroll within,
