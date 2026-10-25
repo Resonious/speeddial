@@ -109,8 +109,8 @@ class _Dot extends StatelessWidget {
   );
 }
 
-/// An amber dot whose ring keeps chiming outward, like an oven timer that
-/// went off: the agent needs an answer.
+/// An amber timer face that rattles and chimes twice outward, like an oven
+/// timer that went off: the agent needs an answer.
 class _TimerPing extends StatefulWidget {
   const _TimerPing({super.key, required this.color});
 
@@ -124,14 +124,14 @@ class _TimerPingState extends State<_TimerPing>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ring = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1600),
+    duration: const Duration(milliseconds: 1800),
   );
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
-      _ring.value = 0.35;
+      _ring.value = 0.4;
     } else if (!_ring.isAnimating) {
       _ring.repeat();
     }
@@ -161,25 +161,44 @@ class _PingPainter extends CustomPainter {
   final Paint _dot = Paint();
   final Paint _wave = Paint()..style = PaintingStyle.stroke;
 
+  final Paint _bezel = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.8;
+
+  /// Start of each chime within the cycle: a double "ding-ding".
+  static const List<double> _chimes = <double>[0, 0.2];
+
+  /// How much of the cycle one chime's wave takes to fade out.
+  static const double _chimeLength = 0.5;
+
+  /// The timer rattles while it rings, then sits still until the next chime.
+  static const double _rattleLength = 0.36;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final Offset center = size.center(Offset.zero);
     final double t = ring.value;
-    // The ring spends the last third of each cycle at rest, so the pings
-    // read as distinct chimes rather than a steady throb.
-    final double spread = math.min(1.0, t / 0.66);
-    if (spread < 1) {
+    // A ringed face with a centre pip, not a solid dot, so it can't be
+    // mistaken for a warm idle ember even when the two colors are close.
+    final double rattle = t < _rattleLength
+        ? math.sin(t * math.pi * 2 * 9) * 0.9 * (1 - t / _rattleLength)
+        : 0;
+    final Offset center = size.center(Offset(rattle, 0));
+    for (final double start in _chimes) {
+      final double spread = (t - start) / _chimeLength;
+      if (spread < 0 || spread >= 1) continue;
       _wave
-        ..strokeWidth = 1.6 * (1 - spread) + 0.4
-        ..color = color.withValues(alpha: 0.7 * (1 - spread));
+        ..strokeWidth = 1.8 * (1 - spread) + 0.4
+        ..color = color.withValues(alpha: 0.8 * (1 - spread));
       canvas.drawCircle(
-        center,
-        4 + 5 * Curves.easeOut.transform(spread),
+        size.center(Offset.zero),
+        5 + 4 * Curves.easeOut.transform(spread),
         _wave,
       );
     }
+    _bezel.color = color;
+    canvas.drawCircle(center, 4.6, _bezel);
     _dot.color = color;
-    canvas.drawCircle(center, 4, _dot);
+    canvas.drawCircle(center, 1.9, _dot);
   }
 
   @override

@@ -21,7 +21,7 @@ Every effect marks something that actually happened. Reuse these before writing 
 | Message sent, not yet confirmed | Pale "dough" bubble under a veil, a warm glint sweeping it | `chat/oven.dart` (`BakingBubble`) |
 | Message confirmed | Pops: a small bounce, a warm halo, wisps of steam | `chat/oven.dart` (`DeliveredPop`) |
 | Agent's turn | Flame row at the live end: "Preheating…", then a per-turn cooking verb ("Baking…", "Caramelizing…"), "Keeping warm…" with a blue pilot light while waiting on the user; goes out in smoke | `chat/oven.dart` (`TurnFlameRow`), `flame.dart` (`Flame`) |
-| Session running / waiting (left rail) | Live flame / amber "timer" ping | `left/session_status_glyph.dart` |
+| Session running / waiting (left rail) | Live flame / amber "timer" face (a ring with a centre pip, never a solid dot, so it can't pass for a warm idle ember) that rattles and chimes twice outward; still and frozen mid-chime under reduced motion | `left/session_status_glyph.dart` |
 | Recently idle session | Steady ember dot and halo cool from hot to gray over three hours of inactivity; minute-resolution refresh, no animation ticker. A done session shows a green dot instead, swelling in when marked done. Offline dots are cold. | `left/idle_session_ember.dart` |
 | Daemon out of reach | Flames grey and still; nothing claims to be live | `Flame(dormant: true)`; the pane derives the turn as not running |
 | Agent writing | Typewriter with an ember at the typing point and a few sparks; fresh text glows behind it and cools; the ember pops (flash, burst of sparks, smoke) when the message is done | `chat/typewriter.dart` |
