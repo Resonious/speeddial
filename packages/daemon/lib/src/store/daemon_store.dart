@@ -1421,6 +1421,8 @@ class DaemonStore {
   // events. Strip those redundant bytes inside SQLite before applying the
   // history cap, so existing messages remain readable without loading blobs
   // into Dart. The authoritative payload stays in the attachments table.
+  // Re-tag the scalar subquery with json() so json_set inserts an array,
+  // even when SQLite does not preserve the subquery's JSON subtype.
   ResultSet _historyRows(
     String sessionId, {
     required int limit,
@@ -1436,10 +1438,10 @@ class DaemonStore {
       SELECT seq, timestamp,
         CASE WHEN json_extract(json, '$.type') = 'userMessage'
           AND json_type(json, '$.attachments') = 'array'
-        THEN json_set(json, '$.attachments', (
+        THEN json_set(json, '$.attachments', json((
           SELECT json_group_array(json_remove(value, '$.data'))
           FROM json_each(session_events.json, '$.attachments')
-        )) ELSE json END AS json
+        ))) ELSE json END AS json
       FROM session_events
       WHERE session_id = ? AND (? IS NULL OR seq < ?)
     '''
