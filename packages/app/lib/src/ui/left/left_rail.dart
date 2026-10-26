@@ -134,6 +134,12 @@ class _SessionsTab extends StatelessWidget {
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ),
+                  IconButton(
+                    key: const Key('add-daemon'),
+                    tooltip: 'Add daemon',
+                    icon: const Icon(Icons.add, size: 18),
+                    onPressed: () => _showAddDaemonDialog(context),
+                  ),
                   // Embedded in-process daemon settings (desktop). Lives
                   // here, not on the endpoint tile, so it stays reachable
                   // even when the daemon failed to start at boot.
@@ -183,21 +189,6 @@ class _SessionsTab extends StatelessWidget {
               ),
             const Divider(height: 1),
             Expanded(child: _ProjectTree(onSessionCreated: onSessionCreated)),
-            Padding(
-              // Keep the button above the system navigation area on
-              // edge-to-edge Android; the rail surface extends behind it.
-              padding: EdgeInsets.fromLTRB(
-                12,
-                12,
-                12,
-                12 + MediaQuery.viewPaddingOf(context).bottom,
-              ),
-              child: OutlinedButton.icon(
-                onPressed: () => _showAddDaemonDialog(context),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add daemon'),
-              ),
-            ),
           ],
         );
       },
@@ -454,7 +445,12 @@ class _ProjectTree extends StatelessWidget {
             else
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.only(bottom: 8),
+                  // Let the last project scroll clear of the system
+                  // navigation area on edge-to-edge Android; the rail
+                  // surface extends behind it.
+                  padding: EdgeInsets.only(
+                    bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
+                  ),
                   children: <Widget>[
                     for (final Project project in projects)
                       _ProjectTile(

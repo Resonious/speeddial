@@ -84,8 +84,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('Daemons')).dy,
         greaterThanOrEqualTo(kPhoneInsets.top));
-    expect(tester.getBottomLeft(find.text('Add daemon')).dy,
-        lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
   });
 
   testWidgets('narrow right sheet lifts the commit field above the keyboard',
@@ -135,9 +133,7 @@ void main() {
     expect(tester.getTopLeft(find.byKey(const Key('top-bar-title'))).dy,
         greaterThanOrEqualTo(kPhoneInsets.top));
 
-    // Left rail's bottom action and the chat composer clear the nav area.
-    expect(tester.getBottomLeft(find.text('Add daemon')).dy,
-        lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
+    // The chat composer clears the nav area.
     expect(tester.getBottomLeft(find.byType(Composer)).dy,
         lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
 

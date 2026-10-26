@@ -80,7 +80,7 @@ void main() {
     expect(find.text('SpeedDial'), findsOneWidget);
     // Left rail.
     expect(find.text('Daemons'), findsOneWidget);
-    expect(find.text('Add daemon'), findsOneWidget);
+    expect(find.byTooltip('Add daemon'), findsOneWidget);
     // Chat pane.
     expect(find.text('Select or create a session'), findsOneWidget);
     // Right panel.
@@ -231,7 +231,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('left-rail-resize-handle')), findsNothing);
     expect(find.text('Daemons'), findsOneWidget);
-    expect(find.text('Add daemon'), findsOneWidget);
+    expect(find.byTooltip('Add daemon'), findsOneWidget);
   });
 
   testWidgets('mobile: right swipes across the session open navigation', (
@@ -404,10 +404,10 @@ void main() {
   ) async {
     final AppData data = await pumpApp(tester);
 
-    await tester.tap(find.text('Add daemon'));
+    await tester.tap(find.byTooltip('Add daemon'));
     await tester.pumpAndSettle();
-    // Rail button + dialog title.
-    expect(find.text('Add daemon'), findsNWidgets(2));
+    // Dialog title.
+    expect(find.text('Add daemon'), findsOneWidget);
 
     await tester.enterText(find.byKey(const Key('add-daemon-name')), 'Local');
     await tester.enterText(
@@ -420,7 +420,7 @@ void main() {
 
     // Dialog closed, endpoint materialized in the store and the rail. The
     // bare host was normalized into a connectable ws:// URL.
-    expect(find.text('Add daemon'), findsOneWidget);
+    expect(find.text('Add daemon'), findsNothing);
     expect(find.text('Local'), findsOneWidget);
     expect(data.connections.endpoints, hasLength(1));
     expect(data.connections.endpoints.single.url, 'ws://localhost:7331/ws');

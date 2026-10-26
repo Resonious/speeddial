@@ -257,7 +257,7 @@ void main() {
     expect(find.byKey(const Key('rail-tab-inbox')), findsOneWidget);
     expect(find.text('Daemons'), findsOneWidget);
     expect(find.text('Fake daemon'), findsOneWidget);
-    expect(find.text('Add daemon'), findsOneWidget);
+    expect(find.byTooltip('Add daemon'), findsOneWidget);
     expect(find.text('Add a daemon to begin'), findsOneWidget);
     expect(find.text('Projects'), findsNothing);
     expect(find.text('Demo Project'), findsNothing);
@@ -1174,12 +1174,9 @@ void main() {
   ) async {
     final AppData app = await pumpRail(tester);
 
-    await tester.tap(find.text('Add daemon'));
+    await tester.tap(find.byTooltip('Add daemon'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('Add daemon'),
-      findsNWidgets(2),
-    ); // rail button + dialog title.
+    expect(find.text('Add daemon'), findsOneWidget); // Dialog title.
 
     await tester.enterText(find.byKey(const Key('add-daemon-name')), 'Local');
     await tester.enterText(
@@ -1190,7 +1187,7 @@ void main() {
     await tester.tap(find.byKey(const Key('add-daemon-submit')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Add daemon'), findsOneWidget);
+    expect(find.text('Add daemon'), findsNothing);
     expect(find.text('Local'), findsOneWidget);
     expect(app.connections.endpoints, hasLength(2));
     // The endpoint is wired to a WsDaemonClient whose attempt to reach the
