@@ -435,7 +435,12 @@ class FakeDaemonClient implements DaemonClient {
 
   @override
   Future<List<McpServerProfile>> listMcpServers() async =>
-      List<McpServerProfile>.unmodifiable(_mcpServers.values);
+      List<McpServerProfile>.unmodifiable(
+        _mcpServers.values.toList()..sort(
+          (McpServerProfile a, McpServerProfile b) =>
+              b.createdAt.compareTo(a.createdAt),
+        ),
+      );
 
   @override
   Future<McpServerProfile> createMcpServer({

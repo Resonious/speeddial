@@ -29,7 +29,7 @@ class McpStore extends StoreBase {
     try {
       _serversByDaemon[daemonId] = List<McpServerProfile>.of(
         await _clientFor(daemonId).listMcpServers(),
-      );
+      )..sort(_compareProfiles);
       _lastError = null;
     } catch (error) {
       _lastError = error;
@@ -234,6 +234,9 @@ class McpStore extends StoreBase {
     if (index >= 0) servers![index] = profile;
   }
 
-  static int _compareProfiles(McpServerProfile a, McpServerProfile b) =>
-      a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  /// Newest first; edits never move a server.
+  static int _compareProfiles(McpServerProfile a, McpServerProfile b) {
+    final int byCreated = b.createdAt.compareTo(a.createdAt);
+    return byCreated != 0 ? byCreated : a.id.compareTo(b.id);
+  }
 }

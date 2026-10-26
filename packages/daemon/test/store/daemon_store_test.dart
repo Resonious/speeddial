@@ -204,6 +204,36 @@ void main() {
       throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
     );
   });
+  test('MCP profiles list newest first', () {
+    McpServerProfile profile(String id, String name, DateTime createdAt) =>
+        McpServerProfile(
+          id: id,
+          name: name,
+          transport: McpTransport.stdio,
+          enabled: true,
+          command: '/bin/mcp',
+          secretNames: const <String>[],
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        );
+    store.insertMcpServer(
+      profile('mcp-b', 'Beta', DateTime.utc(2026, 8, 21)),
+      const <String, String>{},
+    );
+    store.insertMcpServer(
+      profile('mcp-a', 'Alpha', DateTime.utc(2026, 8, 20)),
+      const <String, String>{},
+    );
+    store.insertMcpServer(
+      profile('mcp-c', 'Gamma', DateTime.utc(2026, 8, 22)),
+      const <String, String>{},
+    );
+
+    expect(
+      store.listMcpServers().map((McpServerProfile server) => server.id),
+      <String>['mcp-c', 'mcp-b', 'mcp-a'],
+    );
+  });
   test('MCP profiles persist credentials without exposing values', () {
     final DateTime createdAt = DateTime.utc(2026, 8, 20);
     final McpServerProfile profile = McpServerProfile(

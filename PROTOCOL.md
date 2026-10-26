@@ -446,7 +446,7 @@ with the new environment; harnesses that cannot resume keep their original envir
 - `projects.remove {id: string}` → `{}` — also archives its sessions; does NOT touch the filesystem
 - `projects.rename {id: string, name: string}` → `{project: Project}`
 ### MCP servers
-- `mcp.list {}` → `{servers: McpServerProfile[]}`
+- `mcp.list {}` → `{servers: McpServerProfile[]}` — newest first (`createdAt` descending)
 - `mcp.create {name: string, projectIds?: string[], projectId?: string, transport: McpTransport, enabled: boolean,
   command?: string, args?: string[], url?: string, secrets?: {[name: string]: string},
   authType?: McpAuthType, oauthClientId?: string, oauthClientSecret?: string}` →

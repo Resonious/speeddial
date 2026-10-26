@@ -413,7 +413,8 @@ class DaemonStore {
   List<McpServerProfile> listMcpServers() {
     final rows = _db.select(
       'SELECT id, project_id, project_ids, name, transport, enabled, command, args, url, '
-      'auth_type, created_at, updated_at FROM mcp_servers',
+      'auth_type, created_at, updated_at FROM mcp_servers '
+      'ORDER BY created_at DESC, rowid DESC',
     );
     return rows
         .map((Row row) => _mcpProfileFromRow(row))
