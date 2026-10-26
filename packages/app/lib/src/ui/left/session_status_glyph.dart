@@ -58,7 +58,7 @@ class SessionStatusGlyph extends StatelessWidget {
         key: const ValueKey<String>('session-ping'),
         color: colors.waitingPermission,
       ),
-      SessionStatus.idle when done => _Dot(
+      SessionStatus.idle when done => _DoneDot(
         key: const ValueKey<String>('session-done'),
         color: colors.success,
       ),
@@ -107,6 +107,36 @@ class _Dot extends StatelessWidget {
       decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     ),
   );
+}
+
+/// A done session's dot: a touch larger than the rest, in a steady halo that
+/// matches a hot ember's footprint so it never reads as the smaller mark.
+class _DoneDot extends StatelessWidget {
+  const _DoneDot({super.key, required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool dark = Theme.of(context).brightness == Brightness.dark;
+    return Center(
+      child: Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color,
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: color.withValues(alpha: dark ? 0.55 : 0.35),
+              blurRadius: 6,
+              spreadRadius: 1.5,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// An amber timer face that rattles and chimes twice outward, like an oven
