@@ -9,6 +9,7 @@ import 'package:pasteboard/pasteboard.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../theme.dart';
+import 'compaction.dart' show compactTokens;
 import 'model_picker.dart';
 
 /// Picks files for attachment. The record carries the file name and raw
@@ -116,7 +117,7 @@ class Composer extends StatefulWidget {
   final Widget? sessionControls;
   final bool providerQualifiedModels;
 
-  /// Latest turn usage, shown in the footer when non-null.
+  /// Latest context measurements and cost. The footer always reserves a line.
   final UsageInfo? usage;
 
   /// Current model id: the picker's highlight when contained in [models],
@@ -746,7 +747,7 @@ class _ComposerState extends State<Composer>
               ),
             ),
           ),
-          if (widget.usage != null) _UsageFooter(usage: widget.usage!),
+          _UsageFooter(usage: widget.usage),
         ],
       ),
     );
@@ -874,33 +875,71 @@ class _ControlsRow extends StatelessWidget {
 class _UsageFooter extends StatelessWidget {
   const _UsageFooter({required this.usage});
 
-  final UsageInfo usage;
+  final UsageInfo? usage;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Color muted = theme.colorScheme.onSurfaceVariant;
-    final List<String> parts = <String>[
-      '${usage.totalTokens} tokens '
-          '(${usage.inputTokens} in / ${usage.outputTokens} out)',
-    ];
-    final int? contextUsed = usage.contextUsedTokens;
-    final int? contextLimit = usage.contextLimitTokens;
-    if (contextUsed != null && contextLimit != null && contextLimit > 0) {
-      final String percent = (contextUsed * 100 / contextLimit).toStringAsFixed(
-        1,
-      );
-      parts.add('$contextUsed / $contextLimit context ($percent%)');
-    }
-    final int cache =
-        (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0);
-    if (cache > 0) parts.add('$cache cached');
-    if (usage.cost != null) parts.add('\$${usage.cost}');
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-      child: Text(
-        parts.join(' · '),
-        style: theme.textTheme.labelSmall?.copyWith(color: muted),
+    final TextStyle style = theme.textTheme.labelSmall!.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+      fontSize: 11,
+      height: 1.4,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+    final int? used = usage?.contextUsedTokens;
+    final int? limit = usage?.contextLimitTokens;
+    final bool hasContext =
+        used != null && used >= 0 && limit != null && limit > 0;
+    final String? percent = hasContext
+        ? (used * 100 / limit).toStringAsFixed(1)
+        : null;
+    final String? cost = usage?.cost;
+
+    // Reserve the same line even before usage arrives or when a provider only
+    // reports turn totals. Width changes must never add a second line. Scale
+    // the reservation with accessibility text size, including while empty.
+    return SizedBox(
+      height:
+          MediaQuery.textScalerOf(context).scale(style.fontSize!) *
+              style.height! +
+          6,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+        child: DefaultTextStyle(
+          style: style,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) => Row(
+              children: <Widget>[
+                Expanded(
+                  child: hasContext
+                      ? Tooltip(
+                          message: 'Context: $used / $limit tokens ($percent%)',
+                          child: Text(
+                            'Context ${compactTokens(used)} / '
+                            '${compactTokens(limit)} · $percent%',
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                if (cost != null && cost.isNotEmpty) ...<Widget>[
+                  const SizedBox(width: 8),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth * 0.35,
+                    ),
+                    child: Tooltip(
+                      message: 'Estimated cost: \$$cost',
+                      child: Text('≈ \$$cost'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

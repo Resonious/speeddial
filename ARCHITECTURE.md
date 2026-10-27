@@ -536,7 +536,9 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              (multiline, Enter send / Shift+Enter newline, file attachments
                              via file_picker with image thumbnails + file chips,
                              model + thinking/effort selectors fed by the provider, stop button while running), expandable provider
-                             activity cards, usage/context footer. A leading `/` opens a
+                             activity cards, a single reserved footer line for compact
+                             context used/limit/percentage and optional cost estimate
+                             (exact counts in a tooltip; no turn token totals). A leading `/` opens a
                              filtered menu of commands discovered from the live session.
                              "Oven" turn feedback (oven.dart): sent messages appear at once
                              as veiled "baking" bubbles laid out like their final rows,

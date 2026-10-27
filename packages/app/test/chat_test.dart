@@ -846,7 +846,8 @@ void main() {
     // Plan event renders its checklist.
     expect(find.byType(PlanPanel), findsOneWidget);
     // Usage event surfaces in the composer footer.
-    expect(find.textContaining('tokens'), findsOneWidget);
+    expect(find.text('Context 12k / 200k · 6.0%'), findsOneWidget);
+    expect(find.text('≈ \$0.0021'), findsOneWidget);
   });
 
   testWidgets('live thinking streams on one line, then cools', (
