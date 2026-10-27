@@ -286,6 +286,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         chat,
         data.sessions,
         data.connections,
+        data.replies,
         _followLatestRequest,
       ]),
       builder: (BuildContext context, Widget? _) {
@@ -396,6 +397,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     unawaited(_forkFrom(seq));
                   },
             openLocalFile: _openLocalFile,
+            onReply: (String quote, String reply) =>
+                data.replies.add(daemonId, sessionId, quote, reply),
           );
         }
 
@@ -493,6 +496,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     ),
                 onSharedAttachmentsSent: (List<OutgoingAttachment> files) =>
                     data.shares.removeStaged(daemonId, sessionId, files),
+                replies: data.replies.repliesFor(daemonId, sessionId),
+                onEditReply: (int id, String reply) =>
+                    data.replies.edit(daemonId, sessionId, id, reply),
+                onRemoveReply: (int id) =>
+                    data.replies.remove(daemonId, sessionId, <int>[id]),
+                onRepliesSent: (List<int> ids) =>
+                    data.replies.remove(daemonId, sessionId, ids),
                 onSend:
                     (String text, List<OutgoingAttachment> attachments) async {
                       if (status == SessionStatus.running) {

@@ -8,9 +8,11 @@ import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../../state/replies_store.dart';
 import '../../theme.dart';
 import 'compaction.dart' show compactTokens;
 import 'model_picker.dart';
+import 'replies.dart';
 import 'typed_text.dart';
 
 /// Picks files for attachment. The record carries the file name and raw
@@ -96,6 +98,10 @@ class Composer extends StatefulWidget {
     this.sharedAttachments = const <OutgoingAttachment>[],
     this.onRemoveSharedAttachment,
     this.onSharedAttachmentsSent,
+    this.replies = const <ReplyDraft>[],
+    this.onEditReply,
+    this.onRemoveReply,
+    this.onRepliesSent,
     required this.onSend,
     required this.onStop,
   });
@@ -166,6 +172,15 @@ class Composer extends StatefulWidget {
   final List<OutgoingAttachment> sharedAttachments;
   final ValueChanged<OutgoingAttachment>? onRemoveSharedAttachment;
   final ValueChanged<List<OutgoingAttachment>>? onSharedAttachmentsSent;
+
+  /// Replies to selected timeline text, staged as chips beside the
+  /// attachments. They ride ahead of the text (see
+  /// [formatMessageWithReplies]) and are cleared through [onRepliesSent]
+  /// only once the send succeeds.
+  final List<ReplyDraft> replies;
+  final void Function(int id, String reply)? onEditReply;
+  final ValueChanged<int>? onRemoveReply;
+  final ValueChanged<List<int>>? onRepliesSent;
 
   /// Starts a turn with [text] and [attachments]. Completes when the daemon
   /// accepted it; on failure (a [DaemonError] surfaced as a SnackBar by the
@@ -250,6 +265,14 @@ class _ComposerState extends State<Composer>
   /// Files picked but not yet sent; cleared on send, restored on failure.
   final List<OutgoingAttachment> _attachments = <OutgoingAttachment>[];
 
+  /// The staged reply whose editor is open, if any.
+  int? _openReply;
+
+  /// Replies staged before this composer mounted; only later ones pop in.
+  late final Set<int> _settledReplies = <int>{
+    for (final ReplyDraft reply in widget.replies) reply.id,
+  };
+
   bool get _running => widget.status == SessionStatus.running;
 
   /// Send is enabled with text, attachments, or both (PROTOCOL.md allows
@@ -258,7 +281,8 @@ class _ComposerState extends State<Composer>
       !widget.sending &&
       (_hasText ||
           _attachments.isNotEmpty ||
-          widget.sharedAttachments.isNotEmpty);
+          widget.sharedAttachments.isNotEmpty ||
+          widget.replies.isNotEmpty);
 
   @override
   void initState() {
@@ -493,7 +517,9 @@ class _ComposerState extends State<Composer>
       widget.sharedAttachments,
     );
     attachments.addAll(shared);
-    if ((text.isEmpty && attachments.isEmpty) ||
+    final List<ReplyDraft> replies = List<ReplyDraft>.of(widget.replies);
+    final String message = formatMessageWithReplies(replies, text);
+    if ((message.isEmpty && attachments.isEmpty) ||
         _running ||
         widget.sending ||
         !mounted) {
@@ -505,9 +531,10 @@ class _ComposerState extends State<Composer>
     setState(() {
       _hasText = false;
       _attachments.clear();
+      _openReply = null;
       _commandMatches = const <NativeCommand>[];
     });
-    unawaited(_dispatch(text, attachments, shared));
+    unawaited(_dispatch(message, text, attachments, shared, replies));
   }
 
   void _submitFromKeyboard() {
@@ -523,12 +550,14 @@ class _ComposerState extends State<Composer>
   /// a conflict surfaced as a SnackBar by the pane) never loses the user's
   /// message.
   Future<void> _dispatch(
+    String message,
     String text,
     List<OutgoingAttachment> attachments,
     List<OutgoingAttachment> shared,
+    List<ReplyDraft> replies,
   ) async {
     try {
-      await widget.onSend(text, attachments);
+      await widget.onSend(message, attachments);
     } catch (_) {
       if (!mounted) return;
       _controller.value = TextEditingValue(
@@ -546,6 +575,11 @@ class _ComposerState extends State<Composer>
       return;
     }
     if (shared.isNotEmpty) widget.onSharedAttachmentsSent?.call(shared);
+    if (replies.isNotEmpty) {
+      widget.onRepliesSent?.call(<int>[
+        for (final ReplyDraft reply in replies) reply.id,
+      ]);
+    }
     final Future<void> Function(String text)? onDraftChanged =
         widget.onDraftChanged;
     if (onDraftChanged != null) {
@@ -555,19 +589,7 @@ class _ComposerState extends State<Composer>
     }
   }
 
-  /// Inserts a newline at the cursor (Shift+Enter) without relying on the
-  /// platform IME, so behavior is identical on every platform and in tests.
-  void _insertNewline() {
-    final TextEditingValue value = _controller.value;
-    final int offset = value.selection.isValid
-        ? value.selection.baseOffset
-        : value.text.length;
-    final int clamped = offset.clamp(0, value.text.length);
-    _controller.value = TextEditingValue(
-      text: value.text.replaceRange(clamped, clamped, '\n'),
-      selection: TextSelection.collapsed(offset: clamped + 1),
-    );
-  }
+  void _insertNewline() => insertNewline(_controller);
 
   @override
   Widget build(BuildContext context) {
@@ -613,8 +635,29 @@ class _ComposerState extends State<Composer>
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   if (_attachments.isNotEmpty ||
-                      widget.sharedAttachments.isNotEmpty)
+                      widget.sharedAttachments.isNotEmpty ||
+                      widget.replies.isNotEmpty)
                     _AttachmentChips(
+                      replies: <Widget>[
+                        for (final ReplyDraft reply in widget.replies)
+                          ReplyChip(
+                            key: ValueKey<String>('reply-chip-${reply.id}'),
+                            reply: reply,
+                            open: reply.id == _openReply,
+                            fresh: !_settledReplies.contains(reply.id),
+                            onTap: () => setState(
+                              () => _openReply = _openReply == reply.id
+                                  ? null
+                                  : reply.id,
+                            ),
+                            onRemove: () {
+                              if (_openReply == reply.id) {
+                                setState(() => _openReply = null);
+                              }
+                              widget.onRemoveReply?.call(reply.id);
+                            },
+                          ),
+                      ],
                       attachments: <OutgoingAttachment>[
                         ..._attachments,
                         ...widget.sharedAttachments,
@@ -627,6 +670,7 @@ class _ComposerState extends State<Composer>
                         }
                       },
                     ),
+                  _openReplyEditor(),
                   if (_showCommandMenu)
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 224),
@@ -752,6 +796,31 @@ class _ComposerState extends State<Composer>
           _UsageFooter(usage: widget.usage),
         ],
       ),
+    );
+  }
+
+  /// The open reply's editor, easing open and shut beneath the chips.
+  Widget _openReplyEditor() {
+    ReplyDraft? open;
+    for (final ReplyDraft reply in widget.replies) {
+      if (reply.id == _openReply) open = reply;
+    }
+    final ReplyDraft? reply = open;
+    final Widget editor = reply == null
+        ? const SizedBox(width: double.infinity)
+        : ReplyEditor(
+            key: ValueKey<int>(reply.id),
+            reply: reply,
+            onChanged: (String text) =>
+                widget.onEditReply?.call(reply.id, text),
+            onClose: () => setState(() => _openReply = null),
+          );
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return editor;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: editor,
     );
   }
 
@@ -992,8 +1061,14 @@ class _UsageFooter extends StatelessWidget {
 /// Horizontally scrollable row of pending-attachment chips, shown above the
 /// text field while files are staged for the next send.
 class _AttachmentChips extends StatelessWidget {
-  const _AttachmentChips({required this.attachments, required this.onRemove});
+  const _AttachmentChips({
+    this.replies = const <Widget>[],
+    required this.attachments,
+    required this.onRemove,
+  });
 
+  /// Staged reply chips, leading the row.
+  final List<Widget> replies;
   final List<OutgoingAttachment> attachments;
   final ValueChanged<OutgoingAttachment> onRemove;
 
@@ -1004,6 +1079,8 @@ class _AttachmentChips extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
         children: <Widget>[
+          for (final Widget reply in replies)
+            Padding(padding: const EdgeInsets.only(right: 8), child: reply),
           for (final OutgoingAttachment attachment in attachments)
             Padding(
               padding: const EdgeInsets.only(right: 8),

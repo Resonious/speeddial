@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import 'latest_button.dart';
 import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
+import 'replies.dart';
 import 'tool_call_card.dart';
 import 'subagent_crew.dart';
 import 'tool_run.dart';
@@ -831,6 +833,7 @@ class Timeline extends StatefulWidget {
     this.onFork,
     this.onRewind,
     this.openLocalFile,
+    this.onReply,
     this.hasOlder = false,
     this.loadingOlder = false,
     this.olderError,
@@ -897,6 +900,10 @@ class Timeline extends StatefulWidget {
   /// Offers Download or Float for a path linked from an agent message.
   final Future<void> Function(String path)? openLocalFile;
 
+  /// Stages a reply to selected text; when set, the selection's context
+  /// menu offers Reply, which opens [showReplyPopover] beside the text.
+  final void Function(String quote, String reply)? onReply;
+
   @override
   State<Timeline> createState() => _TimelineState();
 }
@@ -921,6 +928,9 @@ class _TimelineState extends State<Timeline> {
   Object? _liveStart;
   bool _requestedOlder = false;
   final PageStorageBucket _storage = PageStorageBucket();
+
+  /// The timeline's current selection as plain text, for Reply.
+  String _selectedText = '';
 
   /// Delivered messages whose row has been built, so the pop plays once.
   final Set<int> _popped = <int>{};
@@ -1080,6 +1090,39 @@ class _TimelineState extends State<Timeline> {
     _controller.jumpTo(_controller.position.minScrollExtent);
   }
 
+  Widget _selectionMenu(BuildContext context, SelectableRegionState region) {
+    final String quote = _selectedText.trim();
+    final void Function(String quote, String reply)? onReply = widget.onReply;
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: region.contextMenuAnchors,
+      buttonItems: <ContextMenuButtonItem>[
+        if (onReply != null && quote.isNotEmpty)
+          ContextMenuButtonItem(
+            label: 'Reply',
+            onPressed: () => unawaited(_reply(region, quote, onReply)),
+          ),
+        ...region.contextMenuButtonItems,
+      ],
+    );
+  }
+
+  Future<void> _reply(
+    SelectableRegionState region,
+    String quote,
+    void Function(String quote, String reply) onReply,
+  ) async {
+    final TextSelectionToolbarAnchors anchors = region.contextMenuAnchors;
+    region.hideToolbar();
+    final String? reply = await showReplyPopover(
+      context,
+      anchors: anchors,
+      quote: quote,
+    );
+    if (reply == null || !mounted) return;
+    region.clearSelection();
+    onReply(quote, reply);
+  }
+
   @override
   void dispose() {
     _controller
@@ -1214,6 +1257,11 @@ class _TimelineState extends State<Timeline> {
                   // nested scrollbars (wide tables, code) up into content.
                   child: _WithoutPadding(
                     child: SelectionArea(
+                      onSelectionChanged: widget.onReply == null
+                          ? null
+                          : (SelectedContent? content) =>
+                                _selectedText = content?.plainText ?? '',
+                      contextMenuBuilder: _selectionMenu,
                       child: CustomScrollView(
                         key: const Key('chat-timeline'),
                         controller: _controller,

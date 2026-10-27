@@ -19,6 +19,7 @@ Every effect marks something that actually happened. Reuse these before writing 
 | External PR link dragged over the app | Steady theme ember border and a clear drop hint; disappears on leave/drop, no ticker in either motion mode | `pull_request_drop_region.dart` |
 | Quote/code copied | Copy action becomes an ember-colored check and “Copied” for two seconds; no layout movement or continuous animation | `chat/markdown_blocks.dart` |
 | Image download result | A brief fade into the save receipt; a saved image shows an ember-colored check. Reduced motion shows the result immediately. | `chat/image_viewer.dart` |
+| Reply staged from a selection | The inline reply box fades and scales in beside the text; the new composer chip pops with an elastic bounce and an ember halo that cools; the chip's editor and a sent reply's detail ease open. All still under reduced motion. | `chat/replies.dart` |
 | Archived session restored | A steady ember-colored check and “Session restored” confirmation; the archived banner eases away (immediate under reduced motion) | `session_restored_notice.dart`, `chat/chat_pane.dart` |
 | Message sent, not yet confirmed | Pale "dough" bubble under a veil, a warm glint sweeping it | `chat/oven.dart` (`BakingBubble`) |
 | Message confirmed | Pops: a small bounce, a warm halo, wisps of steam | `chat/oven.dart` (`DeliveredPop`) |

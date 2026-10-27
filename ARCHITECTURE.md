@@ -399,6 +399,8 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              ShareStore (floating files and staged attachments), GitStore, McpStore, DaemonConfigStore (installed
                              harnesses + write-only environment names), DraftsStore
                              (per-daemon/session composer text persisted locally),
+                             RepliesStore (in-memory replies to selected timeline text, staged
+                             per daemon/session until a send succeeds),
                              SettingsStore (theme mode persisted locally),
                              EmbeddedDaemonStore (persisted
                              interface/port/token of the built-in daemon; restart
@@ -540,6 +542,13 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              context used/limit/percentage and optional cost estimate
                              (exact counts in a tooltip; no turn token totals). A leading `/` opens a
                              filtered menu of commands discovered from the live session.
+                             Replies (replies.dart): selecting timeline text adds Reply to the
+                             selection menu, which opens an inline reply box beside the text;
+                             the reply stages as a composer chip that opens to the quote and
+                             an editable reply. Replies need no protocol field: they ride
+                             ahead of the message text as `<reply><quote>…</quote>…</reply>`
+                             blocks (`formatMessageWithReplies`), and the user bubble parses
+                             them back into chips that expand to the quote and the reply.
                              "Oven" turn feedback (oven.dart): sent messages appear at once
                              as veiled "baking" bubbles laid out like their final rows,
                              pop with a glow and steam when the echo replaces them, and a

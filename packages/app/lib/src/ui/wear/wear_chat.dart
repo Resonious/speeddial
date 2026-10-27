@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/chat_store.dart';
+import '../../state/replies_store.dart';
 import '../../state/session_timeline.dart';
 import '../../state/turn_cache.dart';
 import '../chat/question_banner.dart';
@@ -243,8 +244,12 @@ List<_WearTimelineItem> _deriveWearTimeline(List<SessionEvent> events) {
           case HistoryRewoundEvent():
             break;
           case UserMessageEvent(:final text, :final attachments):
-            final String display = text.isNotEmpty
-                ? text
+            final ({List<SentReply> replies, String body}) parsed =
+                parseReplies(text);
+            final String display = parsed.body.isNotEmpty
+                ? parsed.body
+                : parsed.replies.isNotEmpty
+                ? parsed.replies.map((SentReply r) => '↩ ${r.reply}').join('\n')
                 : attachments.length == 1
                 ? 'Sent an attachment'
                 : 'Sent ${attachments.length} attachments';

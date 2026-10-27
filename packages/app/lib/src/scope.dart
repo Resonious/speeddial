@@ -18,6 +18,7 @@ import 'state/file_transfer_store.dart';
 import 'state/git_store.dart';
 import 'state/mcp_store.dart';
 import 'state/projects_store.dart';
+import 'state/replies_store.dart';
 import 'state/sessions_store.dart';
 import 'state/settings_store.dart';
 import 'state/share_store.dart';
@@ -403,6 +404,9 @@ class AppData {
   late final McpStore mcp;
   late final DaemonConfigStore daemonConfig;
   late final ShareStore shares;
+
+  /// Replies to selected timeline text, staged for each session's next send.
+  final RepliesStore replies = RepliesStore();
   late final FileTransferStore fileTransfers;
 
   /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
@@ -719,6 +723,7 @@ class AppData {
     _connectedEndpointIds.clear();
     fileTransfers.dispose();
     shares.dispose();
+    replies.dispose();
     connections.dispose();
     selection.dispose();
     projects.dispose();

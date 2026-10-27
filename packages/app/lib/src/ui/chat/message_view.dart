@@ -10,6 +10,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../../state/replies_store.dart';
 import '../../theme.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
@@ -19,6 +20,7 @@ import 'message_highlighter.dart';
 import 'markdown_blocks.dart';
 import 'mermaid/mermaid_diagram.dart';
 import 'mermaid/mermaid_parser.dart';
+import 'replies.dart';
 import 'typewriter.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
@@ -88,11 +90,17 @@ class UserMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool hasText = text.isNotEmpty;
+    final ({List<SentReply> replies, String body}) parsed = parseReplies(text);
+    final String body = parsed.body;
+    final bool hasText = body.isNotEmpty;
     final List<Widget> content = <Widget>[
+      if (parsed.replies.isNotEmpty) ...<Widget>[
+        SentReplies(replies: parsed.replies),
+        if (hasText || attachments.isNotEmpty) const SizedBox(height: 8),
+      ],
       if (hasText)
         Text(
-          text,
+          body,
           style: Theme.of(context).textTheme.bodyMedium
               ?.copyWith(color: scheme.onPrimaryContainer),
         ),
