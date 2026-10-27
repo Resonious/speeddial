@@ -9,6 +9,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/engine/session_engine.dart';
 import 'package:speeddial_daemon/src/git/git_service.dart';
+import 'package:speeddial_daemon/src/git/pr_service.dart';
 import 'package:speeddial_daemon/src/harnesses/harness_service.dart';
 import 'package:speeddial_daemon/src/mcp/built_in_mcp_server.dart';
 import 'package:speeddial_daemon/src/providers/provider_registry.dart';
@@ -48,6 +49,17 @@ ProviderRegistry fakeProviders() => ProviderRegistry(
   },
   modelsProbe: (command) async => const <String>[],
 );
+
+class _LookupPr extends PrService {
+  String? url;
+  List<Session>? candidates;
+  @override
+  Future<List<Session>> findSessions(String url, List<Session> sessions) async {
+    this.url = url;
+    candidates = sessions;
+    return sessions;
+  }
+}
 
 class _PrefetchGit extends GitService {
   final List<(String, String)> requests = [];
@@ -283,6 +295,7 @@ void main() {
     McpUpstreamConnector? mcpConnector,
     HarnessService? harnesses,
     GitService? gitService,
+    PrService? prService,
   }) async {
     final git = gitService ?? GitService();
     engine = SessionEngine(store: store, providers: providers, git: git);
@@ -295,6 +308,7 @@ void main() {
       providers: providers,
       authToken: authToken,
       git: git,
+      pr: prService,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
       mcpConnector: mcpConnector,
@@ -302,6 +316,30 @@ void main() {
     );
     return server!;
   }
+
+  test('PR lookup RPC returns sessions including archived forks', () async {
+    final pr = _LookupPr();
+    await startServer(prService: pr);
+    final client = await connect(server!.port);
+    addTearDown(client.close);
+    final project = Project(id: 'repo', name: 'Repo', path: tempDir.path,
+      addedAt: DateTime.utc(2026), lastActiveAt: DateTime.utc(2026));
+    store.insertProject(project);
+    final session = Session(
+      id: 'fork', projectId: project.id, providerId: 'fake', title: 'Fork',
+      status: SessionStatus.idle, model: null,
+      cwd: '/p/.speeddial-worktrees/repo-aabbccdd', baseBranch: 'main',
+      yolo: false, archived: true, createdAt: DateTime.utc(2026), updatedAt: DateTime.utc(2026),
+    );
+    store.insertSession(session);
+    final result = j(await client.peer.call('sessions.findByPullRequest',
+      {'url': 'https://github.com/org/repo/pull/42'}));
+    expect((result['sessions'] as List).single, session.toJson());
+    expect(pr.candidates!.single.archived, isTrue);
+    expect(pr.url, 'https://github.com/org/repo/pull/42');
+    await expectLater(client.peer.call('sessions.findByPullRequest', {'url': 42}),
+      throwsA(isA<DaemonError>()));
+  });
 
   test('git.prefetch warms the requested project and branch', () async {
     final git = _PrefetchGit();

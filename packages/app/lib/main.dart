@@ -86,8 +86,9 @@ Future<void> main(List<String> args) async {
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS)) {
-    await data.shares.startMobile(
-      ios: defaultTargetPlatform == TargetPlatform.iOS,
+    // PR lookup can wait on remote daemons; paint the app while it resolves.
+    unawaited(
+      data.shares.startMobile(ios: defaultTargetPlatform == TargetPlatform.iOS),
     );
     unawaited(_refreshShareCatalog(data));
   }
@@ -152,11 +153,14 @@ class _SpeedDialAppState extends State<SpeedDialApp>
   final GlobalKey<ScaffoldMessengerState> _messenger =
       GlobalKey<ScaffoldMessengerState>();
   late final SessionLinkStore _sessionLinks;
+  int _prRevealRevision = 0;
 
   @override
   void initState() {
     super.initState();
     _sessionLinks = SessionLinkStore(widget.data);
+    _prRevealRevision = widget.data.shares.pullRequests.revealRevision;
+    widget.data.shares.pullRequests.addListener(_revealPullRequest);
     WidgetsBinding.instance.addObserver(this);
     final Uri? initialUri = kIsWeb
         ? Uri.base
@@ -171,6 +175,15 @@ class _SpeedDialAppState extends State<SpeedDialApp>
         if (mounted) unawaited(_openSessionLink(link));
       });
     }
+  }
+
+  void _revealPullRequest() {
+    final int revision = widget.data.shares.pullRequests.revealRevision;
+    if (revision == _prRevealRevision) return;
+    _prRevealRevision = revision;
+    _navigator.currentState?.popUntil(
+      (Route<Object?> route) => route.isFirst && !route.willHandlePopInternally,
+    );
   }
 
   @override
@@ -216,6 +229,7 @@ class _SpeedDialAppState extends State<SpeedDialApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.data.shares.pullRequests.removeListener(_revealPullRequest);
     _sessionLinks.dispose();
     // Tear down the store graph and stop the embedded daemon (best-effort):
     // agent processes are killed and the WebSocket server closed.

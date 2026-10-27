@@ -15,6 +15,7 @@ import 'left/left_rail.dart';
 import 'native_title_bar.dart';
 import 'right/right_panel.dart';
 import 'touch_slop.dart';
+import 'pull_request_drop_region.dart';
 
 /// Width at which the three-column desktop layout kicks in.
 const double kDesktopBreakpoint = 1000;
@@ -57,11 +58,14 @@ class SpeedDialShell extends StatelessWidget {
         systemNavigationBarColor: Colors.transparent,
         systemNavigationBarIconBrightness: icons,
       ),
-      child: Stack(
-        children: <Widget>[
-          _Shell(nativeTitleBar: nativeTitleBar),
-          const _FloatingShare(),
-        ],
+      child: PullRequestDropRegion(
+        child: Stack(
+          children: <Widget>[
+            _Shell(nativeTitleBar: nativeTitleBar),
+            const _FloatingShare(),
+            const PullRequestMatches(),
+          ],
+        ),
       ),
     );
   }

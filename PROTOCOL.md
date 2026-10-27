@@ -586,6 +586,14 @@ Build/plan session modes are no longer exposed. The legacy `mode` field is ignor
 on input and omitted from sessions; `sessions.setMode` returns method not found.
 Agent task-progress `plan` events remain supported.
 
+- `sessions.findByPullRequest {url: string}` → `{sessions: Session[]}` — resolves
+  an HTTPS github.com PR URL with daemon-side `gh pr view --json headRefName`.
+  Matches the eight-hex worktree identity at the end of a `speeddial/*-<id>`
+  branch against managed `.speeddial-worktrees/*-<id>` session working directories,
+  including forks and archived sessions. PR subpage URLs are normalized. Invalid
+  URLs and non-SpeedDial branches return an empty list. Missing/unavailable `gh`,
+  unreadable PRs, malformed output and the 15-second lookup timeout log a daemon
+  warning and return an empty list without a client-facing error.
 - `sessions.list {projectId?: string, includeArchived?: boolean}` → `{sessions: Session[]}`
 - `sessions.search {query: string, projectId?: string, includeArchived?: boolean,
   limit?: int, cursor?: SessionSearchCursor}` → `SessionSearchPage`

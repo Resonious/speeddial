@@ -119,6 +119,9 @@ abstract class DaemonClient {
   // ---------------------------------------------------------------------
 
   /// Sessions, optionally filtered by project / archive state.
+  /// Resolve a GitHub PR on the daemon using gh; includes archived sessions.
+  Future<List<Session>> findSessionsByPullRequest(String url);
+
   Future<List<Session>> listSessions({
     String? projectId,
     bool includeArchived = false,

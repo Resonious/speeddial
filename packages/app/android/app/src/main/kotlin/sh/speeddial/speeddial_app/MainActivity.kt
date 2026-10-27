@@ -124,6 +124,15 @@ class MainActivity : FlutterActivity() {
             @Suppress("DEPRECATION")
             shareIntent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
         } ?: shareIntent.data ?: shareIntent.clipData?.getItemAt(0)?.uri
+        val text = shareIntent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+            ?: shareIntent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+        val linkText = if (uri?.scheme == "https" || uri?.scheme == "http") uri.toString() else text
+        if ((uri == null || uri.scheme == "https" || uri.scheme == "http") && linkText != null) {
+            val payload = mapOf("text" to linkText)
+            if (shareReady) shareChannel?.invokeMethod("incoming", payload)
+            else pendingShare = payload
+            return
+        }
         val shortcutId = shareIntent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)
         val mimeType = shareIntent.type
         thread(name = "speeddial-share-read") {

@@ -7,6 +7,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
   private let status = UILabel()
   private var targets: [[String: String]] = []
   private var provider: NSItemProvider?
+  private var sharingLink = false
   private var saving = false
   private var saved = false
   private let cancel = UIButton(type: .system)
@@ -42,7 +43,48 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
       return
     }
     provider = providers[0]
-    do { targets = try ShareInbox.shared().targets() }
+    if let provider, !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+       provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) ||
+       provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+      sharingLink = true
+      saving = true
+      cancel.isEnabled = false
+      table.isHidden = true
+      status.text = "Saving link…"
+      let typeID = provider.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+        ? UTType.url.identifier : UTType.plainText.identifier
+      provider.loadItem(forTypeIdentifier: typeID, options: nil) { [weak self] item, error in
+        let outcome: Error?
+        do {
+          if let error { throw error }
+          let text = (item as? URL)?.absoluteString ?? (item as? String)
+            ?? (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
+          guard let text else { throw ShareFailure("Could not read the shared link.") }
+          // Text files can advertise plainText without fileURL. Preserve the
+          // existing attachment flow unless the text is actually a web link.
+          let scheme = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines))?.scheme
+          if typeID == UTType.plainText.identifier && scheme != "https" && scheme != "http" {
+            Task { @MainActor in self?.prepareFileShare() }
+            return
+          }
+          try ShareInbox.shared().save(data: Data(text.utf8), name: "shared-link",
+            mimeType: "application/x-speeddial-link", target: nil)
+          outcome = nil
+        } catch { outcome = error }
+        Task { @MainActor in self?.finished(error: outcome) }
+      }
+      return
+    }
+    prepareFileShare()
+  }
+
+  private func prepareFileShare() {
+    sharingLink = false
+    saving = false
+    cancel.isEnabled = true
+    table.isHidden = false
+    status.text = "Choose a project for a new session, or attach later in SpeedDial. One file, up to 8 MiB."
+    do { targets = try ShareInbox.shared().targets(); table.reloadData() }
     catch { status.text = error.localizedDescription; table.isHidden = true }
   }
 
@@ -119,7 +161,9 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
       table.isUserInteractionEnabled = true
     } else {
       saved = true
-      status.text = "Saved. Open SpeedDial to finish attaching your file."
+      status.text = sharingLink
+        ? "Saved. Open SpeedDial to find sessions for this pull request."
+        : "Saved. Open SpeedDial to finish attaching your file."
       table.isHidden = true
       cancel.setTitle("Done", for: .normal)
     }

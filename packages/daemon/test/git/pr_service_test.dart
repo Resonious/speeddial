@@ -31,6 +31,42 @@ Future<List<String>> _capturedArgs(Directory dir) async {
 }
 
 void main() {
+  Session session(String id, String cwd, {bool archived = false}) => Session(
+    id: id, projectId: 'project', providerId: 'fake', title: id,
+    status: SessionStatus.idle, model: null, cwd: cwd, baseBranch: 'main',
+    yolo: false, archived: archived, createdAt: DateTime.utc(2026), updatedAt: DateTime.utc(2026),
+  );
+
+  test('PR lookup matches worktree identity including archived forks', () async {
+    final dir = await Directory.systemTemp.createTemp('sd_pr_lookup_');
+    addTearDown(() => dir.delete(recursive: true));
+    final gh = await _writeGhShim(dir, 'echo \'{"headRefName":"speeddial/old-title-aabbccdd"}\'');
+    final service = PrService(ghPath: gh);
+    final sessions = <Session>[
+      session('aabbccdd-original', '/p/.speeddial-worktrees/repo-aabbccdd'),
+      session('11223344-fork', '/p/.speeddial-worktrees/repo-aabbccdd', archived: true),
+      session('aabbccdd-other', '/p/.speeddial-worktrees/repo-11223344'),
+      session('unmanaged', '/p/repo-aabbccdd'),
+    ];
+    final found = await service.findSessions('https://github.com/org/repo/pull/42/files#x', sessions);
+    expect(found.map((s) => s.id), ['aabbccdd-original', '11223344-fork']);
+    expect(await _capturedArgs(dir), ['pr', 'view', 'https://github.com/org/repo/pull/42', '--json', 'headRefName']);
+  });
+
+  test('unreadable PR, malformed output, missing gh and unrelated branch are silent', () async {
+    final dir = await Directory.systemTemp.createTemp('sd_pr_lookup_');
+    addTearDown(() => dir.delete(recursive: true));
+    const url = 'https://github.com/org/repo/pull/1';
+    for (final script in ['exit 1', 'echo invalid', 'echo \'{}\'', 'echo \'{"headRefName":"main"}\'']) {
+      final gh = await _writeGhShim(dir, script);
+      expect(await PrService(ghPath: gh).findSessions(url, []), isEmpty);
+    }
+    expect(await PrService(ghPath: '${dir.path}/missing').findSessions(url, []), isEmpty);
+    await File('${dir.path}/args.log').delete();
+    expect(await PrService(ghPath: '${dir.path}/gh').findSessions('--help', []), isEmpty);
+    expect(File('${dir.path}/args.log').existsSync(), isFalse);
+  });
+
   test('isAvailable is true when gh auth status exits 0', () async {
     final dir = await Directory.systemTemp.createTemp('sd_gh_');
     final gh = await _writeGhShim(dir, 'exit 0');

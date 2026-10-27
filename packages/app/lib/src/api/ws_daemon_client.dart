@@ -844,6 +844,14 @@ class WsDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
+  Future<List<Session>> findSessionsByPullRequest(String url) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.findByPullRequest', <String, Object?>{'url': url},
+    );
+    return _decodeList(_resultField(result, 'sessions'), Session.fromJson);
+  }
+
+  @override
   Future<List<Session>> listSessions({
     String? projectId,
     bool includeArchived = false,

@@ -12,3 +12,4 @@ export 'src/explainer/svg_values.dart';
 export 'src/rpc.dart';
 export 'src/session_search.dart';
 export 'src/session_link.dart';
+export 'src/github_pr_link.dart';

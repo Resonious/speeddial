@@ -8,6 +8,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../scope.dart';
 import 'sessions_store.dart';
+import 'pull_request_link_store.dart';
 
 /// A shared or floated file is held in memory until the user stages or cancels
 /// it. Only project labels and session creation settings go to preferences.
@@ -18,6 +19,7 @@ class ShareStore extends ChangeNotifier {
   static const String channelName = 'sh.speeddial/share';
 
   final AppData data;
+  late final PullRequestLinkStore pullRequests = PullRequestLinkStore(data);
   final MethodChannel _channel = const MethodChannel(channelName);
   final Map<String, ShareTarget> _targets = <String, ShareTarget>{};
   final Map<String, ShareSettings> _settings = <String, ShareSettings>{};
@@ -206,6 +208,16 @@ class ShareStore extends ChangeNotifier {
   }
 
   Future<void> receive(Map<String, Object?> payload) async {
+    final String? text = payload['text'] as String?;
+    if (text != null) {
+      await pullRequests.open(text);
+      return;
+    }
+    if (payload['mimeType'] == 'application/x-speeddial-link') {
+      final String? encoded = payload['data'] as String?;
+      if (encoded != null) await pullRequests.open(utf8.decode(base64Decode(encoded)));
+      return;
+    }
     final String? failure = payload['error'] as String?;
     if (failure != null) {
       _pending = null;
@@ -470,6 +482,7 @@ class ShareStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    pullRequests.dispose();
     data.projects.removeListener(_syncProjects);
     data.sessions.removeListener(_syncSessions);
     data.connections.removeListener(_syncProjects);

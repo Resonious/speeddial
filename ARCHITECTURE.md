@@ -743,3 +743,12 @@ The new-session sheet warms the selected base branch fetch, sharing its
 in-flight result with worktree creation (30-second freshness, consumed on use).
 
 Ante provider/model selection and `/provider` share provider switching and state adoption; bare `/provider` opens the model picker. Rewind controls invoke the same session command operation as `/rewind`. The fork button and `/fork [seq]` share `forkSession`, inclusive message boundaries, and navigation to the child. Complete idle Ante conversations use native snapshots; arbitrary message cuts use the portable transcript handoff.
+
+GitHub PR shares and desktop text/URL drops converge in PullRequestLinkStore.
+It asks each saved daemon to resolve the PR with gh, opens a single match, or
+shows a session chooser for shared worktrees/multiple daemons. Failures log
+warnings without interrupting the user. Android delivers text through the
+existing share channel; iOS queues URL/text shares in the App Group inbox.
+The Linux runner's text_drop.cc accepts GTK text/URI copy drops and sends
+hover/text events over sh.speeddial/text-drop to the shell's drop region.
+No new dependencies or GitHub credentials enter the UI.

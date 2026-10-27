@@ -62,6 +62,7 @@ const List<String> _kProtocolMethods = <String>[
   'projects.remove',
   'projects.rename',
   'sessions.list',
+  'sessions.findByPullRequest',
   'sessions.search',
   'sessions.create',
   'sessions.fork',
@@ -527,6 +528,7 @@ class SpeedDialServer {
       'projects.remove' => _projectsRemove(params),
       'projects.rename' => _projectsRename(params),
       'sessions.list' => _sessionsList(params),
+      'sessions.findByPullRequest' => _sessionsFindByPullRequest(params),
       'sessions.search' => _sessionsSearch(params),
       'sessions.create' => _sessionsCreate(params),
       'sessions.fork' => _sessionsFork(params),
@@ -1337,6 +1339,16 @@ class SpeedDialServer {
   // -------------------------------------------------------------------------
   // sessions.*
   // -------------------------------------------------------------------------
+
+  Future<Object?> _sessionsFindByPullRequest(Map<String, Object?> params) async {
+    final String url = _requiredString(params, 'url');
+    final List<Session> sessions = await _pr.findSessions(
+      url, _store.listSessions(includeArchived: true),
+    );
+    return <String, Object?>{
+      'sessions': sessions.map((session) => session.toJson()).toList(),
+    };
+  }
 
   Object? _sessionsList(Map<String, Object?> params) {
     final projectId = params['projectId'];

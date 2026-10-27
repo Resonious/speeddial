@@ -684,6 +684,9 @@ class FakeDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
+  Future<List<Session>> findSessionsByPullRequest(String url) async => <Session>[];
+
+  @override
   Future<List<Session>> listSessions({
     String? projectId,
     bool includeArchived = false,
