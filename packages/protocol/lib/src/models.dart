@@ -628,6 +628,7 @@ class Session {
     required this.yolo,
     this.shortPrompt = false,
     this.preparing = false,
+    this.preparationStep,
     this.completionRevision = 0,
     this.done = false,
     this.pinned = false,
@@ -681,6 +682,9 @@ class Session {
   /// Worktree/provider preparation is pending; sends are queued by the daemon.
   final bool preparing;
 
+  /// Current preparation operation, or null when ready/unknown.
+  final String? preparationStep;
+
   /// Monotonically increases whenever a turn reaches a successful terminal
   /// state. Clients include the observed revision when acknowledging [done]
   /// so a delayed acknowledgement cannot clear a newer completion.
@@ -726,6 +730,7 @@ class Session {
     // Absent on pre-short-prompt daemons.
     shortPrompt: json['shortPrompt'] as bool? ?? false,
     preparing: json['preparing'] as bool? ?? false,
+    preparationStep: json['preparationStep'] as String?,
     // Absent on pre-daemon-owned-completion daemons.
     completionRevision: json['completionRevision'] as int? ?? 0,
     done: json['done'] as bool? ?? false,
@@ -754,6 +759,7 @@ class Session {
     'yolo': yolo,
     'shortPrompt': shortPrompt,
     'preparing': preparing,
+    'preparationStep': preparationStep,
     'completionRevision': completionRevision,
     'done': done,
     'pinned': pinned,

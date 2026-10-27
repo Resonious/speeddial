@@ -75,6 +75,7 @@ class Composer extends StatefulWidget {
     required this.status,
     this.sending = false,
     this.preparing = false,
+    this.preparationStep,
     this.commands = const <NativeCommand>[],
     this.onSlashStarted,
     this.sessionControls,
@@ -107,6 +108,7 @@ class Composer extends StatefulWidget {
   /// A sent message is still on its way to the daemon; sending again waits.
   final bool sending;
   final bool preparing;
+  final String? preparationStep;
 
   /// Native commands advertised by the active harness session.
   final List<NativeCommand> commands;
@@ -583,8 +585,8 @@ class _ComposerState extends State<Composer>
                 widget.status == SessionStatus.error
                     ? 'Preparation failed. Send a message to retry.'
                     : _running
-                    ? 'Preparing session… Your message is queued.'
-                    : 'Preparing session… You can send a message now.',
+                    ? '${widget.preparationStep ?? 'Preparing session'}… Your message is queued.'
+                    : '${widget.preparationStep ?? 'Preparing session'}… You can send a message now.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),

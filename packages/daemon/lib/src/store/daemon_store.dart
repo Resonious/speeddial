@@ -180,6 +180,9 @@ class DaemonStore {
         'ALTER TABLE sessions ADD COLUMN yolo INTEGER NOT NULL DEFAULT 0',
       );
     }
+    if (!sessionColumns.contains('preparation_step')) {
+      _db.execute('ALTER TABLE sessions ADD COLUMN preparation_step TEXT');
+    }
     if (!sessionColumns.contains('preparing')) {
       _db.execute(
         'ALTER TABLE sessions ADD COLUMN preparing INTEGER NOT NULL DEFAULT 0',
@@ -870,11 +873,11 @@ class DaemonStore {
     _db.execute(
       'INSERT INTO sessions (id, project_id, provider_id, title, status, '
       'mode, model, models, cwd, base_branch, thinking_level, '
-      'thinking_levels, sandbox_mode, yolo, preparing, short_prompt, '
+      'thinking_levels, sandbox_mode, yolo, preparing, preparation_step, short_prompt, '
       'completion_revision, done, '
       'archived, pinned, created_at, '
       'last_activity_at, updated_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         session.id,
         session.projectId,
@@ -891,6 +894,7 @@ class DaemonStore {
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
         session.preparing ? 1 : 0,
+        session.preparationStep,
         session.shortPrompt ? 1 : 0,
         session.completionRevision,
         session.done ? 1 : 0,
@@ -913,7 +917,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, preparing, short_prompt, completion_revision, done, archived, pinned, created_at, '
+      'yolo, preparing, preparation_step, short_prompt, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions '
       'WHERE (? IS NULL OR project_id = ?) AND (? = 1 OR archived = 0) '
       'ORDER BY created_at ASC, id ASC',
@@ -959,7 +963,7 @@ class DaemonStore {
     final rows = _db.select(
       'SELECT id, project_id, provider_id, title, status, mode, model, '
       'models, cwd, base_branch, thinking_level, thinking_levels, sandbox_mode, '
-      'yolo, preparing, short_prompt, completion_revision, done, archived, pinned, created_at, '
+      'yolo, preparing, preparation_step, short_prompt, completion_revision, done, archived, pinned, created_at, '
       'last_activity_at, updated_at FROM sessions WHERE id = ?',
       [id],
     );
@@ -973,7 +977,7 @@ class DaemonStore {
       'UPDATE sessions SET project_id = ?, provider_id = ?, title = ?, '
       'status = ?, mode = ?, model = ?, models = ?, cwd = ?, base_branch = ?, '
       'thinking_level = ?, thinking_levels = ?, sandbox_mode = ?, '
-      'yolo = ?, preparing = ?, short_prompt = ?, completion_revision = ?, done = ?, archived = ?, pinned = ?, '
+      'yolo = ?, preparing = ?, preparation_step = ?, short_prompt = ?, completion_revision = ?, done = ?, archived = ?, pinned = ?, '
       'created_at = ?, last_activity_at = ?, updated_at = ? WHERE id = ?',
       [
         session.projectId,
@@ -990,6 +994,7 @@ class DaemonStore {
         session.sandboxMode?.wire,
         session.yolo ? 1 : 0,
         session.preparing ? 1 : 0,
+        session.preparationStep,
         session.shortPrompt ? 1 : 0,
         session.completionRevision,
         session.done ? 1 : 0,
@@ -1617,6 +1622,7 @@ class DaemonStore {
     yolo: (row['yolo'] as int? ?? 0) != 0,
     shortPrompt: (row['short_prompt'] as int? ?? 0) != 0,
     preparing: (row['preparing'] as int? ?? 0) != 0,
+    preparationStep: row['preparation_step'] as String?,
     completionRevision: row['completion_revision'] as int? ?? 0,
     done: (row['done'] as int? ?? 0) != 0,
     pinned: (row['pinned'] as int) != 0,

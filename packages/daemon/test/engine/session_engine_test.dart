@@ -117,7 +117,12 @@ class _GatedWorktreeGit extends GitService {
   int worktrees = 0;
 
   @override
-  Future<String> worktreeBaseRef(String repoPath, String branch) {
+  Future<String> worktreeBaseRef(
+    String repoPath,
+    String branch, {
+    void Function(String step)? onProgress,
+  }) {
+    onProgress?.call('Fetching origin/$branch');
     started.complete();
     return base.future;
   }
@@ -367,12 +372,17 @@ void main() {
       await git.started.future;
       await engine.sendMessage(session.id, 'run after fetch');
       expect(git.worktrees, 0);
+      expect(
+        store.getSession(session.id)!.preparationStep,
+        'Fetching origin/main',
+      );
       expect(store.hasUserMessage(session.id), isTrue);
       git.base.complete('main');
       await waitFor(
         () => store.getSession(session.id)!.completionRevision == 1,
       );
       expect(git.worktrees, 1);
+      expect(store.getSession(session.id)!.preparationStep, isNull);
       expect(store.getSession(session.id)!.preparing, isFalse);
     });
 
@@ -443,7 +453,16 @@ void main() {
         engine.sendMessage(session.id, 'duplicate'),
         throwsA(isA<DaemonError>()),
       );
+      await waitFor(
+        () =>
+            store.getSession(session.id)!.preparationStep ==
+            'Preparing integration credentials',
+      );
       await engine.rename(session.id, 'Keep this title');
+      expect(
+        store.getSession(session.id)!.preparationStep,
+        'Preparing integration credentials',
+      );
       gate.complete();
       await waitFor(() => events.any((e) => e.event is TurnCompleteEvent));
       expect(store.getSession(session.id)!.preparing, isFalse);

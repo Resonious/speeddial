@@ -129,6 +129,8 @@ Session = {
   providerId: string,
   title: string,
   status: SessionStatus,
+  preparationStep: string | null, // current operation (e.g. "Fetching origin/main");
+                             // absent on older daemons; null when ready/unknown
   preparing: boolean,        // default false when absent; worktree/provider not ready
                              // true + error means preparation failed; send retries
   model: string | null,       // current model id — agent-reported when the provider

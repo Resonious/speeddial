@@ -539,6 +539,7 @@ class WsDaemonClient implements DaemonClient {
         }
       case 'session.created':
       case 'session.updated':
+        // Decode the full snapshot, including optional preparationStep.
         final Object? session = params['session'];
         if (session is Map) {
           try {

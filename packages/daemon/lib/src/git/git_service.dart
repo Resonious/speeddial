@@ -24,7 +24,11 @@ class GitService {
     await _fetchWorktreeBase(repoPath, branch);
   }
 
-  Future<bool> _fetchWorktreeBase(String repoPath, String branch) {
+  Future<bool> _fetchWorktreeBase(
+    String repoPath,
+    String branch, {
+    void Function(String step)? onProgress,
+  }) {
     _validateBranchName(branch);
     final now = DateTime.now();
     _fetchedBases.removeWhere(
@@ -33,6 +37,7 @@ class GitService {
     final key = (repoPath, branch);
     final cached = _fetchedBases[key];
     if (cached != null) return Future<bool>.value(cached.hasRemote);
+    onProgress?.call('Fetching origin/$branch');
     return _baseFetches.putIfAbsent(key, () async {
       try {
         var hasRemote = true;
@@ -259,9 +264,16 @@ class GitService {
   /// i.e. local wins when ahead, when equal, and on divergence. A branch
   /// that exists only locally or only on the remote resolves to the side
   /// that exists; one that exists on neither throws [DaemonError] `kErrGit`.
-  Future<String> worktreeBaseRef(String repoPath, String branch) async {
+  Future<String> worktreeBaseRef(
+    String repoPath,
+    String branch, {
+    void Function(String step)? onProgress,
+  }) async {
     _validateBranchName(branch);
-    final bool hasRemote = await _fetchWorktreeBase(repoPath, branch);
+    final bool hasRemote = await _fetchWorktreeBase(
+      repoPath, branch, onProgress: onProgress,
+    );
+    onProgress?.call('Checking base branch $branch');
     _fetchedBases.remove((repoPath, branch));
     final bool hasLocal =
         await _refExists(repoPath, 'refs/heads/$branch');

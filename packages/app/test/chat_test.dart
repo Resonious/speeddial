@@ -243,6 +243,7 @@ void main() {
     WidgetTester tester, {
     required AttachmentPicker picker,
     bool preparing = false,
+    String? preparationStep,
     SessionStatus status = SessionStatus.idle,
     List<NativeCommand> commands = const <NativeCommand>[],
     ClipboardImageReader? clipboardImageReader,
@@ -259,6 +260,7 @@ void main() {
           body: Composer(
             status: status,
             preparing: preparing,
+            preparationStep: preparationStep,
             commands: commands,
             attachmentPicker: picker,
             clipboardImageReader: clipboardImageReader,
@@ -271,6 +273,47 @@ void main() {
       ),
     );
   }
+
+  testWidgets('preparation operation updates while a message is queued', (
+    tester,
+  ) async {
+    await pumpComposer(
+      tester,
+      picker: () async => [],
+      preparing: true,
+      preparationStep: 'Fetching origin/main',
+    );
+    expect(
+      find.text('Fetching origin/main… You can send a message now.'),
+      findsOneWidget,
+    );
+    await pumpComposer(
+      tester,
+      picker: () async => [],
+      preparing: true,
+      preparationStep: 'Creating worktree',
+      status: SessionStatus.running,
+    );
+    expect(
+      find.text('Creating worktree… Your message is queued.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Fetching origin/main'), findsNothing);
+    await pumpComposer(
+      tester,
+      picker: () async => [],
+      preparing: true,
+      preparationStep: 'Creating worktree',
+      status: SessionStatus.error,
+    );
+    expect(
+      find.text('Preparation failed. Send a message to retry.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Creating worktree'), findsNothing);
+    await pumpComposer(tester, picker: () async => []);
+    expect(find.textContaining('Preparation failed'), findsNothing);
+  });
 
   testWidgets(
     'preparing composer accepts a message and shows the queued state',

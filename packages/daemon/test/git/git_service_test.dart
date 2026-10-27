@@ -459,15 +459,27 @@ void main() {
       await _git(repos.repo, ['push', '-u', 'origin', 'main']);
       final git = _CountingFetchGit()..gate = Completer<void>();
       final warmup = git.prefetchWorktreeBase(repos.repo.path, 'main');
-      final creating = git.worktreeBaseRef(repos.repo.path, 'main');
+      final steps = <String>[];
+      final creating = git.worktreeBaseRef(
+        repos.repo.path, 'main', onProgress: steps.add,
+      );
+      expect(steps, ['Fetching origin/main']);
       expect(git.fetches, 1);
       git.gate!.complete();
       await warmup;
       expect(await creating, 'main');
+      expect(steps, ['Fetching origin/main', 'Checking base branch main']);
       expect(git.fetches, 1);
       await git.prefetchWorktreeBase(repos.repo.path, 'main');
       expect(git.fetches, 2);
-      expect(await git.worktreeBaseRef(repos.repo.path, 'main'), 'main');
+      steps.clear();
+      expect(
+        await git.worktreeBaseRef(
+          repos.repo.path, 'main', onProgress: steps.add,
+        ),
+        'main',
+      );
+      expect(steps, ['Checking base branch main']);
       expect(git.fetches, 2);
       await git.worktreeBaseRef(repos.repo.path, 'main');
       expect(

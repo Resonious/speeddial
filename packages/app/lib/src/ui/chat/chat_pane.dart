@@ -460,7 +460,10 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     : null,
                 status: status,
                 sending: sending,
-                preparing: session?.preparing ?? false,
+                preparing:
+                    (session?.preparing ?? false) &&
+                    !data.connections.statusOf(daemonId).outOfReach,
+                preparationStep: session?.preparationStep,
                 commands: _commands,
                 onSlashStarted: () => unawaited(_loadCommands()),
                 usage: usage,

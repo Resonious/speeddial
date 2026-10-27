@@ -730,7 +730,10 @@ registration is not provided; desktop notification links can use a hosted web ap
 ### Session preparation
 
 The wire create operation persists and publishes a session with `preparing: true` before
-Git or harness I/O. SessionEngine owns background preparation and one accepted queued turn;
+Git or harness I/O. Persisted `preparationStep` updates describe the current fetch,
+base-ref check, worktree creation, agent startup, integration credential preparation,
+session opening, or model selection in the composer, including queued turns.
+The ready snapshot clears the step. SessionEngine owns background preparation and one accepted queued turn;
 the user message and attachments are persisted before acknowledgement. Cancellation drops
 the queued turn, deletion/shutdown drain preparation, and errors remain in session history.
 Interrupted preparation is retryable by sending again, without automatically replaying an

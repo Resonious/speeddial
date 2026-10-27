@@ -300,6 +300,7 @@ class SpeedDialServer {
       // broadcast yet: the engine emits updates while `sessions.create` is
       // still in flight, and a client must observe created before updated.
       if (!_createdBroadcast.contains(session.id)) return;
+      // Full snapshots include preparationStep so reconnects and live clients agree.
       _broadcast('session.updated', <String, Object?>{
         'session': session.toJson(),
       });

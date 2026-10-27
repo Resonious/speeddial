@@ -378,6 +378,22 @@ void main() {
       );
       expect(lifecycle.first.method, 'session.created');
       expect(client.of('session.created'), hasLength(1));
+      final snapshots = lifecycle
+          .map(
+            (n) => Session.fromJson(
+              (j(n.params)['session']! as Map).cast<String, Object?>(),
+            ),
+          )
+          .toList();
+      expect(
+        snapshots.map((s) => s.preparationStep),
+        containsAllInOrder([
+          'Starting fake agent',
+          'Preparing integration credentials',
+          'Opening fake session',
+        ]),
+      );
+      expect(snapshots.last.preparationStep, isNull);
     },
   );
 

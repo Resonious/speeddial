@@ -599,6 +599,22 @@ class SessionEngine {
     );
   });
 
+  void _reportPreparation(String sessionId, String step) {
+    final current = _store.getSession(sessionId);
+    if (current == null ||
+        !current.preparing ||
+        _preparations[sessionId]?.cancelled == true) {
+      return;
+    }
+    final updated = Session.fromJson({
+      ...current.toJson(),
+      'preparationStep': step,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+    _store.updateSession(updated);
+    _sessionChangesController.add(updated);
+  }
+
   // Defer the work until after sessions.create has published session.created.
   // Every accepted message is already in SQLite before its RPC is acknowledged.
   _SessionPreparation _startPreparation(Session session) {
@@ -614,8 +630,10 @@ class SessionEngine {
             final String baseRef = await _git!.worktreeBaseRef(
               project.path,
               session.baseBranch!,
+              onProgress: (step) => _reportPreparation(session.id, step),
             );
             if (preparation.cancelled) return;
+            _reportPreparation(session.id, 'Creating worktree');
             await _git.addWorktree(
               project.path,
               path: session.cwd,
@@ -885,6 +903,11 @@ class SessionEngine {
         requestedModel = requestedModel.substring(slash + 1);
       }
     }
+    void report(String step) {
+      if (preparation != null) _reportPreparation(baseSession.id, step);
+    }
+
+    report('Starting ${baseSession.providerId} agent');
     final client = _spawnAgent(baseSession);
     if (preparation != null) preparation.client = client;
     final String providerSessionId;
@@ -898,8 +921,10 @@ class SessionEngine {
       // cannot be invoked through the ACP authenticate RPC.
 
       if (info.agentCapabilities['mcpServers'] != false) {
+        report('Preparing integration credentials');
         await _prepareMcpServers?.call();
       }
+      report('Opening ${baseSession.providerId} session');
       final created = await client.newSession(
         cwd: baseSession.cwd,
         mcpServers: _mcpServersFor(baseSession, info),
@@ -920,6 +945,7 @@ class SessionEngine {
               modelOption.current ==
                   '${client.upstreamProvider}/$requestedModel')) {
         try {
+          report('Selecting model');
           adoptedOptions = await client.setConfigOption(
             providerSessionId,
             modelOption.configId,
@@ -3176,6 +3202,7 @@ class SessionEngine {
       yolo: session.yolo,
       shortPrompt: session.shortPrompt,
       preparing: session.preparing,
+      preparationStep: session.preparationStep,
       completionRevision: completed
           ? session.completionRevision + 1
           : session.completionRevision,
@@ -3204,6 +3231,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: session.preparing,
+    preparationStep: session.preparationStep,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -3231,6 +3259,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: session.preparing,
+    preparationStep: session.preparationStep,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -3256,6 +3285,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: session.preparing,
+    preparationStep: session.preparationStep,
     completionRevision: session.completionRevision,
     done: archived ? false : session.done,
     archived: archived,
@@ -3283,6 +3313,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: session.preparing,
+    preparationStep: session.preparationStep,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -3309,6 +3340,7 @@ class SessionEngine {
         yolo: session.yolo,
         shortPrompt: session.shortPrompt,
         preparing: session.preparing,
+        preparationStep: session.preparationStep,
         completionRevision: session.completionRevision,
         done: session.done,
         archived: session.archived,
@@ -3342,6 +3374,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: preparing ?? session.preparing,
+    preparationStep: preparing == false ? null : session.preparationStep,
     completionRevision: session.completionRevision,
     done: session.done,
     archived: session.archived,
@@ -3367,6 +3400,7 @@ class SessionEngine {
     yolo: session.yolo,
     shortPrompt: session.shortPrompt,
     preparing: session.preparing,
+    preparationStep: session.preparationStep,
     completionRevision: session.completionRevision,
     done: done,
     archived: session.archived,

@@ -233,6 +233,7 @@ void main() {
       };
       final session = Session.fromJson(json);
       expect(session.preparing, isFalse);
+      expect(session.preparationStep, isNull);
       expect(session.id, 'sess_abcdefghijklmno');
       expect(session.status, SessionStatus.waitingPermission);
       expect(session.toJson(), isNot(contains('mode')));
@@ -297,6 +298,7 @@ void main() {
         yolo: true,
         shortPrompt: true,
         preparing: true,
+        preparationStep: 'Fetching origin/main',
         pinned: true,
         completionRevision: 7,
         done: true,
@@ -322,6 +324,7 @@ void main() {
       expect(decoded.yolo, isTrue);
       expect(decoded.shortPrompt, isTrue);
       expect(decoded.preparing, isTrue);
+      expect(decoded.preparationStep, 'Fetching origin/main');
       expect(decoded.pinned, isTrue);
       expect(decoded.completionRevision, 7);
       expect(decoded.done, isTrue);
