@@ -112,6 +112,95 @@ void main() {
     return (app, fakeClient);
   }
 
+  testWidgets('Continue resumes an error without changing the draft', (
+    WidgetTester tester,
+  ) async {
+    final fake = _ContinueFake();
+    final (AppData app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const SessionErrorEvent(
+        message: 'Daemon restarted before the turn completed',
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'My unfinished draft');
+    await tester.tap(find.text('Continue'));
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+    expect(fake.sends, <String>['Keep going']);
+    expect(find.text('Continue'), findsNothing);
+    expect(find.text('My unfinished draft'), findsOneWidget);
+    fake.gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsNothing);
+    expect(find.text('My unfinished draft'), findsOneWidget);
+    expect(
+      app.chat.eventsFor('sess-1').whereType<UserMessageEvent>().last.text,
+      'Keep going',
+    );
+  });
+
+  testWidgets('Continue is hidden offline and on historical errors', (
+    WidgetTester tester,
+  ) async {
+    final (AppData app, FakeDaemonClient fake) = await pumpChat(tester);
+    addTearDown(app.dispose);
+    await app.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const SessionErrorEvent(message: 'Agent stopped'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsOneWidget);
+    app.connections.setStatus('fake', ConnectionStatus.reconnecting);
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsNothing);
+    app.connections.setStatus('fake', ConnectionStatus.connected);
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsOneWidget);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const UserMessageEvent(text: 'Already continued'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsNothing);
+  });
+
+  testWidgets('Continue failure is visible and can be retried', (
+    WidgetTester tester,
+  ) async {
+    final fake = _ContinueFake()..fail = true;
+    final (AppData app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const SessionErrorEvent(message: 'Agent stopped'),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    fake.gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Could not continue: Bad state: send failed'),
+      findsOneWidget,
+    );
+    expect(app.chat.lastError, isA<StateError>());
+    expect(find.text('Continue'), findsOneWidget);
+    fake.fail = false;
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(fake.sends, <String>['Keep going', 'Keep going']);
+    expect(find.text('Continue'), findsNothing);
+  });
+
   testWidgets('archived conversation restores to the session list', (
     WidgetTester tester,
   ) async {
@@ -1969,5 +2058,23 @@ class _DroppedConnectionFake extends FakeDaemonClient {
     List<OutgoingAttachment>? attachments,
   }) async {
     throw const DaemonConnectionError('peer closed');
+  }
+}
+
+class _ContinueFake extends FakeDaemonClient {
+  _ContinueFake() : super(eventDelay: const Duration(milliseconds: 1));
+  final Completer<void> gate = Completer<void>();
+  final List<String> sends = <String>[];
+  bool fail = false;
+  @override
+  Future<void> sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
+    sends.add(text);
+    await gate.future;
+    if (fail) throw StateError('send failed');
+    await super.sendMessage(sessionId, text, attachments: attachments);
   }
 }

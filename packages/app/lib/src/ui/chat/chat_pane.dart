@@ -182,6 +182,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   int _activity = 0;
   bool _forking = false;
   bool _controlling = false;
+  final ValueNotifier<bool> _continuing = ValueNotifier<bool>(false);
   bool _draftErrorShown = false;
   final ValueNotifier<int> _followLatestRequest = ValueNotifier<int>(0);
   List<NativeCommand> _commands = const <NativeCommand>[];
@@ -272,6 +273,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   @override
   void dispose() {
     _followLatestRequest.dispose();
+    _continuing.dispose();
     super.dispose();
   }
 
@@ -288,6 +290,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         data.connections,
         data.replies,
         _followLatestRequest,
+        _continuing,
       ]),
       builder: (BuildContext context, Widget? _) {
         final List<SessionEvent> events = chat.eventViewFor(sessionId);
@@ -378,6 +381,16 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     !data.connections.statusOf(daemonId).outOfReach
                 ? (int seq) =>
                       unawaited(_runControl('rewind', arguments: '$seq'))
+                : null,
+            onContinue:
+                status == SessionStatus.error &&
+                    !sending &&
+                    !_continuing.value &&
+                    !_controlling &&
+                    !catchingUp &&
+                    !(session?.archived ?? false) &&
+                    !data.connections.statusOf(daemonId).outOfReach
+                ? () => unawaited(_continueSession())
                 : null,
             followLatestRequest: _followLatestRequest.value,
             catchingUp: catchingUp,
@@ -518,6 +531,28 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         );
       },
     );
+  }
+
+  Future<void> _continueSession() async {
+    if (_continuing.value) return;
+    _continuing.value = true;
+    try {
+      await widget.data.chat.send(
+        widget.daemonId,
+        widget.sessionId,
+        'Keep going',
+      );
+      if (mounted) _followLatestRequest.value++;
+    } on Object catch (error) {
+      if (!mounted) return;
+      if (error is DaemonError) {
+        await _showError(error);
+      } else {
+        await _showMessage('Could not continue: $error');
+      }
+    } finally {
+      if (mounted) _continuing.value = false;
+    }
   }
 
   Future<void> _runControl(String name, {String arguments = ''}) async {

@@ -351,6 +351,11 @@ native platforms, and uses a bounded shared cache. Large code blocks remain full
 visible as plain text (8,000-character native / 2,000-character web highlight limit;
 32,000 characters per batch). Web highlighting uses the main thread.
 
+The latest terminal session error offers Continue while connected and ready. It
+sends “Keep going” through ChatStore, reusing the baking/delivery effects without
+consuming the composer draft or staged attachments. Pending sends suppress repeat
+activation; failed sends show a notice and allow another attempt.
+
 Package name `speeddial_app`. No third-party state management: plain `ChangeNotifier`
 stores + `ListenableBuilder`. One inherited-widget accessor `AppScope.of(context)`
 (lib/src/scope.dart) exposing the store graph. Deps: `web_socket_channel`,

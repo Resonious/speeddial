@@ -832,6 +832,7 @@ class Timeline extends StatefulWidget {
     this.attachmentLoader,
     this.onFork,
     this.onRewind,
+    this.onContinue,
     this.openLocalFile,
     this.onReply,
     this.hasOlder = false,
@@ -896,6 +897,8 @@ class Timeline extends StatefulWidget {
   /// Forks the selected session through the message event at [seq].
   final void Function(int seq)? onFork;
   final void Function(int seq)? onRewind;
+  /// Resumes the session from its latest error; null while unavailable.
+  final VoidCallback? onContinue;
 
   /// Offers Download or Float for a path linked from an agent message.
   final Future<void> Function(String path)? openLocalFile;
@@ -1210,6 +1213,7 @@ class _TimelineState extends State<Timeline> {
             attachmentLoader: widget.attachmentLoader,
             onFork: widget.onFork,
             onRewind: widget.onRewind,
+            onContinue: itemIndex == newest ? widget.onContinue : null,
             openLocalFile: widget.openLocalFile,
           );
         },
@@ -1395,6 +1399,7 @@ class _TimelineRow extends StatelessWidget {
     this.attachmentLoader,
     this.onFork,
     this.onRewind,
+    this.onContinue,
     this.openLocalFile,
   });
 
@@ -1420,6 +1425,7 @@ class _TimelineRow extends StatelessWidget {
   final Future<AttachmentData> Function(String attachmentId)? attachmentLoader;
   final void Function(int seq)? onFork;
   final void Function(int seq)? onRewind;
+  final VoidCallback? onContinue;
   final Future<void> Function(String path)? openLocalFile;
 
   @override
@@ -1504,7 +1510,10 @@ class _TimelineRow extends StatelessWidget {
       ),
       PermissionResolvedItem i => _ResolvedRecord(optionId: i.optionId),
       TurnCompleteItem _ => _TurnDivider(),
-      SessionErrorItem i => _ErrorBanner(message: i.message),
+      SessionErrorItem i => _ErrorBanner(
+        message: i.message,
+        onContinue: onContinue,
+      ),
     };
   }
 
@@ -2136,9 +2145,10 @@ class _ActivityTag extends StatelessWidget {
 }
 
 class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
+  const _ErrorBanner({required this.message, this.onContinue});
 
   final String message;
+  final VoidCallback? onContinue;
 
   @override
   Widget build(BuildContext context) {
@@ -2157,10 +2167,21 @@ class _ErrorBanner extends StatelessWidget {
           Icon(Icons.error_outline, size: 16, color: colors.error),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              message,
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: colors.error),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  message,
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: colors.error),
+                ),
+                if (onContinue != null)
+                  TextButton.icon(
+                    onPressed: onContinue,
+                    icon: const Icon(Icons.play_arrow, size: 18),
+                    label: const Text('Continue'),
+                  ),
+              ],
             ),
           ),
         ],
