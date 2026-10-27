@@ -299,9 +299,7 @@ class SessionRow extends StatelessWidget {
   }
 
   /// The agent is (or was last heard to be) mid-turn.
-  bool get _inProgress =>
-      session.status == SessionStatus.running ||
-      session.status == SessionStatus.waitingPermission;
+  bool get _inProgress => SessionsStore.isInProgress(session);
 
   @override
   Widget build(BuildContext context) {
@@ -540,6 +538,7 @@ class SessionList extends StatelessWidget {
     final int firstPreviousDay = sessions.indexWhere(
       (Session session) =>
           !session.pinned &&
+          !SessionsStore.isInProgress(session) &&
           session.lastActivityAt.toLocal().isBefore(startOfToday),
     );
     final bool showPreviousDaysDivider = firstPreviousDay > 0;
@@ -605,6 +604,7 @@ class InboxSessionList extends StatelessWidget {
     final int firstPreviousDay = sessions.indexWhere(
       (RecentSession recent) =>
           !recent.session.pinned &&
+          !SessionsStore.isInProgress(recent.session) &&
           recent.session.lastActivityAt.toLocal().isBefore(startOfToday),
     );
     final bool showPreviousDaysDivider = firstPreviousDay > 0;

@@ -534,6 +534,88 @@ void main() {
       },
     );
 
+    test('in-progress sessions sort above idle ones below pins', () async {
+      final String projectId = (await fake.listProjects()).single.id;
+      await app.sessions.refresh('fake', projectId: projectId);
+      final DateTime base = DateTime.utc(2026, 1, 1);
+      Session seed(
+        String id,
+        DateTime activity,
+        SessionStatus status, {
+        bool pinned = false,
+      }) {
+        final Session template = app.sessions.sessionsFor(projectId).first;
+        return Session.fromJson(<String, Object?>{
+          ...template.toJson(),
+          'id': id,
+          'status': status.wire,
+          'pinned': pinned,
+          'lastActivityAt': activity.toIso8601String(),
+        });
+      }
+
+      List<String> order() => app.sessions
+          .sessionsFor(projectId)
+          .map((Session s) => s.id)
+          .where((String id) => id.startsWith('order-'))
+          .toList();
+
+      for (final Session session in <Session>[
+        seed('order-pin', base, SessionStatus.idle, pinned: true),
+        seed('order-run-old', base, SessionStatus.running),
+        seed(
+          'order-run-new',
+          base.add(const Duration(minutes: 2)),
+          SessionStatus.running,
+        ),
+        seed(
+          'order-idle-new',
+          base.add(const Duration(minutes: 3)),
+          SessionStatus.idle,
+        ),
+        seed(
+          'order-wait',
+          base.add(const Duration(minutes: 1)),
+          SessionStatus.waitingPermission,
+        ),
+      ]) {
+        app.sessions.rememberSearchResult('fake', session);
+      }
+      expect(order(), <String>[
+        'order-pin',
+        'order-run-new',
+        'order-wait',
+        'order-run-old',
+        'order-idle-new',
+      ]);
+      expect(
+        app.sessions
+            .recentSessions()
+            .map((item) => item.session.id)
+            .where((String id) => id.startsWith('order-'))
+            .toList(),
+        order(),
+      );
+
+      // The top in-progress session finishing drops below the others still
+      // in progress, even though its activity is now the newest.
+      app.sessions.rememberSearchResult(
+        'fake',
+        seed(
+          'order-run-new',
+          base.add(const Duration(minutes: 4)),
+          SessionStatus.idle,
+        ),
+      );
+      expect(order(), <String>[
+        'order-pin',
+        'order-wait',
+        'order-run-old',
+        'order-run-new',
+        'order-idle-new',
+      ]);
+    });
+
     test('activity moves a session to the top through completion', () async {
       final String projectId = (await fake.listProjects()).single.id;
       await app.sessions.refresh('fake', projectId: projectId);

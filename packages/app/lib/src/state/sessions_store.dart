@@ -641,8 +641,16 @@ class SessionsStore extends StoreBase {
     bucket.insert(insertionIndex < 0 ? bucket.length : insertionIndex, session);
   }
 
+  /// The agent is (or was last heard to be) mid-turn. Unpinned in-progress
+  /// sessions sort above everything else that isn't pinned.
+  static bool isInProgress(Session session) =>
+      session.status == SessionStatus.running ||
+      session.status == SessionStatus.waitingPermission;
+
   static int _compareActivity(Session a, Session b) {
     if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    final bool aInProgress = isInProgress(a);
+    if (aInProgress != isInProgress(b)) return aInProgress ? -1 : 1;
     final int activity = b.lastActivityAt.compareTo(a.lastActivityAt);
     if (activity != 0) return activity;
     final int created = b.createdAt.compareTo(a.createdAt);
