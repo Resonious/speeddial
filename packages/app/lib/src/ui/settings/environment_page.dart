@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../scope.dart';
 import '../../state/daemon_config_store.dart';
+import '../toast.dart';
 
 /// Write-only daemon environment applied to harnesses spawned in the future.
 class EnvironmentPage extends StatefulWidget {
@@ -74,9 +75,7 @@ class _EnvironmentPageState extends State<EnvironmentPage> {
   }
 
   void _showError(Object error) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(error.toString())));
+    showToast(context, error.toString(), tone: ToastTone.error);
   }
 
   @override

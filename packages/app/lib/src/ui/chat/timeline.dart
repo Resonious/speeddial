@@ -9,6 +9,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
 import '../../theme.dart';
+import '../toast.dart';
 import 'active_pulse.dart';
 import 'catching_up.dart';
 import 'compaction.dart';
@@ -1757,11 +1758,11 @@ class _MessageWithActions extends StatelessWidget {
   Future<void> _copyMessage(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Message copied'),
-        duration: Duration(seconds: 1),
-      ),
+    showToast(
+      context,
+      'Message copied',
+      tone: ToastTone.success,
+      duration: const Duration(seconds: 2),
     );
   }
 }

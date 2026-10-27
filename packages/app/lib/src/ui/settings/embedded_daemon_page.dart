@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../scope.dart';
 import '../../state/embedded_daemon_store.dart';
+import '../toast.dart';
 
 /// Settings for the embedded in-process daemon: bind interface, fixed port,
 /// and auth token. Applying restarts the daemon and repoints its endpoint.
@@ -103,9 +104,7 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
       await data.applyEmbeddedDaemonConfig(_currentConfig());
     } on Object catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to restart: $error')));
+        showToast(context, 'Failed to restart: $error', tone: ToastTone.error);
       }
     } finally {
       if (mounted) setState(() => _applying = false);

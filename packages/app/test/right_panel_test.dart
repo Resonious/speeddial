@@ -246,7 +246,7 @@ void main() {
       findsOneWidget,
     );
 
-    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    // Let the toast's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
   });
@@ -285,7 +285,7 @@ void main() {
       contains('Please create a PR based on main'),
     );
 
-    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    // Let the toast's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
   });
@@ -312,11 +312,11 @@ void main() {
     await tester.tap(find.text('Merge into main'));
     await tester.pumpAndSettle();
 
-    // The fake resolves a fast-forward merge, which the snackbar announces.
-    expect(find.byType(SnackBar), findsOneWidget);
+    // The fake resolves a fast-forward merge, which the toast announces.
+    expect(find.byKey(const Key('toast')), findsOneWidget);
     expect(find.textContaining('Merged'), findsOneWidget);
 
-    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    // Let the toast's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
@@ -337,11 +337,11 @@ void main() {
     await tester.tap(find.text('Rebase onto main'));
     await tester.pumpAndSettle();
 
-    // The fake resolves a rebase, which the snackbar announces.
-    expect(find.byType(SnackBar), findsOneWidget);
+    // The fake resolves a rebase, which the toast announces.
+    expect(find.byKey(const Key('toast')), findsOneWidget);
     expect(find.textContaining('Rebased'), findsOneWidget);
 
-    // Let the snackbar's dismiss timer fire so no timer is pending at teardown.
+    // Let the toast's dismiss timer fire so no timer is pending at teardown.
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });

@@ -14,6 +14,7 @@ import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
 import 'native_title_bar.dart';
 import 'right/right_panel.dart';
+import 'toast.dart';
 import 'touch_slop.dart';
 import 'pull_request_drop_region.dart';
 
@@ -577,11 +578,11 @@ Future<void> _cycleThemeMode(BuildContext context) async {
     });
   } catch (_) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text('Could not save theme preference')),
-      );
+    showToast(
+      context,
+      'Could not save theme preference',
+      tone: ToastTone.error,
+    );
   }
 }
 

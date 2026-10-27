@@ -5,6 +5,7 @@ import '../../scope.dart';
 import '../../state/sessions_store.dart';
 import '../../theme.dart';
 import '../chat/typed_text.dart';
+import '../toast.dart';
 import 'session_status_glyph.dart';
 
 /// Palette color for a session lifecycle status.
@@ -230,9 +231,11 @@ class SessionRow extends StatelessWidget {
       await data.sessions.pin(daemonId, session.id, !session.pinned);
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
+      showToast(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not update pin: $error')));
+        'Could not update pin: $error',
+        tone: ToastTone.error,
+      );
     }
   }
 

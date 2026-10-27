@@ -3,6 +3,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/sessions_store.dart';
+import '../toast.dart';
 
 /// Daemon-scoped archive storage preview and explicit destructive cleanup.
 class ArchivePage extends StatefulWidget {
@@ -34,10 +35,8 @@ class _ArchivePageState extends State<ArchivePage> {
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+  void _showMessage(String message, {ToastTone tone = ToastTone.error}) {
+    showToast(context, message, tone: tone);
   }
 
   Future<void> _clear(ArchivePreview preview) async {
@@ -93,6 +92,7 @@ class _ArchivePageState extends State<ArchivePage> {
       if (mounted) {
         _showMessage(
           'Deleted ${result.deletedSessionIds.length} archived sessions and ${result.removedWorktreeCount} worktrees.',
+          tone: ToastTone.success,
         );
       }
     } catch (error) {

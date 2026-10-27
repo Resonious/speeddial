@@ -3,6 +3,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/daemon_config_store.dart';
+import '../toast.dart';
 
 /// Installed supported harnesses on one daemon, with native update actions.
 class HarnessesPage extends StatefulWidget {
@@ -39,20 +40,18 @@ class _HarnessesPageState extends State<HarnessesPage> {
       final HarnessInfo updated = await AppScope.of(context).daemonConfig
           .updateHarness(widget.daemonId, harness.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text('${updated.name} is now ${updated.version}')),
-        );
+      showToast(
+        context,
+        '${updated.name} is now ${updated.version}',
+        tone: ToastTone.success,
+      );
     } on Object catch (error) {
       if (mounted) _showError(error);
     }
   }
 
   void _showError(Object error) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(error.toString())));
+    showToast(context, error.toString(), tone: ToastTone.error);
   }
 
   @override

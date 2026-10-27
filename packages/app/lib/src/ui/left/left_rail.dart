@@ -6,6 +6,7 @@ import '../../state/projects_store.dart';
 import '../../state/settings_store.dart';
 import '../connection_status_indicator.dart';
 import '../segmented_tab_bar.dart';
+import '../toast.dart';
 import 'inbox_tab.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
@@ -52,8 +53,10 @@ class _LeftRailState extends State<LeftRail>
       await _settings!.setLeftRailTab(tab);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not save rail tab preference')),
+      showToast(
+        context,
+        'Could not save rail tab preference',
+        tone: ToastTone.error,
       );
     }
   }

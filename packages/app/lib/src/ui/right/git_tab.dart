@@ -7,6 +7,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/git_store.dart';
 import '../../theme.dart';
+import '../toast.dart';
 import 'diff_view.dart';
 
 /// Git workspace tab: branch picker with ahead/behind chips, staged and
@@ -306,14 +307,14 @@ class _GitPaneState extends State<_GitPane> {
     return null;
   }
 
-  /// Copies [branch] to the clipboard and confirms with a brief SnackBar.
+  /// Copies [branch] to the clipboard and confirms with a brief toast.
   static void _copyBranchName(BuildContext context, String branch) {
     Clipboard.setData(ClipboardData(text: branch));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Copied "$branch"'),
-        duration: const Duration(seconds: 1),
-      ),
+    showToast(
+      context,
+      'Copied "$branch"',
+      tone: ToastTone.success,
+      duration: const Duration(seconds: 2),
     );
   }
 
@@ -489,7 +490,7 @@ class _GitPaneState extends State<_GitPane> {
   Future<void> _commit() => _sendToSession('Please commit your changes');
 
   /// Sends [text] to the selected session as a user message. Failures
-  /// surface in a SnackBar: the git store's `errorFor` only covers
+  /// surface in a toast: the git store's `errorFor` only covers
   /// store-run operations, and this bypasses it.
   Future<void> _sendToSession(String text) async {
     final String? sessionId = widget.sessionId;
@@ -498,21 +499,11 @@ class _GitPaneState extends State<_GitPane> {
       await _app.chat.send(widget.daemonId, sessionId, text);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorText(error)),
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      showToast(context, _errorText(error), tone: ToastTone.error);
       return;
     }
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Sent to session: $text'),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showToast(context, 'Sent to session: $text', tone: ToastTone.success);
   }
 
   Future<void> _push() async {
@@ -539,8 +530,8 @@ class _GitPaneState extends State<_GitPane> {
             '(${m.fastForward ? 'fast-forward' : 'merge commit'})'
             '${m.baseFastForwarded ? ' — ${m.baseBranch} fast-forwarded to origin/${m.baseBranch} first' : ''}';
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(text), duration: const Duration(seconds: 5)));
+      showToast(context, text,
+          tone: ToastTone.success, duration: const Duration(seconds: 5));
       await _app.git.refresh(widget.daemonId, widget.projectId,
           sessionId: widget.sessionId);
       // The merge landed on the base branch in the project checkout.
@@ -564,8 +555,8 @@ class _GitPaneState extends State<_GitPane> {
         text = 'Rebased ${r.sessionBranch} onto ${r.baseBranch}'
             '${r.baseFastForwarded ? ' — ${r.baseBranch} fast-forwarded to origin/${r.baseBranch} first' : ''}';
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(text), duration: const Duration(seconds: 5)));
+      showToast(context, text,
+          tone: ToastTone.success, duration: const Duration(seconds: 5));
       await _app.git.refresh(widget.daemonId, widget.projectId,
           sessionId: widget.sessionId);
       if (r.baseFastForwarded) {

@@ -9,6 +9,7 @@ import '../../state/file_transfer_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
 import '../session_restored_notice.dart';
+import '../toast.dart';
 import 'ante_controls.dart';
 import 'catching_up.dart';
 import 'composer.dart';
@@ -139,7 +140,7 @@ class _ChatPaneState extends State<ChatPane> {
 
 /// Renders the selected session's live surface. Stateful so the timeline
 /// completed turns are cached while the live tail updates, and so
-/// send/cancel failures can surface a SnackBar.
+/// send/cancel failures can surface a toast.
 class _SessionSurface extends StatefulWidget {
   const _SessionSurface({
     super.key,
@@ -747,12 +748,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
     final String text = error is DaemonConnectionError
         ? kConnectionLostMessage
         : error.message;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    showToast(context, text, tone: ToastTone.error);
   }
 
+  /// Every caller reports a failure ("Could not …").
   Future<void> _showMessage(String text) async {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    showToast(context, text, tone: ToastTone.error);
   }
 }
 

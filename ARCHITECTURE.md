@@ -426,6 +426,11 @@ lib/src/ui/shell.dart        responsive shell: >=1000px → three columns (left 
                              wide tables and code blocks win sideways drags.
 lib/src/ui/flame.dart        hand-painted flame glyph (flickering seamless loop, blaze or
                              blue pilot light) marking agent work in the rail and chat
+lib/src/ui/toast.dart        showToast/showToastOn: app notices and failures (info, success,
+                             error tones) stacked below the top bar in the root overlay so
+                             they never cover the composer; close button, hover holds the
+                             timer, repeats restart instead of stacking, at most three.
+                             Use instead of SnackBar (Wear keeps SnackBars).
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
                              hierarchy and connection controls; Inbox lists sessions across
                              every configured daemon (pinned first, then activity), with

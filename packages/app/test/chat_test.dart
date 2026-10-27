@@ -1455,7 +1455,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('send failure shows a SnackBar and restores the composer text', (
+  testWidgets('send failure shows a toast and restores the composer text', (
     WidgetTester tester,
   ) async {
     final FakeDaemonClient fake = _FailingSendFake();
@@ -1481,8 +1481,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
-    // DaemonError surfaced as a SnackBar...
+    await pumpUntil(tester, () => find.byKey(const Key('toast')).evaluate().isNotEmpty);
+    // DaemonError surfaced as a toast...
     expect(find.text('a turn is already running'), findsOneWidget);
     expect(position.pixels, closeTo(readingOffset, 0.1));
     // ...the optimistic bubble is gone and the flame is out again...
@@ -1494,7 +1494,7 @@ void main() {
     expect(field.controller!.text, 'hello');
     expect(find.byIcon(Icons.send), findsOneWidget); // send re-enabled
 
-    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    // Let the toast auto-dismiss timer fire so the test ends clean.
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
@@ -1508,7 +1508,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty);
+    await pumpUntil(tester, () => find.byKey(const Key('toast')).evaluate().isNotEmpty);
     // The drop self-heals (auto-reconnect + resync): transient copy only.
     expect(find.text(kConnectionLostMessage), findsOneWidget);
     expect(find.text('peer closed'), findsNothing);
@@ -1516,7 +1516,7 @@ void main() {
     final TextField field = tester.widget<TextField>(find.byType(TextField));
     expect(field.controller!.text, 'hello');
 
-    // Let the SnackBar auto-dismiss timer fire so the test ends clean.
+    // Let the toast auto-dismiss timer fire so the test ends clean.
     await tester.pump(const Duration(seconds: 6));
     await tester.pumpAndSettle();
   });
@@ -2036,7 +2036,7 @@ Future<String?> _fakeSessionModel(FakeDaemonClient fake) async =>
         .model;
 
 /// A fake whose sends always fail like a turn conflict, driving the
-/// composer/pane failure path (SnackBar + text restore).
+/// composer/pane failure path (toast + text restore).
 class _FailingSendFake extends FakeDaemonClient {
   @override
   Future<void> sendMessage(

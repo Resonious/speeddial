@@ -7,6 +7,7 @@ import '../../scope.dart';
 import '../../oauth/localhost_oauth_callback.dart';
 import '../../state/mcp_store.dart';
 import '../chat/external_link_launcher.dart';
+import '../toast.dart';
 
 /// Daemon-scoped settings for MCP servers injected into ACP sessions.
 class McpSettingsPage extends StatefulWidget {
@@ -59,9 +60,7 @@ class _McpSettingsPageState extends State<McpSettingsPage> {
   }
 
   void _showError(Object error) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(error.toString())));
+    showToast(context, error.toString(), tone: ToastTone.error);
   }
 
   Future<void> _openEditor([McpServerProfile? existing]) async {

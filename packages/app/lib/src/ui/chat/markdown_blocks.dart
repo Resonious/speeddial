@@ -8,6 +8,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme.dart';
+import '../toast.dart';
 
 /// Allows embedded code to contribute its full wrapped height to a paragraph.
 /// flutter_markdown_plus forces a one-line strut even around WidgetSpans; its
@@ -217,8 +218,10 @@ class _CopyableMarkdownBlockState extends State<CopyableMarkdownBlock> {
       });
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        const SnackBar(content: Text('Could not copy to clipboard')),
+      showToast(
+        context,
+        'Could not copy to clipboard',
+        tone: ToastTone.error,
       );
     }
   }

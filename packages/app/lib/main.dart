@@ -13,6 +13,7 @@ import 'src/scope.dart';
 import 'src/theme.dart';
 import 'src/ui/native_title_bar.dart';
 import 'src/ui/shell.dart';
+import 'src/ui/toast.dart';
 
 Future<void> main(List<String> args) async {
   if (await runMcpIfRequested(args)) return;
@@ -150,8 +151,6 @@ class SpeedDialApp extends StatefulWidget {
 class _SpeedDialAppState extends State<SpeedDialApp>
     with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
-  final GlobalKey<ScaffoldMessengerState> _messenger =
-      GlobalKey<ScaffoldMessengerState>();
   late final SessionLinkStore _sessionLinks;
   int _prRevealRevision = 0;
 
@@ -214,14 +213,14 @@ class _SpeedDialAppState extends State<SpeedDialApp>
     } on Object catch (error) {
       debugPrint('Session link failed: $error');
       if (!mounted) return;
-      _messenger.currentState?.showSnackBar(
-        SnackBar(
-          content: Text(
-            error is SessionLinkException
-                ? error.message
-                : 'Could not open the session. Check your daemon connections.',
-          ),
-        ),
+      final OverlayState? overlay = _navigator.currentState?.overlay;
+      if (overlay == null) return;
+      showToastOn(
+        overlay,
+        error is SessionLinkException
+            ? error.message
+            : 'Could not open the session. Check your daemon connections.',
+        tone: ToastTone.error,
       );
     }
   }
@@ -273,7 +272,6 @@ class _SpeedDialAppState extends State<SpeedDialApp>
         builder: (BuildContext context, Widget? _) {
           return MaterialApp(
             navigatorKey: _navigator,
-            scaffoldMessengerKey: _messenger,
             // Session links select within the existing shell; they do not
             // create a second Navigator route on cold launch.
             initialRoute: '/',

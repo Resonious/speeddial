@@ -12,6 +12,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../state/replies_store.dart';
 import '../../theme.dart';
+import '../toast.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
 import 'history_expansion.dart';
@@ -561,10 +562,10 @@ class _AgentMessageViewState extends State<AgentMessageView> {
       // The failure is reported in the UI below.
     }
     if (opened || !mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        content: Text('Could not open URL. Right-click it to copy the URL.'),
-      ),
+    showToast(
+      context,
+      'Could not open URL. Right-click it to copy the URL.',
+      tone: ToastTone.error,
     );
   }
 
@@ -937,9 +938,7 @@ abstract final class _LinkMenu {
     String href,
     Offset globalPosition,
   ) async {
-    final ScaffoldMessengerState? messenger = ScaffoldMessenger.maybeOf(
-      context,
-    );
+    final OverlayState? toasts = Overlay.maybeOf(context, rootOverlay: true);
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final Offset position = overlay.globalToLocal(globalPosition);
@@ -966,8 +965,8 @@ abstract final class _LinkMenu {
     );
     if (action != _LinkMenuAction.copyUrl) return;
     await Clipboard.setData(ClipboardData(text: href));
-    if (messenger == null || !messenger.mounted) return;
-    messenger.showSnackBar(const SnackBar(content: Text('URL copied')));
+    if (toasts == null || !toasts.mounted) return;
+    showToastOn(toasts, 'URL copied', tone: ToastTone.success);
   }
 }
 

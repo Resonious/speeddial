@@ -183,7 +183,7 @@ class Composer extends StatefulWidget {
   final ValueChanged<List<int>>? onRepliesSent;
 
   /// Starts a turn with [text] and [attachments]. Completes when the daemon
-  /// accepted it; on failure (a [DaemonError] surfaced as a SnackBar by the
+  /// accepted it; on failure (a [DaemonError] surfaced as a toast by the
   /// caller) the composer restores BOTH the text into the field and the
   /// attachments into the chip row so the draft is never lost. Returning a
   /// future is what lets the composer know the send outcome.
@@ -547,7 +547,7 @@ class _ComposerState extends State<Composer>
 
   /// Runs the send future; restores the draft (text into the field AND
   /// attachments into the chip row) when it fails so a rejected send (e.g.
-  /// a conflict surfaced as a SnackBar by the pane) never loses the user's
+  /// a conflict surfaced as a toast by the pane) never loses the user's
   /// message.
   Future<void> _dispatch(
     String message,
