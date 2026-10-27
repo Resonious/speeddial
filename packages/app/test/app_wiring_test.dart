@@ -315,10 +315,8 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(
-        find.text('Preparing session… You can send a message now.'),
-        findsOneWidget,
-      );
+      expect(find.text('Preparing session…'), findsOneWidget);
+      expect(find.text(' You can send a message now.'), findsOneWidget);
 
       await tester.runAsync(() async {
         await data.connections.updateEndpoint(

@@ -11,6 +11,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../theme.dart';
 import 'compaction.dart' show compactTokens;
 import 'model_picker.dart';
+import 'typed_text.dart';
 
 /// Picks files for attachment. The record carries the file name and raw
 /// bytes; the composer turns them into base64 [OutgoingAttachment]s.
@@ -582,14 +583,15 @@ class _ComposerState extends State<Composer>
           if (widget.preparing)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: Text(
-                widget.status == SessionStatus.error
-                    ? 'Preparation failed. Send a message to retry.'
-                    : _running
-                    ? '${widget.preparationStep ?? 'Preparing session'}… Your message is queued.'
-                    : '${widget.preparationStep ?? 'Preparing session'}… You can send a message now.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              child: widget.status == SessionStatus.error
+                  ? Text(
+                      'Preparation failed. Send a message to retry.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    )
+                  : _PreparationNotice(
+                      step: widget.preparationStep ?? 'Preparing session',
+                      queued: _running,
+                    ),
             ),
           _ControlsRow(
             sessionControls: widget.sessionControls,
@@ -761,6 +763,48 @@ class _ComposerState extends State<Composer>
     ),
     child: child,
   );
+}
+
+/// What preparation is doing now. A new step backspaces the old one and
+/// types itself in, quicker than a rename since steps can fly by; the rest
+/// of the line stays put.
+class _PreparationNotice extends StatelessWidget {
+  const _PreparationNotice({required this.step, required this.queued});
+
+  final String step;
+  final bool queued;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final SpeedDialColors colors = context.speedDialColors;
+    final TextStyle? style = theme.textTheme.bodySmall;
+    return Row(
+      children: <Widget>[
+        Flexible(
+          child: TypedText(
+            '$step…',
+            style: style,
+            typeRate: 220,
+            eraseRate: 480,
+            caretColor: theme.brightness == Brightness.dark
+                ? colors.flameTip
+                : colors.flameRoot,
+          ),
+        ),
+        Flexible(
+          child: Text(
+            queued
+                ? ' Your message is queued.'
+                : ' You can send a message now.',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _ControlsRow extends StatelessWidget {

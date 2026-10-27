@@ -274,31 +274,48 @@ void main() {
     );
   }
 
-  testWidgets('preparation operation updates while a message is queued', (
-    tester,
-  ) async {
+  testWidgets('preparation operation types over the last one', (tester) async {
     await pumpComposer(
       tester,
       picker: () async => [],
       preparing: true,
       preparationStep: 'Fetching origin/main',
     );
-    expect(
-      find.text('Fetching origin/main… You can send a message now.'),
-      findsOneWidget,
-    );
+    expect(find.text('Fetching origin/main…'), findsOneWidget);
+    expect(find.text(' You can send a message now.'), findsOneWidget);
     await pumpComposer(
       tester,
       picker: () async => [],
       preparing: true,
-      preparationStep: 'Creating worktree',
+      preparationStep: 'Fetching origin/feature',
       status: SessionStatus.running,
     );
-    expect(
-      find.text('Creating worktree… Your message is queued.'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Fetching origin/main'), findsNothing);
+    expect(find.text(' Your message is queued.'), findsOneWidget);
+
+    String shown() => tester
+        .widgetList<Text>(find.byType(Text))
+        .map((Text text) => text.data ?? '')
+        .firstWhere((String data) => data.startsWith('Fetching'));
+    final List<String> frames = <String>[];
+    for (int i = 0; i < 100 && shown() != 'Fetching origin/feature…'; i++) {
+      await tester.pump(const Duration(milliseconds: 8));
+      frames.add(shown());
+    }
+    // It erases only what differs, then types the rest.
+    expect(frames, contains('Fetching origin/'));
+    expect(frames, isNot(contains('Fetching')));
+    for (final String frame in frames) {
+      expect(
+        'Fetching origin/main…'.startsWith(frame) ||
+            'Fetching origin/feature…'.startsWith(frame),
+        isTrue,
+        reason: frame,
+      );
+    }
+    // Faster than a rename: 15 characters in well under 200ms.
+    expect(frames.length, lessThan(25));
+    expect(find.textContaining('origin/main'), findsNothing);
+
     await pumpComposer(
       tester,
       picker: () async => [],
@@ -327,10 +344,8 @@ void main() {
           sent.add(text);
         },
       );
-      expect(
-        find.text('Preparing session… You can send a message now.'),
-        findsOneWidget,
-      );
+      expect(find.text('Preparing session…'), findsOneWidget);
+      expect(find.text(' You can send a message now.'), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'Start when ready');
       await tester.pump();
       await tester.tap(find.byTooltip('Send'));
@@ -346,10 +361,8 @@ void main() {
         preparing: true,
         status: SessionStatus.running,
       );
-      expect(
-        find.text('Preparing session… Your message is queued.'),
-        findsOneWidget,
-      );
+      expect(find.text('Preparing session…'), findsOneWidget);
+      expect(find.text(' Your message is queued.'), findsOneWidget);
       expect(find.byTooltip('Stop'), findsOneWidget);
       expect(find.byTooltip('Send'), findsNothing);
     },

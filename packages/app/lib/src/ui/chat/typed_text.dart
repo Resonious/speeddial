@@ -14,6 +14,8 @@ class TypedText extends StatefulWidget {
     this.style,
     this.typeIn = false,
     this.caretColor,
+    this.typeRate = defaultTypeRate,
+    this.eraseRate = defaultEraseRate,
   });
 
   final String text;
@@ -22,8 +24,11 @@ class TypedText extends StatefulWidget {
   final Color? caretColor;
 
   /// Typing pace, in characters a second; backspacing goes faster.
-  static const double typeRate = 70;
-  static const double eraseRate = 160;
+  final double typeRate;
+  final double eraseRate;
+
+  static const double defaultTypeRate = 70;
+  static const double defaultEraseRate = 160;
 
   @override
   State<TypedText> createState() => _TypedTextState();
@@ -104,13 +109,13 @@ class _TypedTextState extends State<TypedText>
         (elapsed - last).inMicroseconds / Duration.microsecondsPerSecond;
     final String before = _visible;
     if (_erasing) {
-      _shown -= TypedText.eraseRate * step;
+      _shown -= widget.eraseRate * step;
       if (_shown <= _keep) {
         _erasing = false;
         _shown = _keep.toDouble();
       }
     } else {
-      _shown += TypedText.typeRate * step;
+      _shown += widget.typeRate * step;
       if (_shown >= _to.length) _shown = _to.length.toDouble();
     }
     if (!_busy) _ticker.stop();
