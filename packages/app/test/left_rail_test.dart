@@ -1169,6 +1169,47 @@ void main() {
     expect(app.sessions.byId('sess-1')!.title, 'Ship it');
   });
 
+  testWidgets('a renamed session backspaces and retypes its title', (
+    WidgetTester tester,
+  ) async {
+    final FakeDaemonClient client = FakeDaemonClient(
+      eventDelay: const Duration(milliseconds: 1),
+    );
+    final AppData app = await pumpRail(tester, client: client);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    final Finder row = find.byKey(const ValueKey<String>('session-sess-1'));
+    String shown() => tester
+        .widget<Text>(
+          find.descendant(of: row, matching: find.byType(Text)).first,
+        )
+        .data!;
+    expect(shown(), 'Build the feature');
+
+    await client.renameSession('sess-1', 'Build the oven');
+    final List<String> frames = <String>[];
+    for (int i = 0; i < 200 && shown() != 'Build the oven'; i++) {
+      await tester.pump(const Duration(milliseconds: 8));
+      frames.add(shown());
+    }
+
+    // It erases only what differs, then types the rest, never jumping.
+    expect(frames, contains('Build the '));
+    expect(frames, isNot(contains('Build')));
+    for (final String frame in frames) {
+      expect(
+        'Build the feature'.startsWith(frame) ||
+            'Build the oven'.startsWith(frame),
+        isTrue,
+        reason: frame,
+      );
+    }
+    expect(frames.last, 'Build the oven');
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('add daemon dialog still adds an endpoint to the rail', (
     WidgetTester tester,
   ) async {

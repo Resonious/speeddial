@@ -4,6 +4,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/sessions_store.dart';
 import '../../theme.dart';
+import '../chat/typed_text.dart';
 import 'session_status_glyph.dart';
 
 /// Palette color for a session lifecycle status.
@@ -343,13 +344,16 @@ class SessionRow extends StatelessWidget {
           ),
         ),
       ),
-      title: Text(
+      // A new name backspaces the old one and types itself in, like a
+      // tool call's line.
+      title: TypedText(
         session.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
         style: textTheme.bodySmall?.copyWith(
           color: selected ? scheme.primary : null,
         ),
+        caretColor: Theme.of(context).brightness == Brightness.dark
+            ? context.speedDialColors.flameTip
+            : context.speedDialColors.flameRoot,
       ),
       subtitle: Wrap(
         spacing: 6,

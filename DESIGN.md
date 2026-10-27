@@ -27,6 +27,7 @@ Every effect marks something that actually happened. Reuse these before writing 
 | Agent writing | Typewriter with an ember at the typing point and a few sparks; fresh text glows behind it and cools; the ember pops (flash, burst of sparks, smoke) when the message is done | `chat/typewriter.dart` |
 | Tool call running | Icon glows hot, a glint sweeps its title, elapsed time ticks; cools when done | `chat/tool_call_heat.dart`, `chat/heat_shimmer.dart` |
 | Busy run of tool calls and thinking | One steady cell: the thought streams on its own line, the call's description types, backspaces and retypes | `chat/tool_run.dart`, `chat/typed_text.dart`, `chat/thought_line.dart` |
+| Session renamed (left rail) | The old name backspaces to what it shares with the new one under an ember caret, then the new name types in; swaps at once under reduced motion | `left/session_list.dart` (`SessionRow`), `chat/typed_text.dart` |
 | Subagents | A crew of small flames that flare as they report, cold once the turn ends | `chat/subagent_crew.dart` |
 | Compaction | Divider: "Reducing the conversation…" with bubbles simmering along the line, then "Conversation reduced · 313k → 48k tokens" | `chat/compaction.dart` |
 | Catching up after a reconnect | Strip rises with a flame while a haze "reheats" the stale timeline; missed rows rise into place | `chat/catching_up.dart` |
