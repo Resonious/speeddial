@@ -754,3 +754,17 @@ existing share channel; iOS queues URL/text shares in the App Group inbox.
 The Linux runner's text_drop.cc accepts GTK text/URI copy drops and sends
 hover/text events over sh.speeddial/text-drop to the shell's drop region.
 No new dependencies or GitHub credentials enter the UI.
+
+### Release download server
+
+`scripts/build_and_serve.sh` launches the standard-library Python build server.
+It serves the repository-owned `downloads.html` immediately, builds on startup or
+Enter, and polls the checkout's full HEAD every two seconds. Builds serialize;
+a changed HEAD during a build triggers another pass afterwards. Stdin EOF leaves
+the watcher running. App, watch, and daemon builds run concurrently in separate
+packages, staging into a unique temporary directory before atomically replacing
+each download. Failures retain existing artifacts and retry on Enter or new HEAD.
+`/status.json` reports build state and each published file's byte size and UTC
+mtime (publication time for new builds; existing files retain their original
+mtime). The page polls without caching and uses the viewer's local time zone.
+This standalone HTTP endpoint does not change the daemon's JSON-RPC protocol.
