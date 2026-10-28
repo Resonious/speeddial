@@ -772,14 +772,32 @@ class _ArchivedSessionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    // An icon, a heavier label and a bottom rule mark this as pane chrome,
+    // so it doesn't read as the first line of the transcript beneath it.
     final Widget child = archived
         ? Material(
-            color: Theme.of(context).colorScheme.surfaceContainerHigh,
+            color: scheme.surfaceContainerHighest,
+            shape: Border(bottom: BorderSide(color: scheme.outlineVariant)),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
               child: Row(
                 children: <Widget>[
-                  const Expanded(child: Text('Archived session')),
+                  Icon(
+                    Icons.archive_outlined,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Archived session',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                   TextButton.icon(
                     key: const Key('restore-session'),
                     onPressed: restoring ? null : onRestore,
