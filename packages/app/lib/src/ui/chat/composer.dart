@@ -835,8 +835,8 @@ class _ComposerState extends State<Composer>
 }
 
 /// What preparation is doing now. A new step backspaces the old one and
-/// types itself in, quicker than a rename since steps can fly by; the rest
-/// of the line stays put.
+/// types itself in, quicker than a rename since steps can fly by. The hint
+/// sits at the far end so the typing never pushes it around.
 class _PreparationNotice extends StatelessWidget {
   const _PreparationNotice({required this.step, required this.queued});
 
@@ -850,26 +850,25 @@ class _PreparationNotice extends StatelessWidget {
     final TextStyle? style = theme.textTheme.bodySmall;
     return Row(
       children: <Widget>[
-        Flexible(
-          child: TypedText(
-            '$step…',
-            style: style,
-            typeRate: 220,
-            eraseRate: 480,
-            caretColor: theme.brightness == Brightness.dark
-                ? colors.flameTip
-                : colors.flameRoot,
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TypedText(
+              '$step…',
+              style: style,
+              typeRate: 220,
+              eraseRate: 480,
+              caretColor: theme.brightness == Brightness.dark
+                  ? colors.flameTip
+                  : colors.flameRoot,
+            ),
           ),
         ),
-        Flexible(
-          child: Text(
-            queued
-                ? ' Your message is queued.'
-                : ' You can send a message now.',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
+        const SizedBox(width: 12),
+        Text(
+          queued ? 'Your message is queued.' : 'You can send a message now.',
+          maxLines: 1,
+          style: style?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),
       ],
     );

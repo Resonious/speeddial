@@ -371,7 +371,7 @@ void main() {
       preparationStep: 'Fetching origin/main',
     );
     expect(find.text('Fetching origin/main…'), findsOneWidget);
-    expect(find.text(' You can send a message now.'), findsOneWidget);
+    expect(find.text('You can send a message now.'), findsOneWidget);
     await pumpComposer(
       tester,
       picker: () async => [],
@@ -379,7 +379,7 @@ void main() {
       preparationStep: 'Fetching origin/feature',
       status: SessionStatus.running,
     );
-    expect(find.text(' Your message is queued.'), findsOneWidget);
+    expect(find.text('Your message is queued.'), findsOneWidget);
 
     String shown() => tester
         .widgetList<Text>(find.byType(Text))
@@ -434,7 +434,7 @@ void main() {
         },
       );
       expect(find.text('Preparing session…'), findsOneWidget);
-      expect(find.text(' You can send a message now.'), findsOneWidget);
+      expect(find.text('You can send a message now.'), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'Start when ready');
       await tester.pump();
       await tester.tap(find.byTooltip('Send'));
@@ -451,7 +451,7 @@ void main() {
         status: SessionStatus.running,
       );
       expect(find.text('Preparing session…'), findsOneWidget);
-      expect(find.text(' Your message is queued.'), findsOneWidget);
+      expect(find.text('Your message is queued.'), findsOneWidget);
       expect(find.byTooltip('Stop'), findsOneWidget);
       expect(find.byTooltip('Send'), findsNothing);
     },
