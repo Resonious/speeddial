@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpeedDial — your coding agents, on speed dial</title>
+  <meta name="description" content="SpeedDial is a fast agent development environment. Run Claude Code, Codex and friends on every machine you own, and watch them cook from your desk or your phone.">
+  <meta name="theme-color" content="#000000">
+  <meta property="og:title" content="SpeedDial — your coding agents, on speed dial">
+  <meta property="og:description" content="Every agent, every machine, one dial. A fast agent development environment in Dart and Flutter.">
+  <meta property="og:image" content="/shots/run-dark.webp">
+  <link rel="icon" href="/favicon.png">
+  <link rel="preload" href="/fonts/IBMPlexSans-Bold.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0">
+        <stop offset="0" stop-color="#E5402A"/>
+        <stop offset=".45" stop-color="#FF7A33"/>
+        <stop offset=".8" stop-color="#FFC04A"/>
+        <stop offset="1" stop-color="#FFF1C9"/>
+      </linearGradient>
+      <symbol id="flame" viewBox="0 0 24 32">
+        <path d="M12 1c1.2 5-3.4 7.6-5.6 11.4C4.7 15.3 3 18 3 21.5 3 27 7 31 12 31s9-4 9-9.4c0-3.6-1.6-6.2-3.3-8.4.2 2.2-.6 4-2.2 4.8.4-6.4-2-12-3.5-17z" fill="url(#flameGrad)"/>
+        <path d="M12 16c.4 2.6-2.5 4-2.5 7.4C9.5 26 10.6 28 12 28s3-1.6 3-4.3c0-2.8-1.6-4.5-3-7.7z" fill="#FFF1C9" opacity=".9"/>
+      </symbol>
+      <symbol id="handset" viewBox="0 0 64 64">
+        <path d="M43.5 9.5c1.6-1.6 4.2-1.6 5.8 0l5.2 5.2c2.3 2.3 2.9 5.8 1.3 8.7-7.3 13.6-18.5 24.8-32.1 32.1-2.9 1.6-6.4 1-8.7-1.3l-5.2-5.2c-1.6-1.6-1.6-4.2 0-5.8l7.4-7.4c1.6-1.6 4.2-1.6 5.8 0l3.4 3.4c5.6-3.4 10.3-8.1 13.7-13.7l-3.4-3.4c-1.6-1.6-1.6-4.2 0-5.8z" fill="currentColor" transform="scale(-1,1) translate(-64,0)"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="SpeedDial home">
+      <span class="brand-mark"><svg><use href="#handset"/></svg><i></i><i></i><i></i></span>
+      SpeedDial
+    </a>
+    <nav>
+      <a href="#oven">The oven</a>
+      <a href="#dial">Speed dial</a>
+      <a href="#start">Get cooking</a>
+      <a class="nav-gh" href="https://github.com/Resonious/speeddial">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <!-- HERO ------------------------------------------------------------ -->
+    <section class="hero">
+      <canvas class="hero-fire" aria-hidden="true"></canvas>
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="pilot"></span>Agent development environment</p>
+        <h1>
+          <span class="line">Your agents,</span>
+          <span class="line">on <em class="hot" data-heat>speed dial.</em></span>
+        </h1>
+        <p class="lede">
+          Claude Code, Codex and friends running on every machine you own, all
+          in one window. Fire off a task from your desk, check the oven from
+          your phone, ship it from the couch.
+        </p>
+        <div class="cta">
+          <a class="btn btn-fire" href="#start">
+            <svg class="btn-flame"><use href="#flame"/></svg>
+            Light it up
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/Resonious/speeddial">Star on GitHub</a>
+        </div>
+        <p class="fineprint">Open source · Linux, Android and web apps · the daemon runs anywhere Dart does</p>
+      </div>
+
+      <div class="phone-stage">
+        <div class="heat-haze" aria-hidden="true"></div>
+        <div class="phone" aria-label="SpeedDial on a phone, mid-turn">
+          <div class="phone-screen">
+            <div class="status-bar"><span>9:41</span><span class="sb-icons"><i class="sig"></i><i class="bat"></i></span></div>
+            <img src="/shots/phone-run.webp" alt="SpeedDial on a phone: an agent is adding passkey sign-in and a flame says Searing…" width="390" height="844">
+            <div class="toast" role="presentation">
+              <svg><use href="#flame"/></svg>
+              <div>
+                <strong>tidepool · claude</strong>
+                <span>Passkey sign-in: 32 tests pass. Ready for review.</span>
+              </div>
+            </div>
+          </div>
+          <div class="phone-notch"></div>
+        </div>
+        <div class="dial-ring" aria-hidden="true">
+          <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+          <span>6</span><span>7</span><span>8</span><span>9</span><span>0</span>
+        </div>
+      </div>
+      <a class="scroll-cue" href="#window" aria-label="Scroll down"><span></span></a>
+    </section>
+
+    <!-- MARQUEE ---------------------------------------------------------- -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <span>Preheating…</span><b>✦</b><span>Searing…</span><b>✦</b><span>Caramelizing…</span><b>✦</b>
+        <span>Keeping warm…</span><b>✦</b><span>Reducing the conversation…</span><b>✦</b><span>Baking…</span><b>✦</b>
+        <span>Flambéing…</span><b>✦</b><span>Roasting…</span><b>✦</b>
+        <span>Preheating…</span><b>✦</b><span>Searing…</span><b>✦</b><span>Caramelizing…</span><b>✦</b>
+        <span>Keeping warm…</span><b>✦</b><span>Reducing the conversation…</span><b>✦</b><span>Baking…</span><b>✦</b>
+        <span>Flambéing…</span><b>✦</b><span>Roasting…</span><b>✦</b>
+      </div>
+    </div>
+
+    <!-- BIG WINDOW --------------------------------------------------------- -->
+    <section class="window-section" id="window">
+      <div class="section-head reveal">
+        <p class="eyebrow">Three panes, zero tab juggling</p>
+        <h2>Every session, every machine, <span class="hot">one window.</span></h2>
+        <p>Daemons and sessions on the left, the conversation in the middle, files and git on the right.
+          Each session gets its own worktree, so five agents can cook in one repo without stepping on each other.</p>
+      </div>
+
+      <div class="window reveal" data-theme-target>
+        <div class="window-bar">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="window-title">SpeedDial</span>
+          <div class="toggle" role="group" aria-label="Screenshot">
+            <button class="on" data-shot="run">Cooking</button>
+            <button data-shot="done">Served</button>
+            <span class="sep"></span>
+            <button class="theme-btn" data-theme-toggle aria-label="Toggle light and dark screenshot">
+              <span class="sun">☀</span><span class="moon">☾</span>
+            </button>
+          </div>
+        </div>
+        <div class="window-body">
+          <img data-shot-img src="/shots/run-dark.webp" alt="SpeedDial desktop: an agent mid-turn with a flame row, sessions in the left rail showing running, waiting, done and cooling states" width="1440" height="900">
+          <div class="glint" aria-hidden="true"></div>
+        </div>
+        <div class="callouts" aria-hidden="true">
+          <span class="callout c1"><i class="mini-flame"></i>Running turns burn</span>
+          <span class="callout c2"><i class="mini-timer"></i>Waiting on you rings</span>
+          <span class="callout c3"><i class="mini-ember"></i>Idle sessions cool off</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- THE OVEN ------------------------------------------------------------ -->
+    <section class="oven" id="oven">
+      <div class="section-head reveal">
+        <p class="eyebrow">The agent is an oven</p>
+        <h2>Know what's cooking <span class="hot">at a glance.</span></h2>
+        <p>Every animation in SpeedDial marks something that actually happened. You'll learn to read the kitchen without reading a word.</p>
+      </div>
+
+      <div class="cards">
+        <article class="card reveal">
+          <div class="fx fx-flame"><svg class="f1"><use href="#flame"/></svg><span class="fx-label">Caramelizing…</span></div>
+          <h3>Turns burn as a flame</h3>
+          <p>"Preheating…" while the agent spins up, then a new cooking verb for every turn. When it's done, the flame goes out in a puff of smoke.</p>
+        </article>
+        <article class="card reveal">
+          <div class="fx fx-bake"><div class="dough">ship it</div></div>
+          <h3>Messages bake, then pop</h3>
+          <p>What you send rises as pale dough until the daemon confirms it, then pops out of the oven with a little bounce and a wisp of steam.</p>
+        </article>
+        <article class="card reveal">
+          <div class="fx fx-type"><span class="typed">Pushed to <code>main</code> as <code>4e1c9b2</code></span><i class="ember"></i></div>
+          <h3>Fresh text glows</h3>
+          <p>Replies type out behind a hot ember, glow like metal just out of the forge, then cool to plain text as you read.</p>
+        </article>
+        <article class="card reveal">
+          <div class="fx fx-timer"><span class="timer"><i></i></span><span class="fx-label amber">Keeping warm…</span></div>
+          <h3>Waiting on you? It rings.</h3>
+          <p>An agent that needs permission shows a ringing timer and a blue pilot light, so the ones blocked on you never hide in the list.</p>
+        </article>
+        <article class="card reveal">
+          <div class="fx fx-embers"><i style="--h:1"></i><i style="--h:.7"></i><i style="--h:.4"></i><i style="--h:.15"></i><i class="done"></i></div>
+          <h3>Embers cool over hours</h3>
+          <p>A finished session's dot cools from hot orange to grey over three hours. Glance at the rail and you know what you touched this morning.</p>
+        </article>
+        <article class="card reveal">
+          <div class="fx fx-simmer"><span class="line"><i></i><i></i><i></i><i></i><i></i></span><span class="fx-label">313k → 48k tokens</span></div>
+          <h3>Compaction simmers</h3>
+          <p>Long conversations reduce like a sauce: bubbles along the divider, then the receipt of how much context you just got back.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- SPEED DIAL ---------------------------------------------------------- -->
+    <section class="dial" id="dial">
+      <div class="dial-copy reveal">
+        <p class="eyebrow">Press 1 for your workstation</p>
+        <h2>Every box you own, <span class="hot">one tap away.</span></h2>
+        <p>Run the SpeedDial daemon on your workstation, the Mac in the studio, the build server, the laptop. Add each one to the app and they line up like numbers on a speed dial. Each runs its own agents, keeps its own history, and keeps cooking when you close the lid.</p>
+        <ul class="ticks">
+          <li><b>Claude Code, Codex, OMP and Ante</b> over the Agent Client Protocol. Bring your own agent with one line of config.</li>
+          <li><b>A worktree per session</b>, with merge, rebase, push and pull requests a tap away.</li>
+          <li><b>MCP servers live on the daemon</b>, credentials included. Your agents get the same tools on every machine.</li>
+          <li><b>The phone is a first-class client.</b> Approve a permission prompt from the bus, then push to main.</li>
+        </ul>
+      </div>
+      <div class="keypad-wrap reveal">
+        <div class="keypad" role="list">
+          <button class="key" role="listitem" data-key="1"><b>1</b><span>workstation</span><i class="k-dot run"></i></button>
+          <button class="key" role="listitem" data-key="2"><b>2</b><span>Studio Mac</span><i class="k-dot run"></i></button>
+          <button class="key" role="listitem" data-key="3"><b>3</b><span>buildbox</span><i class="k-dot spin"></i></button>
+          <button class="key" role="listitem" data-key="4"><b>4</b><span>Laptop</span><i class="k-dot run"></i></button>
+          <button class="key" role="listitem" data-key="5"><b>5</b><span>claude</span></button>
+          <button class="key" role="listitem" data-key="6"><b>6</b><span>codex</span></button>
+          <button class="key" role="listitem" data-key="7"><b>7</b><span>omp</span></button>
+          <button class="key" role="listitem" data-key="8"><b>8</b><span>ante</span></button>
+          <button class="key" role="listitem" data-key="9"><b>9</b><span>your agent</span></button>
+          <button class="key" role="listitem" data-key="*"><b>*</b><span>merge</span></button>
+          <button class="key" role="listitem" data-key="0"><b>0</b><span>push</span></button>
+          <button class="key" role="listitem" data-key="#"><b>#</b><span>ship it</span></button>
+        </div>
+        <div class="mini-phone">
+          <img src="/shots/phone-rail.webp" alt="The SpeedDial session list on a phone: four daemons and a project's sessions with running, waiting, done and idle states" width="390" height="844" loading="lazy">
+        </div>
+      </div>
+    </section>
+
+    <!-- LIGHT/DARK ---------------------------------------------------------- -->
+    <section class="duo">
+      <div class="section-head reveal">
+        <p class="eyebrow">Day shift, night shift</p>
+        <h2>Light and dark, <span class="hot">both hot.</span></h2>
+      </div>
+      <div class="duo-compare reveal" style="--split:50%">
+        <img src="/shots/done-dark.webp" alt="SpeedDial dark theme with a finished session" width="1440" height="900" loading="lazy">
+        <div class="duo-light"><img src="/shots/done-light.webp" alt="SpeedDial light theme with the same session" width="1440" height="900" loading="lazy"></div>
+        <input type="range" min="0" max="100" value="50" aria-label="Compare light and dark themes">
+        <div class="duo-handle"><svg><use href="#flame"/></svg></div>
+      </div>
+    </section>
+
+    <!-- GET STARTED --------------------------------------------------------- -->
+    <section class="start" id="start">
+      <div class="section-head reveal">
+        <p class="eyebrow">Preheat in under a minute</p>
+        <h2>Get <span class="hot">cooking.</span></h2>
+        <p>The desktop app ships with a built-in daemon, so it works out of the box. For other machines, run the daemon and dial it in from the app.</p>
+      </div>
+      <div class="terminal reveal">
+        <div class="terminal-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>~/code</span>
+          <button class="copy" data-copy="git clone https://github.com/Resonious/speeddial && cd speeddial/packages/daemon && dart pub get && dart run bin/speeddial.dart serve">
+            <span class="copy-label">Copy</span>
+          </button>
+        </div>
+<pre><code><span class="c"># grab it</span>
+<span class="p">$</span> git clone https://github.com/Resonious/speeddial
+<span class="p">$</span> cd speeddial/packages/daemon && dart pub get
+
+<span class="c"># light the oven</span>
+<span class="p">$</span> dart run bin/speeddial.dart serve
+<span class="o">listening on ws://127.0.0.1:7331/ws</span>
+
+<span class="c"># remote box? bind wide and lock the door</span>
+<span class="p">$</span> dart run bin/speeddial.dart serve --host 0.0.0.0 \
+    --token "$(openssl rand -hex 16)"</code></pre>
+      </div>
+      <div class="cta center reveal">
+        <a class="btn btn-fire" href="https://github.com/Resonious/speeddial">
+          <svg class="btn-flame"><use href="#flame"/></svg>
+          Get SpeedDial on GitHub
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <canvas class="footer-fire" aria-hidden="true"></canvas>
+    <p class="brand">
+      <span class="brand-mark"><svg><use href="#handset"/></svg><i></i><i></i><i></i></span>
+      SpeedDial
+    </p>
+    <p>Built in Dart and Flutter. Screenshots are the real app running on invented demo data.</p>
+    <p class="muted">Don't forget to turn the oven off.</p>
+  </footer>
+
+  <script src="/main.js" defer></script>
+</body>
+</html>
