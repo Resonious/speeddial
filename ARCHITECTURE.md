@@ -482,7 +482,9 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              `speeddial_protocol` SVG-subset parser validates in the daemon and
                              parses again here; the scene bakes each settled step/toggle state
                              into a Picture and tweens between states from the tree; steps,
-                             toggles, `<title>` tooltips, arrow keys, full-screen view; a parse
+                             toggles, `<title>` tooltips, arrow keys, full-screen view; captions
+                             reserve the tallest step at the current width/text scale so paging
+                             never shifts the timeline or resizes the full-screen diagram; a parse
                              failure shows a fallback card), remote file links that
                              transfer in bounded 256 KiB RPC chunks with progress/cancellation,
                              offer Download (system save picker) or Float (the shared-file card).

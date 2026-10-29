@@ -256,6 +256,13 @@ class _ExplainerViewState extends State<ExplainerView>
     final String? title = widget.spec.title;
     final ExplainerStep step = document.steps[_state.step];
     final Widget diagram = _diagram(scene);
+    final Widget captionSizer = IndexedStack(
+      index: null,
+      children: <Widget>[
+        for (final ExplainerStep step in document.steps)
+          Text(step.caption, style: theme.textTheme.bodyMedium),
+      ],
+    );
     final List<Widget> children = <Widget>[
       if (!widget.fullscreen)
         Row(
@@ -284,13 +291,31 @@ class _ExplainerViewState extends State<ExplainerView>
         ),
       const SizedBox(height: 4),
       if (widget.fullscreen) Expanded(child: diagram) else diagram,
-      if (step.caption.isNotEmpty) ...<Widget>[
+      if (document.steps.any(
+        (ExplainerStep step) => step.caption.isNotEmpty,
+      )) ...<Widget>[
         const SizedBox(height: 8),
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 200),
           layoutBuilder: (Widget? current, List<Widget> previous) => Stack(
             alignment: Alignment.topLeft,
-            children: <Widget>[...previous, ?current],
+            children: <Widget>[
+              // Lay out every caption, but paint and expose only the active
+              // one below. This reserves the tallest step from the first frame
+              // and adapts naturally to wrapping and accessibility text scaling.
+              captionSizer,
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Stack(
+                  alignment: Alignment.topLeft,
+                  children: <Widget>[...previous, ?current],
+                ),
+              ),
+            ],
           ),
           child: Text(
             step.caption,

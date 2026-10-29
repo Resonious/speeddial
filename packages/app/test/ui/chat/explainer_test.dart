@@ -67,6 +67,67 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final double width in <double>[360, 640]) {
+    for (final bool reduced in <bool>[false, true]) {
+      testWidgets('stable caption height: width=$width reduced=$reduced', (
+        tester,
+      ) async {
+        const String longCaption =
+            'The operating system receives the alert while the app is in the background. Tapping it opens the saved session, and reading the conversation still requires connectivity to the daemon.';
+        const ExplainerSpec spec = ExplainerSpec(
+          title: 'Stable steps',
+          svg: '<svg viewBox="0 0 600 120"><rect width="600" height="120"/></svg>',
+          steps: <ExplainerStepSpec>[
+            ExplainerStepSpec(caption: 'Short caption'),
+            ExplainerStepSpec(caption: longCaption),
+            ExplainerStepSpec(caption: ''),
+          ],
+        );
+        await tester.pumpWidget(
+          _host(
+            MediaQuery(
+              data: MediaQueryData(
+                textScaler: TextScaler.linear(1.4),
+                disableAnimations: reduced,
+              ),
+              child: Center(
+                child: SizedBox(
+                  width: width,
+                  child: const ExplainerView(spec: spec),
+                ),
+              ),
+            ),
+            theme: reduced ? buildSpeedDialLightTheme() : buildSpeedDialTheme(),
+          ),
+        );
+        final Finder card = find.byType(ExplainerView);
+        final Finder next = find.byKey(
+          const ValueKey<String>('explainer-next'),
+        );
+        final Rect original = tester.getRect(card);
+        final Offset controls = tester.getTopLeft(next);
+        expect(find.text(longCaption), findsNothing);
+        for (final int step in <int>[1, 2, 0]) {
+          await tester.tap(find.byKey(ValueKey<String>('explainer-dot-$step')));
+          await tester.pump();
+          expect(tester.getRect(card), original);
+          expect(tester.getTopLeft(next), controls);
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(tester.getRect(card), original);
+          await tester.pumpAndSettle();
+          expect(tester.getRect(card), original);
+          expect(tester.getTopLeft(next), controls);
+          expect(
+            find.text(longCaption),
+            step == 1 ? findsOneWidget : findsNothing,
+          );
+          expect(tester.takeException(), isNull);
+        }
+        expect(tester.hasRunningAnimations, isFalse);
+      });
+    }
+  }
+
   testWidgets('toggles flip and tooltips show on tap', (
     WidgetTester tester,
   ) async {
