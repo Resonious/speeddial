@@ -199,7 +199,8 @@ ClearArchiveResult = {
 OutgoingAttachment = {           // client → daemon payload (sessions.send only)
   name: string,                  // file name incl. extension
   mimeType: string,              // IANA type; "application/octet-stream" when unknown
-  data: string,                  // base64-encoded content
+  data?: string,                 // base64-encoded content (inline), or
+  uploadId?: string,             // a complete uploads.begin upload; exactly one of the two
 }
 Attachment = {                   // metadata carried by userMessage/image events (no payload)
   id: string,                    // daemon-assigned, unique within the session
@@ -710,9 +711,15 @@ Agent task-progress `plan` events remain supported.
   `support_vision` capability. Ante accepts other binary attachments too: the daemon writes the
   decoded payload to the same transient directory and adds the file's label and saved path to
   `UserInput`, so the model can inspect it with its own tools.
-  General caps: at most 8 attachments, 8 MiB decoded per attachment, 16 MiB decoded total;
-  violations are `-32602`, as are malformed base64 payloads and text-like payloads that are not valid
-  UTF-8. For an accepted turn, the daemon persists each payload (fetchable later via
+  General caps: at most 8 attachments, 8 MiB decoded per inline attachment, 16 MiB decoded total
+  across attachments of up to 8 MiB; violations are `-32602`, as are malformed base64 payloads,
+  text-like payloads that are not valid UTF-8, and unknown, incomplete or repeated `uploadId`s.
+  An upload of up to 8 MiB is consumed and treated exactly like the same inline payload. A larger
+  upload becomes a file-backed attachment: the daemon moves it into its private files directory
+  (read-only, deleted with the session) and never inlines it. ACP receives it as a `resource_link`
+  block `{uri: "file:///…", name, mimeType, size}`; Codex and Ante receive text naming the file,
+  MIME type, size, and absolute path for the agent to process with its tools.
+  For an accepted turn, the daemon persists each payload (fetchable later via
   `attachments.read`) and records the metadata on the turn's `userMessage` event. ACP receives the
   files as prompt content blocks: non-text `image/*` becomes an `image` block; text-like types become
   an embedded `resource` block with `text`; anything else becomes an embedded `resource` block with
@@ -804,8 +811,21 @@ Agent task-progress `plan` events remain supported.
 
 ### Attachments
 - `attachments.read {sessionId: string, attachmentId: string}` → `{attachment: AttachmentData}` — fetches one
-  attachment's metadata plus base64 payload; `-32002` when the session or attachment is unknown. Payloads are
-  persisted by the daemon and survive restarts; they are deleted with their session.
+  attachment's metadata plus base64 payload; `-32002` when the session or attachment is unknown, `-32602`
+  for a file-backed attachment (larger than 8 MiB). Payloads are persisted by the daemon and survive
+  restarts; they are deleted with their session.
+
+### Uploads
+Chunked transfer for attachments too large to send inline (up to 1 GiB). Uploads are staged by the
+daemon until `sessions.send` consumes them; they do not survive a daemon restart and are discarded
+after one hour without an `uploads.append`.
+- `uploads.begin {size: int}` → `{uploadId: string}` — reserves an upload of exactly `size` bytes
+  (0 to 1 GiB); `-32602` otherwise.
+- `uploads.append {uploadId: string, offset: int, data: string}` → `{received: int}` — appends one
+  base64 chunk of at most 1 MiB decoded. `offset` must equal the bytes received so far, and the upload
+  may not exceed its declared size; violations are `-32602`, an unknown upload is `-32002`. Clients
+  send chunks in order, awaiting each response. The upload is complete once `received == size`.
+- `uploads.cancel {uploadId: string}` → `{}` — discards a staged upload; unknown ids are ignored.
 
 ### Built-in MCP bridge (daemon-private)
 

@@ -8,6 +8,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
+import '../../state/streamed_attachment.dart';
 import '../../theme.dart';
 import '../toast.dart';
 import 'active_pulse.dart';
@@ -1607,7 +1608,16 @@ class _PendingMessageRowState extends State<_PendingMessageRow> {
       <String, Future<AttachmentData>>{};
 
   static AttachmentData _local(int index, OutgoingAttachment attachment) {
-    final String data = attachment.data;
+    if (attachment is StreamedAttachment) {
+      return AttachmentData(
+        id: 'outgoing-$index',
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        data: '',
+      );
+    }
+    final String data = attachment.data ?? '';
     final int padding = data.endsWith('==')
         ? 2
         : data.endsWith('=')
@@ -1636,6 +1646,7 @@ class _PendingMessageRowState extends State<_PendingMessageRow> {
       onFork: null,
       reserveFork: widget.forkable,
       child: BakingBubble(
+        upload: widget.message.upload,
         child: UserMessageBubble(
           text: widget.message.text,
           attachments: _attachments,

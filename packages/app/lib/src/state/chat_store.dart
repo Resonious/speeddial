@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, immutable;
 
 import 'store_base.dart';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
+import 'streamed_attachment.dart';
 
 /// Composite `daemonId/sessionId` key backing the store's maps. Session ids
 /// are daemon-scoped (PROTOCOL.md), so the same id may legitimately exist on
@@ -43,12 +47,17 @@ class OutgoingMessage {
     required this.id,
     required this.text,
     this.attachments = const <OutgoingAttachment>[],
+    this.upload,
   });
 
   /// Client-local identity, unique within one [ChatStore].
   final int id;
   final String text;
   final List<OutgoingAttachment> attachments;
+
+  /// Fraction (0–1) of [StreamedAttachment] bytes uploaded, when the message
+  /// carries any; it reaches 1 before `sessions.send` goes out.
+  final ValueListenable<double>? upload;
 }
 
 /// Per-session event buffer plus its live subscription state.
@@ -451,15 +460,84 @@ class ChatStore extends StoreBase {
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const [],
-  }) => _sendOutgoing(
-    daemonId,
-    sessionId,
-    text,
-    attachments,
-    () =>
-        _clientFor(daemonId)
-            .sendMessage(sessionId, text, attachments: attachments),
-  );
+  }) {
+    final ValueNotifier<double>? upload =
+        attachments.any((OutgoingAttachment a) => a is StreamedAttachment)
+        ? ValueNotifier<double>(0)
+        : null;
+    return _sendOutgoing(daemonId, sessionId, text, attachments, () async {
+      final DaemonClient client = _clientFor(daemonId);
+      if (upload == null) {
+        await client.sendMessage(sessionId, text, attachments: attachments);
+        return;
+      }
+      final List<String> uploadIds = <String>[];
+      try {
+        final List<OutgoingAttachment> sent = await _uploadStreamed(
+          client,
+          attachments,
+          uploadIds,
+          upload,
+        );
+        await client.sendMessage(sessionId, text, attachments: sent);
+      } on Object {
+        for (final String id in uploadIds) {
+          // The send's own error is what gets recorded and rethrown; a failed
+          // cancel only leaves a staged upload the daemon expires in an hour.
+          unawaited(
+            client.cancelUpload(id).then<void>((_) {}, onError: (Object _) {}),
+          );
+        }
+        rethrow;
+      }
+    }, upload: upload);
+  }
+
+  /// Uploads each [StreamedAttachment] in order, one chunk in flight at a
+  /// time, and returns [attachments] with those replaced by upload ids.
+  Future<List<OutgoingAttachment>> _uploadStreamed(
+    DaemonClient client,
+    List<OutgoingAttachment> attachments,
+    List<String> uploadIds,
+    ValueNotifier<double> progress,
+  ) async {
+    int total = 0;
+    for (final OutgoingAttachment attachment in attachments) {
+      if (attachment is StreamedAttachment) total += attachment.size;
+    }
+    int done = 0;
+    final List<OutgoingAttachment> sent = <OutgoingAttachment>[];
+    for (final OutgoingAttachment attachment in attachments) {
+      if (attachment is! StreamedAttachment) {
+        sent.add(attachment);
+        continue;
+      }
+      final String uploadId = await client.beginUpload(attachment.size);
+      uploadIds.add(uploadId);
+      int offset = 0;
+      while (offset < attachment.size) {
+        final Uint8List chunk = await attachment.read(
+          offset,
+          math.min(kMaxUploadChunkBytes, attachment.size - offset),
+        );
+        if (chunk.isEmpty) {
+          throw StateError('${attachment.name} ended before its full size');
+        }
+        offset = await client.appendUpload(uploadId, offset, chunk);
+        done += chunk.length;
+        progress.value = total == 0 ? 1 : done / total;
+      }
+      sent.add(
+        OutgoingAttachment(
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          uploadId: uploadId,
+        ),
+      );
+    }
+    progress.value = 1;
+    return sent;
+  }
 
   Future<List<NativeCommand>> listCommands(String daemonId, String sessionId) =>
       _clientFor(daemonId).listCommands(sessionId);
@@ -487,8 +565,9 @@ class ChatStore extends StoreBase {
     String sessionId,
     String text,
     List<OutgoingAttachment> attachments,
-    Future<void> Function() request,
-  ) async {
+    Future<void> Function() request, {
+    ValueListenable<double>? upload,
+  }) async {
     final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
     final OutgoingMessage? message = buffer?.eventSub == null
         ? null
@@ -496,6 +575,7 @@ class ChatStore extends StoreBase {
             id: _nextOutgoingId++,
             text: text,
             attachments: attachments,
+            upload: upload,
           );
     if (message != null) {
       buffer!.outgoing.add(message);

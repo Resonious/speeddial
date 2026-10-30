@@ -49,6 +49,9 @@ const List<String> _kProtocolMethods = <String>[
   'environment.list',
   'environment.update',
   'attachments.read',
+  'uploads.begin',
+  'uploads.append',
+  'uploads.cancel',
   'mcp.list',
   'mcp.create',
   'mcp.update',
@@ -523,6 +526,9 @@ class SpeedDialServer {
       'mcp.oauth.status' => _mcpOAuthStatus(params),
       'mcp.oauth.disconnect' => _mcpOAuthDisconnect(params),
       'attachments.read' => _attachmentsRead(params),
+      'uploads.begin' => _uploadsBegin(params),
+      'uploads.append' => _uploadsAppend(params),
+      'uploads.cancel' => _uploadsCancel(params),
       'projects.list' => _projectsList(),
       'projects.add' => _projectsAdd(params),
       'projects.remove' => _projectsRemove(params),
@@ -1499,41 +1505,60 @@ class SpeedDialServer {
       }
       attachments = <OutgoingAttachment>[];
       var totalBytes = 0;
+      final Set<String> uploadIds = <String>{};
       for (final entry in rawAttachments) {
         if (entry is! Map) {
           throw DaemonError(
             _kErrInvalidParams,
-            'Each attachment must be an object with name, mimeType, and data',
+            'Each attachment must be an object with name, mimeType, and '
+            'data or uploadId',
           );
         }
         final map = Map<String, Object?>.from(entry);
         final name = map['name'];
         final mimeType = map['mimeType'];
         final rawData = map['data'];
-        if (name is! String || mimeType is! String || rawData is! String) {
+        final rawUploadId = map['uploadId'];
+        if (name is! String ||
+            mimeType is! String ||
+            (rawData is String) == (rawUploadId is String) ||
+            (rawData != null && rawData is! String) ||
+            (rawUploadId != null && rawUploadId is! String)) {
           throw DaemonError(
             _kErrInvalidParams,
             'Each attachment must be an object with string name, mimeType, '
-            'and data',
+            'and exactly one of data or uploadId',
           );
         }
-        final List<int> decoded;
-        try {
-          decoded = base64Decode(rawData);
-        } on FormatException {
-          throw DaemonError(
-            _kErrInvalidParams,
-            'Attachment "$name" carries malformed base64 data',
-          );
+        final int size;
+        if (rawUploadId is String) {
+          if (!uploadIds.add(rawUploadId)) {
+            throw DaemonError(
+              _kErrInvalidParams,
+              'Upload $rawUploadId is attached more than once',
+            );
+          }
+          size = _engine.uploads.completedSize(rawUploadId);
+        } else {
+          try {
+            size = base64Decode(rawData! as String).length;
+          } on FormatException {
+            throw DaemonError(
+              _kErrInvalidParams,
+              'Attachment "$name" carries malformed base64 data',
+            );
+          }
+          if (size > kMaxAttachmentBytes) {
+            throw DaemonError(
+              _kErrInvalidParams,
+              'Attachment "$name" is $size bytes '
+              '(max $kMaxAttachmentBytes per inline attachment)',
+            );
+          }
         }
-        if (decoded.length > kMaxAttachmentBytes) {
-          throw DaemonError(
-            _kErrInvalidParams,
-            'Attachment "$name" is $decoded.length bytes '
-            '(max $kMaxAttachmentBytes per attachment)',
-          );
-        }
-        totalBytes += decoded.length;
+        // Uploads above the inline cap reach the agent as a file path, so
+        // only inline-sized payloads count toward the per-message total.
+        if (size <= kMaxAttachmentBytes) totalBytes += size;
         if (totalBytes > kMaxAttachmentTotalBytes) {
           throw DaemonError(
             _kErrInvalidParams,
@@ -1542,7 +1567,12 @@ class SpeedDialServer {
           );
         }
         attachments.add(
-          OutgoingAttachment(name: name, mimeType: mimeType, data: rawData),
+          OutgoingAttachment(
+            name: name,
+            mimeType: mimeType,
+            data: rawData as String?,
+            uploadId: rawUploadId as String?,
+          ),
         );
       }
     } else {
@@ -1584,7 +1614,59 @@ class SpeedDialServer {
     if (attachment == null) {
       throw DaemonError(kErrNotFound, 'Unknown attachment: $attachmentId');
     }
+    if (_store.attachmentFile(sessionId, attachmentId) != null) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Attachment "${attachment.name}" is ${attachment.size} bytes; only '
+        'attachments up to $kMaxAttachmentBytes bytes can be read',
+      );
+    }
     return <String, Object?>{'attachment': attachment.toJson()};
+  }
+
+  Object? _uploadsBegin(Map<String, Object?> params) {
+    final Object? size = params['size'];
+    if (size is! int) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: size',
+      );
+    }
+    return <String, Object?>{'uploadId': _engine.uploads.begin(size)};
+  }
+
+  Future<Object?> _uploadsAppend(Map<String, Object?> params) async {
+    final String uploadId = _requiredString(params, 'uploadId');
+    final Object? offset = params['offset'];
+    if (offset is! int) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: offset',
+      );
+    }
+    final Object? data = params['data'];
+    if (data is! String) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: data',
+      );
+    }
+    final List<int> bytes;
+    try {
+      bytes = base64Decode(data);
+    } on FormatException {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Upload chunk carries malformed base64 data',
+      );
+    }
+    final int received = await _engine.uploads.append(uploadId, offset, bytes);
+    return <String, Object?>{'received': received};
+  }
+
+  Object? _uploadsCancel(Map<String, Object?> params) {
+    _engine.uploads.cancel(_requiredString(params, 'uploadId'));
+    return <String, Object?>{};
   }
 
   Future<Object?> _sessionsCancel(Map<String, Object?> params) async {

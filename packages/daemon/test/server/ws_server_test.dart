@@ -4253,6 +4253,213 @@ void main() {
       },
       timeout: const Timeout(Duration(minutes: 2)),
     );
+
+    test('chunked uploads: small uploads inline, large uploads reach the agent '
+        'as a file link, and uploads are consumed once', () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_upload_');
+      addTearDown(() => dir.delete(recursive: true));
+      File(p.join(dir.path, 'example.txt'))
+          .writeAsStringSync('hello from file\n');
+      final project = Project.fromJson(
+        (j(
+                  await client.peer.call('projects.add', <String, Object?>{
+                    'path': dir.path,
+                  }),
+                )['project']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final session = Session.fromJson(
+        (j(
+                  await client.createReady(<String, Object?>{
+                    'projectId': project.id,
+                    'providerId': 'fake',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+
+      Future<String> upload(List<int> bytes) async {
+        final String id =
+            j(
+                  await client.peer.call('uploads.begin', <String, Object?>{
+                    'size': bytes.length,
+                  }),
+                )['uploadId']!
+                as String;
+        for (int offset = 0; offset < bytes.length;) {
+          final int end = (offset + kMaxUploadChunkBytes).clamp(
+            0,
+            bytes.length,
+          );
+          final Map<String, Object?> result = j(
+            await client.peer.call('uploads.append', <String, Object?>{
+              'uploadId': id,
+              'offset': offset,
+              'data': base64Encode(bytes.sublist(offset, end)),
+            }),
+          );
+          expect(result['received'], end);
+          offset = end;
+        }
+        return id;
+      }
+
+      // Out-of-order and oversized appends are rejected.
+      final String probe =
+          j(
+                await client.peer.call('uploads.begin', <String, Object?>{
+                  'size': 4,
+                }),
+              )['uploadId']!
+              as String;
+      await expectLater(
+        client.peer.call('uploads.append', <String, Object?>{
+          'uploadId': probe,
+          'offset': 1,
+          'data': base64Encode(<int>[1]),
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await expectLater(
+        client.peer.call('uploads.append', <String, Object?>{
+          'uploadId': probe,
+          'offset': 0,
+          'data': base64Encode(<int>[1, 2, 3, 4, 5]),
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      // An incomplete upload cannot be sent.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': session.id,
+          'text': 'incomplete',
+          'attachments': <Object?>[
+            <String, Object?>{
+              'name': 'probe.bin',
+              'mimeType': 'application/octet-stream',
+              'uploadId': probe,
+            },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+      await client.peer.call('uploads.cancel', <String, Object?>{
+        'uploadId': probe,
+      });
+      await expectLater(
+        client.peer.call('uploads.append', <String, Object?>{
+          'uploadId': probe,
+          'offset': 0,
+          'data': base64Encode(<int>[1]),
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32002)),
+      );
+
+      final List<int> imageBytes = <int>[0x89, 0x50, 0x4E, 0x47];
+      final List<int> bigBytes = List<int>.generate(
+        kMaxAttachmentBytes + 5,
+        (int i) => i % 251,
+      );
+      final String imageUpload = await upload(imageBytes);
+      final String bigUpload = await upload(bigBytes);
+
+      final permission = waitForEvent(
+        client,
+        (event) => event is PermissionRequestEvent,
+      );
+      final send = client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': session.id,
+        'text': 'Look',
+        'attachments': <Object?>[
+          <String, Object?>{
+            'name': 'shot.png',
+            'mimeType': 'image/png',
+            'uploadId': imageUpload,
+          },
+          <String, Object?>{
+            'name': 'video.mp4',
+            'mimeType': 'video/mp4',
+            'uploadId': bigUpload,
+          },
+        ],
+      });
+      final requestParams = await permission;
+      final request = ((requestParams['event']! as Map)['request']! as Map)
+          .cast<String, Object?>();
+      await client.peer.call('sessions.respondPermission', <String, Object?>{
+        'sessionId': session.id,
+        'requestId': request['requestId']! as String,
+        'optionId': 'allow',
+      });
+      await send;
+
+      final lastPrompt = jsonDecode(
+        File(p.join(dir.path, 'agent.last_prompt.json')).readAsStringSync(),
+      ) as List<Object?>;
+      expect(lastPrompt, hasLength(3));
+      final image = lastPrompt[1]! as Map;
+      expect(image['type'], 'image');
+      expect(image['data'], base64Encode(imageBytes));
+      final link = lastPrompt[2]! as Map;
+      expect(link['type'], 'resource_link');
+      expect(link['name'], 'video.mp4');
+      expect(link['mimeType'], 'video/mp4');
+      expect(link['size'], bigBytes.length);
+      final File stored = File(Uri.parse(link['uri']! as String).toFilePath());
+      expect(stored.readAsBytesSync(), bigBytes);
+      expect(p.basename(stored.path), 'video.mp4');
+
+      final history = j(
+        await client.peer.call('sessions.history', <String, Object?>{
+          'sessionId': session.id,
+        }),
+      );
+      final userMessage = SessionEvent.fromJson(
+        ((history['events']! as List<Object?>).first! as Map)
+            .cast<String, Object?>(),
+      ) as UserMessageEvent;
+      expect(userMessage.attachments.map((Attachment a) => a.size), <int>[
+        imageBytes.length,
+        bigBytes.length,
+      ]);
+      // The small upload is readable; the file-backed one is not.
+      final read = j(
+        await client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': session.id,
+          'attachmentId': userMessage.attachments.first.id,
+        }),
+      );
+      expect((read['attachment']! as Map)['data'], base64Encode(imageBytes));
+      await expectLater(
+        client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': session.id,
+          'attachmentId': userMessage.attachments.last.id,
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+      );
+
+      // Sending consumed both uploads.
+      await expectLater(
+        client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': session.id,
+          'text': 'again',
+          'attachments': <Object?>[
+            <String, Object?>{
+              'name': 'video.mp4',
+              'mimeType': 'video/mp4',
+              'uploadId': bigUpload,
+            },
+          ],
+        }),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32002)),
+      );
+
+      await client.close();
+    }, timeout: const Timeout(Duration(minutes: 2)));
   });
 
   group('fs', () {

@@ -1105,12 +1105,13 @@ class _AttachmentChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool image = isImageMimeType(attachment.mimeType);
+    final String? data = attachment.data;
+    final bool image = isImageMimeType(attachment.mimeType) && data != null;
     final Widget leading = image
         ? ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: Image.memory(
-              base64Decode(attachment.data),
+              base64Decode(data),
               width: 40,
               height: 40,
               fit: BoxFit.cover,

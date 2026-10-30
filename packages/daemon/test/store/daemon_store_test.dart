@@ -994,6 +994,35 @@ void main() {
     );
   });
 
+  test('file-backed attachments live beside the database and go with the '
+      'session', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 'a'));
+    final File source = File(p.join(tempDir.path, 'staged.bin'))
+      ..writeAsBytesSync(<int>[1, 2, 3]);
+    final String stored = store.insertFileAttachment(
+      'a',
+      const Attachment(
+        id: 'big-1',
+        name: '../clip.mp4',
+        mimeType: 'video/mp4',
+        size: 3,
+      ),
+      source.path,
+    );
+    expect(source.existsSync(), isFalse);
+    expect(p.isWithin(store.filesPath, stored), isTrue);
+    expect(p.basename(stored), '.._clip.mp4');
+    expect(File(stored).readAsBytesSync(), <int>[1, 2, 3]);
+    expect(store.attachmentFile('a', 'big-1'), stored);
+    expect(store.getAttachment('a', 'big-1')!.size, 3);
+    expect(store.sessionStorageBytes('a').attachmentBytes, 3);
+
+    store.deleteSession('a');
+    expect(File(stored).existsSync(), isFalse);
+    expect(store.attachmentFile('a', 'big-1'), isNull);
+  });
+
   for (final bool legacy in <bool>[false, true]) {
     test('image message survives reload (legacy payload: $legacy)', () {
       store.insertProject(project());

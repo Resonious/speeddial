@@ -276,7 +276,9 @@ lib/src/store/      Bundled SQLite (package:sqlite3 build hooks; no system SQLit
                     SPEEDIAL_DB). Tables: projects, sessions, session_events,
                     attachments (message and MCP-displayed image payloads, FK-cascaded
                     with their session; events carry metadata only, `attachments.read`
-                    serves blobs), mcp_servers, mcp_secrets, mcp_oauth, and
+                    serves blobs; uploads over 8 MiB are file-backed under
+                    ~/.speeddial/files/attachments, staged by upload_store.dart
+                    in files/uploads), mcp_servers, mcp_secrets, mcp_oauth, and
                     daemon_environment. MCP static secrets, OAuth client
                     secrets, and access/refresh tokens stay
                     daemon-side; public reads expose only credential names and OAuth
@@ -737,6 +739,16 @@ picker and an App Group inbox; the app imports one file on launch or resume,
 then advances after attach or dismiss. The extension has no daemon credentials
 and does not send messages. Its immutable inbox entries are published atomically
 and consumed by a serial native worker.
+
+Android shares over 8 MiB (up to 1 GiB) never cross the channel whole:
+`SharedStreams.kt` keeps the content URI (or a cache spill when the provider
+reports no size) and Dart reads it in order through `readShared`, releasing it
+with `releaseShared` once sent or dismissed. ShareStore stages it as a
+`StreamedAttachment`; `ChatStore.send` uploads it with `uploads.begin`/`append`
+one 1 MiB chunk at a time (progress on `OutgoingMessage.upload`, shown by
+`BakingBubble`) and sends the upload id. The daemon hands the agent a file path,
+not the bytes. iOS shares and the composer's file picker still use the inline
+8 MiB limit.
 
 ### Notification session links
 

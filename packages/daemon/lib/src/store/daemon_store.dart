@@ -25,7 +25,9 @@
 ///   * `session_events` session_id FK→sessions ON DELETE CASCADE, seq,
 ///                      timestamp, json, PK (session_id, seq)
 ///   * `attachments`    id PK, session_id FK→sessions ON DELETE CASCADE,
-///                      name, mime_type, size, data
+///                      name, mime_type, size, data, path NULL (file-backed
+///                      attachments keep an empty `data` and their bytes in
+///                      [DaemonStore.filesPath])
 ///   * `daemon_environment` name TEXT PK, value TEXT; values are write-only
 ///                          over the public daemon API
 library;
@@ -34,6 +36,7 @@ import 'dart:io';
 
 import 'dart:convert';
 
+import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' hide Session;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -92,13 +95,27 @@ const int _sqliteConstraintUnique = 2067;
 /// All methods are synchronous (the engine drives them from the event loop,
 /// never concurrently). Access from multiple isolates is not supported.
 class DaemonStore {
-  DaemonStore(String path) : _db = sqlite3.open(path) {
+  /// Opens the database at [path]. Large attachment payloads and staged
+  /// uploads live in a `files` directory beside it; an in-memory database
+  /// gets a private temporary directory that [dispose] removes.
+  DaemonStore(String path)
+    : _db = sqlite3.open(path),
+      _ownsFiles = path == ':memory:' || path.isEmpty,
+      filesPath = path == ':memory:' || path.isEmpty
+          ? Directory.systemTemp.createTempSync('speeddial_files_').path
+          : p.join(p.dirname(path), 'files') {
     _init();
     _restrictDatabasePermissions(path);
+    _restrictFilesPermissions();
     _search = SessionSearchIndex(_db);
   }
 
   final Database _db;
+  final bool _ownsFiles;
+
+  /// Directory for file-backed attachments (`attachments/`) and staged
+  /// chunked uploads (`uploads/`).
+  final String filesPath;
   late final SessionSearchIndex _search;
 
   void _init() {
@@ -254,9 +271,17 @@ class DaemonStore {
         name TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         size INTEGER NOT NULL,
-        data BLOB NOT NULL
+        data BLOB NOT NULL,
+        path TEXT
       );
     ''');
+    final Set<String> attachmentColumns = _db
+        .select('PRAGMA table_info(attachments)')
+        .map((Row row) => row['name'] as String)
+        .toSet();
+    if (!attachmentColumns.contains('path')) {
+      _db.execute('ALTER TABLE attachments ADD COLUMN path TEXT');
+    }
     _db.execute('''
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
@@ -362,6 +387,16 @@ class DaemonStore {
       } on ProcessException {
         // Best-effort. SQLite remains usable on hosts without chmod.
       }
+    }
+  }
+
+  void _restrictFilesPermissions() {
+    Directory(filesPath).createSync(recursive: true);
+    if (!Platform.isLinux && !Platform.isMacOS) return;
+    try {
+      Process.runSync('chmod', <String>['0700', filesPath]);
+    } on ProcessException {
+      // Best-effort, like the database files.
     }
   }
 
@@ -1035,6 +1070,8 @@ class DaemonStore {
   /// Permanently removes a session and (via cascade) its events and attachments.
   void deleteSession(String id) {
     _db.execute('DELETE FROM sessions WHERE id = ?', [id]);
+    final Directory files = Directory(_sessionFilesPath(id));
+    if (files.existsSync()) files.deleteSync(recursive: true);
   }
 
   /// Persists the provider-side session id for [sessionId] so the provider
@@ -1548,6 +1585,10 @@ class DaemonStore {
   void dispose() {
     _search.dispose();
     _db.close();
+    if (_ownsFiles) {
+      final Directory files = Directory(filesPath);
+      if (files.existsSync()) files.deleteSync(recursive: true);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1573,8 +1614,78 @@ class DaemonStore {
     );
   }
 
+  /// Persists [attachment] for [sessionId] as a file-backed attachment by
+  /// moving (or, with [copy], copying) [source] into the session's files
+  /// directory. The stored file is read-only; [attachmentFile] returns it.
+  String insertFileAttachment(
+    String sessionId,
+    Attachment attachment,
+    String source, {
+    bool copy = false,
+  }) {
+    final Directory directory = Directory(
+      p.join(_sessionFilesPath(sessionId), attachment.id),
+    )..createSync(recursive: true);
+    final String safeName = attachment.name.replaceAll(
+      RegExp(r'[/\\\x00]'),
+      '_',
+    );
+    final String target = p.join(
+      directory.path,
+      safeName.isEmpty || safeName == '.' || safeName == '..'
+          ? 'attachment'
+          : safeName,
+    );
+    if (copy) {
+      File(source).copySync(target);
+    } else {
+      File(source).renameSync(target);
+    }
+    if (Platform.isLinux || Platform.isMacOS) {
+      try {
+        Process.runSync('chmod', <String>['0400', target]);
+      } on ProcessException {
+        // Best-effort; the directory is already private.
+      }
+    }
+    try {
+      _db.execute(
+        'INSERT INTO attachments '
+        '(id, session_id, name, mime_type, size, data, path) '
+        "VALUES (?, ?, ?, ?, ?, X'', ?)",
+        [
+          attachment.id,
+          sessionId,
+          attachment.name,
+          attachment.mimeType,
+          attachment.size,
+          target,
+        ],
+      );
+    } on Object {
+      directory.deleteSync(recursive: true);
+      rethrow;
+    }
+    return target;
+  }
+
+  /// The on-disk path of a file-backed attachment, or null when the
+  /// attachment is unknown or stored inline.
+  String? attachmentFile(String sessionId, String attachmentId) {
+    final rows = _db.select(
+      'SELECT path FROM attachments WHERE session_id = ? AND id = ?',
+      [sessionId, attachmentId],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['path'] as String?;
+  }
+
+  String _sessionFilesPath(String sessionId) =>
+      p.join(filesPath, 'attachments', sessionId);
+
   /// The stored attachment of [sessionId] with [attachmentId], or null when
-  /// unknown (payload re-encoded to base64).
+  /// unknown (payload re-encoded to base64). A file-backed attachment (see
+  /// [attachmentFile]) has an empty [AttachmentData.data].
   AttachmentData? getAttachment(String sessionId, String attachmentId) {
     final rows = _db.select(
       'SELECT id, name, mime_type, size, data FROM attachments '

@@ -722,6 +722,24 @@ class CodexClient implements AgentClient, NativeCommandClient {
                   'Use your tools to read or process this file.',
             });
           }
+        case 'resource_link':
+          // A large upload already stored on the daemon host.
+          final String? uri = block['uri'] as String?;
+          if (uri == null || !uri.startsWith('file:')) {
+            throw const FormatException('Invalid Codex file link block');
+          }
+          final String name = block['name'] as String? ?? 'attachment';
+          final String mimeType =
+              block['mimeType'] as String? ?? 'application/octet-stream';
+          inputs.add(<String, Object?>{
+            'type': 'text',
+            'text':
+                'Attached file ${jsonEncode(name)} '
+                '(${jsonEncode(mimeType)}, ${block['size']} bytes). '
+                'Saved on disk at:\n'
+                '${Uri.parse(uri).toFilePath()}\n'
+                'Use your tools to read or process this file.',
+          });
         default:
           throw FormatException('Unknown Codex prompt block: ${block['type']}');
       }

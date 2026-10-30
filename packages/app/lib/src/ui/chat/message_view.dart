@@ -148,8 +148,9 @@ class AttachmentView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!isImageMimeType(attachment.mimeType)) {
-      // No payload needed; a loader is irrelevant here.
+    if (!isImageMimeType(attachment.mimeType) ||
+        attachment.size > kMaxAttachmentBytes) {
+      // No payload needed (or, for file-backed uploads, none readable).
       return _AttachmentMetaRow(attachment: attachment);
     }
     final Future<AttachmentData> Function(String attachmentId)? load = loader;

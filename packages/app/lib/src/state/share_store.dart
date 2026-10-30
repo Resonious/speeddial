@@ -8,6 +8,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../scope.dart';
 import 'sessions_store.dart';
+import 'streamed_attachment.dart';
 import 'pull_request_link_store.dart';
 
 /// A shared or floated file is held in memory until the user stages or cancels
@@ -103,7 +104,10 @@ class ShareStore extends ChangeNotifier {
     if (staged == null) return;
     bool changed = false;
     for (final OutgoingAttachment file in files) {
-      changed = staged.remove(file) || changed;
+      if (staged.remove(file)) {
+        changed = true;
+        _release(file);
+      }
     }
     if (staged.isEmpty) _staged.remove(key);
     if (changed) notifyListeners();
@@ -111,6 +115,10 @@ class ShareStore extends ChangeNotifier {
 
   void cancel() {
     if (_creatingFile != null) _cancelledFiles.add(_creatingFile!);
+    final OutgoingAttachment? pending = _pending;
+    if (pending != null && !identical(pending, _creatingFile)) {
+      _release(pending);
+    }
     _pending = null;
     _error = null;
     notifyListeners();
@@ -229,8 +237,39 @@ class ShareStore extends ChangeNotifier {
     final String mimeType =
         payload['mimeType'] as String? ?? mimeTypeForFileName(name);
     final String? bytes = payload['data'] as String?;
-    if (bytes == null) return;
-    _pending = OutgoingAttachment(name: name, mimeType: mimeType, data: bytes);
+    final String? streamId = payload['streamId'] as String?;
+    final int? size = payload['size'] as int?;
+    final OutgoingAttachment file;
+    if (streamId != null && size != null) {
+      // Too large to pass over the channel at once: read it in chunks.
+      file = StreamedAttachment(
+        name: name,
+        mimeType: mimeType,
+        size: size,
+        read: (int offset, int length) async {
+          final Uint8List? chunk = await _channel.invokeMethod<Uint8List>(
+            'readShared',
+            <String, Object?>{
+              'streamId': streamId,
+              'offset': offset,
+              'length': length,
+            },
+          );
+          return chunk ?? Uint8List(0);
+        },
+        release: () => _channel.invokeMethod<void>(
+          'releaseShared',
+          <String, Object?>{'streamId': streamId},
+        ),
+      );
+    } else if (bytes != null) {
+      file = OutgoingAttachment(name: name, mimeType: mimeType, data: bytes);
+    } else {
+      return;
+    }
+    final OutgoingAttachment? replaced = _pending;
+    if (replaced != null) _release(replaced);
+    _pending = file;
     _error = null;
     notifyListeners();
     final String? shortcutId = payload['shortcutId'] as String?;
@@ -319,7 +358,9 @@ class ShareStore extends ChangeNotifier {
         yolo: saved.yolo,
         shortPrompt: saved.shortPrompt,
       );
-      if (!_cancelledFiles.contains(file)) {
+      if (_cancelledFiles.contains(file)) {
+        _release(file);
+      } else {
         _stage(file, target.daemonId, session.id);
         data.selection.selectedDaemonId = target.daemonId;
         data.selection.selectedProjectId = target.projectId;
@@ -478,6 +519,20 @@ class ShareStore extends ChangeNotifier {
       _error = 'Could not update share targets: ${error.message}';
       notifyListeners();
     }
+  }
+
+  /// Frees the platform stream behind a dropped or sent file.
+  void _release(OutgoingAttachment file) {
+    if (file is! StreamedAttachment) return;
+    final Future<void> Function()? release = file.release;
+    if (release == null) return;
+    unawaited(
+      release().catchError((Object error) {
+        if (error is MissingPluginException) return;
+        _error = 'Could not release shared file: $error';
+        if (!data.isDisposed) notifyListeners();
+      }),
+    );
   }
 
   @override

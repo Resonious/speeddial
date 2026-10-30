@@ -1817,6 +1817,20 @@ class AnteClient implements AgentClient, NativeCommandClient {
               ..writeln('[Attached file: ${file.name} (${file.mimeType})]')
               ..write('Saved to: ${file.path}');
           }
+        case 'resource_link':
+          // A large upload already stored on the daemon host.
+          final Object? uri = block['uri'];
+          if (uri is! String || !uri.startsWith('file:')) {
+            throw const FormatException('Invalid Ante file link block.');
+          }
+          if (text.isNotEmpty) text.writeln('\n');
+          text
+            ..writeln(
+              '[Attached file: ${block['name'] ?? 'attachment'} '
+              '(${block['mimeType'] ?? 'application/octet-stream'}, '
+              '${block['size']} bytes)]',
+            )
+            ..write('Saved to: ${Uri.parse(uri).toFilePath()}');
         case 'image':
           if (text.isNotEmpty) text.writeln('\n');
           final String path = await _materializeImage(block);

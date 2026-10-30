@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 /// Connection state of a live [DaemonClient], exposed through
@@ -186,8 +188,21 @@ abstract class DaemonClient {
   });
 
   /// Fetches an attachment's base64 payload by id; errors `-32002` when the
-  /// session or attachment is unknown.
+  /// session or attachment is unknown, `-32602` for a file-backed attachment
+  /// larger than [kMaxAttachmentBytes].
   Future<AttachmentData> readAttachment(String sessionId, String attachmentId);
+
+  /// Reserves a chunked upload of exactly [size] bytes (PROTOCOL.md
+  /// `uploads.begin`). Send it with an [OutgoingAttachment.uploadId] once
+  /// every byte is appended.
+  Future<String> beginUpload(int size);
+
+  /// Appends [bytes] (at most [kMaxUploadChunkBytes]) at [offset], which
+  /// must equal the bytes received so far. Returns the new received count.
+  Future<int> appendUpload(String uploadId, int offset, Uint8List bytes);
+
+  /// Discards a staged upload; unknown ids are ignored.
+  Future<void> cancelUpload(String uploadId);
 
   /// Cancels the running turn, if any.
   Future<void> cancelSession(String sessionId);

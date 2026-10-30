@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme.dart';
@@ -353,11 +354,16 @@ class _SmokePainter extends CustomPainter {
 
 /// Raw-dough look for a sent message the daemon has not echoed back yet: it
 /// rises into place under a pale veil while a warm glint keeps sweeping
-/// across it. Expects a [UserMessageBubble] child.
+/// across it. While its files [upload], an ember crust browns along the
+/// bubble's bottom edge as the bytes go out, and a label says how far along
+/// it is. Expects a [UserMessageBubble] child.
 class BakingBubble extends StatefulWidget {
-  const BakingBubble({super.key, required this.child});
+  const BakingBubble({super.key, required this.child, this.upload});
 
   final Widget child;
+
+  /// Fraction (0–1) of the message's chunked uploads sent, if any.
+  final ValueListenable<double>? upload;
 
   @override
   State<BakingBubble> createState() => _BakingBubbleState();
@@ -405,31 +411,67 @@ class _BakingBubbleState extends State<BakingBubble>
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
+    final ValueListenable<double>? upload = widget.upload;
+    Widget bubble = CustomPaint(
+      key: const Key('baking-bubble'),
+      foregroundPainter: _BakingPainter(
+        glint: _glint,
+        upload: upload,
+        veil: theme.colorScheme.surface.withValues(alpha: 0.45),
+        sheen: theme.speedDialColors.flameTip.withValues(alpha: 0.3),
+        crust: theme.colorScheme.primary,
+      ),
+      child: widget.child,
+    );
+    if (upload != null) {
+      bubble = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          bubble,
+          Padding(
+            padding: const EdgeInsets.only(right: 12, bottom: 2),
+            child: ValueListenableBuilder<double>(
+              valueListenable: upload,
+              builder: (BuildContext context, double value, Widget? _) => Text(
+                value >= 1
+                    ? 'Uploaded, sending…'
+                    : 'Uploading… ${(value * 100).floor()}%',
+                key: const Key('upload-progress'),
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     return FadeTransition(
       opacity: _rise,
-      child: SlideTransition(
-        position: _slide,
-        child: CustomPaint(
-          key: const Key('baking-bubble'),
-          foregroundPainter: _BakingPainter(
-            glint: _glint,
-            veil: theme.colorScheme.surface.withValues(alpha: 0.45),
-            sheen: theme.speedDialColors.flameTip.withValues(alpha: 0.3),
-          ),
-          child: widget.child,
-        ),
-      ),
+      child: SlideTransition(position: _slide, child: bubble),
     );
   }
 }
 
 class _BakingPainter extends CustomPainter {
-  _BakingPainter({required this.glint, required this.veil, required this.sheen})
-    : super(repaint: glint);
+  _BakingPainter({
+    required this.glint,
+    required this.upload,
+    required this.veil,
+    required this.sheen,
+    required this.crust,
+  }) : super(
+         repaint: upload == null
+             ? glint
+             : Listenable.merge(<Listenable>[glint, upload]),
+       );
 
   final Animation<double> glint;
+  final ValueListenable<double>? upload;
   final Color veil;
   final Color sheen;
+  final Color crust;
   final Paint _paint = Paint();
 
   @override
@@ -453,13 +495,37 @@ class _BakingPainter extends CustomPainter {
       _bandStops,
     );
     canvas.drawRRect(shape, _paint);
+    final ValueListenable<double>? upload = this.upload;
+    if (upload == null) return;
+    // The crust: an ember strip along the bottom edge, browning left to
+    // right as the upload goes out.
+    final double progress = upload.value.clamp(0.0, 1.0);
+    if (progress <= 0) return;
+    canvas
+      ..save()
+      ..clipRRect(shape);
+    _paint
+      ..shader = null
+      ..color = crust;
+    canvas.drawRect(
+      Rect.fromLTRB(
+        bubble.left,
+        bubble.bottom - 3,
+        bubble.left + bubble.width * progress,
+        bubble.bottom,
+      ),
+      _paint,
+    );
+    canvas.restore();
   }
 
   @override
   bool shouldRepaint(_BakingPainter oldDelegate) =>
       oldDelegate.glint != glint ||
+      oldDelegate.upload != upload ||
       oldDelegate.veil != veil ||
-      oldDelegate.sheen != sheen;
+      oldDelegate.sheen != sheen ||
+      oldDelegate.crust != crust;
 }
 
 /// Celebrates a sent message the daemon just confirmed: it puffs up out of

@@ -1482,8 +1482,15 @@ class McpOAuthFlow {
 /// Protocol cap: maximum attachments per `sessions.send`.
 const int kMaxAttachmentsPerMessage = 8;
 
-/// Protocol cap: maximum decoded size of one attachment (8 MiB).
+/// Protocol cap: maximum decoded size of one inline attachment (8 MiB). Larger
+/// files travel as chunked uploads and reach the agent as a file path.
 const int kMaxAttachmentBytes = 8 * 1024 * 1024;
+
+/// Protocol cap: maximum size of one chunked upload (1 GiB).
+const int kMaxUploadBytes = 1024 * 1024 * 1024;
+
+/// Protocol cap: maximum decoded size of one `uploads.append` chunk (1 MiB).
+const int kMaxUploadChunkBytes = 1024 * 1024;
 
 /// Protocol cap: maximum combined decoded size of one message's attachments
 /// (16 MiB).
@@ -1559,12 +1566,15 @@ class AttachmentData extends Attachment {
   };
 }
 
-/// A file the client attaches to an outgoing `sessions.send` message.
+/// A file the client attaches to an outgoing `sessions.send` message: either
+/// an inline base64 [data] payload or the [uploadId] of a completed chunked
+/// upload, never both.
 class OutgoingAttachment {
   const OutgoingAttachment({
     required this.name,
     required this.mimeType,
-    required this.data,
+    this.data,
+    this.uploadId,
   });
 
   /// File name, including extension.
@@ -1573,20 +1583,25 @@ class OutgoingAttachment {
   /// IANA media type; `application/octet-stream` when unknown.
   final String mimeType;
 
-  /// Base64-encoded file content.
-  final String data;
+  /// Base64-encoded file content, for inline attachments.
+  final String? data;
+
+  /// A completed `uploads.begin` upload, for chunked attachments.
+  final String? uploadId;
 
   factory OutgoingAttachment.fromJson(Map<String, Object?> json) =>
       OutgoingAttachment(
         name: json['name']! as String,
         mimeType: json['mimeType']! as String,
-        data: json['data']! as String,
+        data: json['data'] as String?,
+        uploadId: json['uploadId'] as String?,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
     'name': name,
     'mimeType': mimeType,
-    'data': data,
+    'data': ?data,
+    'uploadId': ?uploadId,
   };
 }
 

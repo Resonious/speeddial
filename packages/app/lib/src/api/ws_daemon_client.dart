@@ -982,6 +982,35 @@ class WsDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<String> beginUpload(int size) async {
+    final Object? result = await _requirePeer().call(
+      'uploads.begin',
+      <String, Object?>{'size': size},
+    );
+    return _resultField(result, 'uploadId')! as String;
+  }
+
+  @override
+  Future<int> appendUpload(String uploadId, int offset, Uint8List bytes) async {
+    final Object? result = await _requirePeer().call(
+      'uploads.append',
+      <String, Object?>{
+        'uploadId': uploadId,
+        'offset': offset,
+        'data': base64Encode(bytes),
+      },
+    );
+    return _resultField(result, 'received')! as int;
+  }
+
+  @override
+  Future<void> cancelUpload(String uploadId) async {
+    await _requirePeer().call('uploads.cancel', <String, Object?>{
+      'uploadId': uploadId,
+    });
+  }
+
+  @override
   Future<void> cancelSession(String sessionId) async {
     await _requirePeer().call('sessions.cancel', <String, Object?>{
       'sessionId': sessionId,

@@ -41,6 +41,7 @@ import '../mcp/built_in_mcp_server.dart';
 import '../notifications/final_reply.dart';
 import '../providers/provider_registry.dart';
 import '../store/daemon_store.dart';
+import '../store/upload_store.dart';
 import 'event_mapper.dart';
 import 'archive_service.dart';
 
@@ -123,12 +124,14 @@ class _LiveSession {
 }
 
 /// A validated, persisted attachment ready for the turn: its metadata plus
-/// decoded text when the payload is text-like.
+/// decoded text when the payload is text-like, or the stored file of a
+/// file-backed attachment (whose [data] payload is empty).
 class _PreparedAttachment {
-  _PreparedAttachment({required this.data, required this.text});
+  _PreparedAttachment({required this.data, required this.text, this.path});
 
   final AttachmentData data;
   final String? text;
+  final String? path;
 }
 
 /// Provider prompt context prepared from the copied history of a fork.
@@ -188,6 +191,10 @@ class SessionEngine {
   Timer? _autoArchiveTimer;
 
   final DaemonStore _store;
+
+  /// Chunked attachment uploads awaiting `sessions.send`.
+  UploadStore get uploads => _uploads ??= UploadStore(_store.filesPath);
+  UploadStore? _uploads;
   final ProviderRegistry _providers;
   final Future<void> Function(Session session, String finalText)?
   _onTurnComplete;
@@ -1048,7 +1055,15 @@ class SessionEngine {
         size: data.size,
         data: data.data,
       );
-      _store.insertAttachment(targetSessionId, copied);
+      final String? file = _store.attachmentFile(
+        sourceSessionId,
+        attachment.id,
+      );
+      if (file != null) {
+        _store.insertFileAttachment(targetSessionId, copied, file, copy: true);
+      } else {
+        _store.insertAttachment(targetSessionId, copied);
+      }
       final Attachment metadata = Attachment(
         id: copied.id,
         name: copied.name,
@@ -1333,14 +1348,48 @@ class SessionEngine {
   ) {
     final prepared = <_PreparedAttachment>[];
     for (final attachment in attachments) {
+      final String? uploadId = attachment.uploadId;
       final List<int> bytes;
-      try {
-        bytes = base64Decode(attachment.data);
-      } on FormatException {
-        throw DaemonError(
-          _kErrInvalidParams,
-          'Attachment "${attachment.name}" carries malformed base64 data',
-        );
+      final String encoded;
+      if (uploadId != null) {
+        final upload = uploads.take(uploadId);
+        if (upload.size > kMaxAttachmentBytes) {
+          // Too large for a prompt: the agent gets the stored file's path.
+          final data = AttachmentData(
+            id: _uuid.v4(),
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            size: upload.size,
+            data: '',
+          );
+          final String path;
+          try {
+            path = _store.insertFileAttachment(sessionId, data, upload.path);
+          } on Object {
+            final File staged = File(upload.path);
+            if (staged.existsSync()) staged.deleteSync();
+            rethrow;
+          }
+          prepared.add(_PreparedAttachment(data: data, text: null, path: path));
+          continue;
+        }
+        final File staged = File(upload.path);
+        try {
+          bytes = staged.readAsBytesSync();
+        } finally {
+          staged.deleteSync();
+        }
+        encoded = base64Encode(bytes);
+      } else {
+        encoded = attachment.data ?? '';
+        try {
+          bytes = base64Decode(encoded);
+        } on FormatException {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'Attachment "${attachment.name}" carries malformed base64 data',
+          );
+        }
       }
       String? attachmentText;
       if (isTextMimeType(attachment.mimeType)) {
@@ -1358,7 +1407,7 @@ class SessionEngine {
         name: attachment.name,
         mimeType: attachment.mimeType,
         size: bytes.length,
-        data: attachment.data,
+        data: encoded,
       );
       _store.insertAttachment(sessionId, data);
       prepared.add(_PreparedAttachment(data: data, text: attachmentText));
@@ -1731,12 +1780,17 @@ class SessionEngine {
             content.write(
               '[Attachment: ${data.name}; ${data.mimeType}; ${data.size} bytes]',
             );
+            final String? file = _store.attachmentFile(
+              sessionId,
+              attachment.id,
+            );
             inheritedAttachments.add(
               _PreparedAttachment(
                 data: data,
-                text: isTextMimeType(data.mimeType)
+                text: file == null && isTextMimeType(data.mimeType)
                     ? utf8.decode(base64Decode(data.data))
                     : null,
+                path: file,
               ),
             );
           }
@@ -2354,6 +2408,7 @@ class SessionEngine {
     await Future.wait(_turnNotifications.toList());
     _toolCalls.clear();
     _toolCallImages.clear();
+    _uploads?.dispose();
     _mcpReloadPending.clear();
     _environmentReloadPending.clear();
     if (!_eventsController.isClosed) _eventsController.close();
@@ -2554,8 +2609,9 @@ class SessionEngine {
 
   /// The structured provider prompt blocks for a turn. A fork's inherited
   /// transcript and copied attachments lead the first new prompt; the user's
-  /// current text and attachments follow. ACP transports accept `image` and
-  /// embedded `resource` attachment blocks. Ante flattens blocks into its
+  /// current text and attachments follow. ACP transports accept `image`,
+  /// embedded `resource`, and (for file-backed uploads) `resource_link`
+  /// attachment blocks. Ante flattens blocks into its
   /// text-only `UserInput` operation: text resources inline, images and other
   /// binary resources materialized to files referenced by path.
   static List<Map<String, Object?>> _promptBlocks(
@@ -2568,6 +2624,17 @@ class SessionEngine {
     void appendAttachments(List<_PreparedAttachment> preparedAttachments) {
       for (final prepared in preparedAttachments) {
         final data = prepared.data;
+        final String? path = prepared.path;
+        if (path != null) {
+          blocks.add(<String, Object?>{
+            'type': 'resource_link',
+            'uri': Uri.file(path).toString(),
+            'name': data.name,
+            'mimeType': data.mimeType,
+            'size': data.size,
+          });
+          continue;
+        }
         final String? attachmentText = prepared.text;
         if (attachmentText != null) {
           blocks.add(<String, Object?>{

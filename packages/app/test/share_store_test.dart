@@ -8,6 +8,7 @@ import 'package:speeddial_app/main.dart';
 import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/state/share_store.dart';
+import 'package:speeddial_app/src/state/streamed_attachment.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
@@ -86,6 +87,69 @@ void main() {
       expect(data.shares.pending?.name, 'resumed.txt');
     },
   );
+
+  testWidgets('a large Android share streams in chunks and is released', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient fake) = await setup();
+    final Session session = (await fake.listSessions()).first;
+    final Uint8List bytes = Uint8List.fromList(
+      List<int>.generate(kMaxAttachmentBytes + 9, (int i) => i % 199),
+    );
+    final TestDefaultBinaryMessenger messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const MethodChannel channel = MethodChannel(ShareStore.channelName);
+    final List<String> released = <String>[];
+    messenger.setMockMethodCallHandler(channel, (MethodCall call) async {
+      final Map<Object?, Object?> args =
+          (call.arguments as Map<Object?, Object?>?) ?? const {};
+      switch (call.method) {
+        case 'readShared':
+          final int offset = args['offset']! as int;
+          final int length = args['length']! as int;
+          return Uint8List.sublistView(bytes, offset, offset + length);
+        case 'releaseShared':
+          released.add(args['streamId']! as String);
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    Map<String, Object?> share(String streamId) => <String, Object?>{
+      'name': 'clip.mp4',
+      'mimeType': 'video/mp4',
+      'size': bytes.length,
+      'streamId': streamId,
+    };
+
+    // Dismissing a streamed share releases it.
+    await data.shares.receive(share('dismissed'));
+    expect(data.shares.pending, isA<StreamedAttachment>());
+    data.shares.cancel();
+    await tester.pump();
+    expect(released, <String>['dismissed']);
+
+    await data.shares.receive(share('sent'));
+    data.shares.attachTo('fake', session.id);
+    final StreamedAttachment staged =
+        data.shares.stagedFor('fake', session.id).single as StreamedAttachment;
+    expect(staged.size, bytes.length);
+    await tester.runAsync(
+      () => data.chat.send(
+        'fake',
+        session.id,
+        '',
+        attachments: <OutgoingAttachment>[staged],
+      ),
+    );
+    data.shares.removeStaged('fake', session.id, <OutgoingAttachment>[staged]);
+    await tester.pump();
+    expect(released, <String>['dismissed', 'sent']);
+    final UserMessageEvent echo = (await fake.history(session.id)).events
+        .whereType<UserMessageEvent>()
+        .last;
+    expect(echo.attachments.single.size, bytes.length);
+  });
 
   testWidgets('iOS inbox errors remain visible until dismissed', (
     WidgetTester tester,

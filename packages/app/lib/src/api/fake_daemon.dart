@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -85,6 +86,9 @@ class FakeDaemonClient implements DaemonClient {
 
   /// Per-session counters backing `att-<n>` attachment ids.
   final Map<String, int> _attachmentCounters = <String, int>{};
+  final Map<String, ({int size, BytesBuilder bytes})> _uploads =
+      <String, ({int size, BytesBuilder bytes})>{};
+  int _uploadCounter = 0;
 
   final Map<String, List<FileEntry>> _fileTree = <String, List<FileEntry>>{};
   final Map<String, String> _fileContents = <String, String>{};
@@ -1158,15 +1162,31 @@ class FakeDaemonClient implements DaemonClient {
       final Map<String, AttachmentData> store = _attachmentsBySession
           .putIfAbsent(sessionId, () => <String, AttachmentData>{});
       for (final OutgoingAttachment outgoing in attachments) {
+        if (outgoing.uploadId case final String uploadId) {
+          final ({int size, BytesBuilder bytes})? upload = _uploads[uploadId];
+          if (upload == null) {
+            throw DaemonError(kErrNotFound, 'Unknown upload: $uploadId');
+          }
+          if (upload.bytes.length != upload.size) {
+            throw DaemonError(-32602, 'Upload $uploadId is incomplete');
+          }
+        }
+      }
+      for (final OutgoingAttachment outgoing in attachments) {
         final int n = (_attachmentCounters[sessionId] ?? 0) + 1;
         _attachmentCounters[sessionId] = n;
-        final int size = base64Decode(outgoing.data).length;
+        final String data = switch (outgoing.uploadId) {
+          final String uploadId => base64Encode(
+            _uploads.remove(uploadId)!.bytes.takeBytes(),
+          ),
+          null => outgoing.data ?? '',
+        };
         final AttachmentData stored = AttachmentData(
           id: 'att-$n',
           name: outgoing.name,
           mimeType: outgoing.mimeType,
-          size: size,
-          data: outgoing.data,
+          size: base64Decode(data).length,
+          data: data,
         );
         store[stored.id] = stored;
         metadata.add(
@@ -1212,7 +1232,41 @@ class FakeDaemonClient implements DaemonClient {
     if (stored == null) {
       throw DaemonError(kErrNotFound, 'unknown attachment: $attachmentId');
     }
+    if (stored.size > kMaxAttachmentBytes) {
+      throw DaemonError(-32602, 'attachment is file-backed: $attachmentId');
+    }
     return stored;
+  }
+
+  @override
+  Future<String> beginUpload(int size) async {
+    _ensureSeeded();
+    if (size < 0 || size > kMaxUploadBytes) {
+      throw const DaemonError(-32602, 'invalid upload size');
+    }
+    final String id = 'upload-${++_uploadCounter}';
+    _uploads[id] = (size: size, bytes: BytesBuilder(copy: false));
+    return id;
+  }
+
+  @override
+  Future<int> appendUpload(String uploadId, int offset, Uint8List bytes) async {
+    final ({int size, BytesBuilder bytes})? upload = _uploads[uploadId];
+    if (upload == null) {
+      throw DaemonError(kErrNotFound, 'Unknown upload: $uploadId');
+    }
+    if (offset != upload.bytes.length ||
+        bytes.length > kMaxUploadChunkBytes ||
+        upload.bytes.length + bytes.length > upload.size) {
+      throw DaemonError(-32602, 'invalid append to $uploadId');
+    }
+    upload.bytes.add(bytes);
+    return upload.bytes.length;
+  }
+
+  @override
+  Future<void> cancelUpload(String uploadId) async {
+    _uploads.remove(uploadId);
   }
 
   @override

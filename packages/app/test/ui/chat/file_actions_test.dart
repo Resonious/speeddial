@@ -220,7 +220,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         expect(find.byKey(const Key('attach-shared-file')), findsOneWidget);
-        expect(base64Decode(data.shares.pending!.data), <int>[0, 7, 255]);
+        expect(base64Decode(data.shares.pending!.data!), <int>[0, 7, 255]);
         expect(
           data.shares.pending!.mimeType,
           mimeTypeForFileName('archive.zip'),
