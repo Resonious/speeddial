@@ -97,6 +97,8 @@ lib/src/ante/       Ante's `ante serve --stdio` JSONL client. Reports the resolv
                     Forks copy the upstream before lazy startup; legacy
                     forks retain the source native session id for a provider lookup on
                     their first send. Starts/resumes sessions, sends `UserInput`,
+                    recreates empty sessions after process loss or settings reload
+                    without requiring a native save (preserving provider/model and effort),
                     handles approval pauses, and maps message/thought
                     deltas, tool progress, usage/context accounting, extension/MCP refresh,
                     info blocks, shell output, background TaskEnd completion receipts,

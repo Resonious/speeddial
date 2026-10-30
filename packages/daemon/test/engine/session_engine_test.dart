@@ -1727,6 +1727,53 @@ void main() {
     ]);
   });
 
+  test('empty Ante session recovers without a saved native session', () async {
+    await eventsSub.cancel();
+    await changesSub.cancel();
+    await removalsSub.cancel();
+    await engine.dispose();
+    final String stateDir = p.join(tempDir.path, 'ante-state');
+    store.updateDaemonEnvironment(
+      set: <String, String>{'FAKE_ANTE_STATE_DIR': stateDir},
+    );
+    engine = SessionEngine(store: store, providers: fakeAnteProviders());
+    await engine.restore();
+    eventsSub = engine.events.listen(events.add);
+    changesSub = engine.sessionChanges.listen(changes.add);
+    removalsSub = engine.sessionRemovals.listen(removals.add);
+
+    final Session session = await engine.createSession(
+      projectId: project.id,
+      providerId: 'fakeAnte',
+      model: 'other-provider/fake-model',
+      yolo: true,
+      shortPrompt: true,
+    );
+    await engine.setThinkingLevel(session.id, 'high');
+    final String oldId = store.providerSessionIdOf(session.id)!;
+    // A settings reload can stop a new agent before the first user message.
+    await engine.reloadEnvironment();
+    await File(p.join(stateDir, '$oldId.json')).delete();
+
+    await engine.sendMessage(session.id, 'First message');
+    await waitFor(
+      () => events.any(
+        (tuple) =>
+            tuple.sessionId == session.id && tuple.event is TurnCompleteEvent,
+      ),
+    );
+    expect(store.providerSessionIdOf(session.id), isNot(oldId));
+    final Session recovered = store.getSession(session.id)!;
+    expect(recovered.status, SessionStatus.idle);
+    expect(recovered.model, 'other-provider/fake-model');
+    expect(recovered.thinkingLevel, 'high');
+    expect(recovered.yolo, isTrue);
+    expect(recovered.shortPrompt, isTrue);
+    final List<SessionEvent> history = store.listEvents(session.id).events;
+    expect(history.whereType<UserMessageEvent>().single.text, 'First message');
+    expect(history.whereType<SessionErrorEvent>(), isEmpty);
+  });
+
   test(
     'Ante process death resumes the saved session on the next send',
     () async {

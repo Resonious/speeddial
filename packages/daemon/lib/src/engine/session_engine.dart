@@ -1821,7 +1821,8 @@ class SessionEngine {
   /// making persisted sessions usable across daemon restarts. Codex removes
   /// an empty thread's rollout when app-server exits. Codex sessions whose
   /// user never sent a turn, and forks with pending inherited context,
-  /// therefore start fresh threads.
+  /// therefore start fresh threads. Empty Ante sessions also start fresh:
+  /// receiving a native id does not guarantee a resumable save exists.
   /// Newly copied forks have no provider id until their first send.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
@@ -1871,7 +1872,9 @@ class SessionEngine {
     final bool startNewThread =
         storedProviderSessionId == null ||
         (spec.protocol == ProviderProtocol.codex &&
-            (pendingFork || !_store.hasUserMessage(sessionId)));
+            (pendingFork || !_store.hasUserMessage(sessionId))) ||
+        (spec.protocol == ProviderProtocol.ante &&
+            !_store.hasUserMessage(sessionId));
     final AgentClient client = _spawnAgent(session);
     var providerSessionId = storedProviderSessionId;
     final List<AcpConfigOption> configOptions;
