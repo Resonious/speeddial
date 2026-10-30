@@ -612,6 +612,26 @@ void main() {
     },
   );
 
+  testWidgets('mobile title opens in a dismissible modal', (tester) async {
+    final AppData data = await pumpFakeShell(
+      tester,
+      size: const Size(390, 844),
+    );
+    expect(find.byTooltip('Show full session title'), findsNothing);
+    data.selection.selectedSessionId = 'sess-1';
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('top-bar-title')));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(
+      find.widgetWithText(SelectableText, 'Build the feature'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip('Close session title'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+  });
+
   testWidgets('top bar shows the selected session title and follows renames', (
     WidgetTester tester,
   ) async {

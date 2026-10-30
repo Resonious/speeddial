@@ -594,6 +594,9 @@ lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with
                              per-file diff view, commit field + button, push, create PR)
 ```
 
+The mobile top-bar session title opens `session_title_dialog.dart`: a top-aligned,
+scrollable modal with selectable full text and a reduced-motion-aware expansion.
+
 Idle session dots use `lastActivityAt` for a three-hour ember cooldown, refreshed
 once per minute only while warm and visible, with no animation ticker. Restoring
 or unpinning refreshes that activity timestamp too. Offline dots are gray. Done

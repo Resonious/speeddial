@@ -15,6 +15,7 @@ import 'chat/typed_text.dart';
 import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
 import 'native_title_bar.dart';
+import 'session_title_dialog.dart';
 import 'right/right_panel.dart';
 import 'toast.dart';
 import 'touch_slop.dart';
@@ -421,7 +422,7 @@ class _ShellState extends State<_Shell> {
                       onPressed: () =>
                           _narrowScaffoldKey.currentState?.openDrawer(),
                     ),
-                    title: const _TopBarTitle(),
+                    title: const _TopBarTitle(expandable: true),
                     actions: <Widget>[
                       const _DaemonStatusChip(),
                       const _ThemeModeButton(),
@@ -720,7 +721,9 @@ class _NoSessionTitle {
 /// to this via `Expanded`. A rename backspaces and types in under an ember
 /// caret, as in the left rail; switching sessions swaps it at once.
 class _TopBarTitle extends StatelessWidget {
-  const _TopBarTitle({this.style});
+  const _TopBarTitle({this.style, this.expandable = false});
+
+  final bool expandable;
 
   final TextStyle? style;
 
@@ -730,7 +733,7 @@ class _TopBarTitle extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[data.selection, data.sessions]),
       builder: (BuildContext context, Widget? _) {
-        return KeyedSubtree(
+        final Widget title = KeyedSubtree(
           key: const Key('top-bar-title'),
           child: TypedText(
             _topBarTitle(data),
@@ -739,6 +742,20 @@ class _TopBarTitle extends StatelessWidget {
             caretColor: Theme.of(context).brightness == Brightness.dark
                 ? context.speedDialColors.flameTip
                 : context.speedDialColors.flameRoot,
+          ),
+        );
+        if (!expandable || data.selection.selectedSessionId == null) {
+          return title;
+        }
+        return Tooltip(
+          message: 'Show full session title',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => showSessionTitleDialog(context, _topBarTitle(data)),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Align(alignment: Alignment.centerLeft, child: title),
+            ),
           ),
         );
       },
