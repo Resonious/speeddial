@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -10,6 +11,7 @@ import '../scope.dart';
 import '../state/settings_store.dart';
 import '../theme.dart';
 import 'chat/chat_pane.dart';
+import 'chat/typed_text.dart';
 import 'connection_status_indicator.dart';
 import 'left/left_rail.dart';
 import 'native_title_bar.dart';
@@ -588,7 +590,11 @@ Future<void> _cycleThemeMode(BuildContext context) async {
 
 /// Mirrors the top bar's content — session title, daemon status, pane and
 /// theme state — into the native header bar. Renders [child] unchanged.
-class _NativeTitleBarSync extends StatelessWidget {
+///
+/// A rename types into the header bar as it does in the left rail: the
+/// title is fed through a [TextTyper] here and each step pushed across.
+/// The window title (taskbar, switcher) takes the new name at once.
+class _NativeTitleBarSync extends StatefulWidget {
   const _NativeTitleBarSync({
     required this.bar,
     required this.leftOpen,
@@ -600,6 +606,56 @@ class _NativeTitleBarSync extends StatelessWidget {
   final bool leftOpen;
   final bool rightOpen;
   final Widget child;
+
+  @override
+  State<_NativeTitleBarSync> createState() => _NativeTitleBarSyncState();
+}
+
+class _NativeTitleBarSyncState extends State<_NativeTitleBarSync>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker = createTicker(_tick);
+  TextTyper? _typer;
+  Object? _titleOwner;
+  Duration? _last;
+
+  /// The typed title for [owner]'s [title]. A different owner (another
+  /// session, or none) swaps the title at once; only a rename types.
+  String _typedTitle(Object owner, String title) {
+    final TextTyper? typer = _typer;
+    if (typer == null || owner != _titleOwner) {
+      _titleOwner = owner;
+      _typer = TextTyper(title);
+      _ticker.stop();
+      return title;
+    }
+    typer.retarget(title);
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) {
+      typer.finish();
+      _ticker.stop();
+    } else if (typer.busy && !_ticker.isActive) {
+      _last = null;
+      _ticker.start();
+    }
+    return typer.visible;
+  }
+
+  void _tick(Duration elapsed) {
+    final Duration? last = _last;
+    _last = elapsed;
+    final TextTyper? typer = _typer;
+    if (last == null || typer == null) return;
+    final bool changed = typer.advance(
+      (elapsed - last).inMicroseconds / Duration.microsecondsPerSecond,
+    );
+    if (!typer.busy) _ticker.stop();
+    if (changed) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -616,20 +672,22 @@ class _NativeTitleBarSync extends StatelessWidget {
         final ConnectionStatus status = daemonId == null
             ? ConnectionStatus.disconnected
             : data.connections.statusOf(daemonId);
-        bar.show(
+        final String title = _topBarTitle(data);
+        widget.bar.show(
           NativeTitleBarState(
-            title: _topBarTitle(data),
+            title: _typedTitle(_topBarTitleOwner(data), title),
+            windowTitle: title,
             status: daemonId == null ? 'Not connected' : status.name,
             statusColor: connectionStatusColor(context, status),
-            leftOpen: leftOpen,
-            rightOpen: rightOpen,
+            leftOpen: widget.leftOpen,
+            rightOpen: widget.rightOpen,
             themeMode: data.settings.themeMode,
             dark: Theme.of(context).brightness == Brightness.dark,
           ),
         );
         return child!;
       },
-      child: child,
+      child: widget.child,
     );
   }
 }
@@ -642,10 +700,25 @@ String _topBarTitle(AppData data) {
   return data.sessions.byId(sessionId)?.title ?? 'SpeedDial';
 }
 
+/// What [_topBarTitle] is the title of. A change of owner swaps the title
+/// at once; a new title for the same owner is a rename and types in.
+Object _topBarTitleOwner(AppData data) {
+  final String? sessionId = data.selection.selectedSessionId;
+  if (sessionId == null || data.sessions.byId(sessionId) == null) {
+    return const _NoSessionTitle();
+  }
+  return sessionId;
+}
+
+class _NoSessionTitle {
+  const _NoSessionTitle();
+}
+
 /// Top-bar title: the selected session's title, falling back to the app
 /// name when no session is selected (or the store hasn't loaded it yet).
 /// Long titles ellipsize; the wide layout hands the bar's remaining width
-/// to this via `Expanded`.
+/// to this via `Expanded`. A rename backspaces and types in under an ember
+/// caret, as in the left rail; switching sessions swaps it at once.
 class _TopBarTitle extends StatelessWidget {
   const _TopBarTitle({this.style});
 
@@ -657,12 +730,16 @@ class _TopBarTitle extends StatelessWidget {
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[data.selection, data.sessions]),
       builder: (BuildContext context, Widget? _) {
-        return Text(
-          _topBarTitle(data),
+        return KeyedSubtree(
           key: const Key('top-bar-title'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: style,
+          child: TypedText(
+            _topBarTitle(data),
+            key: ValueKey<Object>(_topBarTitleOwner(data)),
+            style: style ?? DefaultTextStyle.of(context).style,
+            caretColor: Theme.of(context).brightness == Brightness.dark
+                ? context.speedDialColors.flameTip
+                : context.speedDialColors.flameRoot,
+          ),
         );
       },
     );

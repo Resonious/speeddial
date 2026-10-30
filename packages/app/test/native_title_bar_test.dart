@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:speeddial_app/main.dart';
+import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/ui/left/left_rail.dart';
 import 'package:speeddial_app/src/ui/native_title_bar.dart';
@@ -152,5 +153,65 @@ void main() {
     await press(tester, 'toggleRight');
     await tester.pumpAndSettle();
     expect(find.byType(RightPanel), findsOneWidget);
+  });
+
+  testWidgets('a rename types into the header bar; the window title settles', (
+    WidgetTester tester,
+  ) async {
+    final List<Map<Object?, Object?>> updates = mockRunner(
+      tester,
+      attached: true,
+    );
+    final NativeTitleBar? bar = await attach(tester);
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final AppData data = AppData()
+      ..registerClient(
+        'fake',
+        FakeDaemonClient(eventDelay: const Duration(milliseconds: 1)),
+      );
+    addTearDown(data.dispose);
+    await data.connections.addEndpoint(
+      id: 'fake',
+      name: 'Fake daemon',
+      url: 'fake://local',
+      token: '',
+    );
+    await data.sessions.refresh('fake');
+    data.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedSessionId = 'sess-1';
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(SpeedDialApp(data: data, nativeTitleBar: bar));
+    await tester.pump();
+
+    // Selecting a session shows its name at once.
+    expect(updates.last['title'], 'Build the feature');
+
+    final int before = updates.length;
+    await data.sessions.rename('fake', 'sess-1', 'Build the docs');
+    for (int frame = 0; frame < 30; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final List<Map<Object?, Object?>> typed = updates.sublist(before);
+    final List<Object?> titles = <Object?>[
+      for (final Map<Object?, Object?> update in typed) update['title'],
+    ];
+    // Backspaced to the shared prefix, then typed the rest in.
+    expect(titles, contains('Build the '));
+    expect(titles, contains('Build the d'));
+    expect(titles.last, 'Build the docs');
+    for (final Map<Object?, Object?> update in typed) {
+      expect(update['windowTitle'], 'Build the docs');
+    }
+
+    // Switching sessions swaps the name without typing.
+    data.selection.selectedSessionId = 'sess-2';
+    await tester.pump();
+    final Object? other = data.sessions.byId('sess-2')?.title;
+    expect(other, isNotNull);
+    expect(updates.last['title'], other);
+    await tester.pump(const Duration(milliseconds: 5));
   });
 }

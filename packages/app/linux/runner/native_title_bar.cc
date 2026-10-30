@@ -155,7 +155,10 @@ gboolean attach(TitleBar* self) {
 void update(TitleBar* self, FlValue* args) {
   const gchar* title = lookup_string(args, "title");
   if (title == nullptr) title = kDefaultTitle;
-  gtk_window_set_title(self->window, title);
+  // The header bar's title types through a rename; the window's settles.
+  const gchar* window_title = lookup_string(args, "windowTitle");
+  gtk_window_set_title(self->window,
+                       window_title == nullptr ? title : window_title);
   if (self->header_bar == nullptr) return;
 
   gtk_label_set_text(GTK_LABEL(self->title_label), title);

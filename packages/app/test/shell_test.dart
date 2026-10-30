@@ -640,8 +640,12 @@ void main() {
     await tester.pumpWidget(SpeedDialApp(data: data));
     await tester.pump();
 
-    Text topBarTitle() =>
-        tester.widget<Text>(find.byKey(const Key('top-bar-title')));
+    Text topBarTitle() => tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(const Key('top-bar-title')),
+        matching: find.byType(Text),
+      ),
+    );
 
     // No session selected: the app name is the fallback.
     expect(topBarTitle().data, 'SpeedDial');
@@ -650,10 +654,18 @@ void main() {
     await tester.pump();
     expect(topBarTitle().data, 'Build the feature');
 
-    // A rename propagates through the store into the title.
-    await data.sessions.rename('fake', 'sess-1', 'Ship it');
+    // A rename propagates through the store into the title, backspacing
+    // the old name and typing the new one in.
+    await data.sessions.rename('fake', 'sess-1', 'Build the docs');
     await tester.pump();
-    expect(topBarTitle().data, 'Ship it');
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 16));
+    // Mid-backspace: "feature" is going, "docs" not yet in.
+    expect(topBarTitle().data, startsWith('Build the '));
+    expect(topBarTitle().data, isNot('Build the feature'));
+    expect(topBarTitle().data, isNot('Build the docs'));
+    await tester.pumpAndSettle();
+    expect(topBarTitle().data, 'Build the docs');
     // Drain the fake's delayed sessionUpdates broadcast so no timer
     // outlives the test.
     await tester.pump(const Duration(milliseconds: 5));

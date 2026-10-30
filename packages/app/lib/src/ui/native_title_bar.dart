@@ -12,15 +12,20 @@ enum NativeTitleBarAction { toggleLeft, toggleRight, cycleTheme }
 class NativeTitleBarState {
   const NativeTitleBarState({
     required this.title,
+    String? windowTitle,
     required this.status,
     required this.statusColor,
     required this.leftOpen,
     required this.rightOpen,
     required this.themeMode,
     required this.dark,
-  });
+  }) : windowTitle = windowTitle ?? title;
 
+  /// What the header bar shows, mid-typing during a rename.
   final String title;
+
+  /// The window's own title (taskbar, switcher): the settled name.
+  final String windowTitle;
   final String status;
   final Color statusColor;
   final bool leftOpen;
@@ -33,6 +38,7 @@ class NativeTitleBarState {
 
   Map<String, Object?> toMap() => <String, Object?>{
     'title': title,
+    'windowTitle': windowTitle,
     'status': status,
     'statusColor': statusColor.toARGB32(),
     'leftOpen': leftOpen,
@@ -45,6 +51,7 @@ class NativeTitleBarState {
   bool operator ==(Object other) =>
       other is NativeTitleBarState &&
       other.title == title &&
+      other.windowTitle == windowTitle &&
       other.status == status &&
       other.statusColor == statusColor &&
       other.leftOpen == leftOpen &&
@@ -55,6 +62,7 @@ class NativeTitleBarState {
   @override
   int get hashCode => Object.hash(
     title,
+    windowTitle,
     status,
     statusColor,
     leftOpen,
