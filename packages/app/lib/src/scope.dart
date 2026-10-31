@@ -7,6 +7,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'api/daemon_client.dart';
 import 'api/fake_daemon.dart';
+import 'api/local_history.dart';
 import 'api/ws_daemon_client.dart';
 import 'local_daemon/local_daemon.dart';
 import 'state/chat_store.dart';
@@ -553,6 +554,7 @@ class AppData {
       token: endpoint.token,
       channelFactory: daemonChannelFactory,
       historyDetail: daemonHistoryDetail,
+      localHistory: LocalHistory(daemonId),
     );
     return _registerWebSocketClient(daemonId, client);
   }

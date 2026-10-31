@@ -11,7 +11,7 @@ import '../daemon_error_text.dart';
 import '../session_restored_notice.dart';
 import '../toast.dart';
 import 'ante_controls.dart';
-import 'catching_up.dart';
+import 'history_notice.dart';
 import 'composer.dart';
 import 'file_action_dialog.dart';
 import 'file_transfer_banner.dart';
@@ -330,7 +330,8 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         // A just-reconnected daemon refetches what was missed offline; the
         // buffered timeline is stale for that window (but valid — nothing
         // is lost), so say so instead of silently showing old content.
-        final bool catchingUp = chat.isCatchingUp(sessionId);
+        final bool offline = data.connections.statusOf(daemonId).outOfReach;
+        final bool catchingUp = chat.isCatchingUp(sessionId) && !offline;
 
         // While the first fetch runs (or after it failed with nothing live
         // to show), a bare timeline would read as an empty session.
@@ -395,6 +396,9 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                 : null,
             followLatestRequest: _followLatestRequest.value,
             catchingUp: catchingUp,
+            historyReplacementRevision: chat.historyReplacementRevisionFor(
+              sessionId,
+            ),
             hasOlder: chat.hasOlderHistory(sessionId),
             loadingOlder: chat.isLoadingOlderHistory(sessionId),
             olderError: chat.olderHistoryErrorFor(sessionId),
@@ -427,7 +431,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                   : _restore,
             ),
             Expanded(child: _SurfaceSwitcher(child: surface)),
-            CatchingUpStrip(active: catchingUp),
+            HistoryNotice(
+              offline: offline,
+              hasContent: !bare || chat.isSavedHistory(sessionId),
+              updating: catchingUp,
+              savedOnly: chat.isSavedHistory(sessionId),
+              savedComplete: chat.isSavedHistoryComplete(sessionId),
+              failed: failed,
+              onRetry: () => chat.retryHistory(daemonId, sessionId),
+            ),
             if (pending != null && pending.questions.isNotEmpty)
               QuestionBanner(
                 key: ValueKey(pending.requestId),

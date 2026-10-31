@@ -11,6 +11,7 @@ import 'store_base.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../api/daemon_client.dart';
+import '../api/saved_history_client.dart';
 import 'streamed_attachment.dart';
 
 /// Composite `daemonId/sessionId` key backing the store's maps. Session ids
@@ -77,6 +78,10 @@ class _SessionBuffer {
   final List<SessionEvent> pending = <SessionEvent>[];
   StreamSubscription<SessionEvent>? eventSub;
   bool historyLoaded = false;
+  bool savedOnly = false;
+  bool savedComplete = false;
+  bool replaceOnResync = false;
+  int historyReplacementRevision = 0;
   bool hasOlderHistory = false;
   bool loadingOlderHistory = false;
   Object? olderHistoryError;
@@ -313,6 +318,14 @@ class ChatStore extends StoreBase {
   bool isCatchingUp(String sessionId) =>
       _bufferFor(sessionId)?.resyncing ?? false;
 
+  int historyReplacementRevisionFor(String sessionId) =>
+      _bufferFor(sessionId)?.historyReplacementRevision ?? 0;
+
+  bool isSavedHistory(String sessionId) =>
+      _bufferFor(sessionId)?.savedOnly ?? false;
+  bool isSavedHistoryComplete(String sessionId) =>
+      _bufferFor(sessionId)?.savedComplete ?? false;
+
   /// Whether persisted events older than the currently buffered page remain.
   bool hasOlderHistory(String sessionId) =>
       _bufferFor(sessionId)?.hasOlderHistory ?? false;
@@ -332,7 +345,8 @@ class ChatStore extends StoreBase {
     if (buffer == null ||
         !buffer.historyLoaded ||
         !buffer.hasOlderHistory ||
-        buffer.loadingOlderHistory) {
+        buffer.loadingOlderHistory ||
+        buffer.resyncing) {
       return;
     }
     final int? beforeSeq = buffer.oldestSeq;
@@ -348,6 +362,11 @@ class ChatStore extends StoreBase {
       final page = await _clientFor(daemonId)
           .history(sessionId, limit: historyPageSize, beforeSeq: beforeSeq);
       _prependHistoryPage(buffer, page.events);
+      if (!page.hasMore &&
+          !buffer.savedOnly &&
+          _clientFor(daemonId).isConnected) {
+        buffer.savedComplete = true;
+      }
       buffer.hasOlderHistory = page.hasMore;
       if (page.events.isNotEmpty) buffer.oldestSeq = page.events.first.seq;
     } catch (error) {
@@ -365,6 +384,10 @@ class ChatStore extends StoreBase {
     if (buffer == null ||
         !buffer.historyLoaded ||
         buffer.historyError == null) {
+      return;
+    }
+    if (buffer.events.isNotEmpty) {
+      unawaited(_resyncBuffer(_clientFor(daemonId), buffer));
       return;
     }
     buffer.historyLoaded = false;
@@ -789,22 +812,38 @@ class ChatStore extends StoreBase {
     _SessionBuffer buffer, {
     bool alreadyMarked = false,
   }) async {
+    if (client is SavedHistoryClient && !client.isConnected) {
+      buffer.resyncing = false;
+      _scheduleNotify();
+      return;
+    }
     if (!alreadyMarked) {
       if (buffer.resyncing) return;
       buffer.resyncing = true;
       _scheduleNotify();
     }
-    final int knownMaxSeq = buffer.maxSeq;
+    final bool replaceSaved = buffer.savedOnly || buffer.replaceOnResync;
+    final int knownMaxSeq = replaceSaved
+        ? (buffer.oldestSeq ?? 0) - 1
+        : buffer.maxSeq;
     try {
       final List<List<SessionEvent>> pages = <List<SessionEvent>>[];
       int? beforeSeq;
+      bool hasMore = false;
       while (true) {
+        if (client is SavedHistoryClient && !client.isConnected) {
+          throw StateError('Daemon disconnected while updating conversation');
+        }
         final page = await client.history(
           buffer.sessionId,
           limit: historyPageSize,
           beforeSeq: beforeSeq,
         );
+        if (client is SavedHistoryClient && !client.isConnected) {
+          throw StateError('Daemon disconnected while updating conversation');
+        }
         pages.add(page.events);
+        hasMore = page.hasMore;
         if (page.events.isEmpty ||
             page.events.first.seq == null ||
             page.events.first.seq! <= knownMaxSeq + 1 ||
@@ -813,14 +852,27 @@ class ChatStore extends StoreBase {
         }
         beforeSeq = page.events.first.seq;
       }
+      if (replaceSaved) {
+        // Saved text is a sparse projection. Rebuild the loaded range from
+        // authoritative raw events, including tools/thoughts and missed gaps.
+        _resetHistory(buffer);
+        buffer.historyReplacementRevision++;
+        buffer.hasOlderHistory = hasMore;
+        buffer.oldestSeq = pages.last.firstOrNull?.seq;
+      }
       for (final List<SessionEvent> page in pages.reversed) {
         for (final SessionEvent event in page) {
           _applyLive(buffer, event);
         }
       }
+      buffer.savedOnly = false;
+      buffer.savedComplete = buffer.savedComplete || !buffer.hasOlderHistory;
+      buffer.replaceOnResync = false;
       buffer.historyError = null;
-    } on Object {
-      // Live events remain pending; the next reconnect or gap retries.
+    } on Object catch (error) {
+      buffer.replaceOnResync = true;
+      buffer.historyError = error;
+      _lastError = error;
     } finally {
       buffer.resyncing = false;
       final List<SessionEvent> pending = List<SessionEvent>.of(buffer.pending)
@@ -830,7 +882,7 @@ class ChatStore extends StoreBase {
         );
       buffer.pending.clear();
       for (final SessionEvent event in pending) {
-        _onLiveEvent(buffer, event);
+        _applyLive(buffer, event);
       }
       _scheduleNotify();
     }
@@ -867,14 +919,28 @@ class ChatStore extends StoreBase {
   /// one round trip.
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
-    buffer.events.clear();
-    buffer.rewinds.clear();
-    buffer.permissions.clear();
-    buffer.chunkRun = null;
-    buffer.maxSeq = 0;
-    buffer.oldestSeq = null;
-    buffer.hasOlderHistory = false;
-    buffer.olderHistoryError = null;
+    _resetHistory(buffer);
+    try {
+      if (client is SavedHistoryClient) {
+        final saved = await (client as SavedHistoryClient).savedHistory(
+          buffer.sessionId,
+          limit: historyPageSize,
+        );
+        if (saved != null) {
+          buffer.savedOnly = true;
+          buffer.savedComplete = saved.complete;
+          buffer.oldestSeq = saved.events.firstOrNull?.seq;
+          buffer.hasOlderHistory = saved.hasMore;
+          _applyLatestHistoryPage(buffer, saved.events);
+          if (client.isConnected) await _resyncBuffer(client, buffer);
+          return;
+        }
+      }
+    } on Object catch (error) {
+      // A broken disk snapshot must not prevent fetching authoritative history.
+      _lastError = error;
+      _scheduleNotify();
+    }
     try {
       final page = await client.history(
         buffer.sessionId,
@@ -882,10 +948,13 @@ class ChatStore extends StoreBase {
       );
       _applyLatestHistoryPage(buffer, page.events);
       buffer.hasOlderHistory = page.hasMore;
+      buffer.savedComplete = !page.hasMore;
       if (page.events.isNotEmpty) buffer.oldestSeq = page.events.first.seq;
+      buffer.savedOnly = false;
       buffer.historyError = null;
     } catch (error) {
       buffer.historyError = error;
+      _lastError = error;
     } finally {
       buffer.historyLoaded = true;
       for (final SessionEvent event in buffer.pending) {
@@ -894,6 +963,20 @@ class ChatStore extends StoreBase {
       buffer.pending.clear();
       _scheduleNotify();
     }
+  }
+
+  void _resetHistory(_SessionBuffer buffer) {
+    final bool hadEvents = buffer.events.isNotEmpty;
+    buffer.events.clear();
+    buffer.rewinds.clear();
+    buffer.permissions.clear();
+    buffer.chunkRun = null;
+    buffer.maxSeq = 0;
+    buffer.oldestSeq = null;
+    buffer.hasOlderHistory = false;
+    buffer.olderHistoryError = null;
+    _usageById.remove(buffer.key);
+    if (hadEvents) _revisions[buffer.key] = (_revisions[buffer.key] ?? 0) + 1;
   }
 
   /// Appends the newest history page (the first one fetched) oldest-first

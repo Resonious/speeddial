@@ -22,6 +22,63 @@ void main() {
       content: const <ToolCallContent>[ToolCallText(text: 'Details to read')],
     ),
   );
+  for (final showUpdating in [false, true]) {
+    testWidgets(
+      'filling cached gaps keeps the visible message in place (updating: $showUpdating)',
+      (tester) async {
+        final cached = <TimelineItem>[
+          for (int i = 0; i < 60; i++)
+            UserMessageItem(id: i, text: 'Saved message $i'),
+        ];
+        Widget snapshot(List<TimelineItem> items, bool updating) => MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: MediaQuery(
+            data: const MediaQueryData(disableAnimations: true),
+            child: Scaffold(
+              body: Timeline(
+                items: items,
+                catchingUp: updating,
+                historyReplacementRevision: identical(items, cached) ? 0 : 1,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpWidget(snapshot(cached, showUpdating));
+        await tester.pumpAndSettle();
+        await tester.drag(
+          find.byKey(const Key('chat-timeline')),
+          const Offset(0, 350),
+        );
+        await tester.pumpAndSettle();
+        final visible = find
+            .byWidgetPredicate(
+              (w) =>
+                  w is Text && (w.data?.startsWith('Saved message ') ?? false),
+            )
+            .hitTestable()
+            .first;
+        final anchor = find.text(tester.widget<Text>(visible).data!);
+        final before = tester.getTopLeft(anchor);
+        final full = <TimelineItem>[
+          for (int i = 0; i < 60; i++) ...[
+            UserMessageItem(id: i, text: 'Saved message $i'),
+            AgentMessageItem(
+              id: 'restored-$i',
+              text: List.filled(
+                12,
+                'Previously missing response $i',
+              ).join('\n\n'),
+            ),
+          ],
+        ];
+        await tester.pumpWidget(snapshot(full, false));
+        await tester.pumpAndSettle();
+        expect(anchor.hitTestable(), findsOneWidget);
+        expect(tester.getTopLeft(anchor).dy, closeTo(before.dy, 1));
+      },
+    );
+  }
+
   testWidgets('expanded card and reading position survive incoming events', (
     tester,
   ) async {

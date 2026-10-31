@@ -17,9 +17,14 @@ import 'heat_shimmer.dart';
 /// A catch-up quicker than a blink never shows. Reduced motion shows and
 /// hides it at once, still.
 class CatchingUpStrip extends StatefulWidget {
-  const CatchingUpStrip({super.key, required this.active});
+  const CatchingUpStrip({
+    super.key,
+    required this.active,
+    this.label = 'Catching up…',
+  });
 
   final bool active;
+  final String label;
 
   /// How long a catch-up may take before the strip shows at all.
   static const Duration patience = Duration(milliseconds: 150);
@@ -158,7 +163,7 @@ class _CatchingUpStripState extends State<CatchingUpStrip>
                       glint: colors.flameTip,
                       color: theme.colorScheme.onSurfaceVariant,
                       child: Text(
-                        'Catching up…',
+                        widget.label,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           fontWeight: FontWeight.w500,

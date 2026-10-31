@@ -7,6 +7,8 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'daemon_client.dart';
+import 'local_history.dart';
+import 'saved_history_client.dart';
 
 /// One bidirectional stream of daemon WebSocket text frames.
 ///
@@ -82,10 +84,11 @@ class _DaemonNotifications {
 /// Live notifications are broadcast without buffering: a session that nobody
 /// is watching simply loses its events (stores watch deliberately and recover
 /// through [resynced] + `history()`).
-class WsDaemonClient implements DaemonClient {
+class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   WsDaemonClient({
     required this.url,
     this.token,
+    this.localHistory,
     DaemonFrameChannelFactory? channelFactory,
     // The explicit initializers (rather than `this.` formals) keep each
     // field's default next to its declaration.
@@ -106,8 +109,107 @@ class WsDaemonClient implements DaemonClient {
        _channelFactory = previous._channelFactory,
        reconnectBase = previous.reconnectBase,
        livenessProbeTimeout = previous.livenessProbeTimeout,
-       historyDetail = previous.historyDetail {
+       historyDetail = previous.historyDetail,
+       localHistory = previous.localHistory {
     _resyncNeeded = true;
+  }
+
+  final LocalHistory? localHistory;
+  Object? historyCacheError;
+  final Set<String> _historyQueue = <String>{};
+  final Set<String> _removedHistory = <String>{};
+  bool _syncingHistory = false;
+  final Map<String, List<SessionEvent>> _pendingCache = {};
+
+  void _cacheEvent(String id, SessionEvent event) {
+    if (localHistory == null || _removedHistory.contains(id)) return;
+    if (event is! UserMessageEvent &&
+        event is! AgentMessageChunkEvent &&
+        event is! TurnCompleteEvent &&
+        event is! SessionErrorEvent &&
+        event is! HistoryRewoundEvent) {
+      return;
+    }
+    (_pendingCache[id] ??= []).add(event);
+    // Streaming deltas stay in memory until a message/turn boundary so a
+    // long response does not rewrite persistent transcripts on every tick.
+    if (event is! AgentMessageChunkEvent) _flushCacheEvents();
+  }
+
+  void _flushCacheEvents() {
+    for (final entry in _pendingCache.entries) {
+      if (!_removedHistory.contains(entry.key)) {
+        _cacheOperation(localHistory!.merge(entry.key, entry.value));
+      }
+    }
+    _pendingCache.clear();
+  }
+
+  void _cacheOperation(Future<void> operation) {
+    unawaited(
+      operation.catchError((Object error) {
+        historyCacheError = error;
+        debugPrint('Offline history: $error');
+      }),
+    );
+  }
+
+  Future<void> _cacheAllSessions() async {
+    if (localHistory == null) return;
+    await listProjects();
+    final sessions = await listSessions(includeArchived: true);
+    for (final session in sessions) {
+      _queueHistory(session.id);
+    }
+  }
+
+  void _queueHistory(String id) {
+    if (localHistory == null || _removedHistory.contains(id)) return;
+    _historyQueue.add(id);
+    if (!_syncingHistory) _cacheOperation(_drainHistory());
+  }
+
+  Future<void> _drainHistory() async {
+    _syncingHistory = true;
+    try {
+      while (!_disposed && isConnected && _historyQueue.isNotEmpty) {
+        final id = _historyQueue.first;
+        _historyQueue.remove(id);
+        try {
+          final saved = await localHistory!.read(id);
+          final watermark = saved?.watermark ?? 0;
+          final events = <SessionEvent>[];
+          int? beforeSeq;
+          int newest = watermark;
+          while (!_disposed && isConnected) {
+            final page = await _remoteHistory(
+              id,
+              limit: 500,
+              beforeSeq: beforeSeq,
+              detail: SessionHistoryDetail.summary,
+            );
+            events.addAll(page.events);
+            if (beforeSeq == null && page.events.isNotEmpty) {
+              newest = page.events.last.seq ?? watermark;
+            }
+            if (!page.hasMore ||
+                page.events.isEmpty ||
+                (page.events.first.seq ?? 0) <= watermark + 1) {
+              if (!_removedHistory.contains(id)) {
+                await localHistory!.merge(id, events, watermark: newest);
+              }
+              break;
+            }
+            beforeSeq = page.events.first.seq;
+          }
+        } on Object catch (error) {
+          historyCacheError = error;
+          debugPrint('Offline history: $error');
+        }
+      }
+    } finally {
+      _syncingHistory = false;
+    }
   }
 
   final _DaemonNotifications _notifications;
@@ -251,7 +353,10 @@ class WsDaemonClient implements DaemonClient {
       if (_disposed) return;
       connState.value = DaemonConnectionState.connected;
       _reconnectAttempt = 0;
-      if (!initial || _resyncNeeded) {
+      _cacheOperation(_cacheAllSessions());
+      // Stores may already be displaying disk snapshots while the first
+      // connection opens; they need authoritative catch-up on that connect too.
+      if (!initial || _resyncNeeded || localHistory != null) {
         // Back on the wire after a gap: stores backfill what they missed
         // while offline (or while the first connect was failing).
         _resyncNeeded = false;
@@ -500,6 +605,7 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Future<void> dispose() async {
+    _flushCacheEvents();
     if (_disposed) return;
     _disposed = true;
     _reconnectTimer?.cancel();
@@ -529,10 +635,15 @@ class WsDaemonClient implements DaemonClient {
           eventJson.putIfAbsent('seq', () => params['seq']);
           eventJson.putIfAbsent('timestamp', () => params['timestamp']);
           try {
-            _sessionEventFeed.add((
-              sessionId: sessionId,
-              event: SessionEvent.fromJson(eventJson),
-            ));
+            final decoded = SessionEvent.fromJson(eventJson);
+            _sessionEventFeed.add((sessionId: sessionId, event: decoded));
+            _cacheEvent(sessionId, decoded);
+            if (decoded is TurnCompleteEvent ||
+                decoded is SessionErrorEvent ||
+                decoded is UserMessageEvent ||
+                decoded is HistoryRewoundEvent) {
+              _queueHistory(sessionId);
+            }
           } on Object {
             // Malformed event: drop rather than kill the notification feed.
           }
@@ -543,9 +654,15 @@ class WsDaemonClient implements DaemonClient {
         final Object? session = params['session'];
         if (session is Map) {
           try {
-            _sessionUpdatesController.add(
-              Session.fromJson(Map<String, Object?>.from(session)),
+            final decoded = Session.fromJson(
+              Map<String, Object?>.from(session),
             );
+            _sessionUpdatesController.add(decoded);
+            if (localHistory != null) {
+              _cacheOperation(
+                localHistory!.writeIndex('sessions', [decoded.toJson()]),
+              );
+            }
           } on Object {
             // Malformed session: drop.
           }
@@ -554,6 +671,17 @@ class WsDaemonClient implements DaemonClient {
         final Object? sessionId = params['sessionId'];
         if (sessionId is String) {
           _sessionRemovalsController.add(sessionId);
+          _removedHistory.add(sessionId);
+          _historyQueue.remove(sessionId);
+          _pendingCache.remove(sessionId);
+          if (localHistory != null) {
+            _cacheOperation(
+              localHistory!.writeIndex('sessions', [], removeId: sessionId),
+            );
+          }
+          if (localHistory != null) {
+            _cacheOperation(localHistory!.remove(sessionId));
+          }
         }
       case 'git.changed':
         final Object? projectId = params['projectId'];
@@ -642,8 +770,25 @@ class WsDaemonClient implements DaemonClient {
 
   @override
   Future<List<Project>> listProjects() async {
+    if (!isConnected && localHistory != null) {
+      final saved = await localHistory!.readIndex('projects');
+      if (saved != null) return saved.map(Project.fromJson).toList();
+    }
     final Object? result = await _requirePeer().call('projects.list');
-    return _decodeList(_resultField(result, 'projects'), Project.fromJson);
+    final projects = _decodeList(
+      _resultField(result, 'projects'),
+      Project.fromJson,
+    );
+    if (localHistory != null) {
+      _cacheOperation(
+        localHistory!.writeIndex(
+          'projects',
+          projects.map((p) => p.toJson()).toList(),
+          replace: true,
+        ),
+      );
+    }
+    return projects;
   }
 
   @override
@@ -846,7 +991,8 @@ class WsDaemonClient implements DaemonClient {
   @override
   Future<List<Session>> findSessionsByPullRequest(String url) async {
     final Object? result = await _requirePeer().call(
-      'sessions.findByPullRequest', <String, Object?>{'url': url},
+      'sessions.findByPullRequest',
+      <String, Object?>{'url': url},
     );
     return _decodeList(_resultField(result, 'sessions'), Session.fromJson);
   }
@@ -856,6 +1002,19 @@ class WsDaemonClient implements DaemonClient {
     String? projectId,
     bool includeArchived = false,
   }) async {
+    if (!isConnected && localHistory != null) {
+      final saved = await localHistory!.readIndex('sessions');
+      if (saved != null) {
+        return saved
+            .map(Session.fromJson)
+            .where(
+              (s) =>
+                  (projectId == null || s.projectId == projectId) &&
+                  (includeArchived || !s.archived),
+            )
+            .toList();
+      }
+    }
     final Object? result = await _requirePeer().call(
       'sessions.list',
       <String, Object?>{
@@ -863,7 +1022,20 @@ class WsDaemonClient implements DaemonClient {
         'includeArchived': includeArchived,
       },
     );
-    return _decodeList(_resultField(result, 'sessions'), Session.fromJson);
+    final sessions = _decodeList(
+      _resultField(result, 'sessions'),
+      Session.fromJson,
+    );
+    if (localHistory != null) {
+      _cacheOperation(
+        localHistory!.writeIndex(
+          'sessions',
+          sessions.map((s) => s.toJson()).toList(),
+          replace: projectId == null && includeArchived,
+        ),
+      );
+    }
+    return sessions;
   }
 
   @override
@@ -1109,14 +1281,55 @@ class WsDaemonClient implements DaemonClient {
     int limit = 200,
     int? beforeSeq,
   }) async {
+    if (!isConnected) {
+      final saved = await savedHistory(
+        sessionId,
+        limit: limit,
+        beforeSeq: beforeSeq,
+      );
+      if (saved != null) return (events: saved.events, hasMore: saved.hasMore);
+    }
+    final page = await _remoteHistory(
+      sessionId,
+      limit: limit,
+      beforeSeq: beforeSeq,
+    );
+    if (localHistory != null) {
+      _cacheOperation(localHistory!.merge(sessionId, page.events));
+    }
+    return page;
+  }
+
+  @override
+  Future<({List<SessionEvent> events, bool hasMore, bool complete})?>
+  savedHistory(String sessionId, {required int limit, int? beforeSeq}) async {
+    final saved = await localHistory?.read(sessionId);
+    if (saved == null) return null;
+    final events = saved.events
+        .where((e) => beforeSeq == null || e.seq! < beforeSeq)
+        .toList();
+    final start = events.length > limit ? events.length - limit : 0;
+    return (
+      events: events.sublist(start),
+      hasMore: start > 0,
+      complete: saved.complete,
+    );
+  }
+
+  Future<({List<SessionEvent> events, bool hasMore})> _remoteHistory(
+    String sessionId, {
+    required int limit,
+    int? beforeSeq,
+    SessionHistoryDetail? detail,
+  }) async {
     final Object? result = await _requirePeer().call(
       'sessions.history',
       <String, Object?>{
         'sessionId': sessionId,
         'limit': limit,
         'beforeSeq': ?beforeSeq,
-        if (historyDetail != SessionHistoryDetail.full)
-          'detail': historyDetail.wire,
+        if ((detail ?? historyDetail) != SessionHistoryDetail.full)
+          'detail': (detail ?? historyDetail).wire,
       },
     );
     return (

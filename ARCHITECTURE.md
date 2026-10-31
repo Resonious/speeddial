@@ -806,3 +806,33 @@ each download. Failures retain existing artifacts and retry on Enter or new HEAD
 mtime (publication time for new builds; existing files retain their original
 mtime). The page polls without caching and uses the viewer's local time zone.
 This standalone HTTP endpoint does not change the daemon's JSON-RPC protocol.
+
+### Offline conversations
+
+App-owned WebSocket clients persist a compact transcript per configured daemon
+and session through `LocalHistory` (shared preferences on native and web).
+Connection catch-up walks summary history in bounded pages, one session at a
+time, including sessions never opened on this device. A saved sequence watermark
+limits subsequent catch-up to missed events. User messages, agent reply text,
+turn endings, errors, and rewind markers are retained; tool/thought details and
+attachment payloads remain online-only. Live text deltas accumulate in memory;
+user messages and turn endings flush immediately (also on client disposal). Rewinds remove cached text and
+remain as tombstones against late pages. Session removal deletes its transcript.
+Project/session indexes also persist so offline startup can populate the inbox.
+Offline history uses the same backwards pagination and timeline as online chat;
+reconnect resumes authoritative daemon history and the existing reheating effect.
+No protocol changes or additional dependencies are involved.
+
+SavedHistoryClient is an optional local client capability, separate from the wire
+contract. ChatStore hydrates its latest saved page before starting network I/O,
+tracks whether the snapshot covers all messages as of its last sync, and exposes
+saved/updating/error state independently of empty-history loading. Reconnect or
+retry replaces the displayed sparse range with complete authoritative pages;
+older history remains lazy. Live events queue during replacement and replay by
+sequence afterwards. Failed refreshes retain readable content and retry the
+whole loaded range so gaps cannot be hidden by later live events. The timeline
+reanchors its sliver origin to a visible row when filling gaps, retaining the
+reader's position even when restored content is taller than the viewport.
+HistoryNotice uses the existing reheating effect only while reachable, and a
+still offline notice or retry notice otherwise. No full-screen loader replaces
+readable messages.

@@ -38,6 +38,8 @@ Every effect marks something that actually happened. Reuse these before writing 
 | Subagents | A crew of small flames that flare as they report, cold once the turn ends | `chat/subagent_crew.dart` |
 | Compaction | Divider: "Reducing the conversation…" with bubbles simmering along the line, then "Conversation reduced · 313k → 48k tokens" | `chat/compaction.dart` |
 | Catching up after a reconnect | Strip rises with a flame while a haze "reheats" the stale timeline; missed rows rise into place | `chat/catching_up.dart` |
+| Saved conversation offline | Still cloud-off notice: “Offline · Viewing saved messages”, with an incomplete-history explanation when needed. No shimmer or success bloom on disconnect. | `chat/history_notice.dart` |
+| Saved conversation updating | Existing reheating strip says “Updating conversation…” while saved text stays readable; authoritative rows fill gaps, anchored to the message being read. Failed refresh keeps content and offers Retry. | `chat/history_notice.dart`, `chat/catching_up.dart` |
 | History loading | A ghost of the conversation under a warm glint; dims and stills on failure | `chat/history_skeleton.dart` |
 | Landing at the bottom | Sparks fly up off the bottom edge | `chat/landing_sparks.dart` |
 | New activity below while scrolled up | Jump button flares like a fanned ember; rises in and sinks out | `chat/latest_button.dart` |

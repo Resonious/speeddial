@@ -850,6 +850,7 @@ class Timeline extends StatefulWidget {
     this.cwd,
     this.unreachable,
     this.catchingUp = false,
+    this.historyReplacementRevision = 0,
   });
 
   /// The session's working directory: tool rows show paths under it as
@@ -860,6 +861,10 @@ class Timeline extends StatefulWidget {
   /// [CatchingUpStrip]). The rows they bring rise into place once it lands,
   /// and a view at the live end lands in sparks.
   final bool catchingUp;
+
+  /// Changes when sparse saved content is replaced, even when a refresh
+  /// completes between frames before the updating indicator is painted.
+  final int historyReplacementRevision;
 
   /// Set while the session's daemon is out of reach (see
   /// [TurnFlameRow.unreachable]).
@@ -899,6 +904,7 @@ class Timeline extends StatefulWidget {
   /// Forks the selected session through the message event at [seq].
   final void Function(int seq)? onFork;
   final void Function(int seq)? onRewind;
+
   /// Resumes the session from its latest error; null while unavailable.
   final VoidCallback? onContinue;
 
@@ -932,6 +938,7 @@ class _TimelineState extends State<Timeline> {
   final ValueNotifier<int> _landings = ValueNotifier<int>(0);
   Object? _liveStart;
   bool _requestedOlder = false;
+  final Map<Object, GlobalKey> _rowAnchors = <Object, GlobalKey>{};
   final PageStorageBucket _storage = PageStorageBucket();
 
   /// The timeline's current selection as plain text, for Reply.
@@ -1024,15 +1031,71 @@ class _TimelineState extends State<Timeline> {
     _liveStart = _identity(widget.items[index], index);
   }
 
+  void _preserveReadingAnchor() {
+    if (_controller.followLatest || !_controller.hasClients) return;
+    final viewport = context.findRenderObject();
+    if (viewport is! RenderBox || !viewport.hasSize) return;
+    final bottom = viewport.localToGlobal(Offset(0, viewport.size.height)).dy;
+    final top = viewport.localToGlobal(Offset.zero).dy;
+    final remaining = <Object>{};
+    final duplicates = <Object>{};
+    for (int i = 0; i < widget.items.length; i++) {
+      final id = _identity(widget.items[i], i);
+      if (!remaining.add(id)) duplicates.add(id);
+    }
+    remaining.removeAll(duplicates);
+    GlobalKey? anchor;
+    Object? anchorId;
+    double? before;
+    for (final entry in _rowAnchors.entries) {
+      if (!remaining.contains(entry.key)) continue;
+      final box = entry.value.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
+      final y = box.localToGlobal(Offset.zero).dy;
+      if (y >= top && y < bottom && (before == null || y > before)) {
+        anchor = entry.value;
+        anchorId = entry.key;
+        before = y;
+      }
+    }
+    if (anchor == null) return;
+    // Make the visible row the sliver origin before layout. Even a large
+    // restored gap cannot push it out of the viewport's build/cache range.
+    _liveStart = anchorId;
+    _controller.position.correctPixels(before! - bottom);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _controller.followLatest || !_controller.hasClients) {
+        return;
+      }
+      final box = anchor!.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.attached || !box.hasSize) return;
+      final delta = before! - box.localToGlobal(Offset.zero).dy;
+      if (delta.abs() < 0.5) return;
+      final position = _controller.position;
+      position.jumpTo(
+        (position.pixels + delta).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+    });
+  }
+
   @override
   void didUpdateWidget(Timeline oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if ((oldWidget.catchingUp && !widget.catchingUp) ||
+        oldWidget.historyReplacementRevision !=
+            widget.historyReplacementRevision) {
+      _preserveReadingAnchor();
+    }
     _initializeOrigin();
     if (widget.followLatestRequest != oldWidget.followLatestRequest) {
       _controller.followLatest = true;
     }
     if (oldWidget.loadingOlder != widget.loadingOlder ||
-        oldWidget.hasOlder != widget.hasOlder) {
+        oldWidget.hasOlder != widget.hasOlder ||
+        oldWidget.catchingUp != widget.catchingUp) {
       _requestedOlder = false;
     }
     if (widget.catchingUp && !oldWidget.catchingUp) {
@@ -1058,6 +1121,7 @@ class _TimelineState extends State<Timeline> {
       _landings.value++;
     }
     if (!_requestedOlder &&
+        !widget.catchingUp &&
         widget.hasOlder &&
         !widget.loadingOlder &&
         widget.onLoadOlder != null &&
@@ -1144,6 +1208,12 @@ class _TimelineState extends State<Timeline> {
       for (int i = 0; i < widget.items.length; i++)
         _identity(widget.items[i], i),
     ];
+    final Set<Object> seen = <Object>{};
+    final Set<Object> duplicated = <Object>{};
+    for (final id in identities) {
+      if (!seen.add(id)) duplicated.add(id);
+    }
+    _rowAnchors.removeWhere((id, key) => key.currentContext == null);
     final int originIndex = _liveStart == null
         ? -1
         : identities.indexOf(_liveStart!);
@@ -1205,18 +1275,28 @@ class _TimelineState extends State<Timeline> {
           }
           final int itemIndex = reverse ? end - 1 - index : start + index;
           final TimelineItem item = widget.items[itemIndex];
-          return _TimelineRow(
+          return KeyedSubtree(
             key: PageStorageKey<Object>(identities[itemIndex]),
-            item: item,
-            onTouch: itemIndex == newest ? _touchedLiveEnd : null,
-            delivery: _deliveryOf(item),
-            arrival: _arrivals[identities[itemIndex]],
-            cwd: widget.cwd,
-            attachmentLoader: widget.attachmentLoader,
-            onFork: widget.onFork,
-            onRewind: widget.onRewind,
-            onContinue: itemIndex == newest ? widget.onContinue : null,
-            openLocalFile: widget.openLocalFile,
+            child: SizedBox(
+              key: duplicated.contains(identities[itemIndex])
+                  ? null
+                  : _rowAnchors.putIfAbsent(
+                      identities[itemIndex],
+                      GlobalKey.new,
+                    ),
+              child: _TimelineRow(
+                item: item,
+                onTouch: itemIndex == newest ? _touchedLiveEnd : null,
+                delivery: _deliveryOf(item),
+                arrival: _arrivals[identities[itemIndex]],
+                cwd: widget.cwd,
+                attachmentLoader: widget.attachmentLoader,
+                onFork: widget.onFork,
+                onRewind: widget.onRewind,
+                onContinue: itemIndex == newest ? widget.onContinue : null,
+                openLocalFile: widget.openLocalFile,
+              ),
+            ),
           );
         },
         childCount: end - start + (reverse ? (historyStatus ? 1 : 0) : 1),
@@ -1392,7 +1472,6 @@ class _OlderHistoryStatus extends StatelessWidget {
 
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
-    super.key,
     required this.item,
     this.onTouch,
     this.delivery,
