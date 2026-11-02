@@ -12,6 +12,7 @@ import 'src/state/session_link_store.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
 import 'src/ui/native_title_bar.dart';
+import 'src/ui/session_link_navigation.dart';
 import 'src/ui/shell.dart';
 import 'src/ui/toast.dart';
 
@@ -270,17 +271,20 @@ class _SpeedDialAppState extends State<SpeedDialApp>
       child: ListenableBuilder(
         listenable: widget.data.settings,
         builder: (BuildContext context, Widget? _) {
-          return MaterialApp(
-            navigatorKey: _navigator,
-            // Session links select within the existing shell; they do not
-            // create a second Navigator route on cold launch.
-            initialRoute: '/',
-            title: 'SpeedDial',
-            debugShowCheckedModeBanner: false,
-            theme: buildSpeedDialLightTheme(),
-            darkTheme: buildSpeedDialTheme(),
-            themeMode: widget.data.settings.themeMode,
-            home: SpeedDialShell(nativeTitleBar: widget.nativeTitleBar),
+          return SessionLinkNavigation(
+            open: _openSessionLink,
+            child: MaterialApp(
+              navigatorKey: _navigator,
+              // Session links select within the existing shell; they do not
+              // create a second Navigator route on cold launch.
+              initialRoute: '/',
+              title: 'SpeedDial',
+              debugShowCheckedModeBanner: false,
+              theme: buildSpeedDialLightTheme(),
+              darkTheme: buildSpeedDialTheme(),
+              themeMode: widget.data.settings.themeMode,
+              home: SpeedDialShell(nativeTitleBar: widget.nativeTitleBar),
+            ),
           );
         },
       ),

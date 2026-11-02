@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
+import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:speeddial_app/main.dart';
@@ -141,6 +143,74 @@ void main() {
     gate.complete();
     expect(await old, isFalse);
     expect(data.selection.selectedSessionId, newer.id);
+  });
+
+  for (final bool archived in <bool>[false, true]) {
+    testWidgets('chat link opens session (archived: $archived)', (
+      tester,
+    ) async {
+      if (archived) await second.archiveSession(target.id, true);
+      await tester.pumpWidget(SpeedDialApp(data: data));
+      await tester.pumpAndSettle();
+      final NavigatorState navigator = tester.state(
+        find.byType(Navigator).first,
+      );
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => Scaffold(
+              body: AgentMessageView(
+                text: '[Referenced conversation](${linkFor(target).toUri()})',
+                launchExternal: (_) async =>
+                    throw StateError('Must stay in app'),
+                openLocalFile: (_) async => throw StateError('Not a file'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.text('Referenced conversation', findRichText: true),
+      );
+      await tester.pumpAndSettle();
+      expect(data.selection.selectedDaemonId, 'second');
+      expect(data.selection.selectedSessionId, target.id);
+      expect(data.sessions.byId(target.id)?.archived, archived);
+      expect(navigator.canPop(), isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('missing chat session shows error and preserves selection', (
+    tester,
+  ) async {
+    data.selection.selectDaemon('first');
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pumpAndSettle();
+    final NavigatorState navigator = tester.state(find.byType(Navigator).first);
+    unawaited(
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(
+            body: AgentMessageView(
+              text: '[Missing conversation](speeddial://session?sessionId=missing&projectId=proj-demo)',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Missing conversation', findRichText: true));
+    await tester.pumpAndSettle();
+    expect(data.selection.selectedDaemonId, 'first');
+    expect(data.selection.selectedSessionId, isNull);
+    expect(
+      find.text('This session is not available on your configured daemons.'),
+      findsOneWidget,
+    );
+    expect(navigator.canPop(), isTrue);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

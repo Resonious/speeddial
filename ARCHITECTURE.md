@@ -755,13 +755,17 @@ one 1 MiB chunk at a time (progress on `OutgoingMessage.upload`, shown by
 not the bytes. iOS shares and the composer's file picker still use the inline
 8 MiB limit.
 
-### Notification session links
+### Notification and chat session links
 
 The protocol package's SessionLink helper builds and parses
 `speeddial://session?sessionId=<id>&projectId=<id>` and hosted-web equivalents.
 Android/iOS register the `speeddial` scheme and use Flutter's built-in deep-link
 delivery. The root app handles initial and incoming route information within
 the existing shell, and web startup reads session parameters from `Uri.base`.
+Markdown `speeddial://session` links use `SessionLinkNavigation` to call the
+same root resolver directly on every platform, including desktop and web.
+Successful opens dismiss overlays; failed lookups use the existing error toast.
+Ordinary HTTP(S) markdown links continue to open externally.
 Links use already saved endpoints and credentials; they never add a connection.
 If the same project/session IDs exist on multiple daemons, the app reports the
 ambiguity instead of opening an arbitrary copy. Native desktop URL-scheme

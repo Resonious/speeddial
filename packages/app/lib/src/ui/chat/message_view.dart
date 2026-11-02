@@ -12,6 +12,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../state/replies_store.dart';
 import '../../theme.dart';
+import '../session_link_navigation.dart';
 import '../toast.dart';
 import 'active_pulse.dart';
 import 'external_link_launcher.dart';
@@ -573,6 +574,22 @@ class _AgentMessageViewState extends State<AgentMessageView> {
 
   void _activateLink(String href) {
     final Uri? uri = Uri.tryParse(href);
+    if (uri?.scheme == 'speeddial') {
+      final SessionLink? link = SessionLink.fromUri(uri!);
+      final SessionLinkNavigation? navigation = SessionLinkNavigation.maybeOf(
+        context,
+      );
+      if (link != null && navigation != null) {
+        unawaited(navigation.open(link));
+      } else {
+        showToast(
+          context,
+          'Could not open this session link.',
+          tone: ToastTone.error,
+        );
+      }
+      return;
+    }
     if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
       unawaited(_openExternal(uri));
       return;
