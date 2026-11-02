@@ -836,3 +836,9 @@ reader's position even when restored content is taller than the viewport.
 HistoryNotice uses the existing reheating effect only while reachable, and a
 still offline notice or retry notice otherwise. No full-screen loader replaces
 readable messages.
+
+Cancelled and failed turns annotate their initiating user bubble from persisted
+turn events, retaining the outcome after later sends and history reloads.
+Cancellation before any reply, thought, tool call or permission request is labelled
+“Cancelled before agent response”; this does not assert that the provider never
+received the input. Cancelled turn dividers retain their stop reason.

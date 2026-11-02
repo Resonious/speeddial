@@ -14,6 +14,74 @@ import 'package:speeddial_app/src/ui/chat/tool_call_heat.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 void main() {
+  test('cancelled and failed messages retain outcomes across later turns', () {
+    final items = deriveTimelineItems(const <SessionEvent>[
+      UserMessageEvent(text: 'First', seq: 1),
+      TurnCompleteEvent(stopReason: 'cancelled', seq: 2),
+      UserMessageEvent(text: 'Correction', seq: 3),
+      AgentMessageChunkEvent(text: 'Reply', seq: 4),
+      TurnCompleteEvent(stopReason: 'end_turn', seq: 5),
+      UserMessageEvent(text: 'Interrupted', seq: 6),
+      AgentThoughtChunkEvent(text: 'Thinking', seq: 7),
+      TurnCompleteEvent(stopReason: 'cancelled', seq: 8),
+      UserMessageEvent(text: 'Failed', seq: 9),
+      SessionErrorEvent(message: 'Transport closed', seq: 10),
+    ]);
+    expect(
+      items.whereType<UserMessageItem>().map((item) => item.notice),
+      <String?>[
+        'Cancelled before agent response',
+        null,
+        'Turn cancelled',
+        'Turn failed',
+      ],
+    );
+    // A terminal event from an unloaded earlier page cannot mark a later send.
+    expect(
+      deriveTimelineItems(const <SessionEvent>[
+        TurnCompleteEvent(stopReason: 'cancelled', seq: 2),
+        UserMessageEvent(text: 'Next', seq: 3),
+      ]).whereType<UserMessageItem>().single.notice,
+      isNull,
+    );
+  });
+
+  for (final bool light in <bool>[false, true]) {
+    testWidgets('cancelled message remains distinct in theme $light', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: light ? buildSpeedDialLightTheme() : buildSpeedDialTheme(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: Timeline(
+              items: deriveTimelineItems(const <SessionEvent>[
+                UserMessageEvent(text: 'First message', seq: 1),
+                TurnCompleteEvent(stopReason: 'cancelled', seq: 2),
+                UserMessageEvent(text: 'Correction', seq: 3),
+                AgentMessageChunkEvent(text: 'Reply', seq: 4),
+                TurnCompleteEvent(stopReason: 'end_turn', seq: 5),
+              ]),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Cancelled before agent response'), findsOneWidget);
+      expect(find.text('Turn cancelled'), findsOneWidget);
+      expect(find.byIcon(Icons.info_outline), findsOneWidget);
+      expect(tester.hasRunningAnimations, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   group('message alignment', () {
     testWidgets('user messages sit right and agent messages sit left', (
       WidgetTester tester,

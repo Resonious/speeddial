@@ -43,8 +43,11 @@ class UserMessageItem extends TimelineItem {
     required this.text,
     this.attachments = const <Attachment>[],
     this.forkSeq,
+    this.notice,
   });
 
+  /// Persisted turn outcome; daemon receipt alone is not agent delivery.
+  final String? notice;
   final String text;
 
   /// Files attached to the message (metadata; payloads are fetched lazily
@@ -331,6 +334,36 @@ List<TimelineItem> deriveTimelineItems(
   bool running = false,
 }) {
   final List<TimelineItem> items = <TimelineItem>[];
+  final Map<UserMessageEvent, String> notices = <UserMessageEvent, String>{};
+  UserMessageEvent? pendingMessage;
+  bool agentResponded = false;
+  for (final SessionEvent event in events) {
+    switch (event) {
+      case UserMessageEvent():
+        pendingMessage = event;
+        agentResponded = false;
+      case AgentMessageChunkEvent() ||
+          AgentThoughtChunkEvent() ||
+          ToolCallEvent() ||
+          PermissionRequestEvent():
+        agentResponded = true;
+      case TurnCompleteEvent(:final stopReason):
+        if (pendingMessage != null && stopReason == 'cancelled') {
+          notices[pendingMessage] = agentResponded
+              ? 'Turn cancelled'
+              : 'Cancelled before agent response';
+        }
+        pendingMessage = null;
+      case SessionErrorEvent():
+        if (pendingMessage != null) {
+          notices[pendingMessage] = 'Turn failed';
+        }
+        pendingMessage = null;
+      default:
+        break;
+    }
+  }
+
   final Map<String, _LegacySubagentState> legacySubagents =
       <String, _LegacySubagentState>{};
   final Map<String, int> legacySubagentGenerations = <String, int>{};
@@ -578,6 +611,7 @@ List<TimelineItem> deriveTimelineItems(
               UserMessageItem(
                 id: e.seq,
                 text: e.text,
+                notice: notices[e],
                 attachments: e.attachments,
                 forkSeq: e.seq,
               ),
@@ -1529,6 +1563,7 @@ class _TimelineRow extends StatelessWidget {
         child: _deliveredBubble(
           UserMessageBubble(
             text: i.text,
+            notice: i.notice,
             attachments: i.attachments,
             attachmentLoader: attachmentLoader,
           ),
@@ -1590,7 +1625,9 @@ class _TimelineRow extends StatelessWidget {
         cwd: cwd,
       ),
       PermissionResolvedItem i => _ResolvedRecord(optionId: i.optionId),
-      TurnCompleteItem _ => _TurnDivider(),
+      TurnCompleteItem i => _TurnDivider(
+        cancelled: i.stopReason == 'cancelled',
+      ),
       SessionErrorItem i => _ErrorBanner(
         message: i.message,
         onContinue: onContinue,
@@ -1599,7 +1636,10 @@ class _TimelineRow extends StatelessWidget {
   }
 
   Widget _deliveredBubble(Widget bubble) {
-    final bool? play = delivery;
+    final bool? play =
+        item is UserMessageItem && (item as UserMessageItem).notice != null
+        ? null
+        : delivery;
     return play == null ? bubble : DeliveredPop(play: play, child: bubble);
   }
 }
@@ -2089,11 +2129,30 @@ class _ResolvedRecord extends StatelessWidget {
 }
 
 class _TurnDivider extends StatelessWidget {
+  const _TurnDivider({required this.cancelled});
+
+  final bool cancelled;
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Divider(height: 1),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: cancelled
+          ? Row(
+              children: <Widget>[
+                const Expanded(child: Divider(height: 1)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    'Turn cancelled',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const Expanded(child: Divider(height: 1)),
+              ],
+            )
+          : const Divider(height: 1),
     );
   }
 }

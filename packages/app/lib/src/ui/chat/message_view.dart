@@ -60,11 +60,13 @@ class UserMessageBubble extends StatelessWidget {
   const UserMessageBubble({
     super.key,
     required this.text,
+    this.notice,
     this.attachments = const <Attachment>[],
     this.attachmentLoader,
   });
 
   final String text;
+  final String? notice;
 
   /// Files attached to the message (metadata only; ids address the daemon).
   final List<Attachment> attachments;
@@ -102,13 +104,33 @@ class UserMessageBubble extends StatelessWidget {
       if (hasText)
         Text(
           body,
-          style: Theme.of(context).textTheme.bodyMedium
-              ?.copyWith(color: scheme.onPrimaryContainer),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: notice == null
+                ? scheme.onPrimaryContainer
+                : scheme.onSurface,
+          ),
         ),
       if (attachments.isNotEmpty) ...<Widget>[
         if (hasText) const SizedBox(height: 8),
         for (final Attachment attachment in attachments)
           AttachmentView(attachment: attachment, loader: attachmentLoader),
+      ],
+      if (notice != null) ...<Widget>[
+        const SizedBox(height: 8),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.info_outline, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                notice!,
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
+        ),
       ],
     ];
     return Align(
@@ -119,7 +141,12 @@ class UserMessageBubble extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         constraints: const BoxConstraints(maxWidth: 560),
         decoration: BoxDecoration(
-          color: scheme.primaryContainer,
+          color: notice == null
+              ? scheme.primaryContainer
+              : scheme.surfaceContainerHighest,
+          border: notice == null
+              ? null
+              : Border.all(color: scheme.outlineVariant),
           borderRadius: radius,
         ),
         child: Column(
