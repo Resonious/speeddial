@@ -116,33 +116,9 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
 
   final LocalHistory? localHistory;
   Object? historyCacheError;
-  final Set<String> _historyQueue = <String>{};
-  final Set<String> _removedHistory = <String>{};
-  bool _syncingHistory = false;
-  final Map<String, List<SessionEvent>> _pendingCache = {};
-
   void _cacheEvent(String id, SessionEvent event) {
-    if (localHistory == null || _removedHistory.contains(id)) return;
-    if (event is! UserMessageEvent &&
-        event is! AgentMessageChunkEvent &&
-        event is! TurnCompleteEvent &&
-        event is! SessionErrorEvent &&
-        event is! HistoryRewoundEvent) {
-      return;
-    }
-    (_pendingCache[id] ??= []).add(event);
-    // Streaming deltas stay in memory until a message/turn boundary so a
-    // long response does not rewrite persistent transcripts on every tick.
-    if (event is! AgentMessageChunkEvent) _flushCacheEvents();
-  }
-
-  void _flushCacheEvents() {
-    for (final entry in _pendingCache.entries) {
-      if (!_removedHistory.contains(entry.key)) {
-        _cacheOperation(localHistory!.merge(entry.key, entry.value));
-      }
-    }
-    _pendingCache.clear();
+    final cache = localHistory;
+    if (cache != null) _cacheOperation(cache.record(id, event));
   }
 
   void _cacheOperation(Future<void> operation) {
@@ -152,64 +128,6 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
         debugPrint('Offline history: $error');
       }),
     );
-  }
-
-  Future<void> _cacheAllSessions() async {
-    if (localHistory == null) return;
-    await listProjects();
-    final sessions = await listSessions(includeArchived: true);
-    for (final session in sessions) {
-      _queueHistory(session.id);
-    }
-  }
-
-  void _queueHistory(String id) {
-    if (localHistory == null || _removedHistory.contains(id)) return;
-    _historyQueue.add(id);
-    if (!_syncingHistory) _cacheOperation(_drainHistory());
-  }
-
-  Future<void> _drainHistory() async {
-    _syncingHistory = true;
-    try {
-      while (!_disposed && isConnected && _historyQueue.isNotEmpty) {
-        final id = _historyQueue.first;
-        _historyQueue.remove(id);
-        try {
-          final saved = await localHistory!.read(id);
-          final watermark = saved?.watermark ?? 0;
-          final events = <SessionEvent>[];
-          int? beforeSeq;
-          int newest = watermark;
-          while (!_disposed && isConnected) {
-            final page = await _remoteHistory(
-              id,
-              limit: 500,
-              beforeSeq: beforeSeq,
-              detail: SessionHistoryDetail.summary,
-            );
-            events.addAll(page.events);
-            if (beforeSeq == null && page.events.isNotEmpty) {
-              newest = page.events.last.seq ?? watermark;
-            }
-            if (!page.hasMore ||
-                page.events.isEmpty ||
-                (page.events.first.seq ?? 0) <= watermark + 1) {
-              if (!_removedHistory.contains(id)) {
-                await localHistory!.merge(id, events, watermark: newest);
-              }
-              break;
-            }
-            beforeSeq = page.events.first.seq;
-          }
-        } on Object catch (error) {
-          historyCacheError = error;
-          debugPrint('Offline history: $error');
-        }
-      }
-    } finally {
-      _syncingHistory = false;
-    }
   }
 
   final _DaemonNotifications _notifications;
@@ -353,7 +271,6 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
       if (_disposed) return;
       connState.value = DaemonConnectionState.connected;
       _reconnectAttempt = 0;
-      _cacheOperation(_cacheAllSessions());
       // Stores may already be displaying disk snapshots while the first
       // connection opens; they need authoritative catch-up on that connect too.
       if (!initial || _resyncNeeded || localHistory != null) {
@@ -605,7 +522,6 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
 
   @override
   Future<void> dispose() async {
-    _flushCacheEvents();
     if (_disposed) return;
     _disposed = true;
     _reconnectTimer?.cancel();
@@ -638,12 +554,6 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
             final decoded = SessionEvent.fromJson(eventJson);
             _sessionEventFeed.add((sessionId: sessionId, event: decoded));
             _cacheEvent(sessionId, decoded);
-            if (decoded is TurnCompleteEvent ||
-                decoded is SessionErrorEvent ||
-                decoded is UserMessageEvent ||
-                decoded is HistoryRewoundEvent) {
-              _queueHistory(sessionId);
-            }
           } on Object {
             // Malformed event: drop rather than kill the notification feed.
           }
@@ -671,9 +581,6 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
         final Object? sessionId = params['sessionId'];
         if (sessionId is String) {
           _sessionRemovalsController.add(sessionId);
-          _removedHistory.add(sessionId);
-          _historyQueue.remove(sessionId);
-          _pendingCache.remove(sessionId);
           if (localHistory != null) {
             _cacheOperation(
               localHistory!.writeIndex('sessions', [], removeId: sessionId),
@@ -1294,8 +1201,9 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
       limit: limit,
       beforeSeq: beforeSeq,
     );
-    if (localHistory != null) {
-      _cacheOperation(localHistory!.merge(sessionId, page.events));
+    // Rewinds invalidate existing saved messages; history text itself is never cached.
+    for (final rewind in page.events.whereType<HistoryRewoundEvent>()) {
+      _cacheEvent(sessionId, rewind);
     }
     return page;
   }

@@ -813,33 +813,29 @@ This standalone HTTP endpoint does not change the daemon's JSON-RPC protocol.
 
 ### Offline conversations
 
-App-owned WebSocket clients persist a compact transcript per configured daemon
-and session through `LocalHistory` (shared preferences on native and web).
-Connection catch-up walks summary history in bounded pages, one session at a
-time, including sessions never opened on this device. A saved sequence watermark
-limits subsequent catch-up to missed events. User messages, agent reply text,
-turn endings, errors, and rewind markers are retained; tool/thought details and
-attachment payloads remain online-only. Live text deltas accumulate in memory;
-user messages and turn endings flush immediately (also on client disposal). Rewinds remove cached text and
-remain as tombstones against late pages. Session removal deletes its transcript.
-Project/session indexes also persist so offline startup can populate the inbox.
-Offline history uses the same backwards pagination and timeline as online chat;
-reconnect resumes authoritative daemon history and the existing reheating effect.
-No protocol changes or additional dependencies are involved.
+`LocalHistory` records only live user messages and the final agent reply at a
+turn's completion, plus turn boundaries and rewind tombstones. One StringBuffer
+per active session holds only the latest logical reply; newer message IDs replace
+intermediate commentary. Tool output, thoughts, intermediate messages, unfinished
+replies, and attachment payloads are never persisted. History-page responses do
+not populate the cache. There is no startup/reconnect session crawl or cache
+backfill, including for archived sessions. Normal project/session listings still
+save their metadata so the inbox can be shown offline.
 
-SavedHistoryClient is an optional local client capability, separate from the wire
-contract. ChatStore hydrates its latest saved page before starting network I/O,
-tracks whether the snapshot covers all messages as of its last sync, and exposes
-saved/updating/error state independently of empty-history loading. Reconnect or
-retry replaces the displayed sparse range with complete authoritative pages;
-older history remains lazy. Live events queue during replacement and replay by
-sequence afterwards. Failed refreshes retain readable content and retry the
-whole loaded range so gaps cannot be hidden by later live events. The timeline
-reanchors its sliver origin to a visible row when filling gaps, retaining the
-reader's position even when restored content is taller than the viewport.
-HistoryNotice uses the existing reheating effect only while reachable, and a
-still offline notice or retry notice otherwise. No full-screen loader replaces
-readable messages.
+The v2 cache discards the oversized v1 cache once, preserving connections, drafts,
+and settings. `shared_preferences_platform_interface` is now a direct dependency
+(already transitive) solely to clear that prefix in one bulk operation: removing
+one key at a time would rewrite the entire Linux preference file repeatedly.
+
+SavedHistoryClient is an optional local capability, separate from the wire API.
+ChatStore shows its saved summary immediately, then fetches one latest history
+page when the session is opened or reconnected. It never walks backwards to fill
+gaps in the saved summary. Older history stays lazy and is fetched as the reader
+scrolls. Reading server history can apply rewind tombstones to invalidate stale
+saved messages, but never backfills message text. The timeline anchors visible
+rows during replacement. HistoryNotice uses the existing reheating strip while
+reachable, and a still offline notice or inline Retry otherwise. Saved summaries
+are explicitly incomplete; a failed refresh never clears readable messages.
 
 Cancelled and failed turns annotate their initiating user bubble from persisted
 turn events, retaining the outcome after later sends and history reloads.

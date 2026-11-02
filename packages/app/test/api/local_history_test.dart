@@ -10,6 +10,9 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 class _Channel implements DaemonFrameChannel {
   final incoming = StreamController<Object?>();
+  int historyRequests = 0;
+  int sessionCount = 1;
+  bool pageHasMore = false;
   bool holdHistory = false;
   bool failHistory = false;
   final List<Map> held = [];
@@ -33,6 +36,7 @@ class _Channel implements DaemonFrameChannel {
   @override
   void add(Object? data) {
     final request = jsonDecode(data as String) as Map;
+    if (request['method'] == 'sessions.history') historyRequests++;
     if (holdHistory && request['method'] == 'sessions.history') {
       held.add(request);
       return;
@@ -54,11 +58,14 @@ class _Channel implements DaemonFrameChannel {
     final result = switch (request['method']) {
       'projects.list' => {'projects': <Object>[]},
       'sessions.list' => {
-        'sessions': [session.toJson()],
+        'sessions': [
+          for (int i = 0; i < sessionCount; i++)
+            {...session.toJson(), if (i > 0) 'id': 's$i'},
+        ],
       },
       'sessions.history' => {
         'events': events.map((e) => e.toJson()).toList(),
-        'hasMore': false,
+        'hasMore': pageHasMore,
       },
       _ => <String, Object?>{},
     };
@@ -105,31 +112,118 @@ Future<void> until(Future<bool> Function() check) async {
   fail('Background cache did not finish');
 }
 
+Future<void> seed(
+  LocalHistory cache,
+  String id,
+  List<SessionEvent> events,
+) async {
+  for (final event in events) {
+    await cache.record(id, event);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  test('only live users and completed final replies persist; history never backfills', () async {
+    final cache = LocalHistory('daemon');
+    final channel = _Channel()..sessionCount = 3000;
+    final client = WsDaemonClient(
+      url: 'ws://test/ws',
+      localHistory: cache,
+      channelFactory: (_) => channel,
+    );
+    await client.connect();
+    await client.listSessions(includeArchived: true);
+    expect(channel.historyRequests, 0);
+    await client.history('s');
+    expect(await cache.read('s'), isNull);
+    channel.emit(const UserMessageEvent(text: 'New question', seq: 10));
+    channel.emit(
+      const AgentMessageChunkEvent(
+        text: 'Intermediate commentary',
+        messageId: 'commentary',
+        seq: 11,
+      ),
+    );
+    channel.emit(
+      const AgentThoughtChunkEvent(text: 'Private thinking', seq: 12),
+    );
+    channel.emit(
+      const AgentMessageChunkEvent(text: 'Final ', messageId: 'final', seq: 13),
+    );
+    channel.emit(
+      const AgentMessageChunkEvent(text: 'answer', messageId: 'final', seq: 14),
+    );
+    await until(
+      () async => (await cache.read('s'))?.events.isNotEmpty ?? false,
+    );
+    expect(
+      (await cache.read('s'))!.events.whereType<AgentMessageChunkEvent>(),
+      isEmpty,
+    );
+    channel.emit(const TurnCompleteEvent(stopReason: 'end_turn', seq: 15));
+    await until(() async => (await cache.read('s'))?.events.last.seq == 15);
+    final events = (await LocalHistory('daemon').read('s'))!.events;
+    expect(events, hasLength(3));
+    expect(events.whereType<UserMessageEvent>().single.text, 'New question');
+    expect(
+      events.whereType<AgentMessageChunkEvent>().single.text,
+      'Final answer',
+    );
+    expect(channel.historyRequests, 1);
+    await client.dispose();
+  });
+
   test(
-    'connected open shows sparse cache before a delayed full range refresh',
+    'legacy bulk cache is removed without touching settings or drafts',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'speeddial.history.v1.old.session': 'oversized transcript',
+        'speeddial.history.v1.other.session': 'another transcript',
+        'speeddial.connections.v1': 'saved endpoints',
+        'speeddial.chatDraft.v1.d.s': 'unsent message',
+      });
+      final cache = LocalHistory('daemon');
+      await cache.record(
+        's',
+        const UserMessageEvent(text: 'New question', seq: 1),
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getKeys().where((key) => key.startsWith('speeddial.history.v1.')),
+        isEmpty,
+      );
+      expect(prefs.getString('speeddial.connections.v1'), 'saved endpoints');
+      expect(prefs.getString('speeddial.chatDraft.v1.d.s'), 'unsent message');
+      expect((await cache.read('s'))!.events.single, isA<UserMessageEvent>());
+    },
+  );
+
+  test(
+    'connected open shows saved messages then requests only one page',
     () async {
       final cache = LocalHistory('daemon');
-      await cache.merge('s', [
+      await seed(cache, 's', [
         const UserMessageEvent(text: 'Question', seq: 1),
         const AgentMessageChunkEvent(text: 'Answer', seq: 4),
         const TurnCompleteEvent(stopReason: 'end_turn', seq: 5),
       ]);
-      final channel = _Channel()..holdHistory = true;
+      final channel = _Channel()
+        ..holdHistory = true
+        ..pageHasMore = true;
       channel.events
         ..clear()
         ..addAll([
-          const UserMessageEvent(text: 'Question', seq: 1),
+          const UserMessageEvent(text: 'Question', seq: 1001),
           const AgentThoughtChunkEvent(
             text: 'Previously omitted thinking',
-            seq: 2,
+            seq: 1002,
           ),
-          const AgentMessageChunkEvent(text: 'Missing reply. ', seq: 3),
-          const AgentMessageChunkEvent(text: 'Answer', seq: 4),
-          const TurnCompleteEvent(stopReason: 'end_turn', seq: 5),
+          const AgentMessageChunkEvent(text: 'Missing reply. ', seq: 1003),
+          const AgentMessageChunkEvent(text: 'Answer', seq: 1004),
+          const TurnCompleteEvent(stopReason: 'end_turn', seq: 1005),
         ]);
       final client = WsDaemonClient(
         url: 'ws://test/ws',
@@ -157,6 +251,8 @@ void main() {
         'Previously omitted thinking',
       );
       expect(chat.isSavedHistory('s'), isFalse);
+      expect(channel.historyRequests, 1);
+      expect(chat.hasOlderHistory('s'), isTrue);
       chat.dispose();
       await client.dispose();
     },
@@ -164,7 +260,7 @@ void main() {
 
   test('failed refresh retains saved content and retry fills it without duplication', () async {
     final cache = LocalHistory('daemon');
-    await cache.merge('s', [const UserMessageEvent(text: 'Question', seq: 1)]);
+    await seed(cache, 's', [const UserMessageEvent(text: 'Question', seq: 1)]);
     final channel = _Channel()..failHistory = true;
     final client = WsDaemonClient(
       url: 'ws://test/ws',
@@ -199,20 +295,20 @@ void main() {
 
   test('persists across instances, isolates daemons, serializes writes and rewinds', () async {
     final cache = LocalHistory('a');
-    final first = cache.merge('s', [
+    final first = seed(cache, 's', [
       const UserMessageEvent(text: 'old', seq: 1),
       const AgentMessageChunkEvent(text: 'old reply', seq: 2),
-    ], watermark: 2);
-    final second = cache.merge('s', [
+    ]);
+    final second = seed(cache, 's', [
       const HistoryRewoundEvent(beforeSeq: 1, seq: 3),
-    ], watermark: 3);
+    ]);
     await Future.wait([first, second]);
-    await cache.merge('s', [
+    await seed(cache, 's', [
       const UserMessageEvent(text: 'stale page', seq: 1),
     ]);
     final restored = await LocalHistory('a').read('s');
     expect(restored!.events.single, isA<HistoryRewoundEvent>());
-    expect(restored.watermark, 3);
+    expect(restored.complete, isFalse);
     expect(await LocalHistory('b').read('s'), isNull);
     await cache.remove('s');
     expect(await cache.read('s'), isNull);
@@ -222,11 +318,11 @@ void main() {
     'reconnect reconciles missed rewinds without duplicating saved replies',
     () async {
       final cache = LocalHistory('daemon');
-      await cache.merge('s', [
+      await seed(cache, 's', [
         const UserMessageEvent(text: 'Removed question', seq: 1),
         const AgentMessageChunkEvent(text: 'Removed reply', seq: 2),
         const TurnCompleteEvent(stopReason: 'end_turn', seq: 3),
-      ], watermark: 3);
+      ]);
       final channel = _Channel();
       channel.events
         ..clear()
@@ -251,7 +347,7 @@ void main() {
         'Removed reply',
       );
       await client.connect();
-      await until(() async => (await cache.read('s'))?.watermark == 7);
+
       await until(
         () async =>
             chat
@@ -264,14 +360,8 @@ void main() {
       chat.dispose();
       await client.dispose();
       final events = (await LocalHistory('daemon').read('s'))!.events;
-      expect(
-        events.whereType<UserMessageEvent>().single.text,
-        'Replacement question',
-      );
-      expect(
-        events.whereType<AgentMessageChunkEvent>().single.text,
-        'Replacement reply',
-      );
+      expect(events.whereType<UserMessageEvent>(), isEmpty);
+      expect(events.whereType<AgentMessageChunkEvent>(), isEmpty);
     },
   );
 
@@ -284,11 +374,19 @@ void main() {
       channelFactory: (_) => channel,
     );
     await online.connect();
-    await until(() async => (await cache.read('s'))?.watermark == 3);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(channel.historyRequests, 0);
+    expect(await cache.read('s'), isNull);
+    await online.listSessions();
+    for (final event in List<SessionEvent>.of(channel.events)) {
+      channel.emit(event);
+    }
+    await until(() async => (await cache.read('s'))?.events.last.seq == 3);
     channel.emit(const UserMessageEvent(text: 'Second question', seq: 4));
     channel.emit(const AgentMessageChunkEvent(text: 'Second answer', seq: 5));
     channel.emit(const TurnCompleteEvent(stopReason: 'end_turn', seq: 6));
-    await until(() async => (await cache.read('s'))?.watermark == 6);
+    await until(() async => (await cache.read('s'))?.events.last.seq == 6);
+    expect(channel.historyRequests, 0);
     await online.dispose();
 
     final offline = WsDaemonClient(

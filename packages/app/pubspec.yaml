@@ -34,6 +34,9 @@ dependencies:
     path: ../protocol
   web_socket_channel: ^3.0.3
   shared_preferences: ^2.5.3
+  # Already transitive: bulk-remove the oversized v1 cache in one write,
+  # preserving settings instead of rewriting Linux preferences once per key.
+  shared_preferences_platform_interface: ^2.4.2
   flutter_markdown_plus: ^1.0.5
   # Required by flutter_markdown_plus's public MarkdownElementBuilder API.
   markdown: ^7.3.1

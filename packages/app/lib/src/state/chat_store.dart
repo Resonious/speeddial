@@ -844,7 +844,8 @@ class ChatStore extends StoreBase {
         }
         pages.add(page.events);
         hasMore = page.hasMore;
-        if (page.events.isEmpty ||
+        if (replaceSaved ||
+            page.events.isEmpty ||
             page.events.first.seq == null ||
             page.events.first.seq! <= knownMaxSeq + 1 ||
             !page.hasMore) {
@@ -853,8 +854,8 @@ class ChatStore extends StoreBase {
         beforeSeq = page.events.first.seq;
       }
       if (replaceSaved) {
-        // Saved text is a sparse projection. Rebuild the loaded range from
-        // authoritative raw events, including tools/thoughts and missed gaps.
+        // Replace the saved summary with one normal latest page. Never walk
+        // backwards to fill gaps in a sparse local summary; older pages stay lazy.
         _resetHistory(buffer);
         buffer.historyReplacementRevision++;
         buffer.hasOlderHistory = hasMore;
