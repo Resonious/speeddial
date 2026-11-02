@@ -28,6 +28,10 @@ migration:
       create_revision: 0056d8b88d3444cde7ba54691853b1e2a3614f53
       base_revision: 0056d8b88d3444cde7ba54691853b1e2a3614f53
 
+    - platform: windows
+      create_revision: c197ca5199e9ee5661e865596c9c07294dfab51c
+      base_revision: c197ca5199e9ee5661e865596c9c07294dfab51c
+
   # User provided section
 
   # List of Local paths (relative to this file) that should be
