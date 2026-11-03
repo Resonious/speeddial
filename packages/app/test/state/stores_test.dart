@@ -220,6 +220,31 @@ class _GatedResyncFake extends FakeDaemonClient {
   }
 }
 
+/// History-gated fake whose session list can report a turn still running,
+/// as when a client opens a session mid-turn.
+class _RunningSnapshotFake extends _GatedResyncFake {
+  bool reportRunning = false;
+
+  @override
+  Future<List<Session>> listSessions({
+    String? projectId,
+    bool includeArchived = false,
+  }) async {
+    final List<Session> sessions = await super.listSessions(
+      projectId: projectId,
+      includeArchived: includeArchived,
+    );
+    if (!reportRunning) return sessions;
+    return <Session>[
+      for (final Session session in sessions)
+        Session.fromJson(<String, Object?>{
+          ...session.toJson(),
+          'status': SessionStatus.running.name,
+        }),
+    ];
+  }
+}
+
 /// Fake whose `history()` serves the newest page normally and can hold
 /// older pages behind a gate or fail them, so tests can observe the
 /// store's incremental page application and mid-backfill retries.
@@ -1092,6 +1117,39 @@ void main() {
         expect(app.chat.statusOf('sess-1'), SessionStatus.running);
       },
     );
+
+    test('replayed history does not mark a running session idle', () async {
+      final _RunningSnapshotFake snap = _RunningSnapshotFake();
+      app.registerClient('snap', snap);
+      // Give sess-1 a finished turn, so its history ends in turnComplete.
+      await snap.sendMessage('sess-1', 'earlier turn');
+      await _waitUntil(
+        () async =>
+            (await snap.history('sess-1')).events
+                .any((SessionEvent e) => e is TurnCompleteEvent),
+      );
+
+      // Open it while the daemon reports a new turn running; the session
+      // snapshot lands before the history page that replays the old turn.
+      snap
+        ..reportRunning = true
+        ..blockHistory = true;
+      app.chat.watchSession('snap', 'sess-1');
+      await _waitUntil(
+        () => app.chat.statusOf('sess-1') == SessionStatus.running,
+      );
+      snap.releaseHistory();
+      await _waitUntil(
+        () => app.chat.historyStatusFor('sess-1') == HistoryStatus.ready,
+      );
+      await _flushMicrotasks();
+
+      expect(
+        app.chat.eventsFor('sess-1').whereType<TurnCompleteEvent>(),
+        isNotEmpty,
+      );
+      expect(app.chat.statusOf('sess-1'), SessionStatus.running);
+    });
 
     test(
       'live event view reuses storage and permission paging stays resolved',

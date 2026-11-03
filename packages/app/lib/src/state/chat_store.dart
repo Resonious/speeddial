@@ -912,9 +912,12 @@ class ChatStore extends StoreBase {
       }
       for (final List<SessionEvent> page in pages.reversed) {
         for (final SessionEvent event in page) {
-          _applyLive(buffer, event);
+          _applyLive(buffer, event, live: false);
         }
       }
+      // Replayed pages never set status (see [_noteEvent]); a missed
+      // session.updated while out of reach is recovered from a snapshot.
+      unawaited(_seedSession(client, buffer.daemonId, buffer.sessionId));
       buffer.savedOnly = false;
       buffer.savedComplete = buffer.savedComplete || !buffer.hasOlderHistory;
       buffer.replaceOnResync = false;
@@ -956,10 +959,17 @@ class ChatStore extends StoreBase {
     _applyLive(buffer, event);
   }
 
-  void _applyLive(_SessionBuffer buffer, SessionEvent event) {
+  /// Applies [event] in seq order, skipping duplicates. [live] is false for
+  /// events fetched from history during a resync: they may predate the
+  /// current turn, so they must not derive status (see [_noteEvent]).
+  void _applyLive(
+    _SessionBuffer buffer,
+    SessionEvent event, {
+    bool live = true,
+  }) {
     final int? seq = event.seq;
     if (seq != null && seq <= buffer.maxSeq) return; // duplicate
-    _append(buffer, event);
+    _append(buffer, event, live: live);
     if (seq != null && seq > buffer.maxSeq) buffer.maxSeq = seq;
     _scheduleNotify();
   }
@@ -1034,7 +1044,7 @@ class ChatStore extends StoreBase {
   /// parking and the UI can render while older pages stream in.
   void _applyLatestHistoryPage(_SessionBuffer buffer, List<SessionEvent> page) {
     for (final SessionEvent event in page) {
-      _append(buffer, event);
+      _append(buffer, event, live: false);
       final int? seq = event.seq;
       if (seq != null && seq > buffer.maxSeq) buffer.maxSeq = seq;
     }
@@ -1076,7 +1086,11 @@ class ChatStore extends StoreBase {
   /// Appends [event], merging consecutive chunk deltas of the same kind into
   /// one buffered event, and records any derived state it carries. Every
   /// call is a buffer mutation, so it bumps the session's revision.
-  void _append(_SessionBuffer buffer, SessionEvent event) {
+  void _append(
+    _SessionBuffer buffer,
+    SessionEvent event, {
+    required bool live,
+  }) {
     if (event is HistoryRewoundEvent) {
       if (event.seq != null) buffer.rewinds.add(event);
       _closeChunkRun(buffer);
@@ -1116,6 +1130,7 @@ class ChatStore extends StoreBase {
           seq: seq,
           timestamp: timestamp,
           event: event,
+          live: live,
         );
       case AgentThoughtChunkEvent(
         :final String text,
@@ -1131,11 +1146,12 @@ class ChatStore extends StoreBase {
           seq: seq,
           timestamp: timestamp,
           event: event,
+          live: live,
         );
       default:
         _closeChunkRun(buffer);
         buffer.events.add(event);
-        _noteEvent(buffer, event);
+        _noteEvent(buffer, event, live: live);
     }
   }
 
@@ -1150,6 +1166,7 @@ class ChatStore extends StoreBase {
     required int? seq,
     required DateTime? timestamp,
     required SessionEvent event,
+    required bool live,
   }) {
     final _ChunkRun? run = buffer.chunkRun;
     if (run != null &&
@@ -1173,7 +1190,7 @@ class ChatStore extends StoreBase {
       timestamp: timestamp,
     );
     buffer.events.add(event);
-    _noteEvent(buffer, event);
+    _noteEvent(buffer, event, live: live);
   }
 
   /// Replaces the tail event with one built from the run's scratch buffer —
@@ -1223,15 +1240,24 @@ class ChatStore extends StoreBase {
     }
   }
 
-  void _noteEvent(_SessionBuffer buffer, SessionEvent event) {
+  /// Records derived state carried by [event]. Only [live] events change
+  /// status: a replayed history page holds earlier turns' `turnComplete`s,
+  /// and applying them could mark a running turn idle after the session
+  /// snapshot said otherwise (re-enabling Send mid-turn). Session snapshots
+  /// (`session.updated`, [_seedSession]) own status for history.
+  void _noteEvent(
+    _SessionBuffer buffer,
+    SessionEvent event, {
+    required bool live,
+  }) {
     switch (event) {
       case final UserMessageEvent message:
         _deliverOutgoing(buffer, message);
       case TurnCompleteEvent():
-        _statusById[buffer.key] = SessionStatus.idle;
+        if (live) _statusById[buffer.key] = SessionStatus.idle;
         _dropAcknowledged(buffer);
       case SessionErrorEvent():
-        _statusById[buffer.key] = SessionStatus.error;
+        if (live) _statusById[buffer.key] = SessionStatus.error;
         _dropAcknowledged(buffer);
       // Permission events do not imply a status: auto-approved requests and
       // requests from the agent's own background work arrive outside a turn,
