@@ -36,6 +36,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../executable_lookup.dart';
 import '../paths.dart';
 import 'claude_instructions.dart';
 
@@ -249,19 +250,8 @@ class ProviderRegistry {
     return spec != null && _isResolvable(spec.command.first);
   }
 
-  static bool _isResolvable(String executable) {
-    if (p.isAbsolute(executable)) {
-      return File(executable).existsSync();
-    }
-    final pathEnv = Platform.environment['PATH'];
-    if (pathEnv == null || pathEnv.isEmpty) return false;
-    final separator = Platform.isWindows ? ';' : ':';
-    for (final dir in pathEnv.split(separator)) {
-      if (dir.isEmpty) continue;
-      if (File(p.join(dir, executable)).existsSync()) return true;
-    }
-    return false;
-  }
+  static bool _isResolvable(String executable) =>
+      isExecutableResolvable(executable, Platform.environment);
 
   /// The selectable models for [spec]: the static list when configured,
   /// otherwise a cached or fresh probe of [ProviderSpec.modelsCommand] (or,

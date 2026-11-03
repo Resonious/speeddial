@@ -4,8 +4,9 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
+
+import '../executable_lookup.dart';
 
 typedef HarnessEnvironmentProvider = Map<String, String> Function();
 typedef HarnessExecutableResolver = bool Function(
@@ -35,7 +36,7 @@ class HarnessService {
     HarnessExecutableResolver? executableResolver,
     HarnessProcessRunner? processRunner,
   }) : _environmentProvider = environmentProvider ?? _emptyEnvironmentProvider,
-       _executableResolver = executableResolver ?? _isResolvable,
+       _executableResolver = executableResolver ?? isExecutableResolvable,
        _processRunner = processRunner ?? _runProcess;
 
   final HarnessEnvironmentProvider _environmentProvider;
@@ -146,33 +147,6 @@ class HarnessService {
       }
     }
     return null;
-  }
-
-  static bool _isResolvable(
-    String executable,
-    Map<String, String> environment,
-  ) {
-    if (p.isAbsolute(executable)) return File(executable).existsSync();
-    final String? path = environment['PATH'];
-    if (path == null || path.isEmpty) return false;
-    final List<String> suffixes = Platform.isWindows
-        ? <String>[
-            '',
-            ...(environment['PATHEXT'] ?? '.EXE;.CMD;.BAT;.COM')
-                .split(';')
-                .map((String value) => value.toLowerCase()),
-          ]
-        : const <String>[''];
-    final String separator = Platform.isWindows ? ';' : ':';
-    for (final String directory in path.split(separator)) {
-      if (directory.isEmpty) continue;
-      for (final String suffix in suffixes) {
-        if (File(p.join(directory, '$executable$suffix')).existsSync()) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 
   static Future<ProcessResult> _runProcess(
