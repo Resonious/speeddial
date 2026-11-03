@@ -4,21 +4,20 @@ See the repository README for daemon setup and desktop development.
 
 ## Windows
 
-With Flutter on PATH, run from the repository root:
+Enable **Developer Mode** in Windows Settings (search for Developer Mode).
+With Flutter on PATH, run from `packages/app`:
 
 ```powershell
-.\scripts\windows.ps1
+flutter pub get
+flutter run -d windows --release
 # Build without launching:
-.\scripts\windows.ps1 -Action Build
+flutter build windows --release
 ```
 
-Use this after pulling changes too. It refreshes dependency resolution and
-recreates plugin directory junctions from the current package paths before
-building. Developer Mode and administrator access are not required. Failures
-in dependency resolution stop the build; only Flutter's symlink-permission
-failure is recovered automatically. `-Action Prepare` performs setup only;
-`-Configuration debug` selects a debug build. Close an existing app instance
-before rebuilding so Windows can replace its executable and plugin DLLs.
+After pulling dependency changes, run `flutter pub get` again. Close an existing
+app instance before rebuilding so Windows can replace its executable and plugin
+DLLs. The window title is SpeedDial; the Windows ProductName remains
+`speeddial_app` because it determines the persistent settings directory.
 
 ## iPad and iPhone
 

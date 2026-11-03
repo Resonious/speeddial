@@ -95,7 +95,9 @@ BEGIN
             VALUE "InternalName", "speeddial_app" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 sh.speeddial. All rights reserved." "\0"
             VALUE "OriginalFilename", "speeddial_app.exe" "\0"
-            VALUE "ProductName", "SpeedDial" "\0"
+            // path_provider uses CompanyName/ProductName for persistent storage.
+            // Keep this identity stable; main.cpp controls the visible title.
+            VALUE "ProductName", "speeddial_app" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
