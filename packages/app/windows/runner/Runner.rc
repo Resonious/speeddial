@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "sh.speeddial" "\0"
-            VALUE "FileDescription", "speeddial_app" "\0"
+            VALUE "FileDescription", "SpeedDial" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "speeddial_app" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 sh.speeddial. All rights reserved." "\0"
             VALUE "OriginalFilename", "speeddial_app.exe" "\0"
-            VALUE "ProductName", "speeddial_app" "\0"
+            VALUE "ProductName", "SpeedDial" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
