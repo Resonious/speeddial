@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/sessions_store.dart';
@@ -22,6 +23,10 @@ class _InboxTabState extends State<InboxTab> {
   final TextEditingController _search = TextEditingController();
   final Set<String> _requested = <String>{};
   final Set<String> _loading = <String>{};
+
+  /// daemonId → the projects whose git badges this tab has already fetched.
+  /// [GitStore] keeps them fresh from then on.
+  final Map<String, Set<String>> _summariesRequested = <String, Set<String>>{};
   final Map<String, Object> _errors = <String, Object>{};
   final ValueNotifier<int> _loadRevision = ValueNotifier<int>(0);
   bool _refreshScheduled = false;
@@ -32,9 +37,12 @@ class _InboxTabState extends State<InboxTab> {
     final AppData data = AppScope.of(context);
     if (!identical(_data, data)) {
       _data?.connections.removeListener(_scheduleRefresh);
+      _data?.projects.removeListener(_scheduleRefresh);
       _data = data;
       data.connections.addListener(_scheduleRefresh);
+      data.projects.addListener(_scheduleRefresh);
       _requested.clear();
+      _summariesRequested.clear();
       _loading.clear();
       _errors.clear();
     }
@@ -44,6 +52,7 @@ class _InboxTabState extends State<InboxTab> {
   @override
   void dispose() {
     _data?.connections.removeListener(_scheduleRefresh);
+    _data?.projects.removeListener(_scheduleRefresh);
     _loadRevision.dispose();
     _search.dispose();
     super.dispose();
@@ -67,6 +76,9 @@ class _InboxTabState extends State<InboxTab> {
     };
     _requested.removeWhere((String id) => !configured.contains(id));
     _errors.removeWhere((String id, Object _) => !configured.contains(id));
+    _summariesRequested.removeWhere(
+      (String id, Set<String> _) => !configured.contains(id),
+    );
     for (final String daemonId in configured) {
       // Real WebSocket clients reject requests until the connection handshake
       // finishes. Registered fake clients stay `disconnected` and can be read
@@ -77,11 +89,27 @@ class _InboxTabState extends State<InboxTab> {
           status != ConnectionStatus.disconnected) {
         continue;
       }
+      _refreshNewSummaries(data, daemonId);
       if (!_requested.add(daemonId)) continue;
       _loading.add(daemonId);
       unawaited(_loadDaemon(data, daemonId));
     }
     _loadRevision.value++;
+  }
+
+  /// Inbox rows span every project, so unlike the Sessions tree there is no
+  /// expansion to kick the git badge fetch. Runs again whenever the project
+  /// list changes, which also covers the daemon's first load.
+  void _refreshNewSummaries(AppData data, String daemonId) {
+    final Set<String> requested = _summariesRequested.putIfAbsent(
+      daemonId,
+      () => <String>{},
+    );
+    for (final Project project in data.projects.projectsFor(daemonId)) {
+      if (requested.add(project.id)) {
+        unawaited(data.git.refreshSessionSummaries(daemonId, project.id));
+      }
+    }
   }
 
   Future<void> _loadDaemon(AppData data, String daemonId) async {

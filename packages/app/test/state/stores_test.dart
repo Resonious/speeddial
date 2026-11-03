@@ -186,6 +186,18 @@ class _GatedSessionListFake extends FakeDaemonClient {
   }
 }
 
+/// Fails `git.sessionSummaries` until [failing] is cleared, like a daemon
+/// that dropped off mid-request.
+class _FlakySummariesFake extends FakeDaemonClient {
+  bool failing = true;
+
+  @override
+  Future<List<SessionGitSummary>> gitSessionSummaries(String projectId) {
+    if (failing) throw StateError('connection lost');
+    return super.gitSessionSummaries(projectId);
+  }
+}
+
 /// Fake whose `history()` can be blocked on demand, so tests can hold a
 /// resync's refetch open and observe the store's catch-up state.
 class _GatedResyncFake extends FakeDaemonClient {
@@ -2051,6 +2063,23 @@ void main() {
       await app.git.refreshSessionSummaries('other', projectId);
       expect(app.git.sessionSummaryFor('sess-1', daemonId: 'other'), isNull);
       expect(app.git.sessionSummaryFor('sess-1', daemonId: 'fake'), isNotNull);
+    });
+
+    test('a resync retries summaries whose first fetch failed', () async {
+      final _FlakySummariesFake flaky = _FlakySummariesFake();
+      app.registerClient('flaky', flaky);
+      final String projectId = (await flaky.listProjects()).single.id;
+
+      await app.git.refreshSessionSummaries('flaky', projectId);
+      expect(app.git.sessionSummaryErrorFor('flaky', projectId), isNotNull);
+      expect(app.git.sessionSummaryFor('sess-1', daemonId: 'flaky'), isNull);
+
+      flaky.failing = false;
+      flaky.triggerResync();
+      await _waitUntil(
+        () => app.git.sessionSummaryFor('sess-1', daemonId: 'flaky') != null,
+      );
+      expect(app.git.sessionSummaryErrorFor('flaky', projectId), isNull);
     });
 
     test('refreshSessionSummaries records failures without throwing', () async {

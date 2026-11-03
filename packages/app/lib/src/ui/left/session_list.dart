@@ -94,10 +94,11 @@ class ProviderBadge extends StatelessWidget {
 /// "merged" (all of the session branch's commits are in the base branch).
 ///
 /// Subscribes to [GitStore] itself — summaries refresh on their own
-/// schedule (project expansion, turn end, git mutations, the daemon's
-/// `git.changed` notifications), so the strip rebuilds without remounting
-/// the whole rail. Renders nothing until the first summary for the session
-/// arrives, and nothing ever for a session whose git state is all-unknown.
+/// schedule (project expansion, the Inbox loading, turn end, git mutations,
+/// the daemon's `git.changed` notifications), so the strip rebuilds without
+/// remounting the whole rail. Renders nothing until the first summary for the
+/// session arrives, and nothing ever for a session whose git state is
+/// all-unknown.
 class SessionGitBadges extends StatelessWidget {
   const SessionGitBadges({
     super.key,

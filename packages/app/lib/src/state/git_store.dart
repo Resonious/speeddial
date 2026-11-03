@@ -120,6 +120,8 @@ class GitStore extends StoreBase {
       _summaryErrors.remove(projectKey);
     } catch (error) {
       _summaryErrors[projectKey] = error;
+      // Keep the project watched, so a resync retries a failed first fetch.
+      _summarySessionIds.putIfAbsent(projectKey, () => <String>{});
     }
     notifyListeners();
   }
@@ -138,8 +140,9 @@ class GitStore extends StoreBase {
   /// - a resync after reconnect means the daemon's state may have moved
   ///     while the socket was down → refetch every known project.
   ///
-  /// Refreshes are gated on the project having been fetched once (the rail
-  /// fetches on expansion), so projects nobody is looking at cost nothing.
+  /// Refreshes are gated on the project having been fetched once (the
+  /// Sessions tree fetches on expansion, the Inbox fetches every project it
+  /// lists), so projects nobody is looking at cost nothing.
   void _ensureDaemonSubscriptions(String daemonId) {
     if (_sessionUpdateSubs.containsKey(daemonId)) return;
     final DaemonClient client = _clientFor(daemonId);

@@ -896,6 +896,61 @@ void main() {
     expect(find.text('↓3'), findsOneWidget);
   });
 
+  testWidgets('Inbox rows show git badges without opening the Sessions tab', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    // Seeded fake: sess-1 and sess-2 are dirty, sess-1 is two commits ahead.
+    expect(find.text('changes'), findsNWidgets(2));
+    expect(find.text('↑2'), findsOneWidget);
+
+    // Live updates must flow too, with no project ever expanded.
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      behindBase: 3,
+      mergedIntoBase: false,
+    );
+    fake.gitChangedController.add('proj-demo');
+    await tester.pumpAndSettle();
+    expect(find.text('↑2'), findsNothing);
+    expect(find.text('↓3'), findsOneWidget);
+  });
+
+  testWidgets('Inbox fetches git badges for a project added after loading', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    final Project added = await app.projects.add('fake', '/tmp/added');
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    final Session session = await fake.createSession(
+      projectId: added.id,
+      providerId: 'claude',
+    );
+    fake.sessionGitSummaries[session.id] = SessionGitSummary(
+      sessionId: session.id,
+      dirty: false,
+      aheadOfBase: 7,
+      behindBase: 0,
+      mergedIntoBase: false,
+    );
+    await app.projects.refresh('fake');
+    await tester.pumpAndSettle();
+
+    expect(
+      app.git.sessionSummaryFor(session.id, daemonId: 'fake')?.aheadOfBase,
+      7,
+    );
+  });
+
   testWidgets('a failed endpoint offers Retry now in its actions menu', (
     WidgetTester tester,
   ) async {
