@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -484,21 +485,24 @@ class ChatStore extends StoreBase {
     String text, {
     List<OutgoingAttachment> attachments = const [],
   }) {
+    // Inline payloads past the protocol caps go up as chunked uploads (and
+    // reach the agent as a file) instead of being rejected by the daemon.
+    final List<OutgoingAttachment> outgoing = _streamOversized(attachments);
     final ValueNotifier<double>? upload =
-        attachments.any((OutgoingAttachment a) => a is StreamedAttachment)
+        outgoing.any((OutgoingAttachment a) => a is StreamedAttachment)
         ? ValueNotifier<double>(0)
         : null;
     return _sendOutgoing(daemonId, sessionId, text, attachments, () async {
       final DaemonClient client = _clientFor(daemonId);
       if (upload == null) {
-        await client.sendMessage(sessionId, text, attachments: attachments);
+        await client.sendMessage(sessionId, text, attachments: outgoing);
         return;
       }
       final List<String> uploadIds = <String>[];
       try {
         final List<OutgoingAttachment> sent = await _uploadStreamed(
           client,
-          attachments,
+          outgoing,
           uploadIds,
           upload,
         );
@@ -514,6 +518,51 @@ class ChatStore extends StoreBase {
         rethrow;
       }
     }, upload: upload);
+  }
+
+  /// Returns [attachments] with every inline payload that would break the
+  /// per-attachment or per-message inline cap swapped for an in-memory
+  /// [StreamedAttachment], so it travels through `uploads.*` instead.
+  static List<OutgoingAttachment> _streamOversized(
+    List<OutgoingAttachment> attachments,
+  ) {
+    int inlineTotal = 0;
+    List<OutgoingAttachment>? result;
+    for (int i = 0; i < attachments.length; i++) {
+      final OutgoingAttachment attachment = attachments[i];
+      final String? data = attachment.data;
+      if (attachment is StreamedAttachment || data == null) continue;
+      final int size = _decodedLength(data);
+      if (size <= kMaxAttachmentBytes &&
+          inlineTotal + size <= kMaxAttachmentTotalBytes) {
+        inlineTotal += size;
+        continue;
+      }
+      final Uint8List bytes = base64Decode(data);
+      result ??= List<OutgoingAttachment>.of(attachments);
+      result[i] = StreamedAttachment(
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: bytes.length,
+        read: (int offset, int length) async => Uint8List.sublistView(
+          bytes,
+          offset,
+          math.min(bytes.length, offset + length),
+        ),
+      );
+    }
+    return result ?? attachments;
+  }
+
+  /// Decoded size of padded base64 [data] without decoding it.
+  static int _decodedLength(String data) {
+    int padding = 0;
+    if (data.endsWith('==')) {
+      padding = 2;
+    } else if (data.endsWith('=')) {
+      padding = 1;
+    }
+    return data.length ~/ 4 * 3 - padding;
   }
 
   /// Uploads each [StreamedAttachment] in order, one chunk in flight at a

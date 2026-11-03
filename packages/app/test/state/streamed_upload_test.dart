@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -110,6 +111,49 @@ void main() {
         .last;
     expect(echo.attachments.last.size, bytes.length);
   });
+
+  test(
+    'oversized inline attachments are uploaded instead of rejected',
+    () async {
+      // A 16 MB pasted BMP, plus inline files that together break the
+      // per-message inline total.
+      final Uint8List big = Uint8List.fromList(
+        List<int>.generate(kMaxAttachmentBytes + 5, (int i) => i % 251),
+      );
+      final Uint8List half = Uint8List(kMaxAttachmentBytes ~/ 2 + 1);
+      OutgoingAttachment inline(String name, Uint8List bytes) =>
+          OutgoingAttachment(
+            name: name,
+            mimeType: 'image/bmp',
+            data: base64Encode(bytes),
+          );
+      await app.chat.send(
+        'fake',
+        sessionId,
+        '',
+        attachments: <OutgoingAttachment>[
+          inline('pasted-image.bmp', big),
+          inline('a.bmp', Uint8List(kMaxAttachmentBytes)),
+          inline('b.bmp', Uint8List(kMaxAttachmentBytes ~/ 2)),
+          inline('c.bmp', half),
+          inline('tiny.bmp', Uint8List(3)),
+        ],
+      );
+
+      expect(
+        <String?>[
+          for (final OutgoingAttachment a in fake.sent)
+            a.uploadId == null ? 'inline' : 'upload',
+        ],
+        <String>['upload', 'inline', 'inline', 'upload', 'inline'],
+      );
+      expect(fake.sent.first.name, 'pasted-image.bmp');
+      final UserMessageEvent echo = (await fake.history(sessionId)).events
+          .whereType<UserMessageEvent>()
+          .last;
+      expect(echo.attachments.first.size, big.length);
+    },
+  );
 
   test('a failed upload cancels it, records the error and rethrows', () async {
     final Uint8List bytes = Uint8List(kMaxUploadChunkBytes + 1);
