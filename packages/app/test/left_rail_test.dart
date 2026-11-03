@@ -1054,12 +1054,15 @@ void main() {
     await tester.tap(find.byKey(const Key('new-session-base-branch')));
     await tester.pumpAndSettle();
     await tester.enterText(
-      find.byKey(const Key('new-session-base-branch')),
+      find.byKey(const Key('branch-picker-query')),
       'feat',
     );
     await tester.pumpAndSettle();
     expect(find.text('feature/x'), findsOneWidget);
-    expect(find.text('main'), findsNothing);
+    expect(
+      find.descendant(of: find.byType(Dialog), matching: find.text('main')),
+      findsNothing,
+    );
 
     await tester.tap(find.text('feature/x'));
     await tester.pumpAndSettle();

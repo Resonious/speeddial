@@ -447,6 +447,8 @@ lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's p
                              failed) an in-progress status is only the last one heard:
                              flame, ping and chip go grey and still, and the chat's turn
                              row reads "Reconnecting…" / "Daemon unreachable".
+                             New-session branch picker keeps the selection in the form
+                             and opens a bounded list with a fresh, empty search above it.
                              New-session sheet (provider, worktree branch, yolo,
                              and short prompt —
                              model/thinking are picked in the

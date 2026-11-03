@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/daemon_config_store.dart';
+import 'branch_picker.dart';
 
 /// Modal sheet used to create a session under [projectId] of [daemonId].
 ///
@@ -458,27 +459,13 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ),
           if (_useWorktree) ...<Widget>[
             const SizedBox(height: 8),
-            // Searchable dropdown: typing filters the entries
-            // case-insensitively by label. Selection stays constrained to
-            // listed branches — the daemon fetches origin/<base>, so a
-            // free-text typo would just fail at creation time.
-            DropdownMenu<String>(
+            BranchPicker(
               key: const Key('new-session-base-branch'),
-              initialSelection: _baseBranch,
-              label: const Text('Base branch'),
-              expandedInsets: EdgeInsets.zero,
-              enableFilter: true,
-              requestFocusOnTap: true,
-              enabled: !_submitting,
-              dropdownMenuEntries: <DropdownMenuEntry<String>>[
-                for (final Branch branch in branches)
-                  DropdownMenuEntry<String>(
-                    value: branch.name,
-                    label: branch.name,
-                  ),
-              ],
-              onSelected: (String? value) =>
-                  setState(() => _baseBranch = value),
+              branches: branches,
+              value: _baseBranch,
+              onChanged: _submitting
+                  ? null
+                  : (String value) => setState(() => _baseBranch = value),
             ),
           ],
         ],
