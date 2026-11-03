@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
@@ -19,6 +21,7 @@ import 'history_skeleton.dart';
 import 'model_picker.dart';
 import 'permission_banner.dart';
 import 'question_banner.dart';
+import 'session_handoff.dart';
 import 'timeline.dart';
 
 /// Center pane: the selected session's timeline, pending permission banner and
@@ -37,10 +40,16 @@ class _ChatPaneState extends State<ChatPane> {
   AppData? _data;
   String? _watchedDaemonId;
   String? _watchedSessionId;
+  final GlobalKey _paneKey = GlobalKey();
+
+  /// The left session's last frame while [SessionHandoff] shows it.
+  ui.Image? _handoff;
+  bool _still = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     final AppData data = AppScope.of(context);
     if (!identical(_data, data)) {
       _data?.selection.removeListener(_onSelectionChanged);
@@ -60,6 +69,7 @@ class _ChatPaneState extends State<ChatPane> {
   void _onSelectionChanged() {
     final AppData? data = _data;
     if (data == null || !mounted) return;
+    _holdFrame(data.selection.selectedSessionId);
     _syncWatch(
       data.chat,
       data.selection.selectedDaemonId,
@@ -67,8 +77,41 @@ class _ChatPaneState extends State<ChatPane> {
     );
   }
 
+  /// Captures what is on screen as the selection moves to [next], before
+  /// anything rebuilds.
+  void _holdFrame(String? next) {
+    if (_still || next == null || _watchedSessionId == null) return;
+    if (next == _watchedSessionId) return;
+    final RenderObject? pane = _paneKey.currentContext?.findRenderObject();
+    if (pane is! RenderRepaintBoundary || !pane.hasSize) return;
+    // The capture asserts a clean frame in debug builds only; a release
+    // build just takes the last painted one, which is what is on screen.
+    bool dirty = false;
+    assert(() {
+      dirty = pane.debugNeedsPaint;
+      return true;
+    }());
+    if (dirty) return;
+    final ui.Image frame = pane.toImageSync(
+      pixelRatio: View.of(context).devicePixelRatio,
+    );
+    final ui.Image? replaced = _handoff;
+    _handoff = frame;
+    // Still on screen until the frame that swaps it in.
+    if (replaced != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => replaced.dispose());
+    }
+  }
+
+  void _handoffDone() {
+    final ui.Image? frame = _handoff;
+    setState(() => _handoff = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) => frame?.dispose());
+  }
+
   @override
   void dispose() {
+    _handoff?.dispose();
     _data?.selection.removeListener(_onSelectionChanged);
     final String? watched = _watchedSessionId;
     if (watched != null) {
@@ -126,12 +169,30 @@ class _ChatPaneState extends State<ChatPane> {
             ],
           );
         }
-        return _SessionSurface(
-          key: ValueKey<String>('$daemonId/$sessionId'),
-          data: data,
-          daemonId: daemonId,
-          sessionId: sessionId,
-          composerFocusNode: widget.composerFocusNode,
+        final ui.Image? handoff = _handoff;
+        return RepaintBoundary(
+          key: _paneKey,
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              _SessionSurface(
+                key: ValueKey<String>('$daemonId/$sessionId'),
+                data: data,
+                daemonId: daemonId,
+                sessionId: sessionId,
+                composerFocusNode: widget.composerFocusNode,
+                handingOff: handoff != null,
+              ),
+              if (handoff != null)
+                SessionHandoff(
+                  key: ObjectKey(handoff),
+                  image: handoff,
+                  chat: data.chat,
+                  sessionId: sessionId,
+                  onDone: _handoffDone,
+                ),
+            ],
+          ),
         );
       },
     );
@@ -148,12 +209,16 @@ class _SessionSurface extends StatefulWidget {
     required this.daemonId,
     required this.sessionId,
     this.composerFocusNode,
+    this.handingOff = false,
   });
 
   final AppData data;
   final String daemonId;
   final String sessionId;
   final FocusNode? composerFocusNode;
+
+  /// A [SessionHandoff] covers the pane and does the fading itself.
+  final bool handingOff;
 
   @override
   State<_SessionSurface> createState() => _SessionSurfaceState();
@@ -438,7 +503,12 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                   ? null
                   : _restore,
             ),
-            Expanded(child: _SurfaceSwitcher(child: surface)),
+            Expanded(
+              child: _SurfaceSwitcher(
+                instant: widget.handingOff,
+                child: surface,
+              ),
+            ),
             HistoryNotice(
               offline: offline,
               hasContent: !bare || chat.isSavedHistory(sessionId),
@@ -859,13 +929,15 @@ class _EmptyState extends StatelessWidget {
 /// Hands the session's surface over — loading placeholder to conversation —
 /// with a short crossfade, the incoming side settling up into place.
 class _SurfaceSwitcher extends StatelessWidget {
-  const _SurfaceSwitcher({required this.child});
+  const _SurfaceSwitcher({required this.child, this.instant = false});
 
   final Widget child;
+  final bool instant;
 
   @override
   Widget build(BuildContext context) {
-    final bool still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    final bool still =
+        instant || (MediaQuery.maybeDisableAnimationsOf(context) ?? false);
     return AnimatedSwitcher(
       duration: still ? Duration.zero : const Duration(milliseconds: 320),
       switchInCurve: Curves.easeOutCubic,

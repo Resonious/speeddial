@@ -837,9 +837,11 @@ and settings. `shared_preferences_platform_interface` is now a direct dependency
 one key at a time would rewrite the entire Linux preference file repeatedly.
 
 SavedHistoryClient is an optional local capability, separate from the wire API.
-ChatStore shows its saved summary immediately, then fetches one latest history
-page when the session is opened or reconnected. It never walks backwards to fill
-gaps in the saved summary. Older history stays lazy and is fetched as the reader
+While connected, ChatStore asks for the latest page first and shows the saved
+summary only if that takes over 250 ms, since the two differ and showing both
+makes the conversation jump. Offline it shows the summary at once, and fetches
+one latest history page on reconnect. It never walks backwards to fill gaps in
+the saved summary. Older history stays lazy and is fetched as the reader
 scrolls. Reading server history can apply rewind tombstones to invalidate stale
 saved messages, but never backfills message text. The timeline anchors visible
 rows during replacement. HistoryNotice uses the existing reheating strip while

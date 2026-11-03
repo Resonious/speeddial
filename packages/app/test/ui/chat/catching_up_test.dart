@@ -254,19 +254,7 @@ void main() {
         ),
       ),
     );
-    double settled(WidgetTester tester) => tester
-        .widget<FadeTransition>(
-          find
-              .ancestor(
-                of: find.byKey(const Key('chat-timeline')),
-                matching: find.byType(FadeTransition),
-              )
-              .first,
-        )
-        .opacity
-        .value;
-
-    testWidgets('a replaced page dissolves in once, without rising rows', (
+    testWidgets('a replaced page just shows, without rising rows or dimming', (
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(replaced(stale, catchingUp: false, revision: 0));
@@ -275,23 +263,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pumpWidget(replaced(missed, catchingUp: false, revision: 1));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 80));
-      expect(settled(tester), inExclusiveRange(0, 1));
+      expect(reply, findsOneWidget);
       expect(find.byKey(const Key('arrival-rise')), findsNothing);
       expect(sparks, paintsNothing);
-      await tester.pumpAndSettle();
-      expect(settled(tester), 1);
-      expect(tester.hasRunningAnimations, isFalse);
-    });
-
-    testWidgets('under reduced motion a replaced page just shows', (
-      WidgetTester tester,
-    ) async {
-      stillMotion(tester);
-      await tester.pumpWidget(replaced(stale, catchingUp: false, revision: 0));
-      await tester.pumpWidget(replaced(missed, catchingUp: false, revision: 1));
-      await tester.pump();
-      expect(settled(tester), 1);
       expect(tester.hasRunningAnimations, isFalse);
     });
 

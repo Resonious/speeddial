@@ -23,6 +23,12 @@ import 'streamed_attachment.dart';
 /// resolved last-write-wins (see the resolution helpers in [ChatStore]).
 String _scopedKey(String daemonId, String id) => '$daemonId/$id';
 
+typedef _HistoryPage = ({List<SessionEvent> events, bool hasMore});
+
+/// How long a connected client waits for a session's real history before
+/// showing its saved summary instead.
+const Duration savedHistoryPatience = Duration(milliseconds: 250);
+
 /// Load state of a watched session's persisted history, surfaced so the UI
 /// can distinguish "history still arriving" from "this session is empty"
 /// (and from "the fetch failed") instead of rendering a blank timeline.
@@ -860,6 +866,7 @@ class ChatStore extends StoreBase {
     DaemonClient client,
     _SessionBuffer buffer, {
     bool alreadyMarked = false,
+    Future<_HistoryPage>? firstPage,
   }) async {
     if (client is SavedHistoryClient && !client.isConnected) {
       buffer.resyncing = false;
@@ -883,11 +890,14 @@ class ChatStore extends StoreBase {
         if (client is SavedHistoryClient && !client.isConnected) {
           throw StateError('Daemon disconnected while updating conversation');
         }
-        final page = await client.history(
-          buffer.sessionId,
-          limit: historyPageSize,
-          beforeSeq: beforeSeq,
-        );
+        final _HistoryPage page =
+            await (firstPage ??
+                client.history(
+                  buffer.sessionId,
+                  limit: historyPageSize,
+                  beforeSeq: beforeSeq,
+                ));
+        firstPage = null;
         if (client is SavedHistoryClient && !client.isConnected) {
           throw StateError('Daemon disconnected while updating conversation');
         }
@@ -980,8 +990,19 @@ class ChatStore extends StoreBase {
   /// Loads the newest persisted-history page for a newly watched session.
   Future<void> _loadHistory(DaemonClient client, _SessionBuffer buffer) async {
     _resetHistory(buffer);
+    Future<_HistoryPage>? fetch;
     try {
       if (client is SavedHistoryClient) {
+        if (client.isConnected) {
+          // A saved summary differs from the real page, so showing one just
+          // before the other makes the conversation jump. Only a slow fetch
+          // is worth that.
+          fetch = client.history(buffer.sessionId, limit: historyPageSize);
+          if (await _landsWithin(fetch, savedHistoryPatience)) {
+            await _applyFetchedHistory(buffer, fetch);
+            return;
+          }
+        }
         final saved = await (client as SavedHistoryClient).savedHistory(
           buffer.sessionId,
           limit: historyPageSize,
@@ -992,7 +1013,9 @@ class ChatStore extends StoreBase {
           buffer.oldestSeq = saved.events.firstOrNull?.seq;
           buffer.hasOlderHistory = saved.hasMore;
           _applyLatestHistoryPage(buffer, saved.events);
-          if (client.isConnected) await _resyncBuffer(client, buffer);
+          if (client.isConnected) {
+            await _resyncBuffer(client, buffer, firstPage: fetch);
+          }
           return;
         }
       }
@@ -1001,11 +1024,44 @@ class ChatStore extends StoreBase {
       _lastError = error;
       _scheduleNotify();
     }
+    await _applyFetchedHistory(
+      buffer,
+      fetch ?? client.history(buffer.sessionId, limit: historyPageSize),
+    );
+  }
+
+  /// Whether [fetch] succeeds within [patience]. A failure counts as not
+  /// landing, so saved content still shows; whoever awaits [fetch] next sees
+  /// the error.
+  Future<bool> _landsWithin(
+    Future<_HistoryPage> fetch,
+    Duration patience,
+  ) async {
+    final Completer<bool> landed = Completer<bool>();
+    final Timer timer = Timer(patience, () {
+      if (!landed.isCompleted) landed.complete(false);
+    });
+    unawaited(
+      fetch.then(
+        (_) {
+          timer.cancel();
+          if (!landed.isCompleted) landed.complete(true);
+        },
+        onError: (Object _) {
+          timer.cancel();
+          if (!landed.isCompleted) landed.complete(false);
+        },
+      ),
+    );
+    return landed.future;
+  }
+
+  Future<void> _applyFetchedHistory(
+    _SessionBuffer buffer,
+    Future<_HistoryPage> fetch,
+  ) async {
     try {
-      final page = await client.history(
-        buffer.sessionId,
-        limit: historyPageSize,
-      );
+      final _HistoryPage page = await fetch;
       _applyLatestHistoryPage(buffer, page.events);
       buffer.hasOlderHistory = page.hasMore;
       buffer.savedComplete = !page.hasMore;

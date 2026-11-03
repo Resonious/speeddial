@@ -952,22 +952,8 @@ class Timeline extends StatefulWidget {
   State<Timeline> createState() => _TimelineState();
 }
 
-class _TimelineState extends State<Timeline>
-    with SingleTickerProviderStateMixin {
+class _TimelineState extends State<Timeline> {
   static const double _loadThreshold = 320;
-
-  /// Fades the timeline back in when a whole page of history replaces what
-  /// it showed (a saved summary giving way to the real conversation), so the
-  /// swap dissolves rather than jumps. Rests at 1.
-  late final AnimationController _settle = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 240),
-    value: 1,
-  );
-  late final Animation<double> _settled = CurvedAnimation(
-    parent: _settle,
-    curve: Curves.easeOutCubic,
-  );
   static const Key _historyKey = ValueKey<String>('timeline-history');
   static const Key _tailKey = ValueKey<String>('timeline-tail');
   final _TimelineScrollController _controller = _TimelineScrollController();
@@ -1149,12 +1135,8 @@ class _TimelineState extends State<Timeline>
     }
     if (oldWidget.historyReplacementRevision !=
         widget.historyReplacementRevision) {
-      // A fresh page replaced the whole timeline: none of it is news, so
-      // it dissolves in once instead of every row rising.
+      // A fresh page replaced the whole timeline: none of it is news.
       _beforeCatchUp = null;
-      if (!(MediaQuery.maybeDisableAnimationsOf(context) ?? false)) {
-        _settle.forward(from: 0);
-      }
     }
     if (widget.catchingUp && !oldWidget.catchingUp) {
       _beforeCatchUp = _identities(widget.items);
@@ -1257,7 +1239,6 @@ class _TimelineState extends State<Timeline>
       ..dispose();
     _showLatest.dispose();
     _landings.dispose();
-    _settle.dispose();
     super.dispose();
   }
 
@@ -1366,72 +1347,69 @@ class _TimelineState extends State<Timeline>
     return Stack(
       children: <Widget>[
         Positioned.fill(
-          child: FadeTransition(
-            opacity: _settled,
-            child: Listener(
-              onPointerDown: (_) {
-                _followBeforeTouch ??= _controller.followLatest;
-                _controller.followLatest = false;
+          child: Listener(
+            onPointerDown: (_) {
+              _followBeforeTouch ??= _controller.followLatest;
+              _controller.followLatest = false;
+            },
+            onPointerUp: (_) => _endTouch(),
+            onPointerCancel: (_) => _endTouch(),
+            onPointerSignal: (_) => _controller.followLatest = false,
+            // Trackpad pans do not emit pointer-down or wheel events.
+            onPointerPanZoomStart: (_) => _controller.followLatest = false,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (ScrollNotification notification) {
+                if (notification.depth != 0) return false;
+                if (notification is ScrollStartNotification) {
+                  _followBeforeTouch = null;
+                }
+                if (notification is ScrollEndNotification) {
+                  _controller.followLatest =
+                      notification.metrics.pixels -
+                          notification.metrics.minScrollExtent <=
+                      1;
+                }
+                return false;
               },
-              onPointerUp: (_) => _endTouch(),
-              onPointerCancel: (_) => _endTouch(),
-              onPointerSignal: (_) => _controller.followLatest = false,
-              // Trackpad pans do not emit pointer-down or wheel events.
-              onPointerPanZoomStart: (_) => _controller.followLatest = false,
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (ScrollNotification notification) {
-                  if (notification.depth != 0) return false;
-                  if (notification is ScrollStartNotification) {
-                    _followBeforeTouch = null;
-                  }
-                  if (notification is ScrollEndNotification) {
-                    _controller.followLatest =
-                        notification.metrics.pixels -
-                            notification.metrics.minScrollExtent <=
-                        1;
-                  }
+              child: NotificationListener<ScrollMetricsNotification>(
+                onNotification: (ScrollMetricsNotification notification) {
+                  if (notification.depth == 0) _onScroll();
                   return false;
                 },
-                child: NotificationListener<ScrollMetricsNotification>(
-                  onNotification: (ScrollMetricsNotification notification) {
-                    if (notification.depth == 0) _onScroll();
-                    return false;
-                  },
-                  child: PageStorage(
-                    bucket: _storage,
-                    // The composer keeps clear of the system bars, so the
-                    // timeline has none. Leaving the insets in would push
-                    // nested scrollbars (wide tables, code) up into content.
-                    child: _WithoutPadding(
-                      child: SelectionArea(
-                        onSelectionChanged: widget.onReply == null
-                            ? null
-                            : (SelectedContent? content) =>
-                                  _selectedText = content?.plainText ?? '',
-                        contextMenuBuilder: _selectionMenu,
-                        child: CustomScrollView(
-                          key: const Key('chat-timeline'),
-                          controller: _controller,
-                          reverse: true,
-                          center: _historyKey,
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          slivers: <Widget>[
-                            SliverPadding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              sliver: SliverList(
-                                delegate: rows(split, widget.items.length),
-                              ),
+                child: PageStorage(
+                  bucket: _storage,
+                  // The composer keeps clear of the system bars, so the
+                  // timeline has none. Leaving the insets in would push
+                  // nested scrollbars (wide tables, code) up into content.
+                  child: _WithoutPadding(
+                    child: SelectionArea(
+                      onSelectionChanged: widget.onReply == null
+                          ? null
+                          : (SelectedContent? content) =>
+                                _selectedText = content?.plainText ?? '',
+                      contextMenuBuilder: _selectionMenu,
+                      child: CustomScrollView(
+                        key: const Key('chat-timeline'),
+                        controller: _controller,
+                        reverse: true,
+                        center: _historyKey,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        slivers: <Widget>[
+                          SliverPadding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            sliver: SliverList(
+                              delegate: rows(split, widget.items.length),
                             ),
-                            SliverPadding(
-                              key: _historyKey,
-                              padding: const EdgeInsets.only(top: 8),
-                              sliver: SliverList(
-                                delegate: rows(0, split, reverse: true),
-                              ),
+                          ),
+                          SliverPadding(
+                            key: _historyKey,
+                            padding: const EdgeInsets.only(top: 8),
+                            sliver: SliverList(
+                              delegate: rows(0, split, reverse: true),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
