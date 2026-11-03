@@ -119,6 +119,8 @@ void main() {
         find.byKey(const ValueKey<String>('fork-message-2')),
       );
 
+      expect(userCopy.center.dy, closeTo(userMessage.center.dy, 0.1));
+      expect(agentCopy.center.dy, closeTo(agentMessage.center.dy, 0.1));
       expect(userMessage.right, 390);
       expect(agentMessage.left, 0);
       // Actions stay toward the conversation's center instead of displacing

@@ -1991,10 +1991,11 @@ class _RenderMessageActions extends RenderBox
         : 0;
     (bubble.parentData! as _MessageActionsParentData).offset = Offset(
       left + (_isUser ? actionsWidth : 0),
-      size.height - bubble.size.height,
+      (size.height - bubble.size.height) / (horizontal ? 2 : 1),
     );
     double x = _isUser ? left : bubble.size.width;
-    double y = size.height - actionsHeight;
+    // Inline actions share the bubble’s center; stacked actions hug its bottom.
+    double y = (size.height - actionsHeight) / (horizontal ? 2 : 1);
     for (
       RenderBox? action = childAfter(bubble);
       action != null;
