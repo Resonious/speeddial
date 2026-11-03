@@ -773,7 +773,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey<String>('copy-message-1')));
     await tester.pump();
+    await tester.tap(find.text('Copy Markdown'));
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey<String>('copy-message-3')));
+    await tester.pump();
+    await tester.tap(find.text('Copy Markdown'));
     await tester.pump();
 
     final List<String> copied = clipboardCalls
@@ -787,7 +791,7 @@ void main() {
       'Copy this user message',
       'Merged **agent** message',
     ]);
-    expect(find.text('Message copied'), findsOneWidget);
+    expect(find.byTooltip('Copied'), findsWidgets);
   });
 
   testWidgets('composer has no build or plan mode selector', (tester) async {

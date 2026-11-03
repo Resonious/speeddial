@@ -9,6 +9,7 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../../theme.dart';
 import '../toast.dart';
+import 'copy_menu.dart';
 
 /// Allows embedded code to contribute its full wrapped height to a paragraph.
 /// flutter_markdown_plus forces a one-line strut even around WidgetSpans; its
@@ -218,11 +219,7 @@ class _CopyableMarkdownBlockState extends State<CopyableMarkdownBlock> {
       });
     } catch (_) {
       if (!mounted) return;
-      showToast(
-        context,
-        'Could not copy to clipboard',
-        tone: ToastTone.error,
-      );
+      showToast(context, 'Could not copy to clipboard', tone: ToastTone.error);
     }
   }
 
@@ -251,4 +248,67 @@ class _CopyableMarkdownBlockState extends State<CopyableMarkdownBlock> {
       widget.child,
     ],
   );
+}
+
+/// Wrap the standard table AST: the library overwrites custom `table` builders.
+class CopyableTableSyntax extends md.TableSyntax {
+  const CopyableTableSyntax();
+
+  @override
+  md.Node? parse(md.BlockParser parser) {
+    final int start = parser.lines.indexOf(parser.current);
+    final md.Node? table = super.parse(parser);
+    if (table == null) return null;
+    final int end = parser.isDone
+        ? parser.lines.length
+        : parser.lines.indexOf(parser.current);
+    return md.Element('copyableTable', <md.Node>[table])
+      ..attributes['source'] = parser.lines
+          .sublist(start, end)
+          .map((line) => line.content)
+          .join('\n')
+          .trimRight();
+  }
+}
+
+class CopyableTableBuilder extends MarkdownElementBuilder {
+  CopyableTableBuilder({required this.builders, required this.styleSheet});
+
+  final Map<String, MarkdownElementBuilder> builders;
+  final MarkdownStyleSheet Function(BuildContext) styleSheet;
+
+  @override
+  bool isBlockElement() => true;
+
+  @override
+  Widget visitElementAfterWithContext(
+    BuildContext context,
+    md.Element element,
+    TextStyle? preferredStyle,
+    TextStyle? parentStyle,
+  ) {
+    final List<Widget> children = MarkdownBuilder(
+      delegate: _QuoteDelegate(context),
+      selectable: false,
+      styleSheet: styleSheet(context),
+      imageDirectory: null,
+      imageBuilder: null,
+      checkboxBuilder: null,
+      bulletBuilder: null,
+      builders: builders,
+      paddingBuilders: const <String, MarkdownPaddingBuilder>{},
+      listItemCrossAxisAlignment: MarkdownListItemCrossAxisAlignment.baseline,
+    ).build(element.children!);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Align(
+          alignment: Alignment.centerRight,
+          child: CopyMenu(text: element.attributes['source']!, table: true),
+        ),
+        ...children,
+      ],
+    );
+  }
 }

@@ -17,7 +17,7 @@ Every effect marks something that actually happened. Reuse these before writing 
 |---|---|---|
 | Release build running | Steady ember border and “Building…” label on the download page; clears on completion or connection failure, no motion | `scripts/downloads.html` |
 | External PR link dragged over the app | Steady theme ember border and a clear drop hint; disappears on leave/drop, no ticker in either motion mode | `pull_request_drop_region.dart` |
-| Quote/code copied | Copy action becomes an ember-colored check and “Copied” for two seconds; no layout movement or continuous animation | `chat/markdown_blocks.dart` |
+| Message/table/quote/code copied | Copy action becomes an ember-colored check and “Copied” for two seconds; no layout movement or continuous animation | `chat/markdown_blocks.dart`, `chat/copy_menu.dart` |
 | Image download result | A brief fade into the save receipt; a saved image shows an ember-colored check. Reduced motion shows the result immediately. | `chat/image_viewer.dart` |
 | Reply staged from a selection | The inline reply box fades and scales in beside the text; the new composer chip pops with an elastic bounce and an ember halo that cools; the chip's editor and a sent reply's detail ease open. All still under reduced motion. | `chat/replies.dart` |
 | Archived session restored | A success toast (ember check) saying “Session restored”; the archived banner eases away (immediate under reduced motion) | `session_restored_notice.dart`, `chat/chat_pane.dart` |

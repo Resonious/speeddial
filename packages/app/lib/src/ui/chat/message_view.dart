@@ -450,6 +450,11 @@ class _AgentMessageViewState extends State<AgentMessageView> {
       styleSheet: (context) =>
           _styleSheetFor(context, Theme.of(context).textTheme.bodyMedium),
     );
+    _elementBuilders['copyableTable'] = CopyableTableBuilder(
+      builders: _elementBuilders,
+      styleSheet: (context) =>
+          _styleSheetFor(context, Theme.of(context).textTheme.bodyMedium),
+    );
     _restartSettleTimer();
   }
 
@@ -644,6 +649,7 @@ class _AgentMessageViewState extends State<AgentMessageView> {
                 // Reparse once when an asynchronous highlight batch is ready.
                 key: ValueKey<int>(_highlightRevision),
                 data: _renderedText,
+                blockSyntaxes: const <md.BlockSyntax>[CopyableTableSyntax()],
                 styleSheet: _styleSheetFor(context, bodyStyle),
                 builders: _elementBuilders,
               ),

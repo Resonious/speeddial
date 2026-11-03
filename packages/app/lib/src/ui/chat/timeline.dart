@@ -3,17 +3,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../state/chat_store.dart';
 import '../../state/session_timeline.dart';
 import '../../state/streamed_attachment.dart';
 import '../../theme.dart';
-import '../toast.dart';
 import 'active_pulse.dart';
 import 'catching_up.dart';
 import 'compaction.dart';
+import 'copy_menu.dart';
 import 'explainer/explainer_view.dart';
 import 'history_expansion.dart';
 import 'landing_sparks.dart';
@@ -1860,13 +1859,9 @@ class _MessageWithActions extends StatelessWidget {
     final List<Widget> buttons = <Widget>[];
     if (text.isNotEmpty) {
       buttons.add(
-        IconButton(
+        CopyMenu(
           key: seq == null ? null : ValueKey<String>('copy-message-${seq!}'),
-          tooltip: 'Copy message',
-          visualDensity: VisualDensity.compact,
-          iconSize: 18,
-          onPressed: () => _copyMessage(context),
-          icon: const Icon(Icons.content_copy),
+          text: text,
         ),
       );
     }
@@ -1911,17 +1906,6 @@ class _MessageWithActions extends StatelessWidget {
     return _MessageActionsLayout(
       isUser: isUser,
       children: <Widget>[child, ...buttons],
-    );
-  }
-
-  Future<void> _copyMessage(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!context.mounted) return;
-    showToast(
-      context,
-      'Message copied',
-      tone: ToastTone.success,
-      duration: const Duration(seconds: 2),
     );
   }
 }

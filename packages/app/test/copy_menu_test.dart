@@ -1,0 +1,108 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/message_view.dart';
+import 'package:speeddial_app/src/ui/chat/timeline.dart';
+
+void main() {
+  for (final bool dark in <bool>[false, true]) {
+    testWidgets('message and table menus copy scoped formats (dark: $dark)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final List<String> copied = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      const String table = '| Name | Count |\n| --- | --- |\n| Apples | 3 |';
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: dark ? buildSpeedDialTheme() : buildSpeedDialLightTheme(),
+          home: const Scaffold(
+            body: MediaQuery(
+              data: MediaQueryData(disableAnimations: true),
+              child: Timeline(
+                items: <TimelineItem>[
+                  AgentMessageItem(
+                    text: 'Before\n\n$table\n\nAfter',
+                    forkSeq: 2,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Copy message'));
+      await tester.pumpAndSettle();
+      expect(copied, isEmpty);
+      expect(find.text('Copy as CSV'), findsNothing);
+      await tester.tap(find.text('Copy Markdown'));
+      await tester.pumpAndSettle();
+      expect(copied.single, 'Before\n\n$table\n\nAfter');
+      for (final String label in <String>[
+        'Copy as CSV',
+        'Copy HTML',
+        'Copy for Slack',
+        'Copy Markdown',
+      ]) {
+        await tester.tap(
+          find.text('Copy table').evaluate().isEmpty
+              ? find.text('Copied')
+              : find.text('Copy table'),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label));
+        await tester.pumpAndSettle();
+        expect(copied.last, isNot(contains('Before')));
+        expect(copied.last, isNot(contains('After')));
+        if (label == 'Copy as CSV') {
+          expect(copied.last, 'Name,Count\r\nApples,3');
+        }
+        if (label == 'Copy HTML') expect(copied.last, contains('<table>'));
+        if (label == 'Copy for Slack') expect(copied.last, startsWith('```\n'));
+        if (label == 'Copy Markdown') expect(copied.last, table);
+      }
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('Copied'), findsNothing);
+      expect(tester.hasRunningAnimations, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+  testWidgets(
+    'tables inside quotes and consecutive tables each have copy controls',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: SelectionArea(
+              child: AgentMessageView(
+                text: '> | A | B |\n> | - | - |\n> | 1 | 2 |\n\nOutside\n\n| C | D |\n| - | - |\n| 3 | 4 |',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Copy table'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+}

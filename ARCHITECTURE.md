@@ -647,6 +647,12 @@ Performance rules for the app:
   `TapGestureRecognizer` (tap opens, secondary tap offers Copy URL) for the same reason:
   any non-text inline widget splits the paragraph into separate lines. Quotes reuse the markdown AST renderer; quotes and fenced code have
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
+  Message copy menus offer original Markdown, HTML source, and Slack markup
+  (tables become aligned fenced code blocks). Table headers offer the same formats
+  plus RFC-style CSV quoting, scoped to the table's original Markdown. A custom
+  table syntax wraps the standard AST so the existing renderer keeps cell layout,
+  selection, and scrolling. Conversion runs only on copy; confirmations reuse the
+  still ember check and expire after two seconds (`copy_menu.dart`, `copy_formats.dart`).
   Tables size columns to their contents and scroll horizontally with a visible scrollbar
   when wider than the message, keeping identifiers and multilingual names readable.
   The timeline strips inherited safe-area padding so nested scrollbars hug their block.
