@@ -1623,31 +1623,15 @@ class DaemonStore {
     String source, {
     bool copy = false,
   }) {
-    final Directory directory = Directory(
-      p.join(_sessionFilesPath(sessionId), attachment.id),
-    )..createSync(recursive: true);
-    final String safeName = attachment.name.replaceAll(
-      RegExp(r'[/\\\x00]'),
-      '_',
-    );
-    final String target = p.join(
-      directory.path,
-      safeName.isEmpty || safeName == '.' || safeName == '..'
-          ? 'attachment'
-          : safeName,
-    );
+    final String target = _attachmentFilePath(sessionId, attachment);
+    final Directory directory = File(target).parent
+      ..createSync(recursive: true);
     if (copy) {
       File(source).copySync(target);
     } else {
       File(source).renameSync(target);
     }
-    if (Platform.isLinux || Platform.isMacOS) {
-      try {
-        Process.runSync('chmod', <String>['0400', target]);
-      } on ProcessException {
-        // Best-effort; the directory is already private.
-      }
-    }
+    _makeReadOnly(target);
     try {
       _db.execute(
         'INSERT INTO attachments '
@@ -1669,6 +1653,20 @@ class DaemonStore {
     return target;
   }
 
+  /// Writes a read-only on-disk copy of the inline [attachment] for agents
+  /// that can only reach it by path, and returns that path. The database row
+  /// stays the source of truth, so `attachments.read` and forks are unaffected;
+  /// the copy lives in the session's files directory and is deleted with it.
+  String writeAttachmentCopy(String sessionId, AttachmentData attachment) {
+    final String target = _attachmentFilePath(sessionId, attachment);
+    final File file = File(target);
+    if (file.existsSync()) return target;
+    file.parent.createSync(recursive: true);
+    file.writeAsBytesSync(base64Decode(attachment.data), flush: true);
+    _makeReadOnly(target);
+    return target;
+  }
+
   /// The on-disk path of a file-backed attachment, or null when the
   /// attachment is unknown or stored inline.
   String? attachmentFile(String sessionId, String attachmentId) {
@@ -1682,6 +1680,29 @@ class DaemonStore {
 
   String _sessionFilesPath(String sessionId) =>
       p.join(filesPath, 'attachments', sessionId);
+
+  String _attachmentFilePath(String sessionId, Attachment attachment) {
+    final String safeName = attachment.name.replaceAll(
+      RegExp(r'[/\\\x00]'),
+      '_',
+    );
+    return p.join(
+      _sessionFilesPath(sessionId),
+      attachment.id,
+      safeName.isEmpty || safeName == '.' || safeName == '..'
+          ? 'attachment'
+          : safeName,
+    );
+  }
+
+  void _makeReadOnly(String path) {
+    if (!Platform.isLinux && !Platform.isMacOS) return;
+    try {
+      Process.runSync('chmod', <String>['0400', path]);
+    } on ProcessException {
+      // Best-effort; the directory is already private.
+    }
+  }
 
   /// The stored attachment of [sessionId] with [attachmentId], or null when
   /// unknown (payload re-encoded to base64). A file-backed attachment (see

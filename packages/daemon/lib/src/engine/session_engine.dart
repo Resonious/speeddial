@@ -670,7 +670,7 @@ class SessionEngine {
                   live,
                   () => live.client.prompt(
                     live.providerSessionId,
-                    _promptBlocks(queued.text, queued.attachments),
+                    _promptBlocks(live, queued.text, queued.attachments),
                   ),
                 ).whenComplete(() {
                   live.turn = null;
@@ -1334,7 +1334,7 @@ class SessionEngine {
           active,
           () => active.client.prompt(
             active.providerSessionId,
-            _promptBlocks(text, prepared, forkContext: forkContext),
+            _promptBlocks(active, text, prepared, forkContext: forkContext),
           ),
           forkContext: forkContext,
         ).whenComplete(() {
@@ -2617,7 +2617,13 @@ class SessionEngine {
   /// attachment blocks. Ante flattens blocks into its
   /// text-only `UserInput` operation: text resources inline, images and other
   /// binary resources materialized to files referenced by path.
-  static List<Map<String, Object?>> _promptBlocks(
+  ///
+  /// ACP agents may silently drop blobs they cannot interpret (the Claude
+  /// adapter keeps only images, PDFs and text), so an ACP turn links every
+  /// other binary as a file. `resource_link` is the one non-text block all ACP
+  /// agents must support. PDFs stay embedded for native document input.
+  List<Map<String, Object?>> _promptBlocks(
+    _LiveSession live,
     String text,
     List<_PreparedAttachment> attachments, {
     _ForkContext? forkContext,
@@ -2627,7 +2633,16 @@ class SessionEngine {
     void appendAttachments(List<_PreparedAttachment> preparedAttachments) {
       for (final prepared in preparedAttachments) {
         final data = prepared.data;
-        final String? path = prepared.path;
+        final bool linkInline =
+            live.client is AcpClient &&
+            prepared.text == null &&
+            !isImageMimeType(data.mimeType) &&
+            data.mimeType.toLowerCase() != 'application/pdf';
+        final String? path =
+            prepared.path ??
+            (linkInline
+                ? _store.writeAttachmentCopy(live.session.id, data)
+                : null);
         if (path != null) {
           blocks.add(<String, Object?>{
             'type': 'resource_link',

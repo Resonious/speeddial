@@ -722,8 +722,11 @@ Agent task-progress `plan` events remain supported.
   For an accepted turn, the daemon persists each payload (fetchable later via
   `attachments.read`) and records the metadata on the turn's `userMessage` event. ACP receives the
   files as prompt content blocks: non-text `image/*` becomes an `image` block; text-like types become
-  an embedded `resource` block with `text`; anything else becomes an embedded `resource` block with
-  a base64 `blob`. Resource URIs have the form `speeddial-attachment:///<id>/<name>`. Codex receives
+  an embedded `resource` block with `text`; `application/pdf` becomes an embedded `resource` block with
+  a base64 `blob`; any other binary becomes a `resource_link` to a read-only copy in the daemon's
+  private files directory (deleted with the session), because agents may silently drop blobs they
+  cannot interpret. The stored payload stays fetchable through `attachments.read`. Embedded resource
+  URIs have the form `speeddial-attachment:///<id>/<name>`. Codex receives
   native `text`, `image`, and `audio` input items.
   The request resolves at turn start — once the `userMessage` event is persisted and the session is
   `running` — not when the agent finishes. The turn's output arrives as live `session.event` notifications,

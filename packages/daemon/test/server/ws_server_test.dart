@@ -4460,6 +4460,102 @@ void main() {
 
       await client.close();
     }, timeout: const Timeout(Duration(minutes: 2)));
+
+    test('small binaries reach ACP agents as file links, PDFs stay embedded '
+        'and the stored payload stays readable', () async {
+      await startServer();
+      final client = await connect(server!.port);
+      final dir = await Directory.systemTemp.createTemp('sd_upload_');
+      addTearDown(() => dir.delete(recursive: true));
+      File(p.join(dir.path, 'example.txt'))
+          .writeAsStringSync('hello from file\n');
+      final project = Project.fromJson(
+        (j(
+                  await client.peer.call('projects.add', <String, Object?>{
+                    'path': dir.path,
+                  }),
+                )['project']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+      final session = Session.fromJson(
+        (j(
+                  await client.createReady(<String, Object?>{
+                    'projectId': project.id,
+                    'providerId': 'fake',
+                  }),
+                )['session']!
+                as Map)
+            .cast<String, Object?>(),
+      );
+
+      final List<int> videoBytes = <int>[0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70];
+      final List<int> pdfBytes = utf8.encode('%PDF-1.7');
+
+      final permission = waitForEvent(
+        client,
+        (event) => event is PermissionRequestEvent,
+      );
+      final send = client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': session.id,
+        'text': 'Look',
+        'attachments': <Object?>[
+          <String, Object?>{
+            'name': 'clip.mp4',
+            'mimeType': 'video/mp4',
+            'data': base64Encode(videoBytes),
+          },
+          <String, Object?>{
+            'name': 'spec.pdf',
+            'mimeType': 'application/pdf',
+            'data': base64Encode(pdfBytes),
+          },
+        ],
+      });
+      final requestParams = await permission;
+      final request = ((requestParams['event']! as Map)['request']! as Map)
+          .cast<String, Object?>();
+      await client.peer.call('sessions.respondPermission', <String, Object?>{
+        'sessionId': session.id,
+        'requestId': request['requestId']! as String,
+        'optionId': 'allow',
+      });
+      await send;
+
+      final lastPrompt = jsonDecode(
+        File(p.join(dir.path, 'agent.last_prompt.json')).readAsStringSync(),
+      ) as List<Object?>;
+      expect(lastPrompt, hasLength(3));
+      final link = lastPrompt[1]! as Map;
+      expect(link['type'], 'resource_link');
+      expect(link['name'], 'clip.mp4');
+      expect(link['mimeType'], 'video/mp4');
+      expect(link['size'], videoBytes.length);
+      final File stored = File(Uri.parse(link['uri']! as String).toFilePath());
+      expect(stored.readAsBytesSync(), videoBytes);
+      final pdf = lastPrompt[2]! as Map;
+      expect(pdf['type'], 'resource');
+      expect((pdf['resource']! as Map)['blob'], base64Encode(pdfBytes));
+
+      final history = j(
+        await client.peer.call('sessions.history', <String, Object?>{
+          'sessionId': session.id,
+        }),
+      );
+      final userMessage = SessionEvent.fromJson(
+        ((history['events']! as List<Object?>).first! as Map)
+            .cast<String, Object?>(),
+      ) as UserMessageEvent;
+      final read = j(
+        await client.peer.call('attachments.read', <String, Object?>{
+          'sessionId': session.id,
+          'attachmentId': userMessage.attachments.first.id,
+        }),
+      );
+      expect((read['attachment']! as Map)['data'], base64Encode(videoBytes));
+
+      await client.close();
+    });
   });
 
   group('fs', () {
