@@ -21,13 +21,22 @@ class CatchingUpStrip extends StatefulWidget {
     super.key,
     required this.active,
     this.label = 'Catching up…',
+    this.patience = CatchingUpStrip.defaultPatience,
   });
 
   final bool active;
   final String label;
 
   /// How long a catch-up may take before the strip shows at all.
-  static const Duration patience = Duration(milliseconds: 150);
+  final Duration patience;
+
+  /// [patience] after a reconnect, when the reader has been looking at a
+  /// timeline that just went stale.
+  static const Duration defaultPatience = Duration(milliseconds: 150);
+
+  /// [patience] while a session is opening: its refresh is routine, so the
+  /// strip shows only when one is slow enough to be worth explaining.
+  static const Duration openingPatience = Duration(milliseconds: 700);
 
   @override
   State<CatchingUpStrip> createState() => _CatchingUpStripState();
@@ -87,7 +96,7 @@ class _CatchingUpStripState extends State<CatchingUpStrip>
         // Back before it had folded away.
         _shown.forward();
       } else if (_shown.isDismissed && _wait == null) {
-        _wait = Timer(CatchingUpStrip.patience, () {
+        _wait = Timer(widget.patience, () {
           _wait = null;
           if (mounted && widget.active) _shown.forward();
         });

@@ -172,6 +172,11 @@ class _SessionSurfaceState extends State<_SessionSurface> {
   /// markers without adding events.
   bool _running = false;
 
+  /// True from mount until the session's history first settles (loaded, not
+  /// catching up). Switching to a session refreshes it; that is routine, not
+  /// a reconnect, so its updating strip is more patient.
+  bool _opening = true;
+
   List<TimelineItem> _items = const <TimelineItem>[];
   int _turnSeed = 0;
   PermissionRequest? _pending;
@@ -332,6 +337,9 @@ class _SessionSurfaceState extends State<_SessionSurface> {
         // is lost), so say so instead of silently showing old content.
         final bool offline = data.connections.statusOf(daemonId).outOfReach;
         final bool catchingUp = chat.isCatchingUp(sessionId) && !offline;
+        if (!catchingUp && historyStatus != HistoryStatus.loading) {
+          _opening = false;
+        }
 
         // While the first fetch runs (or after it failed with nothing live
         // to show), a bare timeline would read as an empty session.
@@ -435,6 +443,7 @@ class _SessionSurfaceState extends State<_SessionSurface> {
               offline: offline,
               hasContent: !bare || chat.isSavedHistory(sessionId),
               updating: catchingUp,
+              opening: _opening,
               savedOnly: chat.isSavedHistory(sessionId),
               savedComplete: chat.isSavedHistoryComplete(sessionId),
               failed: failed,

@@ -7,6 +7,7 @@ import 'package:speeddial_app/src/api/fake_daemon.dart';
 import 'package:speeddial_app/src/api/saved_history_client.dart';
 import 'package:speeddial_app/src/scope.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/catching_up.dart';
 import 'package:speeddial_app/src/ui/chat/chat_pane.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -76,9 +77,13 @@ void main() {
           ),
         );
         await tester.pump();
+        // Opening the session refreshes it; the strip shows only once that
+        // outlasts the opening patience.
         await tester.pump(const Duration(milliseconds: 200));
-        await tester.pump(const Duration(milliseconds: 300));
         expect(find.text('Can I read this while offline?'), findsOneWidget);
+        expect(find.text('Updating conversation…'), findsNothing);
+        await tester.pump(CatchingUpStrip.openingPatience);
+        await tester.pump(const Duration(milliseconds: 300));
         expect(find.text('Updating conversation…'), findsOneWidget);
         expect(find.text('Loading history…'), findsNothing);
         client.response.completeError(StateError('History unavailable'));

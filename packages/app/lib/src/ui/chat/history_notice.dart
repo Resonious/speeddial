@@ -14,6 +14,7 @@ class HistoryNotice extends StatelessWidget {
     required this.savedComplete,
     required this.failed,
     required this.onRetry,
+    this.opening = false,
   });
 
   final bool offline;
@@ -23,6 +24,10 @@ class HistoryNotice extends StatelessWidget {
   final bool savedComplete;
   final bool failed;
   final VoidCallback onRetry;
+
+  /// The session has only just opened, so a refresh is routine rather than
+  /// a reconnect: the updating strip waits longer before it shows.
+  final bool opening;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +51,9 @@ class HistoryNotice extends StatelessWidget {
     return CatchingUpStrip(
       active: updating && !offline,
       label: savedOnly ? 'Updating conversation…' : 'Catching up…',
+      patience: opening
+          ? CatchingUpStrip.openingPatience
+          : CatchingUpStrip.defaultPatience,
     );
   }
 }

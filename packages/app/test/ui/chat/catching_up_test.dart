@@ -44,10 +44,33 @@ void main() {
     ) async {
       await tester.pumpWidget(strip(active: true));
       await tester.pump(
-        CatchingUpStrip.patience - const Duration(milliseconds: 30),
+        CatchingUpStrip.defaultPatience - const Duration(milliseconds: 30),
       );
       expect(label, findsNothing);
       await tester.pumpWidget(strip(active: false));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(label, findsNothing);
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('while a session opens, a routine refresh never shows', (
+      WidgetTester tester,
+    ) async {
+      Widget opening({required bool active}) => MaterialApp(
+        theme: theme,
+        home: Scaffold(
+          body: CatchingUpStrip(
+            active: active,
+            patience: CatchingUpStrip.openingPatience,
+          ),
+        ),
+      );
+      await tester.pumpWidget(opening(active: true));
+      await tester.pump(
+        CatchingUpStrip.openingPatience - const Duration(milliseconds: 30),
+      );
+      expect(label, findsNothing);
+      await tester.pumpWidget(opening(active: false));
       await tester.pump(const Duration(milliseconds: 300));
       expect(label, findsNothing);
       expect(tester.hasRunningAnimations, isFalse);
@@ -57,7 +80,7 @@ void main() {
       WidgetTester tester,
     ) async {
       await tester.pumpWidget(strip(active: true));
-      await tester.pump(CatchingUpStrip.patience);
+      await tester.pump(CatchingUpStrip.defaultPatience);
       await tester.pump(const Duration(milliseconds: 100));
       expect(label, findsOneWidget);
       expect(risen(tester), inExclusiveRange(0, 1));
@@ -197,6 +220,79 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.byKey(const Key('arrival-rise')), findsNothing);
       expect(sparks, paintsNothing);
+    });
+
+    testWidgets('one already running as the timeline opens stays quiet', (
+      WidgetTester tester,
+    ) async {
+      // Switching to a session refreshes it: nothing the reader saw went
+      // stale, so the rows it brings just show and nothing sparks.
+      await tester.pumpWidget(app(stale, catchingUp: true));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(
+        app(<SessionEvent>[...stale, ...missed], catchingUp: false),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(reply, findsOneWidget);
+      expect(find.byKey(const Key('arrival-rise')), findsNothing);
+      expect(sparks, paintsNothing);
+      await tester.pumpAndSettle();
+    });
+
+    Widget replaced(
+      List<SessionEvent> events, {
+      required bool catchingUp,
+      required int revision,
+    }) => MaterialApp(
+      theme: theme,
+      home: Scaffold(
+        body: Timeline(
+          items: deriveTimelineItems(events),
+          catchingUp: catchingUp,
+          historyReplacementRevision: revision,
+        ),
+      ),
+    );
+    double settled(WidgetTester tester) => tester
+        .widget<FadeTransition>(
+          find
+              .ancestor(
+                of: find.byKey(const Key('chat-timeline')),
+                matching: find.byType(FadeTransition),
+              )
+              .first,
+        )
+        .opacity
+        .value;
+
+    testWidgets('a replaced page dissolves in once, without rising rows', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(replaced(stale, catchingUp: false, revision: 0));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(replaced(stale, catchingUp: true, revision: 0));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pumpWidget(replaced(missed, catchingUp: false, revision: 1));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(settled(tester), inExclusiveRange(0, 1));
+      expect(find.byKey(const Key('arrival-rise')), findsNothing);
+      expect(sparks, paintsNothing);
+      await tester.pumpAndSettle();
+      expect(settled(tester), 1);
+      expect(tester.hasRunningAnimations, isFalse);
+    });
+
+    testWidgets('under reduced motion a replaced page just shows', (
+      WidgetTester tester,
+    ) async {
+      stillMotion(tester);
+      await tester.pumpWidget(replaced(stale, catchingUp: false, revision: 0));
+      await tester.pumpWidget(replaced(missed, catchingUp: false, revision: 1));
+      await tester.pump();
+      expect(settled(tester), 1);
+      expect(tester.hasRunningAnimations, isFalse);
     });
 
     testWidgets('under reduced motion its rows just show', (
