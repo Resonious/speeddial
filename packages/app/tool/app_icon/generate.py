@@ -130,6 +130,17 @@ def main() -> None:
     _render(FULL, 512, APP / 'linux/runner/resources/speeddial_launcher.png',
             True)
 
+    # The runner embeds this resource for the executable and window icon.
+    # Include native sizes for Explorer and taskbars at different DPI scales.
+    windows = APP / 'windows/runner/resources/app_icon.ico'
+    png = cairosvg.svg2png(bytestring=FULL.encode(),
+                           output_width=256, output_height=256)
+    image = Image.open(io.BytesIO(png)).convert('RGBA')
+    windows.parent.mkdir(parents=True, exist_ok=True)
+    image.save(windows, format='ICO',
+               sizes=[(size, size) for size in (16, 24, 32, 48, 64, 128, 256)])
+    print(f'{windows.relative_to(APP)} (16–256px)')
+
 
 if __name__ == '__main__':
     main()
