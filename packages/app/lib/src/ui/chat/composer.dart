@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -430,10 +431,42 @@ class _ComposerState extends State<Composer>
       return false;
     }
     if (!mounted || bytes == null || bytes.isEmpty) return false;
-    final Uint8List imageBytes = bytes;
-    final ({String extension, String mimeType}) format = _imageFormat(
+    await _addPastedImage(bytes);
+    return true;
+  }
+
+  void _onContentInserted(KeyboardInsertedContent content) {
+    final Uint8List? bytes = content.data;
+    if (_running ||
+        !isImageMimeType(content.mimeType) ||
+        bytes == null ||
+        bytes.isEmpty) {
+      return;
+    }
+    unawaited(_addPastedImage(bytes, fallbackMimeType: content.mimeType));
+  }
+
+  /// Stages a pasted image. Uncompressed BMPs (what Windows puts on the
+  /// clipboard) are re-encoded as PNG first, which usually shrinks them by
+  /// an order of magnitude; if the engine cannot decode one it is attached
+  /// as-is.
+  Future<void> _addPastedImage(
+    Uint8List bytes, {
+    String? fallbackMimeType,
+  }) async {
+    Uint8List imageBytes = bytes;
+    ({String extension, String mimeType}) format = _imageFormat(
       imageBytes,
+      fallbackMimeType: fallbackMimeType,
     );
+    if (format.mimeType == 'image/bmp') {
+      final Uint8List? png = await _bmpToPng(imageBytes);
+      if (png != null) {
+        imageBytes = png;
+        format = (extension: 'png', mimeType: 'image/png');
+      }
+    }
+    if (!mounted) return;
     setState(() {
       _pastedImageCount += 1;
       _attachments.add(
@@ -446,33 +479,26 @@ class _ComposerState extends State<Composer>
         ),
       );
     });
-    return true;
   }
 
-  void _onContentInserted(KeyboardInsertedContent content) {
-    final Uint8List? bytes = content.data;
-    if (_running ||
-        !isImageMimeType(content.mimeType) ||
-        bytes == null ||
-        bytes.isEmpty) {
-      return;
-    }
-    final ({String extension, String mimeType}) format = _imageFormat(
-      bytes,
-      fallbackMimeType: content.mimeType,
-    );
-    setState(() {
-      _pastedImageCount += 1;
-      _attachments.add(
-        OutgoingAttachment(
-          name: _pastedImageCount == 1
-              ? 'pasted-image.${format.extension}'
-              : 'pasted-image-$_pastedImageCount.${format.extension}',
-          mimeType: format.mimeType,
-          data: base64Encode(bytes),
-        ),
+  /// Decodes [bmp] and re-encodes it as PNG off the UI thread, or returns
+  /// null when the engine cannot decode it (the BMP is then sent as-is).
+  static Future<Uint8List?> _bmpToPng(Uint8List bmp) async {
+    ui.Codec? codec;
+    ui.Image? image;
+    try {
+      codec = await ui.instantiateImageCodec(bmp);
+      image = (await codec.getNextFrame()).image;
+      final ByteData? png = await image.toByteData(
+        format: ui.ImageByteFormat.png,
       );
-    });
+      return png?.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes);
+    } on Object {
+      return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+    }
   }
 
   Widget _buildContextMenu(

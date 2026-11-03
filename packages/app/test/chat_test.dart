@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1481,7 +1482,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byKey(const Key('toast')).evaluate().isNotEmpty);
+    await pumpUntil(
+      tester,
+      () => find.byKey(const Key('toast')).evaluate().isNotEmpty,
+    );
     // DaemonError surfaced as a toast...
     expect(find.text('a turn is already running'), findsOneWidget);
     expect(position.pixels, closeTo(readingOffset, 0.1));
@@ -1508,7 +1512,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
 
-    await pumpUntil(tester, () => find.byKey(const Key('toast')).evaluate().isNotEmpty);
+    await pumpUntil(
+      tester,
+      () => find.byKey(const Key('toast')).evaluate().isNotEmpty,
+    );
     // The drop self-heals (auto-reconnect + resync): transient copy only.
     expect(find.text(kConnectionLostMessage), findsOneWidget);
     expect(find.text('peer closed'), findsNothing);
@@ -1566,6 +1573,83 @@ void main() {
     expect(sentAttachments!.single.mimeType, 'image/png');
     expect(sentAttachments!.single.data, base64Encode(pngBytes));
     expect(find.byTooltip('Remove'), findsNothing);
+  });
+
+  /// A 2x2 24-bit BMP, the format Windows puts on the clipboard.
+  Uint8List bmpBytes() {
+    final ByteData data = ByteData(70);
+    data
+      ..setUint8(0, 0x42)
+      ..setUint8(1, 0x4d)
+      ..setUint32(2, 70, Endian.little) // file size
+      ..setUint32(10, 54, Endian.little) // pixel data offset
+      ..setUint32(14, 40, Endian.little) // BITMAPINFOHEADER
+      ..setInt32(18, 2, Endian.little) // width
+      ..setInt32(22, 2, Endian.little) // height
+      ..setUint16(26, 1, Endian.little) // planes
+      ..setUint16(28, 24, Endian.little) // bits per pixel
+      ..setUint32(34, 16, Endian.little); // image size
+    // Two rows of two BGR pixels, each padded to 8 bytes.
+    for (int i = 54; i < 70; i++) {
+      data.setUint8(i, 0x80);
+    }
+    return data.buffer.asUint8List();
+  }
+
+  Future<List<OutgoingAttachment>?> pasteAndSend(
+    WidgetTester tester,
+    Uint8List clipboard,
+  ) async {
+    List<OutgoingAttachment>? sent;
+    await pumpComposer(
+      tester,
+      picker: () async => const <({String name, Uint8List bytes})>[],
+      clipboardImageReader: () async => clipboard,
+      onSend: (String text, List<OutgoingAttachment> attachments) async {
+        sent = attachments;
+      },
+    );
+    await tester.tap(find.byType(TextField));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    // Decoding and PNG encoding run on real engine threads.
+    for (
+      int i = 0;
+      i < 20 && find.byTooltip('Remove').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pump();
+    return sent;
+  }
+
+  testWidgets('a pasted BMP is re-encoded as PNG', (WidgetTester tester) async {
+    final List<OutgoingAttachment>? sent = await pasteAndSend(
+      tester,
+      bmpBytes(),
+    );
+    expect(sent, hasLength(1));
+    expect(sent!.single.name, 'pasted-image.png');
+    expect(sent.single.mimeType, 'image/png');
+    final Uint8List png = base64Decode(sent.single.data!);
+    expect(png.sublist(0, 4), <int>[0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  testWidgets('an undecodable BMP is attached unchanged', (
+    WidgetTester tester,
+  ) async {
+    final Uint8List broken = Uint8List.fromList(<int>[0x42, 0x4d, 1, 2, 3]);
+    final List<OutgoingAttachment>? sent = await pasteAndSend(tester, broken);
+    expect(sent, hasLength(1));
+    expect(sent!.single.name, 'pasted-image.bmp');
+    expect(sent.single.mimeType, 'image/bmp');
+    expect(sent.single.data, base64Encode(broken));
   });
 
   testWidgets('text paste still uses the TextField default action', (
