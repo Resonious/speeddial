@@ -5,7 +5,8 @@ The artwork is a full-bleed square (no baked-in corners or shadow): platforms
 apply their own mask. On Android it ships as an adaptive icon (graphite
 background + orange foreground + monochrome for themed icons), with the glyph
 kept inside the 66/108 safe zone.
-Windows uses just the handset on transparency, enlarged for the taskbar.
+Windows uses the same handset and speed lines on transparency, enlarged for
+the taskbar.
 
 Not a project dependency; run by hand after changing the design:
 
@@ -89,10 +90,11 @@ FULL = _svg(_BACKGROUND + _foreground(ACCENT))
 BACKGROUND = _svg(_BACKGROUND)
 FOREGROUND = _svg(_foreground(ACCENT))
 MONOCHROME = _svg(_foreground('#FFFFFF'))
-# The handset spans 3..21 on its original canvas. Leave a 2-unit margin
-# around it so it fills 82% of the Windows icon without touching the edges.
-WINDOWS = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 1 22 22">'
-           f'<path d="{HANDSET}" fill="{ACCENT}"/></svg>')
+# Reuse the complete mark, with tighter framing than mobile's adaptive safe
+# zone. Its bounds are approximately (291, 262)..(768, 739); leave equal
+# padding so the unchanged artwork fills about 82% of the Windows icon.
+WINDOWS = ('<svg xmlns="http://www.w3.org/2000/svg" '
+           f'viewBox="240 212 580 580">{_foreground(ACCENT)}</svg>')
 
 
 def _render(svg: str, size: int, path: Path, opaque: bool) -> None:
