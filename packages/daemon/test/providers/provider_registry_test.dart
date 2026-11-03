@@ -79,6 +79,7 @@ void main() {
       'claude',
       'codex',
       'ante',
+      'goose',
     ]);
     final omp = registry.byId('omp')!;
     expect(omp.name, 'OMP');
@@ -110,6 +111,11 @@ void main() {
     );
     expect(ante.protocol, ProviderProtocol.ante);
     expect(ante.catalogCommand, <String>['ante', 'catalog']);
+    final goose = registry.byId('goose')!;
+    expect(goose.name, 'Goose');
+    expect(goose.command, <String>['goose', 'acp']);
+    expect(goose.commandFor(yolo: true), <String>['goose', 'acp']);
+    expect(goose.protocol, ProviderProtocol.acp);
 
     // ProviderInfo carries the joined command and the (stubbed) model list.
     expect(providers.first.command, 'omp acp');
@@ -216,6 +222,7 @@ void main() {
       'claude',
       'codex',
       'ante',
+      'goose',
       'custom',
     ]);
     final customInfo = providers.firstWhere((info) => info.id == 'custom');
@@ -298,6 +305,7 @@ void main() {
       'claude',
       'codex',
       'ante',
+      'goose',
     ]);
     expect(registry.byId('omp')!.command, <String>['omp', 'acp']);
   });

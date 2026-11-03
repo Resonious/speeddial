@@ -1,7 +1,7 @@
 # SpeedDial
 
 A fast agent development environment (ADE) written entirely in Dart and Flutter.
-Control `omp`, `claude`, and `codex` coding agents from one three-pane UI —
+Control `omp`, `claude`, `codex`, and `goose` coding agents from one three-pane UI —
 desktop, mobile, or web — against any number of local or remote daemons.
 
 Inspired by [T3 Code](https://github.com/pingdotgg/t3code) and
@@ -21,6 +21,7 @@ The daemon talks to agent CLIs over [ACP](https://agentclientprotocol.com)
 - `omp` → `omp acp` (native)
 - `claude` → `npx -y @agentclientprotocol/claude-agent-acp`
 - `codex` → `npx -y @zed-industries/codex-acp`
+- `goose` → `goose acp` (native; install [goose](https://goose-docs.ai) and run `goose configure` first)
 
 Claude uses the [Claude Agent ACP adapter](https://github.com/agentclientprotocol/claude-agent-acp),
 which requires Node.js 22+ and npm (`npx`) on the daemon host. Sign in with

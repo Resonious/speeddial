@@ -1261,7 +1261,7 @@ class ProviderInfo {
     this.sandboxModes = const <SessionSandboxMode>[],
   });
 
-  /// "omp" | "claude" | "codex" | custom id.
+  /// "omp" | "claude" | "codex" | "ante" | "goose" | custom id.
   final String id;
 
   /// Display name.
@@ -1323,7 +1323,7 @@ class HarnessInfo {
     required this.version,
   });
 
-  /// Stable built-in id: "omp", "claude", "codex", or "ante".
+  /// Stable built-in id: "omp", "claude", "codex", "ante", or "goose".
   final String id;
 
   /// Human-readable CLI name.

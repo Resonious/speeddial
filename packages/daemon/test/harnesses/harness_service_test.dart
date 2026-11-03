@@ -43,16 +43,19 @@ void main() {
         'omp',
         'codex',
         'ante',
+        'goose',
       ]);
       expect(harnesses.map((HarnessInfo value) => value.version), <String>[
         'omp version 1.2.3',
         'codex version 1.2.3',
         'ante version 1.2.3',
+        'goose version 1.2.3',
       ]);
       expect(invocations, <String>[
         'omp --version',
         'codex --version',
         'ante --version',
+        'goose --version',
       ]);
     },
   );

@@ -61,6 +61,7 @@ class FakeDaemonClient implements DaemonClient {
       name: 'Ante',
       version: 'ante 0.preview.83',
     ),
+    'goose': const HarnessInfo(id: 'goose', name: 'Goose', version: '1.9.0'),
   };
   final Map<String, String> _environment = <String, String>{};
 
@@ -323,6 +324,13 @@ class FakeDaemonClient implements DaemonClient {
             'openai-subscription/gpt-5.6-luna',
             'zai/glm-5.2',
           ],
+        ),
+        ProviderInfo(
+          id: 'goose',
+          name: 'Goose',
+          available: true,
+          command: 'goose acp',
+          models: <String>[],
         ),
       ],
     );

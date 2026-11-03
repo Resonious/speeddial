@@ -25,6 +25,7 @@ const List<_HarnessSpec> _supportedHarnesses = <_HarnessSpec>[
   (id: 'claude', name: 'Claude Code', executable: 'claude'),
   (id: 'codex', name: 'Codex', executable: 'codex'),
   (id: 'ante', name: 'Ante', executable: 'ante'),
+  (id: 'goose', name: 'Goose', executable: 'goose'),
 ];
 
 /// Runs only fixed commands for SpeedDial's supported, installed harnesses.

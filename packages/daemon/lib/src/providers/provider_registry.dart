@@ -5,6 +5,7 @@
 ///   * `claude` → `npx -y @agentclientprotocol/claude-agent-acp` (ACP)
 ///   * `codex`  → `codex app-server --stdio` (Codex app-server)
 ///   * `ante`   → `ante serve --stdio` (Ante)
+///   * `goose`  → `goose acp` (ACP)
 ///
 /// `~/.speeddial/config.json` may add or override providers under the
 /// `providers` key:
@@ -79,7 +80,7 @@ class ProviderSpec {
     this.catalogCommand,
   });
 
-  /// Provider id ("omp", "claude", "codex", or a custom id).
+  /// Provider id ("omp", "claude", "codex", "ante", "goose", or a custom id).
   final String id;
 
   /// Display name.
@@ -171,6 +172,13 @@ class ProviderRegistry {
         command: <String>['ante', 'serve', '--stdio'],
         protocol: ProviderProtocol.ante,
         catalogCommand: <String>['ante', 'catalog'],
+      ),
+      // Goose has no machine-readable model list or launch-time permission
+      // flag; yolo sessions rely on the engine's auto-approving handler.
+      'goose': const ProviderSpec(
+        id: 'goose',
+        name: 'Goose',
+        command: <String>['goose', 'acp'],
       ),
     };
     _applyConfig(configOverrides ?? _readConfigFile());

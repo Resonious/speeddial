@@ -182,6 +182,7 @@ lib/src/providers/  Provider registry. Built-ins:
                       claude → ["npx", "-y", "@agentclientprotocol/claude-agent-acp"] (ACP)
                       codex  → ["codex", "app-server", "--stdio"]          (Codex)
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
+                      goose  → ["goose", "acp"]                            (ACP)
                     OMP also defines a native yolo launch command selected per session; provider
                     overrides do not inherit those harness-specific arguments. Ante selects yolo
                     in its StartSession operation instead of its server launch command.
