@@ -558,6 +558,13 @@ void main() {
         aheadOfBase: 3,
         behindBase: 1,
         mergedIntoBase: false,
+        pullRequest: SessionPullRequest(
+          number: 12,
+          url: 'https://github.com/org/repo/pull/12',
+          state: PullRequestState.draft,
+          checks: PullRequestChecks.pending,
+          review: PullRequestReview.changesRequested,
+        ),
       );
       expect(model.toJson(), {
         'sessionId': 'sess-1',
@@ -565,6 +572,13 @@ void main() {
         'aheadOfBase': 3,
         'behindBase': 1,
         'mergedIntoBase': false,
+        'pullRequest': {
+          'number': 12,
+          'url': 'https://github.com/org/repo/pull/12',
+          'state': 'draft',
+          'checks': 'pending',
+          'review': 'changesRequested',
+        },
       });
       final decoded = SessionGitSummary.fromJson(model.toJson());
       expect(decoded.sessionId, 'sess-1');
@@ -572,6 +586,7 @@ void main() {
       expect(decoded.aheadOfBase, 3);
       expect(decoded.behindBase, 1);
       expect(decoded.mergedIntoBase, isFalse);
+      expect(decoded.pullRequest?.review, PullRequestReview.changesRequested);
       expect(decoded.toJson(), model.toJson());
 
       // Unknown/not-applicable fields travel as explicit nulls.
@@ -588,13 +603,33 @@ void main() {
         'aheadOfBase': null,
         'behindBase': null,
         'mergedIntoBase': null,
+        'pullRequest': null,
       });
       final decodedEmpty = SessionGitSummary.fromJson(empty.toJson());
       expect(decodedEmpty.dirty, isNull);
       expect(decodedEmpty.aheadOfBase, isNull);
       expect(decodedEmpty.behindBase, isNull);
       expect(decodedEmpty.mergedIntoBase, isNull);
+      expect(decodedEmpty.pullRequest, isNull);
       expect(decodedEmpty.toJson(), empty.toJson());
+
+      // A daemon from before pull requests sends no such key at all.
+      final legacy = SessionGitSummary.fromJson({'sessionId': 'sess-3'});
+      expect(legacy.pullRequest, isNull);
+    });
+
+    test('SessionPullRequest without checks or a review', () {
+      final decoded = SessionPullRequest.fromJson({
+        'number': 1,
+        'url': 'https://github.com/org/repo/pull/1',
+        'state': 'merged',
+        'checks': null,
+        'review': null,
+      });
+      expect(decoded.state, PullRequestState.merged);
+      expect(decoded.checks, isNull);
+      expect(decoded.review, isNull);
+      expect(() => PullRequestState.parse('nope'), throwsFormatException);
     });
 
     test('ToolCall with content, locations, and raw payloads', () {

@@ -5,6 +5,7 @@ import '../../scope.dart';
 import '../../state/sessions_store.dart';
 import '../../theme.dart';
 import '../chat/typed_text.dart';
+import '../pull_request_status.dart';
 import '../toast.dart';
 import 'session_status_glyph.dart';
 
@@ -90,8 +91,9 @@ class ProviderBadge extends StatelessWidget {
 
 /// Git-state badges for a session row: "changes" (uncommitted work in the
 /// session's cwd), "↑N" (N commits not yet in the base branch), "↓N" (N
-/// commits on the base branch the session lacks — its base moved on), and
-/// "merged" (all of the session branch's commits are in the base branch).
+/// commits on the base branch the session lacks — its base moved on),
+/// "merged" (all of the session branch's commits are in the base branch), and
+/// the status of the branch's pull request ("#12 approved").
 ///
 /// Subscribes to [GitStore] itself — summaries refresh on their own
 /// schedule (project expansion, the Inbox loading, turn end, git mutations,
@@ -125,6 +127,7 @@ class SessionGitBadges extends StatelessWidget {
         final String base = session.baseBranch ?? 'base';
         final int ahead = summary.aheadOfBase ?? 0;
         final int behind = summary.behindBase ?? 0;
+        final SessionPullRequest? pullRequest = summary.pullRequest;
         return Wrap(
           spacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
@@ -151,12 +154,16 @@ class SessionGitBadges extends StatelessWidget {
                     '$behind ${behind == 1 ? 'commit' : 'commits'} '
                     'behind $base (the base moved on)',
               ),
-            if (summary.mergedIntoBase ?? false)
+            // A merged pull request already says so.
+            if ((summary.mergedIntoBase ?? false) &&
+                pullRequest?.state != PullRequestState.merged)
               _GitBadge(
                 color: scheme.tertiary,
                 label: 'merged',
                 tooltip: 'Merged into $base',
               ),
+            if (pullRequest != null)
+              _PullRequestBadge(status: PullRequestStatus.of(pullRequest)),
           ],
         );
       },
@@ -168,6 +175,7 @@ class SessionGitBadges extends StatelessWidget {
 /// [SessionStatusChip].
 class _GitBadge extends StatelessWidget {
   const _GitBadge({
+    super.key,
     required this.color,
     required this.label,
     required this.tooltip,
@@ -192,6 +200,47 @@ class _GitBadge extends StatelessWidget {
           style: Theme.of(context).textTheme.labelSmall
               ?.copyWith(color: color, fontSize: 10),
         ),
+      ),
+    );
+  }
+}
+
+/// The pull request pill of a [SessionGitBadges] strip. A new status fades
+/// through the old one while the pill eases to its new width; reduced motion
+/// swaps it at once.
+class _PullRequestBadge extends StatelessWidget {
+  const _PullRequestBadge({required this.status});
+
+  static const Duration _duration = Duration(milliseconds: 240);
+
+  final PullRequestStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final SpeedDialColors colors = context.speedDialColors;
+    final Widget badge = _GitBadge(
+      key: ValueKey<String>(status.label),
+      color: switch (status.tone) {
+        PullRequestTone.neutral => colors.idle,
+        PullRequestTone.active => colors.running,
+        PullRequestTone.attention => colors.waitingPermission,
+        PullRequestTone.failure => colors.error,
+        PullRequestTone.success => colors.success,
+        PullRequestTone.merged => Theme.of(context).colorScheme.tertiary,
+      },
+      label: status.label,
+      tooltip: status.tooltip,
+    );
+    if (MediaQuery.of(context).disableAnimations) return badge;
+    return AnimatedSize(
+      duration: _duration,
+      curve: Curves.easeOut,
+      alignment: Alignment.centerLeft,
+      child: AnimatedSwitcher(
+        duration: _duration,
+        switchInCurve: const Interval(0.5, 1),
+        switchOutCurve: const Interval(0.5, 1),
+        child: badge,
       ),
     );
   }
@@ -232,11 +281,7 @@ class SessionRow extends StatelessWidget {
       await data.sessions.pin(daemonId, session.id, !session.pinned);
     } catch (error) {
       if (!context.mounted) return;
-      showToast(
-        context,
-        'Could not update pin: $error',
-        tone: ToastTone.error,
-      );
+      showToast(context, 'Could not update pin: $error', tone: ToastTone.error);
     }
   }
 

@@ -236,8 +236,8 @@ class FakeDaemonClient implements DaemonClient {
         isBinary: false,
       ),
     ];
-    // Left-rail badges: sess-1 has uncommitted work and two unmerged commits;
-    // sess-2 shares the (dirty) project checkout and has no base branch.
+    // Left-rail badges: sess-1 has uncommitted work, two unmerged commits and
+    // a pull request under review; sess-2 shares the (dirty) project checkout and has no base branch.
     sessionGitSummaries
       ..['sess-1'] = const SessionGitSummary(
         sessionId: 'sess-1',
@@ -245,6 +245,13 @@ class FakeDaemonClient implements DaemonClient {
         aheadOfBase: 2,
         behindBase: 0,
         mergedIntoBase: false,
+        pullRequest: SessionPullRequest(
+          number: 42,
+          url: 'https://github.com/example/speeddial/pull/42',
+          state: PullRequestState.open,
+          checks: PullRequestChecks.passing,
+          review: PullRequestReview.reviewRequired,
+        ),
       )
       ..['sess-2'] = const SessionGitSummary(
         sessionId: 'sess-2',
@@ -696,7 +703,8 @@ class FakeDaemonClient implements DaemonClient {
   // ---------------------------------------------------------------------
 
   @override
-  Future<List<Session>> findSessionsByPullRequest(String url) async => <Session>[];
+  Future<List<Session>> findSessionsByPullRequest(String url) async =>
+      <Session>[];
 
   @override
   Future<List<Session>> listSessions({

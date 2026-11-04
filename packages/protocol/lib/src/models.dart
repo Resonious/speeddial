@@ -1127,12 +1127,105 @@ class RebaseResult {
   };
 }
 
+/// Lifecycle state of a pull request; `draft` is an open draft.
+enum PullRequestState {
+  open,
+  draft,
+  merged,
+  closed;
+
+  String get wire => name;
+
+  static PullRequestState parse(String value) => switch (value) {
+    'open' => PullRequestState.open,
+    'draft' => PullRequestState.draft,
+    'merged' => PullRequestState.merged,
+    'closed' => PullRequestState.closed,
+    _ => throw FormatException('Unknown PullRequestState: "$value"'),
+  };
+}
+
+/// Combined result of a pull request's CI checks.
+enum PullRequestChecks {
+  passing,
+  failing,
+  pending;
+
+  String get wire => name;
+
+  static PullRequestChecks parse(String value) => switch (value) {
+    'passing' => PullRequestChecks.passing,
+    'failing' => PullRequestChecks.failing,
+    'pending' => PullRequestChecks.pending,
+    _ => throw FormatException('Unknown PullRequestChecks: "$value"'),
+  };
+}
+
+/// GitHub's review decision on a pull request.
+enum PullRequestReview {
+  approved,
+  changesRequested,
+  reviewRequired;
+
+  String get wire => name;
+
+  static PullRequestReview parse(String value) => switch (value) {
+    'approved' => PullRequestReview.approved,
+    'changesRequested' => PullRequestReview.changesRequested,
+    'reviewRequired' => PullRequestReview.reviewRequired,
+    _ => throw FormatException('Unknown PullRequestReview: "$value"'),
+  };
+}
+
+/// The GitHub pull request of a session's branch, as `gh` last reported it.
+class SessionPullRequest {
+  const SessionPullRequest({
+    required this.number,
+    required this.url,
+    required this.state,
+    required this.checks,
+    required this.review,
+  });
+
+  final int number;
+  final String url;
+  final PullRequestState state;
+
+  /// Null when the pull request's head has no checks.
+  final PullRequestChecks? checks;
+
+  /// Null when the repository requires no review and none was given.
+  final PullRequestReview? review;
+
+  factory SessionPullRequest.fromJson(Map<String, Object?> json) {
+    final String? checks = json['checks'] as String?;
+    final String? review = json['review'] as String?;
+    return SessionPullRequest(
+      number: json['number']! as int,
+      url: json['url']! as String,
+      state: PullRequestState.parse(json['state']! as String),
+      checks: checks == null ? null : PullRequestChecks.parse(checks),
+      review: review == null ? null : PullRequestReview.parse(review),
+    );
+  }
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'number': number,
+    'url': url,
+    'state': state.wire,
+    'checks': checks?.wire,
+    'review': review?.wire,
+  };
+}
+
 /// Per-session git summary for the left rail (see `git.sessionSummaries`):
 /// uncommitted changes in the session's cwd, plus — for sessions created
-/// with a `baseBranch` — how the session branch relates to its base.
+/// with a `baseBranch` — how the session branch relates to its base, plus
+/// the branch's pull request when the daemon knows of one.
 ///
 /// Computed from local git state only (no fetch happens as part of the
-/// request): `origin` refs are used as-is, however stale. Every field is
+/// request): `origin` refs are used as-is, however stale, and [pullRequest]
+/// comes from the daemon's background cache. Every field is
 /// nullable: null means "unknown" (e.g. the session's cwd is gone or is not
 /// a git repository) or, for the base-branch fields, "not applicable" (no
 /// base branch).
@@ -1143,6 +1236,7 @@ class SessionGitSummary {
     required this.aheadOfBase,
     required this.mergedIntoBase,
     required this.behindBase,
+    this.pullRequest,
   });
 
   final String sessionId;
@@ -1166,14 +1260,25 @@ class SessionGitSummary {
   /// of its own (nothing to merge). Null like [aheadOfBase].
   final bool? mergedIntoBase;
 
-  factory SessionGitSummary.fromJson(Map<String, Object?> json) =>
-      SessionGitSummary(
-        sessionId: json['sessionId']! as String,
-        dirty: json['dirty'] as bool?,
-        aheadOfBase: json['aheadOfBase'] as int?,
-        behindBase: json['behindBase'] as int?,
-        mergedIntoBase: json['mergedIntoBase'] as bool?,
-      );
+  /// The session branch's pull request. Null when it has none, or when `gh`
+  /// is unavailable, logged out, or the repository is not on GitHub.
+  final SessionPullRequest? pullRequest;
+
+  factory SessionGitSummary.fromJson(Map<String, Object?> json) {
+    final Map<String, Object?>? pullRequest =
+        (json['pullRequest'] as Map<Object?, Object?>?)
+            ?.cast<String, Object?>();
+    return SessionGitSummary(
+      sessionId: json['sessionId']! as String,
+      dirty: json['dirty'] as bool?,
+      aheadOfBase: json['aheadOfBase'] as int?,
+      behindBase: json['behindBase'] as int?,
+      mergedIntoBase: json['mergedIntoBase'] as bool?,
+      pullRequest: pullRequest == null
+          ? null
+          : SessionPullRequest.fromJson(pullRequest),
+    );
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
     'sessionId': sessionId,
@@ -1181,6 +1286,7 @@ class SessionGitSummary {
     'aheadOfBase': aheadOfBase,
     'behindBase': behindBase,
     'mergedIntoBase': mergedIntoBase,
+    'pullRequest': pullRequest?.toJson(),
   };
 }
 

@@ -665,6 +665,26 @@ void main() {
     expect(find.byKey(const Key('wear-git-sess-1-ahead')), findsNothing);
     expect(find.byKey(const Key('wear-git-sess-1-behind')), findsOneWidget);
     expect(find.text('↓3'), findsOneWidget);
+
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      behindBase: 0,
+      mergedIntoBase: false,
+      pullRequest: SessionPullRequest(
+        number: 7,
+        url: 'https://github.com/org/repo/pull/7',
+        state: PullRequestState.open,
+        checks: PullRequestChecks.failing,
+        review: null,
+      ),
+    );
+    await data.git.refreshSessionSummaries('fake', 'proj-demo');
+    await tester.pump();
+
+    expect(find.byKey(const Key('wear-git-sess-1-pr')), findsOneWidget);
+    expect(find.text('#7 failing'), findsOneWidget);
   });
 
   testWidgets('asks for phone configuration when no daemon is synchronized', (

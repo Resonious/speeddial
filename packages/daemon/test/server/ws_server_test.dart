@@ -51,6 +51,8 @@ ProviderRegistry fakeProviders() => ProviderRegistry(
 );
 
 class _LookupPr extends PrService {
+  _LookupPr() : super(ghPath: '/nonexistent/gh');
+
   String? url;
   List<Session>? candidates;
   @override
@@ -292,6 +294,7 @@ void main() {
     String? authToken,
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
+    Duration gitPullRequestInterval = const Duration(minutes: 1),
     McpUpstreamConnector? mcpConnector,
     HarnessService? harnesses,
     GitService? gitService,
@@ -308,9 +311,11 @@ void main() {
       providers: providers,
       authToken: authToken,
       git: git,
-      pr: prService,
+      // Tests never reach GitHub: without a stub, gh simply is not there.
+      pr: prService ?? PrService(ghPath: '/nonexistent/gh'),
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
+      gitPullRequestInterval: gitPullRequestInterval,
       mcpConnector: mcpConnector,
       harnesses: harnesses,
     );
@@ -3583,6 +3588,84 @@ void main() {
         await client.close();
       },
     );
+
+    test('summaries carry the pull request gh reports for the branch', () async {
+      final Directory bin = await Directory.systemTemp.createTemp('sd_ws_gh_');
+      addTearDown(() => bin.delete(recursive: true));
+      final File output = File(p.join(bin.path, 'prs.json'));
+      await output.writeAsString('[]');
+      final String gh = p.join(bin.path, 'gh');
+      await File(gh).writeAsString('#!/bin/sh\ncat "${output.path}"\n');
+      await Process.run('chmod', <String>['+x', gh]);
+      await startServer(
+        gitPollInterval: const Duration(milliseconds: 100),
+        gitPullRequestInterval: const Duration(milliseconds: 100),
+        prService: PrService(ghPath: gh),
+      );
+      final client = await connect(server!.port);
+      addTearDown(client.close);
+
+      await Process.run('git', <String>['init', '-b', 'feature', tempDir.path]);
+      final project = Project(id: 'repo', name: 'Repo', path: tempDir.path,
+        addedAt: DateTime.utc(2026), lastActiveAt: DateTime.utc(2026));
+      store.insertProject(project);
+      store.insertSession(Session(
+        id: 'pr-session', projectId: project.id, providerId: 'fake',
+        title: 'PR', status: SessionStatus.idle, model: null,
+        cwd: tempDir.path, baseBranch: null, yolo: false, archived: false,
+        createdAt: DateTime.utc(2026), updatedAt: DateTime.utc(2026),
+      ));
+
+      Future<Map<String, Object?>?> pullRequest() async {
+        final Map<String, Object?> result = j(
+          await client.peer.call('git.sessionSummaries', <String, Object?>{
+            'projectId': project.id,
+          }),
+        );
+        final Map<Object?, Object?> summary =
+            (result['summaries']! as List<Object?>).single!
+                as Map<Object?, Object?>;
+        return (summary['pullRequest'] as Map<Object?, Object?>?)
+            ?.cast<String, Object?>();
+      }
+
+      // Read before the watcher finds it: the first find must be announced.
+      expect(await pullRequest(), isNull);
+      await output.writeAsString(jsonEncode(<Object?>[
+        <String, Object?>{
+          'number': 7,
+          'url': 'https://github.com/org/repo/pull/7',
+          'state': 'OPEN',
+          'isDraft': false,
+          'headRefName': 'feature',
+          'isCrossRepository': false,
+          'reviewDecision': 'APPROVED',
+          'statusCheckRollup': <Object?>[],
+        },
+      ]));
+      await untilRecorded(client, 'git.changed', 1);
+      final Map<String, Object?>? found = await pullRequest();
+      expect(found?['number'], 7);
+      expect(found?['state'], 'open');
+      expect(found?['review'], 'approved');
+      expect(found?['checks'], isNull);
+
+      // A change inside the nested pull request object is a change too.
+      await output.writeAsString(jsonEncode(<Object?>[
+        <String, Object?>{
+          'number': 7,
+          'url': 'https://github.com/org/repo/pull/7',
+          'state': 'MERGED',
+          'isDraft': false,
+          'headRefName': 'feature',
+          'isCrossRepository': false,
+          'reviewDecision': 'APPROVED',
+          'statusCheckRollup': <Object?>[],
+        },
+      ]));
+      await untilRecorded(client, 'git.changed', 2);
+      expect((await pullRequest())?['state'], 'merged');
+    });
 
     test(
       'git.changed notifies when the watcher notices summaries move',

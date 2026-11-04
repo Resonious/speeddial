@@ -896,6 +896,81 @@ void main() {
     expect(find.text('↓3'), findsOneWidget);
   });
 
+  testWidgets('session rows show pull request status as it changes', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+    expect(find.text('#42 in review'), findsOneWidget);
+
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      behindBase: 0,
+      mergedIntoBase: true,
+      pullRequest: SessionPullRequest(
+        number: 42,
+        url: 'https://github.com/example/speeddial/pull/42',
+        state: PullRequestState.merged,
+        checks: PullRequestChecks.passing,
+        review: PullRequestReview.approved,
+      ),
+    );
+    fake.gitChangedController.add('proj-demo');
+    await tester.pumpAndSettle();
+    expect(find.text('#42 in review'), findsNothing);
+    expect(find.text('#42 merged'), findsOneWidget);
+    // The pull request already says merged; no second pill repeats it.
+    expect(find.text('merged'), findsNothing);
+    expect(tester.hasRunningAnimations, isFalse);
+  });
+
+  testWidgets('a pull request status change holds still under reduced motion', (
+    WidgetTester tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await tester.tap(find.text('Demo Project'));
+    await tester.pumpAndSettle();
+
+    final FakeDaemonClient fake = app.clientFor('fake') as FakeDaemonClient;
+    fake.sessionGitSummaries['sess-1'] = const SessionGitSummary(
+      sessionId: 'sess-1',
+      dirty: false,
+      aheadOfBase: 0,
+      behindBase: 0,
+      mergedIntoBase: false,
+      pullRequest: SessionPullRequest(
+        number: 42,
+        url: 'https://github.com/example/speeddial/pull/42',
+        state: PullRequestState.open,
+        checks: PullRequestChecks.failing,
+        review: null,
+      ),
+    );
+    await app.git.refreshSessionSummaries('fake', 'proj-demo');
+    await tester.pump();
+
+    expect(find.text('#42 failing'), findsOneWidget);
+    expect(find.text('#42 in review'), findsNothing);
+    final Finder pill = find.text('#42 failing');
+    expect(
+      find.ancestor(of: pill, matching: find.byType(AnimatedSwitcher)),
+      findsNothing,
+    );
+    expect(
+      find.ancestor(of: pill, matching: find.byType(AnimatedSize)),
+      findsNothing,
+    );
+  });
+
   testWidgets('Inbox rows show git badges without opening the Sessions tab', (
     WidgetTester tester,
   ) async {

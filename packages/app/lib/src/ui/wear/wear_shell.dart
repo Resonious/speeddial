@@ -8,6 +8,7 @@ import '../../companion/companion_endpoint_sync.dart';
 import '../../scope.dart';
 import '../../state/projects_store.dart';
 import '../../state/sessions_store.dart';
+import '../pull_request_status.dart';
 import 'wear_chat.dart';
 import 'wear_scaffold.dart';
 
@@ -870,13 +871,18 @@ class _WearGitState extends StatelessWidget {
     if (summary == null) return const SizedBox.shrink();
     final int ahead = summary.aheadOfBase ?? 0;
     final int behind = summary.behindBase ?? 0;
+    final SessionPullRequest? pullRequest = summary.pullRequest;
     if (summary.dirty != true &&
         ahead == 0 &&
         behind == 0 &&
-        summary.mergedIntoBase != true) {
+        summary.mergedIntoBase != true &&
+        pullRequest == null) {
       return const SizedBox.shrink();
     }
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final PullRequestStatus? prStatus = pullRequest == null
+        ? null
+        : PullRequestStatus.of(pullRequest);
     final String base = session.baseBranch ?? 'base';
     return Padding(
       key: ValueKey<String>('wear-git-${session.id}'),
@@ -906,12 +912,28 @@ class _WearGitState extends StatelessWidget {
               tooltip: '$behind behind $base',
               color: colors.tertiary,
             ),
-          if (summary.mergedIntoBase == true)
+          // A merged pull request already says so.
+          if (summary.mergedIntoBase == true &&
+              pullRequest?.state != PullRequestState.merged)
             _WearGitBadge(
               key: ValueKey<String>('wear-git-${session.id}-merged'),
               label: 'merged',
               tooltip: 'Merged into $base',
               color: Colors.green,
+            ),
+          if (prStatus != null)
+            _WearGitBadge(
+              key: ValueKey<String>('wear-git-${session.id}-pr'),
+              label: prStatus.label,
+              tooltip: prStatus.tooltip,
+              color: switch (prStatus.tone) {
+                PullRequestTone.neutral => colors.onSurfaceVariant,
+                PullRequestTone.active => colors.primary,
+                PullRequestTone.attention => colors.tertiary,
+                PullRequestTone.failure => colors.error,
+                PullRequestTone.success ||
+                PullRequestTone.merged => Colors.green,
+              },
             ),
         ],
       ),

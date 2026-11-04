@@ -145,6 +145,7 @@ class SpeedDialServer {
     HarnessService? harnesses,
     this.gitPollInterval = const Duration(seconds: 15),
     this.gitFetchInterval = const Duration(minutes: 2),
+    this.gitPullRequestInterval = const Duration(minutes: 1),
   }) : _engine = engine, // ignore: prefer_initializing_formals
        _store = store, // ignore: prefer_initializing_formals
        _providers = providers, // ignore: prefer_initializing_formals
@@ -172,6 +173,7 @@ class SpeedDialServer {
     HarnessService? harnesses,
     Duration gitPollInterval = const Duration(seconds: 15),
     Duration gitFetchInterval = const Duration(minutes: 2),
+    Duration gitPullRequestInterval = const Duration(minutes: 1),
   }) async {
     final server = SpeedDialServer(
       engine: engine,
@@ -184,6 +186,7 @@ class SpeedDialServer {
       harnesses: harnesses,
       gitPollInterval: gitPollInterval,
       gitFetchInterval: gitFetchInterval,
+      gitPullRequestInterval: gitPullRequestInterval,
     );
     await server._bind(host, port);
     return server;
@@ -219,6 +222,7 @@ class SpeedDialServer {
   /// often it refetches a project's base branches. Injectable for tests.
   final Duration gitPollInterval;
   final Duration gitFetchInterval;
+  final Duration gitPullRequestInterval;
   late final SummaryWatcher _summaryWatcher;
 
   HttpServer? _httpServer;
@@ -272,9 +276,11 @@ class SpeedDialServer {
     _summaryWatcher = SummaryWatcher(
       store: _store,
       git: _git,
+      pr: _pr,
       hasClients: () => _clients.any((_Client client) => client.authenticated),
       pollInterval: gitPollInterval,
       fetchInterval: gitFetchInterval,
+      pullRequestInterval: gitPullRequestInterval,
       onChanged: (String projectId) =>
           _broadcast('git.changed', <String, Object?>{'projectId': projectId}),
     )..start();
@@ -1346,10 +1352,13 @@ class SpeedDialServer {
   // sessions.*
   // -------------------------------------------------------------------------
 
-  Future<Object?> _sessionsFindByPullRequest(Map<String, Object?> params) async {
+  Future<Object?> _sessionsFindByPullRequest(
+    Map<String, Object?> params,
+  ) async {
     final String url = _requiredString(params, 'url');
     final List<Session> sessions = await _pr.findSessions(
-      url, _store.listSessions(includeArchived: true),
+      url,
+      _store.listSessions(includeArchived: true),
     );
     return <String, Object?>{
       'sessions': sessions.map((session) => session.toJson()).toList(),
@@ -2033,6 +2042,7 @@ class SpeedDialServer {
       base: explicitBase ?? session?.baseBranch,
       draft: rawDraft is bool ? rawDraft : false,
     );
+    _summaryWatcher.expirePullRequests(project.id);
     return <String, Object?>{'url': url};
   }
 
@@ -2094,6 +2104,7 @@ class SpeedDialServer {
     final List<Session> sessions = _store.listSessions(projectId: project.id);
     final List<SessionGitSummary> summaries = await _git.sessionSummaries(
       sessions,
+      pullRequestFor: _pr.pullRequestLookup(project.id),
     );
     return <String, Object?>{
       'summaries': summaries

@@ -84,6 +84,7 @@ class GitService {
     required String repoPath,
     String? baseBranch,
     DateTime? createdAt,
+    SessionPullRequest? Function(String branch)? pullRequestFor,
   }) async {
     bool? dirty;
     try {
@@ -135,19 +136,35 @@ class GitService {
       }
     }
 
+    SessionPullRequest? pullRequest;
+    if (pullRequestFor != null) {
+      try {
+        final String? branch = await _currentBranch(repoPath);
+        if (branch != null) pullRequest = pullRequestFor(branch);
+      } on ProcessException {
+        pullRequest = null;
+      }
+    }
+
     return SessionGitSummary(
       sessionId: sessionId,
       dirty: dirty,
       aheadOfBase: aheadOfBase,
       behindBase: behindBase,
       mergedIntoBase: mergedIntoBase,
+      pullRequest: pullRequest,
     );
   }
 
   /// One summary per session (see [sessionSummary]), computed concurrently.
   /// Shared by the `git.sessionSummaries` handler and the summary watcher.
+  ///
+  /// [pullRequestFor] maps a branch name to its pull request; leave it null
+  /// when no pull requests are known, to skip reading each session's branch.
   Future<List<SessionGitSummary>> sessionSummaries(
-      Iterable<Session> sessions) {
+    Iterable<Session> sessions, {
+    SessionPullRequest? Function(String branch)? pullRequestFor,
+  }) {
     return Future.wait(<Future<SessionGitSummary>>[
       for (final Session session in sessions)
         sessionSummary(
@@ -155,6 +172,7 @@ class GitService {
           repoPath: session.cwd,
           baseBranch: session.baseBranch,
           createdAt: session.createdAt,
+          pullRequestFor: pullRequestFor,
         ),
     ]);
   }

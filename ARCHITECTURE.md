@@ -296,10 +296,11 @@ lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porc
                     merges a session branch back into its base branch (fast-forwarding
                     the local base to origin first when the remote moved ahead).
                     SummaryWatcher recomputes per-session git summaries every ~15s
-                    while clients are connected (fetching base branches every ~2min)
+                    while clients are connected (fetching base branches every ~2min,
+                    and refreshing PrService's pull request cache every ~1min)
                     and reports changed projects so the server broadcasts
-                    `git.changed`. PrService uses `gh pr create`. All ops take an
-                    absolute repo path.
+                    `git.changed`. PrService uses `gh pr create` and `gh pr list`; the
+                    list fails silently. All ops take an absolute repo path.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing. FsService
                     confines project browsing, including symlink resolution. Binary chat-link
