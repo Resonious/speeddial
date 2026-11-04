@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
+
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'localhost_oauth_callback_contract.dart';
 
@@ -52,6 +53,7 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
         HttpStatus.notFound,
         'Not found',
         'This listener accepts only the SpeedDial OAuth callback.',
+        OAuthCallbackTone.failure,
       );
       return;
     }
@@ -63,6 +65,7 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
         HttpStatus.badRequest,
         'Authorization failed',
         'The OAuth state did not match the active SpeedDial request.',
+        OAuthCallbackTone.failure,
       );
       return;
     }
@@ -72,6 +75,7 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
         HttpStatus.conflict,
         'Authorization already received',
         'Return to SpeedDial to see the result.',
+        OAuthCallbackTone.notice,
       );
       return;
     }
@@ -84,17 +88,27 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
     HttpStatus.ok,
     'Authorization complete',
     'SpeedDial can now use this MCP server. You may close this tab.',
+    OAuthCallbackTone.success,
   );
 
   @override
-  Future<void> respondError(String message) =>
-      _respond(HttpStatus.badRequest, 'Authorization failed', message);
+  Future<void> respondError(String message) => _respond(
+    HttpStatus.badRequest,
+    'Authorization failed',
+    message,
+    OAuthCallbackTone.failure,
+  );
 
-  Future<void> _respond(int status, String title, String message) async {
+  Future<void> _respond(
+    int status,
+    String title,
+    String message,
+    OAuthCallbackTone tone,
+  ) async {
     final HttpRequest? request = _pendingRequest;
     _pendingRequest = null;
     if (request == null) return;
-    await _writePage(request, status, title, message);
+    await _writePage(request, status, title, message, tone);
   }
 
   Future<void> _writePage(
@@ -102,18 +116,14 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
     int status,
     String title,
     String message,
+    OAuthCallbackTone tone,
   ) async {
-    const HtmlEscape escape = HtmlEscape();
     request.response
       ..statusCode = status
       ..headers.contentType = ContentType.html
       ..headers.set(HttpHeaders.cacheControlHeader, 'no-store')
       ..headers.set('X-Content-Type-Options', 'nosniff')
-      ..write('''<!doctype html>
-<html><head><meta charset="utf-8"><title>${escape.convert(title)}</title></head>
-<body style="font:16px system-ui;max-width:640px;margin:64px auto;padding:0 24px">
-<h1>${escape.convert(title)}</h1><p>${escape.convert(message)}</p>
-</body></html>''');
+      ..write(oauthCallbackPage(title: title, message: message, tone: tone));
     await request.response.close();
   }
 
@@ -129,6 +139,7 @@ class _NativeLocalhostOAuthCallback implements LocalhostOAuthCallback {
         HttpStatus.badRequest,
         'Authorization cancelled',
         'The SpeedDial authorization window was closed.',
+        OAuthCallbackTone.notice,
       );
     }
     if (!_callback.isCompleted && _expectedState != null) {

@@ -11,7 +11,9 @@ of per-frame work.
 packages/protocol/   pure Dart, zero deps beyond SDK. Implements PROTOCOL.md exactly:
                      models, SessionEvent union, JSON-RPC 2.0 codec (peer for both sides),
                      and the explainer SVG-subset parser/validator (`src/explainer/`) so
-                     the daemon rejects exactly what the app could not draw.
+                     the daemon rejects exactly what the app could not draw. Also renders
+                     the OAuth callback page (`src/oauth_callback_page.dart`) that the
+                     daemon and the app's loopback listener both serve.
 packages/daemon/     Dart CLI + library. Spawns ACP and Ante agent CLIs, owns
                      session/project bookkeeping (SQLite), git/gh operations, WebSocket
                      JSON-RPC server.

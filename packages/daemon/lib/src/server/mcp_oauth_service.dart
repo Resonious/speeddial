@@ -165,6 +165,7 @@ class McpOAuthService {
         HttpStatus.badRequest,
         'Authorization expired',
         'Return to SpeedDial and start authorization again.',
+        OAuthCallbackTone.failure,
       );
       return;
     }
@@ -177,6 +178,7 @@ class McpOAuthService {
         HttpStatus.ok,
         'Authorization complete',
         'SpeedDial can now use this MCP server. You may close this tab.',
+        OAuthCallbackTone.success,
       );
     } on DaemonError catch (error) {
       await _writeCallbackPage(
@@ -184,6 +186,7 @@ class McpOAuthService {
         HttpStatus.badRequest,
         'Authorization failed',
         error.message,
+        OAuthCallbackTone.failure,
       );
     }
   }
@@ -894,16 +897,12 @@ class McpOAuthService {
     int status,
     String title,
     String message,
+    OAuthCallbackTone tone,
   ) async {
-    final HtmlEscape escape = const HtmlEscape();
     request.response
       ..statusCode = status
       ..headers.contentType = ContentType.html
-      ..write('''<!doctype html>
-<html><head><meta charset="utf-8"><title>${escape.convert(title)}</title></head>
-<body style="font:16px system-ui;max-width:640px;margin:64px auto;padding:0 24px">
-<h1>${escape.convert(title)}</h1><p>${escape.convert(message)}</p>
-</body></html>''');
+      ..write(oauthCallbackPage(title: title, message: message, tone: tone));
     await request.response.close();
   }
 }
