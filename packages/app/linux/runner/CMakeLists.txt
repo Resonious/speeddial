@@ -12,6 +12,7 @@ add_executable(${BINARY_NAME}
   "my_application.cc"
   "native_title_bar.cc"
   "text_drop.cc"
+  "rich_clipboard.cc"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 

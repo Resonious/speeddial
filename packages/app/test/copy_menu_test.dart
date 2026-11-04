@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/clipboard/rich_clipboard_native.dart';
+import 'package:speeddial_app/src/ui/chat/copy_menu.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 
@@ -14,6 +16,24 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       final List<String> copied = <String>[];
+      final List<String> richHtml = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        richClipboardChannel,
+        (call) async {
+          expect(call.method, 'writeHtml');
+          final Map<Object?, Object?> args =
+              call.arguments as Map<Object?, Object?>;
+          copied.add(args['text']! as String);
+          richHtml.add(args['html']! as String);
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          richClipboardChannel,
+          null,
+        ),
+      );
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         (call) async {
@@ -76,7 +96,12 @@ void main() {
           expect(copied.last, 'Name,Count\r\nApples,3');
         }
         if (label == 'Copy HTML') expect(copied.last, contains('<table>'));
-        if (label == 'Copy for Slack') expect(copied.last, startsWith('```\n'));
+        if (label == 'Copy for Slack') {
+          expect(copied.last, startsWith('Name'));
+          expect(copied.last, isNot(contains('```')));
+          expect(richHtml.single, startsWith('<pre>'));
+          expect(richHtml.single, endsWith('</pre>'));
+        }
         if (label == 'Copy Markdown') expect(copied.last, table);
       }
       await tester.pump(const Duration(seconds: 3));
@@ -85,6 +110,53 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+  testWidgets(
+    'rich clipboard failure reports an error without plain-text fallback',
+    (tester) async {
+      final List<MethodCall> plainWrites = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') plainWrites.add(call);
+          return null;
+        },
+      );
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        richClipboardChannel,
+        (call) async {
+          throw PlatformException(
+            code: 'clipboard_write',
+            message: 'Clipboard busy',
+          );
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        );
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          richClipboardChannel,
+          null,
+        );
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(body: CopyMenu(text: '**Hello**')),
+        ),
+      );
+      await tester.tap(find.byTooltip('Copy message'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy for Slack'));
+      await tester.pumpAndSettle();
+      expect(plainWrites, isEmpty);
+      expect(find.byTooltip('Copied'), findsNothing);
+      expect(find.text('Could not copy to clipboard'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    },
+  );
   testWidgets(
     'tables inside quotes and consecutive tables each have copy controls',
     (tester) async {

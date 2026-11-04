@@ -1,5 +1,7 @@
 package sh.speeddial.speeddial_app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
@@ -47,6 +49,26 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "sh.speeddial/clipboard")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "writeHtml") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val text = call.argument<String>("text")
+                val html = call.argument<String>("html")
+                if (text == null || html == null) {
+                    result.error("invalid_arguments", "Expected text and html strings", null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newHtmlText("SpeedDial", text, html))
+                    result.success(null)
+                } catch (error: Exception) {
+                    result.error("clipboard_write", error.message, null)
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "sh.speeddial/downloads")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

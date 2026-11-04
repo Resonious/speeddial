@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../toast.dart';
 import 'copy_formats.dart';
+import 'copy_clipboard.dart';
 
 /// Shared message/table menu. Clipboard conversion happens only on selection.
 class CopyMenu extends StatefulWidget {
@@ -39,7 +39,7 @@ class _CopyMenuState extends State<CopyMenu> {
   Future<void> _copy(CopyFormat format) async {
     final String source = widget.text;
     try {
-      await Clipboard.setData(ClipboardData(text: formatCopy(source, format)));
+      await copyToClipboard(source, format);
       if (!mounted || source != widget.text) return;
       _reset?.cancel();
       setState(() => _copied = true);

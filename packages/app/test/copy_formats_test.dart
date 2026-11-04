@@ -21,22 +21,58 @@ void main() {
       'Name,Value\r\n"A, B","""yes"""\r\na|b,&',
     );
   });
-  test('Slack converts emphasis, links and tables without changing code', () {
-    final String slack = formatCopy(
+  test('Slack provides rich HTML and readable text without typing markup', () {
+    final SlackCopy slack = formatSlackCopy(
       '# Heading\n\n**bold** *italic* ~~gone~~ [link](https://example.com)\n\n$table\n\n```dart\n  x ** y\n```',
-      CopyFormat.slack,
     );
     expect(
-      slack,
-      startsWith(
-        '*Heading*\n\n*bold* _italic_ ~gone~ link (https://example.com)',
+      slack.text,
+      startsWith('Heading\n\nbold italic gone link (https://example.com)'),
+    );
+    expect(
+      slack.text,
+      contains('Name | Value\n-----+------\nA, B | "yes"\na|b  | &'),
+    );
+    expect(slack.text, endsWith('  x ** y'));
+    expect(slack.text, isNot(contains('```')));
+    expect(slack.html, contains('<p><strong>Heading</strong></p>'));
+    expect(
+      slack.html,
+      contains('<strong>bold</strong> <em>italic</em> <s>gone</s>'),
+    );
+    expect(slack.html, contains('<a href="https://example.com">link</a>'));
+    expect(
+      slack.html,
+      contains(
+        '<pre>Name | Value\n-----+------\nA, B | &quot;yes&quot;\na|b  | &amp;</pre>',
       ),
     );
-    expect(
-      slack,
-      contains('```\nName | Value\n-----+------\nA, B | "yes"\na|b  | &\n```'),
+    expect(slack.html, endsWith('<pre>  x ** y\n</pre>'));
+    expect(slack.html, isNot(contains('```')));
+    expect(formatCopy(table, CopyFormat.slack), formatSlackCopy(table).text);
+  });
+  test(
+    'rich copy escapes HTML, retains literal code, and rejects active links',
+    () {
+      final SlackCopy slack = formatSlackCopy(
+        '<script>alert(1)</script>\n\n[bad](javascript:alert)\n\n````\n``` & <b>\n````',
+      );
+      expect(slack.html, contains('&lt;script&gt;'));
+      expect(slack.html, isNot(contains('href="javascript:')));
+      expect(slack.html, contains('<pre>``` &amp; &lt;b&gt;\n</pre>'));
+      expect(slack.text, contains('``` & <b>'));
+    },
+  );
+  test('rich copy retains lists and quotes', () {
+    final SlackCopy slack = formatSlackCopy(
+      '> Quoted **text**\n\n3. Third\n4. Fourth\n   - Nested',
     );
-    expect(slack, endsWith('```\n  x ** y\n```'));
+    expect(
+      slack.html,
+      contains('<blockquote><p>Quoted <strong>text</strong></p></blockquote>'),
+    );
+    expect(slack.html, contains('<ol start="3">'));
+    expect(slack.html, contains('<ul><li>Nested</li></ul>'));
   });
   test('empty cells and header-only tables are retained', () {
     expect(

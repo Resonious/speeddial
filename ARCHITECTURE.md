@@ -652,8 +652,14 @@ Performance rules for the app:
   `TapGestureRecognizer` (tap opens, secondary tap offers Copy URL) for the same reason:
   any non-text inline widget splits the paragraph into separate lines. Quotes reuse the markdown AST renderer; quotes and fenced code have
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
-  Message copy menus offer original Markdown, HTML source, and Slack markup
-  (tables become aligned fenced code blocks). Table headers offer the same formats
+  Message copy menus offer original Markdown, HTML source, and rich Slack content.
+  Slack copies publish HTML and readable plain text together: tables become HTML
+  preformatted blocks, not literal backtick fences. Emphasis, links, lists, quotes,
+  and code retain HTML structure. `lib/src/clipboard/` uses one browser ClipboardItem
+  or the `sh.speeddial/clipboard` native channel: Windows CF_HTML plus UTF-16 text,
+  Linux GTK HTML/text targets, Android ClipData.newHtmlText, and iOS pasteboard
+  representations. Windows fragment offsets count UTF-8 bytes. A failed rich write
+  reports an error instead of silently falling back to the broken text-only path. Table headers offer the same formats
   plus RFC-style CSV quoting, scoped to the table's original Markdown. A custom
   table syntax wraps the standard AST so the existing renderer keeps cell layout,
   selection, and scrolling. Conversion runs only on copy; confirmations reuse the
