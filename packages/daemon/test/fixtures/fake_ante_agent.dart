@@ -36,11 +36,18 @@ Map<String, Object?> _effortFields() {
 Future<void> main(List<String> args) async {
   _catalogMode = args.firstOrNull == 'catalog';
   if (_catalogMode) {
+    final String? skipped = Platform.environment['FAKE_ANTE_SKIPPED_PROVIDER'];
+    if (skipped != null) {
+      stderr.writeln(
+        'warning: skipped catalog entry providers.$skipped: `auth` was replaced',
+      );
+    }
     stdout.writeln(
       jsonEncode(<String, Object?>{
         'providers': <Object?>[
           for (final String provider in <String>[
             'fake-provider',
+            ...?Platform.environment['FAKE_ANTE_EXTRA_PROVIDERS']?.split(','),
             if (Platform.environment['FAKE_ANTE_STATE_DIR'] != null)
               'other-provider',
           ])

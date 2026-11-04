@@ -63,6 +63,7 @@ enum ProviderProtocol { acp, codex, ante }
 typedef _AnteAuthState = ({
   Set<String> settingsProviders,
   Set<String> storedKeys,
+  Set<String> storedSecrets,
   Set<String> oauthPresets,
   Map<String, String> providerModels,
 });
@@ -402,13 +403,17 @@ class ProviderRegistry {
 
   /// Auth material found in the Ante home (`ANTE_HOME` or `~/.ante`):
   /// providers named by settings (`provider` plus the `provider_model`
-  /// keys — providers the user has actually chosen), API keys stored in
-  /// `auth/api_keys.json`, and OAuth presets with a token file under
-  /// `auth/`. Reading the home is best-effort: any failure just yields
-  /// fewer usable providers, never a probe crash.
+  /// keys — providers the user has actually chosen), and stored credentials.
+  /// Ante 0.3 keeps those in `auth/credentials/`: `secret/<name>.json`,
+  /// `oauth/<profile>.json` and `oauth/<profile>/<label>.json`. Older homes,
+  /// and 0.3 homes before their first credential lookup migrates them, keep
+  /// `auth/api_keys.json` and `auth/<preset>.json`, so both layouts count.
+  /// Reading the home is best-effort: any failure just yields fewer usable
+  /// providers, never a probe crash.
   static _AnteAuthState _readAnteAuthState(Map<String, String> env) {
     final Set<String> settingsProviders = <String>{};
     final Set<String> storedKeys = <String>{};
+    final Set<String> storedSecrets = <String>{};
     final Set<String> oauthPresets = <String>{};
     final Map<String, String> providerModels = <String, String>{};
     final String? home = switch (env['ANTE_HOME']) {
@@ -422,6 +427,7 @@ class ProviderRegistry {
       return (
         settingsProviders: settingsProviders,
         storedKeys: storedKeys,
+        storedSecrets: storedSecrets,
         oauthPresets: oauthPresets,
         providerModels: providerModels,
       );
@@ -485,19 +491,52 @@ class ProviderRegistry {
     } on Object {
       // Unreadable auth dir: OAuth presets are simply not usable.
     }
+    final String credentialsPath = p.join(home, 'auth', 'credentials');
+    try {
+      final Directory secretDir = Directory(p.join(credentialsPath, 'secret'));
+      if (secretDir.existsSync()) {
+        storedSecrets.addAll(_jsonFileNames(secretDir));
+      }
+    } on Object {
+      // Unreadable secret store: env vars still count.
+    }
+    try {
+      final Directory oauthDir = Directory(p.join(credentialsPath, 'oauth'));
+      if (oauthDir.existsSync()) {
+        oauthPresets.addAll(_jsonFileNames(oauthDir));
+        for (final Directory profile
+            in oauthDir.listSync().whereType<Directory>()) {
+          final String name = p.basename(profile.path);
+          final List<String> labels = _jsonFileNames(profile);
+          // A bare `oauth:<profile>` reference covers its labelled accounts.
+          if (labels.isNotEmpty) oauthPresets.add(name);
+          oauthPresets.addAll(labels.map((String label) => '$name/$label'));
+        }
+      }
+    } on Object {
+      // Unreadable OAuth store: its sign-ins are simply not usable.
+    }
     return (
       settingsProviders: settingsProviders,
       storedKeys: storedKeys,
+      storedSecrets: storedSecrets,
       oauthPresets: oauthPresets,
       providerModels: providerModels,
     );
   }
 
+  static List<String> _jsonFileNames(Directory directory) => <String>[
+    for (final File file in directory.listSync().whereType<File>())
+      if (p.extension(file.path) == '.json')
+        p.basenameWithoutExtension(file.path),
+  ];
+
   /// Whether a catalog provider entry can actually run: providers with no
-  /// auth descriptor are always usable; `env_key` auth needs the variable
-  /// in the process environment or stored in `auth/api_keys.json`;
-  /// `oauth_preset` auth needs a token file under `auth/`; settings-listed
-  /// providers are always kept.
+  /// credential or auth descriptor are always usable; Ante 0.3 `credential`
+  /// references resolve as in [_anteCredentialUsable]; older `env_key` auth
+  /// needs the variable in the process environment or stored in
+  /// `auth/api_keys.json`; `oauth_preset` auth needs a token file under
+  /// `auth/`; settings-listed providers are always kept.
   /// Shared availability policy for creation and active-session model pickers.
   static List<Map<String, Object?>> usableAnteCatalogProviders(
     List<Object?> providers,
@@ -526,6 +565,15 @@ class ProviderRegistry {
     _AnteAuthState authState,
   ) {
     if (authState.settingsProviders.contains(providerId)) return true;
+    final Object? credential = rawProvider['credential'];
+    if (credential is String) {
+      return _anteCredentialUsable(credential, env, authState);
+    }
+    if (credential is List) {
+      return credential.whereType<String>().any(
+        (String reference) => _anteCredentialUsable(reference, env, authState),
+      );
+    }
     final Object? auth = rawProvider['auth'];
     if (auth is! Map) return true;
     for (final Object? shape in auth.values) {
@@ -544,6 +592,26 @@ class ProviderRegistry {
       }
     }
     return false;
+  }
+
+  /// Whether one `scheme:name` reference resolves. `env:` also accepts keys
+  /// still in the pre-0.3 `auth/api_keys.json`. A `helper:` runs a command the
+  /// user configured, which cannot be checked without running it, so it counts.
+  static bool _anteCredentialUsable(
+    String reference,
+    Map<String, String> env,
+    _AnteAuthState authState,
+  ) {
+    final int separator = reference.indexOf(':');
+    if (separator < 0) return false;
+    final String name = reference.substring(separator + 1);
+    return switch (reference.substring(0, separator)) {
+      'env' => env.containsKey(name) || authState.storedKeys.contains(name),
+      'secret' => authState.storedSecrets.contains(name),
+      'oauth' => authState.oauthPresets.contains(name),
+      'helper' => true,
+      _ => false,
+    };
   }
 
   /// Loads `~/.speeddial/config.json`; a missing or malformed file yields

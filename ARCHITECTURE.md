@@ -194,10 +194,12 @@ lib/src/providers/  Provider registry. Built-ins:
                     Ante — `catalogCommand`, which yields provider-qualified
                     ids ("cerebras/gemma-4-31b") because model ids collide
                     across Ante's upstream providers. The Ante catalog is
-                    filtered to providers the user can actually run: auth
-                    descriptors that resolve (env key set or stored in the
-                    Ante home's auth/, OAuth preset with a token file), plus
-                    settings-named providers. Availability = command[0]
+                    filtered to providers the user can actually run:
+                    credential references (or 0.2 auth descriptors) that
+                    resolve (env key set, secret or OAuth sign-in stored in
+                    the Ante home's auth/credentials/, or auth/ until Ante
+                    migrates it on the first credential lookup; helpers always
+                    count), plus settings-named providers. Availability = command[0]
                     resolvable via PATH (or absolute exists).
 lib/src/harnesses/  HarnessService detects the four supported installed CLIs
                     (OMP, Claude Code, Codex, Ante), probes their versions, and

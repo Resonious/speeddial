@@ -54,12 +54,14 @@ ProviderInfo = {
                              // ("cerebras/gemma-4-31b"): model ids collide
                              // across Ante's upstream providers. Only upstream
                              // providers the user can actually run are listed:
-                             // the catalog is filtered to auth descriptors that
-                             // resolve (env key set or stored in the Ante home's
-                             // `auth/api_keys.json`, OAuth preset with a token file
-                             // under `auth/`), plus providers named by the Ante
-                             // settings (`provider`, `provider_model` keys) and
-                             // providers with no auth descriptor. Entries are
+                             // the catalog is filtered to credentials that resolve
+                             // (env key set, or a secret or OAuth sign-in stored in
+                             // the Ante home's `auth/credentials/`, or `auth/` before
+                             // Ante 0.3 migrates it; helpers always count), plus
+                             // providers named by the Ante settings (`provider`,
+                             // `provider_model` keys) and providers that need no
+                             // credential. Ante 0.2 `auth` descriptors resolve the
+                             // same way. Entries are
                              // grouped by upstream provider in catalog order, with
                              // the settings-chosen default model first per provider
                              // — Ante initially selects the provider at session creation, so
@@ -630,7 +632,8 @@ Agent task-progress `plan` events remain supported.
     `cwd` is the planned path and may not exist yet. `session.updated` clears `preparing`
     when ready and supplies advertised model/thinking options. Preparation failures retain
     the session with `preparing: true`, status `error`, and a `sessionError` event.
-    Sending again retries preparation. Published worktrees are retained on provider failure.
+    Sending again retries preparation. A failed Ante preparation also advertises the provider's
+    `models`, and `sessions.setModel` selects the model that retry uses. Published worktrees are retained on provider failure.
   For Ante, `model` carries a `provider/` prefix taken from a qualified
   `ProviderInfo.models` entry (or a custom typed id such as
   `openai-compatible/<model>`); the daemon pins that upstream provider in
@@ -639,6 +642,8 @@ Agent task-progress `plan` events remain supported.
   A slash inside a model id is preserved; only the first slash separates the upstream.
   Providers with no advertised models cannot be enumerated; a custom creation choice
   remains selectable. `sessions.setModel` can switch provider and model together.
+  A provider missing from `ante catalog` fails the start with the reason Ante gave for skipping it,
+  rather than letting `ante serve` silently start on a different provider.
   — with `baseBranch`, the daemon runs `git fetch origin <baseBranch>` in the project repo, adds a
     worktree at `<project-parent>/.speeddial-worktrees/<project-name>-<id8>` on a new
     `speeddial/<slug>-<id8>` branch, and uses the worktree as the session `cwd`. The worktree is
@@ -806,7 +811,8 @@ Agent task-progress `plan` events remain supported.
   (`-32602` when not listed) and forwards the change to a live idle agent through the provider
   transport, persisting the provider-reported state (which also carries the current thinking
   level/levels, since those can be model-dependent); without a live agent the choice is persisted
-  and reapplied on resume. Providers without a model option keep the legacy local-preference
+  and reapplied on resume. While a session prepares this is a `-32003` conflict; once preparation
+  has failed the choice is persisted for the retry. Providers without a model option keep the legacy local-preference
   behavior (any string is stored verbatim).
   For Ante, choices are qualified `provider/model` ids across usable catalog providers.
   A selection applies both fields with `UpdateSession`, adopts the returned model and effort

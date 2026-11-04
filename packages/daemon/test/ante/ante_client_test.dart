@@ -170,18 +170,29 @@ void main() {
     addTearDown(client.dispose);
     final created = await client.newSession(cwd: Directory.current.path);
     final commands = await client.availableCommands(created.sessionId);
-    expect(commands.map((command) => command.name),
-        containsAll(<String>['compact', 'context']));
+    expect(
+      commands.map((command) => command.name),
+      containsAll(<String>['compact', 'context']),
+    );
     for (final name in <String>['compact', 'context']) {
       final NativeCommand command = commands.firstWhere((c) => c.name == name);
-      final result = await client.runNativeCommand(created.sessionId, command, '');
+      final result = await client.runNativeCommand(
+        created.sessionId,
+        command,
+        '',
+      );
       expect(result.stopReason, 'end_turn');
     }
     await Future<void>.delayed(const Duration(milliseconds: 80));
-    final NativeCommand skill = (await client.availableCommands(created.sessionId))
-        .firstWhere((command) => command.name == 'commit');
+    final NativeCommand skill = (await client.availableCommands(
+      created.sessionId,
+    )).firstWhere((command) => command.name == 'commit');
     expect(skill.kind, 'skill');
-    final result = await client.runNativeCommand(created.sessionId, skill, 'now');
+    final result = await client.runNativeCommand(
+      created.sessionId,
+      skill,
+      'now',
+    );
     expect(result.stopReason, 'end_turn');
   });
 
@@ -477,9 +488,7 @@ void main() {
     expect(resumed['short_prompt'], isTrue);
 
     // Default stays off: the key is omitted entirely.
-    final Map<String, Object?> defaultStart = await capture(
-      shortPrompt: false,
-    );
+    final Map<String, Object?> defaultStart = await capture(shortPrompt: false);
     expect(defaultStart.containsKey('short_prompt'), isFalse);
   });
 
@@ -500,7 +509,10 @@ void main() {
     // `ante serve` ignores settings defaults when StartSession carries no
     // model, resolving the subscription instead. SpeedDial must reseed them.
     final AnteClient client = spawnAnte(
-      environment: <String, String>{'ANTE_HOME': anteHome.path},
+      environment: <String, String>{
+        'ANTE_HOME': anteHome.path,
+        'FAKE_ANTE_EXTRA_PROVIDERS': 'cerebras',
+      },
     );
     addTearDown(client.dispose);
     final created = await client.newSession(
@@ -513,6 +525,60 @@ void main() {
       (AcpConfigOption option) => option.id == 'model',
     );
     expect(model.currentValue, 'cerebras/gemma-4-31b');
+  });
+
+  test('refuses a saved default provider missing from the catalog', () async {
+    final Directory anteHome = await Directory.systemTemp.createTemp(
+      'ante_missing_provider_test',
+    );
+    addTearDown(() => anteHome.delete(recursive: true));
+    await File(p.join(anteHome.path, 'settings.json')).writeAsString(
+      jsonEncode(<String, Object?>{'model': 'gemma', 'provider': 'cerebras'}),
+    );
+    final AnteClient client = spawnAnte(
+      environment: <String, String>{
+        'ANTE_HOME': anteHome.path,
+        'FAKE_ANTE_SKIPPED_PROVIDER': 'cerebras',
+      },
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      client.newSession(
+        cwd: Directory.current.path,
+        mcpServers: <Map<String, Object?>>[
+          <String, Object?>{'name': 'managed', 'command': 'managed-mcp'},
+        ],
+      ),
+      throwsA(
+        isA<AnteTurnException>().having(
+          (AnteTurnException error) => error.message,
+          'message',
+          allOf(
+            contains('"cerebras" is not in its catalog'),
+            contains('`auth` was replaced'),
+            contains('Choose another model'),
+          ),
+        ),
+      ),
+    );
+  });
+
+  test('an unreadable catalog cannot refuse a provider', () async {
+    final String script = fakeAnteScript();
+    final AnteClient client = AnteClient.spawn(
+      <String>[Platform.resolvedExecutable, script, 'serve'],
+      cwd: Directory.current.path,
+      catalogCommand: <String>['/nonexistent/ante', 'catalog'],
+    );
+    addTearDown(client.dispose);
+
+    final created = await client.newSession(
+      cwd: Directory.current.path,
+      model: 'fake-model',
+      provider: 'anything',
+    );
+    expect(created.sessionId, isNotEmpty);
   });
 
   test(
@@ -843,91 +909,86 @@ void main() {
     );
   });
 
-  test(
-    'flattens text resources and materializes images and files into Ante '
-    'UserInput',
-    () async {
-      final Directory tempDir = await Directory.systemTemp.createTemp(
-        'ante_attachment_test',
-      );
-      addTearDown(() => tempDir.delete(recursive: true));
-      final File report = File(p.join(tempDir.path, 'user-input.txt'));
-      final AnteClient client = spawnAnte(
-        environment: <String, String>{
-          'FAKE_ANTE_USER_INPUT_REPORT': report.path,
+  test('flattens text resources and materializes images and files into Ante '
+      'UserInput', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'ante_attachment_test',
+    );
+    addTearDown(() => tempDir.delete(recursive: true));
+    final File report = File(p.join(tempDir.path, 'user-input.txt'));
+    final AnteClient client = spawnAnte(
+      environment: <String, String>{'FAKE_ANTE_USER_INPUT_REPORT': report.path},
+      requestPermission: (
+        String sessionId,
+        String? toolCallId,
+        String title,
+        List<PermissionOptionData> options,
+      ) async => 'Accept',
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+
+    final PromptResult result = await client.prompt(
+      created.sessionId,
+      <Map<String, Object?>>[
+        <String, Object?>{'type': 'text', 'text': 'Review these files.'},
+        <String, Object?>{
+          'type': 'resource',
+          'resource': <String, Object?>{
+            'uri': 'speeddial-attachment:///att-1/notes.txt',
+            'mimeType': 'text/plain',
+            'text': 'alpha\nbeta',
+          },
         },
-        requestPermission: (
-          String sessionId,
-          String? toolCallId,
-          String title,
-          List<PermissionOptionData> options,
-        ) async => 'Accept',
-      );
-      addTearDown(client.dispose);
-      final created = await client.newSession(cwd: Directory.current.path);
-
-      final PromptResult result = await client.prompt(
-        created.sessionId,
-        <Map<String, Object?>>[
-          <String, Object?>{'type': 'text', 'text': 'Review these files.'},
-          <String, Object?>{
-            'type': 'resource',
-            'resource': <String, Object?>{
-              'uri': 'speeddial-attachment:///att-1/notes.txt',
-              'mimeType': 'text/plain',
-              'text': 'alpha\nbeta',
-            },
+        <String, Object?>{
+          'type': 'image',
+          'mimeType': 'image/png',
+          'data': 'aQ==',
+        },
+        <String, Object?>{
+          'type': 'resource',
+          'resource': <String, Object?>{
+            'uri': 'speeddial-attachment:///att-2/report.pdf',
+            'mimeType': 'application/pdf',
+            'blob': 'aQ==',
           },
-          <String, Object?>{
-            'type': 'image',
-            'mimeType': 'image/png',
-            'data': 'aQ==',
-          },
-          <String, Object?>{
-            'type': 'resource',
-            'resource': <String, Object?>{
-              'uri': 'speeddial-attachment:///att-2/report.pdf',
-              'mimeType': 'application/pdf',
-              'blob': 'aQ==',
-            },
-          },
-        ],
-      );
+        },
+      ],
+    );
 
-      expect(result.stopReason, 'end_turn');
-      final String input = await report.readAsString();
-      expect(
-        input,
-        startsWith(
-          'Review these files.\n\n'
-          '[Attached resource: speeddial-attachment:///att-1/notes.txt]\n'
-          'alpha\nbeta\n\n'
-          '[Attached image]\n@',
-        ),
-      );
-      final RegExpMatch? pathMatch = RegExp(r'\[Attached image\]\n@([^\r\n]+)')
-          .firstMatch(input);
-      expect(pathMatch, isNotNull);
-      final File image = File(pathMatch!.group(1)!);
-      expect(image.path, endsWith('.png'));
-      expect(await image.readAsBytes(), <int>[105]);
-      final Directory imageDirectory = image.parent;
-      expect(await imageDirectory.exists(), isTrue);
+    expect(result.stopReason, 'end_turn');
+    final String input = await report.readAsString();
+    expect(
+      input,
+      startsWith(
+        'Review these files.\n\n'
+        '[Attached resource: speeddial-attachment:///att-1/notes.txt]\n'
+        'alpha\nbeta\n\n'
+        '[Attached image]\n@',
+      ),
+    );
+    final RegExpMatch? pathMatch = RegExp(r'\[Attached image\]\n@([^\r\n]+)')
+        .firstMatch(input);
+    expect(pathMatch, isNotNull);
+    final File image = File(pathMatch!.group(1)!);
+    expect(image.path, endsWith('.png'));
+    expect(await image.readAsBytes(), <int>[105]);
+    final Directory imageDirectory = image.parent;
+    expect(await imageDirectory.exists(), isTrue);
 
-      final RegExpMatch? fileMatch = RegExp(
-        r'\[Attached file: report\.pdf \(application/pdf\)\]\n'
-        r'Saved to: ([^\r\n]+)$',
-      ).firstMatch(input);
-      expect(fileMatch, isNotNull);
-      final File attachedFile = File(fileMatch!.group(1)!);
-      expect(attachedFile.path, endsWith('report.pdf'));
-      expect(attachedFile.parent.path, imageDirectory.path);
-      expect(await attachedFile.readAsBytes(), <int>[105]);
+    final RegExpMatch? fileMatch = RegExp(
+      r'\[Attached file: report\.pdf \(application/pdf\)\]\n'
+      r'Saved to: ([^\r\n]+)$',
+    ).firstMatch(input);
+    expect(fileMatch, isNotNull);
+    final File attachedFile = File(fileMatch!.group(1)!);
+    expect(attachedFile.path, endsWith('report.pdf'));
+    expect(attachedFile.parent.path, imageDirectory.path);
+    expect(await attachedFile.readAsBytes(), <int>[105]);
 
-      await client.dispose();
-      expect(await imageDirectory.exists(), isFalse);
-    },
-  );
+    await client.dispose();
+    expect(await imageDirectory.exists(), isFalse);
+  });
 
   test(
     'maps provider turn errors without treating them as completion',

@@ -537,6 +537,45 @@ void main() {
       },
     );
 
+    test('a failed Ante start can pick another model and retry', () async {
+      await eventsSub.cancel();
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeAnteProviders());
+      eventsSub = engine.events.listen(events.add);
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fakeAnte',
+        model: 'gone/fake-model',
+        yolo: true,
+        prepareInBackground: true,
+      );
+      await engine.sendMessage(session.id, 'first');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      await waitFor(() => store.getSession(session.id)!.models.isNotEmpty);
+      final failed = store.getSession(session.id)!;
+      expect(failed.preparing, isTrue);
+      expect(failed.models, contains('fake-provider/fake-model'));
+      expect(
+        events
+            .map((e) => e.event)
+            .whereType<SessionErrorEvent>()
+            .single
+            .message,
+        contains('"gone" is not in its catalog'),
+      );
+      await expectLater(
+        engine.setModel(session.id, 'nope/nope'),
+        throwsA(isA<DaemonError>()),
+      );
+
+      await engine.setModel(session.id, 'fake-provider/fake-model');
+      await engine.sendMessage(session.id, 'retry');
+      await waitFor(() => !store.getSession(session.id)!.preparing);
+      expect(store.getSession(session.id)!.model, 'fake-provider/fake-model');
+    });
+
     test('delete before startup cannot recreate a session', () async {
       final session = await engine.createSession(
         projectId: project.id,

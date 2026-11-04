@@ -78,6 +78,10 @@ class AnteClient implements AgentClient, NativeCommandClient {
   String? _settingsAppendSystemPrompt;
   bool _hasSpeedDialMcp = false;
   bool _resumed = false;
+  // Every id `ante catalog` listed, before filtering to usable providers, and
+  // the entries it skipped. Empty when the catalog could not be read.
+  Set<String> _catalogProviderIds = const <String>{};
+  List<String> _catalogWarnings = const <String>[];
   Directory? _attachmentDirectory;
   int _attachmentFileIndex = 0;
   final StreamController<String> _stderrController =
@@ -194,6 +198,7 @@ class AnteClient implements AgentClient, NativeCommandClient {
         if (resolved != null) config['provider'] = resolved;
       }
     }
+    _requireCatalogProvider(config['provider'] as String?);
     final String opId = _nextOpId();
     final Completer<_AnteSessionState> completer =
         Completer<_AnteSessionState>();
@@ -211,6 +216,25 @@ class AnteClient implements AgentClient, NativeCommandClient {
     } finally {
       _sessionWaiters.remove(opId);
     }
+  }
+
+  /// `ante serve` answers an unknown provider by starting on another one, so
+  /// the failure would otherwise surface on the first turn, naming the wrong
+  /// provider. Usually the entry was skipped for a stale catalog.json shape.
+  void _requireCatalogProvider(String? provider) {
+    if (provider == null ||
+        _catalogProviderIds.isEmpty ||
+        _catalogProviderIds.contains(provider)) {
+      return;
+    }
+    final String? reason = _catalogWarnings
+        .where((String line) => line.contains('providers.$provider:'))
+        .firstOrNull;
+    throw AnteTurnException(
+      'Ante provider "$provider" is not in its catalog'
+      '${reason == null ? '' : ' ($reason)'}. Choose another model, or fix '
+      'the provider in catalog.json (`ante doctor` lists catalog problems).',
+    );
   }
 
   @override
@@ -820,6 +844,20 @@ class AnteClient implements AgentClient, NativeCommandClient {
       final Object? decoded = jsonDecode(result.stdout as String);
       if (decoded is! Map || decoded['providers'] is! List) {
         return const <_AnteCatalogProvider>[];
+      }
+      _catalogProviderIds = <String>{
+        for (final Map<String, Object?> provider in _maps(decoded['providers']))
+          if (provider['id'] case final String id when id.isNotEmpty) id,
+      };
+      if (result.stderr case final String stderr) {
+        _catalogWarnings = const LineSplitter()
+            .convert(stderr)
+            .map(
+              (String line) => line.startsWith('warning: ')
+                  ? line.substring('warning: '.length)
+                  : line,
+            )
+            .toList(growable: false);
       }
       return ProviderRegistry.usableAnteCatalogProviders(
             decoded['providers'] as List<Object?>,

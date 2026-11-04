@@ -426,7 +426,7 @@ void main() {
     });
 
     test('ante catalog drops providers the user cannot run', () async {
-      // A provider is usable when its catalog auth descriptor resolves:
+      // Ante 0.2 shape. A provider is usable when its auth descriptor resolves:
       // env_key in the daemon environment or the Ante home's stored
       // api_keys.json, oauth_preset with a token file under auth/, or the
       // provider is named by settings (`provider` / `provider_model`).
@@ -521,6 +521,91 @@ void main() {
             'their settings-chosen default model first',
       );
       expect(ante.protocol, 'ante');
+    });
+
+    group('ante 0.3 credential references', () {
+      late Directory anteHome;
+
+      setUp(() async {
+        anteHome = await Directory.systemTemp.createTemp('ante_credentials');
+        addTearDown(() => anteHome.delete(recursive: true));
+      });
+
+      void writeAuthFile(List<String> segments, [String content = '{}']) {
+        File(p.joinAll(<String>[anteHome.path, 'auth', ...segments]))
+          ..createSync(recursive: true)
+          ..writeAsStringSync(content);
+      }
+
+      List<Object?> usable(
+        Map<String, Object?> credentials, [
+        Map<String, String> environment = const <String, String>{},
+      ]) {
+        return ProviderRegistry.usableAnteCatalogProviders(
+          <Object?>[
+            for (final MapEntry<String, Object?> entry in credentials.entries)
+              <String, Object?>{'id': entry.key, 'credential': entry.value},
+          ],
+          <String, String>{'ANTE_HOME': anteHome.path, ...environment},
+        ).map((Map<String, Object?> provider) => provider['id']).toList();
+      }
+
+      test('resolve against the environment and credential store', () {
+        writeAuthFile(<String>['credentials', 'secret', 'stored.json']);
+        writeAuthFile(<String>['credentials', 'oauth', 'signed-in.json']);
+        writeAuthFile(<String>['credentials', 'oauth', 'teams', 'work.json']);
+
+        expect(
+          usable(
+            <String, Object?>{
+              'env-ok': 'env:PRESENT_KEY',
+              'secret-ok': 'secret:stored',
+              'oauth-ok': 'oauth:signed-in',
+              'label-ok': 'oauth:teams/work',
+              'any-label-ok': 'oauth:teams',
+              'helper-ok': 'helper:vault',
+              'list-ok': <Object?>['env:MISSING_KEY', 'secret:stored'],
+              'keyless': null,
+              'env-missing': 'env:MISSING_KEY',
+              'secret-missing': 'secret:absent',
+              'oauth-missing': 'oauth:absent',
+              'label-missing': 'oauth:teams/home',
+              'list-missing': <Object?>['env:MISSING_KEY', 'secret:absent'],
+              'empty-list': <Object?>[],
+              'unknown-scheme': 'vault:stored',
+            },
+            <String, String>{'PRESENT_KEY': 'present'},
+          ),
+          <Object?>[
+            'env-ok',
+            'secret-ok',
+            'oauth-ok',
+            'label-ok',
+            'any-label-ok',
+            'helper-ok',
+            'list-ok',
+            'keyless',
+          ],
+        );
+      });
+
+      test('resolve against a home Ante has not migrated yet', () {
+        // `ante catalog` reports 0.3 references but leaves auth/ alone; the
+        // files move on the first credential lookup of a later session.
+        writeAuthFile(<String>[
+          'api_keys.json',
+        ], jsonEncode(<String, Object?>{'STORED_KEY': 'k'}));
+        writeAuthFile(<String>['openai.json']);
+
+        expect(
+          usable(<String, Object?>{
+            'stored': <Object?>['env:STORED_KEY', 'secret:stored'],
+            'signed-in': 'oauth:openai',
+            'missing': 'env:MISSING_KEY',
+          }),
+          <Object?>['stored', 'signed-in'],
+        );
+      });
     });
 
     test('ante catalog probe failure degrades to empty models', () async {

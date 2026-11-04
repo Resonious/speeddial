@@ -685,9 +685,15 @@ class SessionEngine {
                     'Session preparation failed: $error. Send a message to retry; queued messages were not sent.',
               ),
             );
+            final List<String> models = await _modelsAfterFailedStart(session);
             await _updateSession(
               session.id,
-              (current) => _withStatus(current, SessionStatus.error),
+              (current) => _withConfigOptions(current, (
+                model: current.model,
+                models: models,
+                thinkingLevel: current.thinkingLevel,
+                thinkingLevels: current.thinkingLevels,
+              ), status: SessionStatus.error),
             );
           }
         } finally {
@@ -696,6 +702,25 @@ class SessionEngine {
       });
       return preparation;
     });
+  }
+
+  /// The picker's choices for a session whose agent never started. An Ante
+  /// start can fail on the model alone, so choosing another must stay possible;
+  /// only a live agent would otherwise have reported these.
+  Future<List<String>> _modelsAfterFailedStart(Session session) async {
+    if (_providers.byId(session.providerId)?.protocol !=
+        ProviderProtocol.ante) {
+      return session.models;
+    }
+    try {
+      final List<ProviderInfo> providers = await _providers.list();
+      return providers
+          .firstWhere((ProviderInfo info) => info.id == session.providerId)
+          .models;
+    } on Object {
+      // The start failure is already reported; this only offers a shortcut.
+      return session.models;
+    }
   }
 
   /// Creates a fresh provider session whose visible history is copied from
@@ -2170,7 +2195,14 @@ class SessionEngine {
       throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
     }
     if (session.preparing) {
-      throw DaemonError(kErrConflict, 'Session is still preparing');
+      if (_preparations.containsKey(sessionId)) {
+        throw DaemonError(kErrConflict, 'Session is still preparing');
+      }
+      // Preparation failed: the next send retries with this model.
+      if (session.models.isNotEmpty && !session.models.contains(model)) {
+        throw DaemonError(_kErrInvalidParams, 'Unknown model: $model');
+      }
+      return _updateSession(sessionId, (current) => _withModel(current, model));
     }
     if (_providers.byId(session.providerId)?.protocol ==
         ProviderProtocol.ante) {
