@@ -257,8 +257,9 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     (an OMP background wakeup after a finished subagent) are persisted
                     instead of dropped, and a prompt parked behind such an agent-busy
                     turn surfaces as a `session`-kind agentActivity instead of an
-                    error. Eventless Codex sessions whose empty rollout vanished with their
-                    app-server process start a replacement thread before their first turn.
+                    error. Sessions with no sent turn have nothing to resume on any provider
+                    (Claude saves on the first prompt; Codex drops empty rollouts), so
+                    they start a replacement thread instead of `session/load`.
                     Inline tool-result images and provider-reported image
                     file reads are deduplicated into attachment-backed tool content. MCP
                     injection supports ACP, Codex, and Ante. ACP

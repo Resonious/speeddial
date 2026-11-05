@@ -1839,6 +1839,13 @@ void main() {
             ),
           ),
         );
+        // Only a session with a sent turn goes through session/load.
+        for (final Session session in <Session>[first, second]) {
+          await engine!.sendMessage(session.id, 'weird');
+          while (store.getSession(session.id)!.status != SessionStatus.idle) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }
         File(p.join(firstDir.path, 'agent.load_fails')).createSync();
         File(p.join(secondDir.path, 'agent.load_fails')).createSync();
         final Map<String, Object?> updated = j(

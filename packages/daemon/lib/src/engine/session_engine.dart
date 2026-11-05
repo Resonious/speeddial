@@ -1843,12 +1843,13 @@ class SessionEngine {
   }
 
   /// Respawns the provider transport for a session whose process is gone,
-  /// making persisted sessions usable across daemon restarts. Codex removes
-  /// an empty thread's rollout when app-server exits. Codex sessions whose
-  /// user never sent a turn, and forks with pending inherited context,
-  /// therefore start fresh threads. Empty Ante sessions also start fresh:
-  /// receiving a native id does not guarantee a resumable save exists.
-  /// Newly copied forks have no provider id until their first send.
+  /// making persisted sessions usable across daemon restarts. A session whose
+  /// user never sent a turn has nothing to resume, and holding a provider id
+  /// does not mean the provider saved anything: Claude writes its transcript
+  /// on the first prompt, Codex removes an empty thread's rollout when
+  /// app-server exits, and Ante may have no native save. Such sessions start
+  /// fresh threads on every provider, as do Codex forks with pending inherited
+  /// context. Newly copied forks have no provider id until their first send.
   ///
   /// Throws `DaemonError(kErrNotFound)` for unknown sessions and
   /// `DaemonError(kErrConflict)` when the session is closed, predates resume
@@ -1896,10 +1897,8 @@ class SessionEngine {
     }
     final bool startNewThread =
         storedProviderSessionId == null ||
-        (spec.protocol == ProviderProtocol.codex &&
-            (pendingFork || !_store.hasUserMessage(sessionId))) ||
-        (spec.protocol == ProviderProtocol.ante &&
-            !_store.hasUserMessage(sessionId));
+        !_store.hasUserMessage(sessionId) ||
+        (spec.protocol == ProviderProtocol.codex && pendingFork);
     final AgentClient client = _spawnAgent(session);
     var providerSessionId = storedProviderSessionId;
     final List<AcpConfigOption> configOptions;

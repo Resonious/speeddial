@@ -793,6 +793,11 @@ void main() {
         }
         expect(store.listEvents(session.id).events, isEmpty);
 
+        // Only a session with a sent turn has anything to resume.
+        await engine.sendMessage(session.id, 'weird');
+        await waitFor(
+          () => store.getSession(session.id)!.status == SessionStatus.idle,
+        );
         await engine.dispose();
         engine = SessionEngine(store: store, providers: providers);
         await engine.restore();
@@ -807,8 +812,8 @@ void main() {
         expect(loaded['sessionId'], store.providerSessionIdOf(session.id));
         expect(loaded['_meta'], created['_meta']);
         final List<SessionEvent> history = store.listEvents(session.id).events;
-        expect(history.whereType<UserMessageEvent>().single.text, 'weird');
-        expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+        expect(history.whereType<UserMessageEvent>(), hasLength(2));
+        expect(history.whereType<TurnCompleteEvent>(), hasLength(2));
         expect(history.whereType<SessionErrorEvent>(), isEmpty);
       },
     );
@@ -2486,6 +2491,11 @@ void main() {
       projectId: secondProject.id,
       providerId: 'fake',
     );
+    // Only a session with a sent turn goes through session/load.
+    await engine.sendMessage(first.id, 'weird');
+    await waitFor(
+      () => store.getSession(first.id)!.status == SessionStatus.idle,
+    );
     File(p.join(tempDir.path, 'agent.load_fails')).createSync();
     File(p.join(secondDir.path, 'agent.load_fails')).createSync();
 
@@ -3129,6 +3139,10 @@ void main() {
         projectId: 'p1',
         providerId: 'fake',
       );
+      await engine.sendMessage(session.id, 'weird');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
       await engine.dispose();
       // The next agent the engine spawns advertises no loadSession capability.
       File(p.join(tempDir.path, 'agent.no_load_session')).createSync();
@@ -3152,6 +3166,10 @@ void main() {
         projectId: 'p1',
         providerId: 'fake',
       );
+      await engine.sendMessage(session.id, 'weird');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
       await engine.dispose();
       // The next agent answers session/load with an error.
       File(p.join(tempDir.path, 'agent.load_fails')).createSync();
@@ -3168,6 +3186,85 @@ void main() {
       await restarted.dispose();
     },
   );
+
+  group('a session with no sent turn starts fresh', () {
+    // Claude only writes its transcript on the first prompt, so session/load
+    // answers "Resource not found" for an agent that exited before then.
+    setUp(() {
+      File(p.join(tempDir.path, 'agent.capture_session')).createSync();
+    });
+
+    Future<void> expectFirstTurnSucceeds(
+      SessionEngine current,
+      Session session,
+    ) async {
+      await current.sendMessage(session.id, 'weird');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      expect(
+        File(p.join(tempDir.path, 'agent.session_load.json')).existsSync(),
+        isFalse,
+      );
+      final List<SessionEvent> history = store.listEvents(session.id).events;
+      expect(history.whereType<UserMessageEvent>().single.text, 'weird');
+      expect(history.whereType<TurnCompleteEvent>(), hasLength(1));
+      expect(history.whereType<SessionErrorEvent>(), isEmpty);
+    }
+
+    test('after a settings reload stops its agent', () async {
+      File(p.join(tempDir.path, 'agent.load_fails')).createSync();
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.reloadEnvironment();
+      await expectFirstTurnSucceeds(engine, session);
+    });
+
+    test('after a daemon restart, without session/load support', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.dispose();
+      File(p.join(tempDir.path, 'agent.no_load_session')).createSync();
+      final restarted = SessionEngine(store: store, providers: fakeProviders());
+      await restarted.restore();
+      await expectFirstTurnSucceeds(restarted, session);
+      await restarted.dispose();
+    });
+
+    test('when an earlier failed resume left it in error', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.dispose();
+      File(p.join(tempDir.path, 'agent.load_fails')).createSync();
+      final Session stored = store.getSession(session.id)!;
+      store.updateSession(
+        Session(
+          id: stored.id,
+          projectId: stored.projectId,
+          providerId: stored.providerId,
+          title: stored.title,
+          status: SessionStatus.error,
+          model: stored.model,
+          cwd: stored.cwd,
+          baseBranch: stored.baseBranch,
+          yolo: stored.yolo,
+          archived: stored.archived,
+          createdAt: stored.createdAt,
+          updatedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final restarted = SessionEngine(store: store, providers: fakeProviders());
+      await restarted.restore();
+      await expectFirstTurnSucceeds(restarted, session);
+      await restarted.dispose();
+    });
+  });
 
   test('concurrent sends after a restart share one resume; the second '
       'conflicts', () async {
