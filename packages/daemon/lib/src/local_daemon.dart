@@ -7,7 +7,9 @@
 /// bind interface, and a token. A non-loopback bind requires a non-empty
 /// token. [port]/[url] are available after [start]. Shares
 /// `~/.speeddial/speeddial.db` with the standalone CLI daemon so projects and
-/// sessions are visible from both surfaces.
+/// sessions are visible from both surfaces. Only one daemon may own a database
+/// at a time; stop the standalone daemon before starting an embedded one against
+/// the same database (or give it a different [start] `dbPath`).
 library;
 
 import 'dart:io';
@@ -99,7 +101,7 @@ class LocalDaemon {
         );
     Directory(p.dirname(resolvedDb)).createSync(recursive: true);
 
-    final store = DaemonStore(resolvedDb);
+    final store = DaemonStore.forDaemon(resolvedDb);
     final providers = ProviderRegistry(
       environmentProvider: store.daemonEnvironment,
     );
@@ -112,10 +114,10 @@ class LocalDaemon {
       autoArchiveKeep: config.autoArchiveKeep,
     );
     final pr = PrService();
-    await engine.restore();
 
     final SpeedDialServer server;
     try {
+      await engine.restore();
       server = await SpeedDialServer.bind(
         host: host,
         port: port,

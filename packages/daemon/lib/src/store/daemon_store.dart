@@ -40,6 +40,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' hide Session;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import 'daemon_database_lock.dart';
 import 'session_search_index.dart';
 
 typedef StoredMcpServer = ({
@@ -95,6 +96,21 @@ const int _sqliteConstraintUnique = 2067;
 /// All methods are synchronous (the engine drives them from the event loop,
 /// never concurrently). Access from multiple isolates is not supported.
 class DaemonStore {
+  /// Claims daemon ownership before opening or migrating the session database.
+  /// The claim lasts until [dispose], and is released automatically on a crash.
+  /// Use this for server startup, before restoring any interrupted sessions.
+  factory DaemonStore.forDaemon(String path) {
+    final ownership = DaemonDatabaseLock.acquire(path);
+    try {
+      return DaemonStore(path).._ownership = ownership;
+    } on Object {
+      ownership.dispose();
+      rethrow;
+    }
+  }
+
+  DaemonDatabaseLock? _ownership;
+
   /// Opens the database at [path]. Large attachment payloads and staged
   /// uploads live in a `files` directory beside it; an in-memory database
   /// gets a private temporary directory that [dispose] removes.
@@ -1583,11 +1599,15 @@ class DaemonStore {
   }
 
   void dispose() {
-    _search.dispose();
-    _db.close();
-    if (_ownsFiles) {
-      final Directory files = Directory(filesPath);
-      if (files.existsSync()) files.deleteSync(recursive: true);
+    try {
+      _search.dispose();
+      _db.close();
+      if (_ownsFiles) {
+        final Directory files = Directory(filesPath);
+        if (files.existsSync()) files.deleteSync(recursive: true);
+      }
+    } finally {
+      _ownership?.dispose();
     }
   }
 

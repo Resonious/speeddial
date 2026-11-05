@@ -53,6 +53,15 @@ credentials and forwards termination signals. Git failures are logged and retrie
 on the next idle check. Other repositories, branches, and embedded daemons do not
 auto-update. No wire API changes are involved.
 
+CLI and embedded daemon startup claim exclusive ownership of their session database
+before opening/migrating it or restoring interrupted turns. `DaemonStore.forDaemon`
+holds an exclusive SQLite transaction in a separate `<database>.daemon-lock` sidecar
+for the store's lifetime; another daemon using the same database is rejected even
+on a different port. The sidecar is never deleted, and process death releases the
+lock automatically. Ordinary store connections remain available for inspection.
+This prevents a failed duplicate launch from marking another daemon's live turns
+as restart errors. Ownership is also released when startup/binding fails.
+
 ```
 lib/src/agents/     AgentClient transport boundary shared by the session engine.
 lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JSON-RPC

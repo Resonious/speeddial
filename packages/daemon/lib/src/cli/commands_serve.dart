@@ -157,7 +157,7 @@ class ServeCommand extends Command<int> {
     if (Platform.environment[daemonWorkerEnvironment] == '1') {
       await updater.initialize();
     }
-    final store = DaemonStore(dbPath);
+    final store = DaemonStore.forDaemon(dbPath);
     final providers = ProviderRegistry(
       environmentProvider: store.daemonEnvironment,
     );
@@ -171,7 +171,6 @@ class ServeCommand extends Command<int> {
       autoArchiveKeep: config.autoArchiveKeep,
     );
     final pr = PrService();
-    await engine.restore();
 
     final nonLoopback = !_isLoopbackHost(host);
     final token =
@@ -192,6 +191,7 @@ class ServeCommand extends Command<int> {
 
     final SpeedDialServer server;
     try {
+      await engine.restore();
       server = await SpeedDialServer.bind(
         host: host,
         port: port,
