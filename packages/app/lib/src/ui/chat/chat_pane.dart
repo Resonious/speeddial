@@ -8,6 +8,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import '../../scope.dart';
 import '../../state/chat_store.dart';
 import '../../state/file_transfer_store.dart';
+import '../../state/replies_store.dart';
 import '../../state/turn_cache.dart';
 import '../daemon_error_text.dart';
 import '../session_restored_notice.dart';
@@ -490,6 +491,13 @@ class _SessionSurfaceState extends State<_SessionSurface> {
             openLocalFile: _openLocalFile,
             onReply: (String quote, String reply) =>
                 data.replies.add(daemonId, sessionId, quote, reply),
+            stagedQuotes: <String>[
+              for (final ReplyDraft reply in data.replies.repliesFor(
+                daemonId,
+                sessionId,
+              ))
+                reply.quote,
+            ],
           );
         }
 

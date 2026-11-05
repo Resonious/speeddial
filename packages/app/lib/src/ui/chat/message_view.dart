@@ -23,6 +23,7 @@ import 'markdown_blocks.dart';
 import 'mermaid/mermaid_diagram.dart';
 import 'mermaid/mermaid_parser.dart';
 import 'replies.dart';
+import 'reply_marks.dart';
 import 'typewriter.dart';
 
 /// Best-effort language guess for a fenced code block, restricted to the
@@ -64,10 +65,14 @@ class UserMessageBubble extends StatelessWidget {
     this.notice,
     this.attachments = const <Attachment>[],
     this.attachmentLoader,
+    this.replyMarks = const <String>[],
   });
 
   final String text;
   final String? notice;
+
+  /// Passages of the text that have been replied to (see [ReplyMarks]).
+  final List<String> replyMarks;
 
   /// Files attached to the message (metadata only; ids address the daemon).
   final List<Attachment> attachments;
@@ -97,18 +102,21 @@ class UserMessageBubble extends StatelessWidget {
     final ({List<SentReply> replies, String body}) parsed = parseReplies(text);
     final String body = parsed.body;
     final bool hasText = body.isNotEmpty;
+    final Color ink = notice == null
+        ? scheme.onPrimaryContainer
+        : scheme.onSurface;
     final List<Widget> content = <Widget>[
       if (parsed.replies.isNotEmpty) ...<Widget>[
         SentReplies(replies: parsed.replies),
         if (hasText || attachments.isNotEmpty) const SizedBox(height: 8),
       ],
       if (hasText)
-        Text(
-          body,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: notice == null
-                ? scheme.onPrimaryContainer
-                : scheme.onSurface,
+        ReplyMarks(
+          quotes: replyMarks,
+          color: ink,
+          child: Text(
+            body,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: ink),
           ),
         ),
       if (attachments.isNotEmpty) ...<Widget>[
@@ -383,10 +391,14 @@ class AgentMessageView extends StatefulWidget {
     this.writing = false,
     this.launchExternal = _launchExternal,
     this.openLocalFile,
+    this.replyMarks = const <String>[],
   });
 
   /// Combined (chunk-merged) markdown body text.
   final String text;
+
+  /// Passages of the text that have been replied to (see [ReplyMarks]).
+  final List<String> replyMarks;
 
   /// Whether the containing turn is still producing output.
   final bool streaming;
@@ -645,13 +657,16 @@ class _AgentMessageViewState extends State<AgentMessageView> {
           child: SelectionContainer(
             delegate: _selectionDelegate,
             child: MarkdownInlineLayout(
-              child: MarkdownBody(
-                // Reparse once when an asynchronous highlight batch is ready.
-                key: ValueKey<int>(_highlightRevision),
-                data: _renderedText,
-                blockSyntaxes: const <md.BlockSyntax>[CopyableTableSyntax()],
-                styleSheet: _styleSheetFor(context, bodyStyle),
-                builders: _elementBuilders,
+              child: ReplyMarks(
+                quotes: widget.replyMarks,
+                child: MarkdownBody(
+                  // Reparse once when an asynchronous highlight batch is ready.
+                  key: ValueKey<int>(_highlightRevision),
+                  data: _renderedText,
+                  blockSyntaxes: const <md.BlockSyntax>[CopyableTableSyntax()],
+                  styleSheet: _styleSheetFor(context, bodyStyle),
+                  builders: _elementBuilders,
+                ),
               ),
             ),
           ),

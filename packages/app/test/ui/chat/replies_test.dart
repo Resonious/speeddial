@@ -1,4 +1,7 @@
+import 'dart:ui' show ClipOp;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/state/replies_store.dart';
@@ -6,6 +9,7 @@ import 'package:speeddial_app/src/theme.dart';
 import 'package:speeddial_app/src/ui/chat/composer.dart';
 import 'package:speeddial_app/src/ui/chat/message_view.dart';
 import 'package:speeddial_app/src/ui/chat/replies.dart';
+import 'package:speeddial_app/src/ui/chat/reply_marks.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -172,6 +176,151 @@ void main() {
     });
   });
 
+  group('ReplyMarkResolver', () {
+    const AgentMessageItem older = AgentMessageItem(
+      text: 'The **cache** is `cold` today.\n\n- first item\n- second item',
+    );
+    const AgentMessageItem newer = AgentMessageItem(text: 'The cache is warm.');
+
+    String sent(String quote) => formatMessageWithReplies(<ReplyDraft>[
+      ReplyDraft(id: 0, quote: quote, reply: 'why?'),
+    ], '');
+
+    test('matches rendered text, not the markdown source', () {
+      final Map<int, List<String>> marks = ReplyMarkResolver().resolve(
+        <TimelineItem>[older, UserMessageItem(text: sent('cache is cold'))],
+        const <String>[],
+      );
+      expect(marks, <int, List<String>>{
+        0: <String>['cache is cold'],
+      });
+    });
+
+    test('a selection across list items still matches', () {
+      final Map<int, List<String>> marks = ReplyMarkResolver().resolve(
+        const <TimelineItem>[older],
+        const <String>['first item•second item'],
+      );
+      expect(marks.keys, <int>[0]);
+    });
+
+    test('a sent reply marks the nearest message before it', () {
+      final Map<int, List<String>> marks = ReplyMarkResolver().resolve(
+        <TimelineItem>[older, UserMessageItem(text: sent('The cache')), newer],
+        const <String>[],
+      );
+      expect(marks.keys, <int>[0]);
+    });
+
+    test('a staged quote marks the latest message holding it', () {
+      final Map<int, List<String>> marks = ReplyMarkResolver().resolve(
+        const <TimelineItem>[older, newer],
+        const <String>['The cache'],
+      );
+      expect(marks.keys, <int>[1]);
+    });
+
+    test('a quote found nowhere marks nothing', () {
+      expect(
+        ReplyMarkResolver().resolve(
+          const <TimelineItem>[older],
+          const <String>['not in any message'],
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  group('ReplyMarks', () {
+    const AgentMessageItem message = AgentMessageItem(
+      id: 'a',
+      text: 'The cache is `cold` today.\n\n```\nlet x = 1;\n```\n\nAfter code.',
+    );
+
+    testWidgets('marks only the quoted text, across inline code', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _timeline(<TimelineItem>[message], staged: <String>['cache is cold']),
+      );
+      await tester.pumpAndSettle();
+      // The text before the inline code, and the code itself.
+      expect(_washes(tester, _marksOn('today')), 2);
+    });
+
+    testWidgets('a quote across blocks skips the copy button label', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _timeline(
+          <TimelineItem>[message],
+          staged: <String>['today.let x = 1;After'],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(_washes(tester, _marksOn('today')), 3);
+    });
+
+    testWidgets('a sent reply marks the message it answers', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        _timeline(<TimelineItem>[
+          message,
+          UserMessageItem(
+            id: 'u',
+            text: formatMessageWithReplies(const <ReplyDraft>[
+              ReplyDraft(id: 0, quote: 'After code.', reply: 'why?'),
+            ], 'Next'),
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(_washes(tester, _marksOn('today')), 1);
+    });
+
+    testWidgets('a text with no reply paints nothing', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(_timeline(<TimelineItem>[message]));
+      await tester.pumpAndSettle();
+      expect(_washes(tester, _marksOn('today')), 0);
+    });
+
+    testWidgets('a mark flares when staged, then settles', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(_timeline(<TimelineItem>[message]));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _timeline(<TimelineItem>[message], staged: <String>['After code.']),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(_glows(tester, _marksOn('today')), 1);
+      await tester.pumpAndSettle();
+      expect(_glows(tester, _marksOn('today')), 0);
+      expect(_washes(tester, _marksOn('today')), 1);
+    });
+
+    testWidgets('reduced motion shows the mark at once', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(_timeline(<TimelineItem>[message], still: true));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _timeline(
+          <TimelineItem>[message],
+          staged: <String>['After code.'],
+          still: true,
+        ),
+      );
+      await tester.pump();
+      expect(_glows(tester, _marksOn('today')), 0);
+      expect(_washes(tester, _marksOn('today')), 1);
+    });
+  });
+
   testWidgets('a sent message shows its replies as chips that expand', (
     WidgetTester tester,
   ) async {
@@ -241,6 +390,61 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
+
+  testWidgets('a real selection across every block kind marks its message', (
+    WidgetTester tester,
+  ) async {
+    const AgentMessageItem rich = AgentMessageItem(
+      id: 'a',
+      text:
+          'Intro with `inline code`, **bold** and [a link](https://x.dev).\n\n'
+          '- bullet one\n- bullet two\n\n'
+          '1. step one\n2. step two\n\n'
+          '> a quoted line\n\n'
+          '```\nlet x = 1;\n```\n\n'
+          '| A | B |\n|---|---|\n| c | d |\n\n'
+          'The end.',
+    );
+    String? quote;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: Timeline(
+            items: const <TimelineItem>[rich],
+            onReply: (String q, String _) => quote = q,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.textContaining('Intro'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Select all'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Reply'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('reply-popover-field')),
+      'Why?',
+    );
+    await tester.pump();
+    await tester.tap(find.byTooltip('Add reply'));
+    await tester.pumpAndSettle();
+    expect(quote, allOf(contains('Intro'), contains('The end.')));
+
+    expect(
+      ReplyMarkResolver()
+          .resolve(const <TimelineItem>[rich], <String>[quote!])
+          .keys,
+      <int>[0],
+    );
+    await tester.pumpWidget(
+      _timeline(const <TimelineItem>[rich], staged: <String>[quote!]),
+    );
+    await tester.pumpAndSettle();
+    expect(_washes(tester, _marksOn('Intro')), greaterThan(5));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
   testWidgets('Enter adds the reply, Shift+Enter breaks the line, Esc drops it', (
     WidgetTester tester,
@@ -358,3 +562,72 @@ void main() {
     expect(tester.hasRunningAnimations, isFalse);
   });
 }
+
+_RectCounter _paintMarks(WidgetTester tester, Finder finder) {
+  final RenderCustomPaint object = tester.renderObject(finder);
+  final _RectCounter counter = _RectCounter();
+  object.foregroundPainter?.paint(counter, object.size);
+  return counter;
+}
+
+/// How many runs of text [ReplyMarks] marked: each is a wash and an underline.
+int _washes(WidgetTester tester, Finder finder) =>
+    _paintMarks(tester, finder).plain ~/ 2;
+
+/// How many of those runs are still flaring.
+int _glows(WidgetTester tester, Finder finder) =>
+    _paintMarks(tester, finder).glows;
+
+class _RectCounter implements Canvas {
+  int plain = 0;
+  int glows = 0;
+
+  @override
+  void drawRect(Rect rect, Paint paint) {
+    if (paint.maskFilter == null) {
+      plain++;
+    } else {
+      glows++;
+    }
+  }
+
+  @override
+  void save() {}
+
+  @override
+  void restore() {}
+
+  @override
+  void clipRect(
+    Rect rect, {
+    ClipOp clipOp = ClipOp.intersect,
+    bool doAntiAlias = true,
+  }) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Widget _timeline(
+  List<TimelineItem> items, {
+  List<String> staged = const <String>[],
+  bool still = false,
+}) => MaterialApp(
+  theme: buildSpeedDialTheme(),
+  home: MediaQuery(
+    data: MediaQueryData(disableAnimations: still),
+    child: Scaffold(
+      body: Timeline(items: items, stagedQuotes: staged),
+    ),
+  ),
+);
+
+Finder _marksOn(String text) => find
+    .descendant(
+      of: find.ancestor(
+        of: find.textContaining(text),
+        matching: find.byType(ReplyMarks),
+      ),
+      matching: find.byType(CustomPaint),
+    )
+    .first;

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -141,6 +142,13 @@ class _QuoteDelegate implements MarkdownBuilderDelegate {
   TextSpan formatText(MarkdownStyleSheet styleSheet, String code) =>
       TextSpan(text: code, style: styleSheet.code);
 }
+
+/// [source] as the reader sees it, parsed the way a message renders it.
+String markdownPlainText(String source) => md.Document(
+  blockSyntaxes: const <md.BlockSyntax>[CopyableTableSyntax()],
+  extensionSet: md.ExtensionSet.gitHubFlavored,
+  encodeHtml: false,
+).parseLines(const LineSplitter().convert(source)).map(_plainText).join();
 
 String _plainText(md.Node node) {
   if (node is md.Text) return node.text;

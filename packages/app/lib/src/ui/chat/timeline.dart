@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../state/chat_store.dart';
+import '../../state/replies_store.dart';
 import '../../state/session_timeline.dart';
 import '../../state/streamed_attachment.dart';
 import '../../theme.dart';
@@ -21,6 +22,7 @@ import 'message_view.dart';
 import 'oven.dart';
 import 'plan_panel.dart';
 import 'replies.dart';
+import 'reply_marks.dart';
 import 'tool_call_card.dart';
 import 'subagent_crew.dart';
 import 'tool_run.dart';
@@ -870,6 +872,7 @@ class Timeline extends StatefulWidget {
     this.onContinue,
     this.openLocalFile,
     this.onReply,
+    this.stagedQuotes = const <String>[],
     this.hasOlder = false,
     this.loadingOlder = false,
     this.olderError,
@@ -948,6 +951,10 @@ class Timeline extends StatefulWidget {
   /// menu offers Reply, which opens [showReplyPopover] beside the text.
   final void Function(String quote, String reply)? onReply;
 
+  /// Passages with a reply staged in the composer, marked in their messages
+  /// alongside those of replies already sent (see [ReplyMarks]).
+  final List<String> stagedQuotes;
+
   @override
   State<Timeline> createState() => _TimelineState();
 }
@@ -976,6 +983,7 @@ class _TimelineState extends State<Timeline> {
 
   /// The timeline's current selection as plain text, for Reply.
   String _selectedText = '';
+  final ReplyMarkResolver _replyMarks = ReplyMarkResolver();
 
   /// Delivered messages whose row has been built, so the pop plays once.
   final Set<int> _popped = <int>{};
@@ -1275,6 +1283,15 @@ class _TimelineState extends State<Timeline> {
       newest--;
     }
 
+    final Map<int, List<String>> replyMarks = _replyMarks.resolve(
+      widget.items,
+      <String>[
+        for (final OutgoingMessage message in widget.outgoing)
+          ...parseReplies(message.text).replies.map((SentReply r) => r.quote),
+        ...widget.stagedQuotes,
+      ],
+    );
+
     // History ends in its load status (when shown); the live side always
     // ends in the tail of baking messages and the turn's flame.
     SliverChildBuilderDelegate rows(
@@ -1335,6 +1352,7 @@ class _TimelineState extends State<Timeline> {
                 onRewind: widget.onRewind,
                 onContinue: itemIndex == newest ? widget.onContinue : null,
                 openLocalFile: widget.openLocalFile,
+                replyMarks: replyMarks[itemIndex] ?? const <String>[],
               ),
             ),
           );
@@ -1522,9 +1540,13 @@ class _TimelineRow extends StatelessWidget {
     this.onRewind,
     this.onContinue,
     this.openLocalFile,
+    this.replyMarks = const <String>[],
   });
 
   final TimelineItem item;
+
+  /// See [ReplyMarks.quotes].
+  final List<String> replyMarks;
 
   /// Set on the newest row only (see [_TimelineState._endTouch]). The
   /// listener stays put either way, so rows keep their state when another
@@ -1572,6 +1594,7 @@ class _TimelineRow extends StatelessWidget {
             notice: i.notice,
             attachments: i.attachments,
             attachmentLoader: attachmentLoader,
+            replyMarks: replyMarks,
           ),
         ),
       ),
@@ -1597,6 +1620,7 @@ class _TimelineRow extends StatelessWidget {
           streaming: i.streaming,
           writing: i.writing,
           openLocalFile: openLocalFile,
+          replyMarks: replyMarks,
         ),
       ),
       AgentThoughtItem i => AgentThoughtView(text: i.text, active: i.active),
