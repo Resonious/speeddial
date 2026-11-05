@@ -65,15 +65,66 @@ class SlackCopy {
   final String html;
 }
 
-SlackCopy formatSlackCopy(String source) {
+SlackCopy formatSlackCopy(String source, {bool stackTables = false}) {
   final List<md.Node> nodes = md.Document(
     extensionSet: md.ExtensionSet.gitHubFlavored,
     encodeHtml: false,
   ).parseLines(source.split('\n'));
+  final List<md.Node> content = stackTables ? _stackTables(nodes) : nodes;
   return SlackCopy(
-    text: nodes.map(_readableText).join().trimRight(),
-    html: nodes.map(_richHtml).join(),
+    text: content.map(_readableText).join().trimRight(),
+    html: content.map(_richHtml).join(),
   );
+}
+
+/// Android Slack can discard preformatted HTML and use proportional text.
+/// Repeating each column label makes long cells readable without alignment.
+/// Transform the AST once so both clipboard representations have the same rows.
+List<md.Node> _stackTables(List<md.Node> nodes) => <md.Node>[
+  for (final md.Node node in nodes)
+    if (node is md.Element && node.tag == 'table')
+      ..._tableParagraphs(node)
+    else if (node is md.Element)
+      md.Element(
+        node.tag,
+        node.children == null ? null : _stackTables(node.children!),
+      )..attributes.addAll(node.attributes)
+    else
+      node,
+];
+
+List<md.Node> _tableParagraphs(md.Element table) {
+  final List<List<md.Node>> rows = tableRows(table);
+  final List<String> labels = <String>[
+    for (int i = 0; i < rows.first.length; i++)
+      _plain(rows.first[i]).trim().isEmpty
+          ? 'Column ${i + 1}'
+          : _plain(rows.first[i]).trim(),
+  ];
+  // A header-only table has no records to invent; retain just its headings.
+  if (rows.length == 1) {
+    return <md.Node>[
+      md.Element('p', <md.Node>[
+        for (int i = 0; i < labels.length; i++) ...<md.Node>[
+          if (i > 0) md.Element.empty('br'),
+          md.Element.text('strong', labels[i]),
+        ],
+      ]),
+    ];
+  }
+  return <md.Node>[
+    for (final List<md.Node> row in rows.skip(1))
+      md.Element('p', <md.Node>[
+        for (int i = 0; i < labels.length; i++) ...<md.Node>[
+          if (i > 0) md.Element.empty('br'),
+          md.Element.text('strong', '${labels[i]}: '),
+          if (row[i] is md.Element)
+            ...(row[i] as md.Element).children ?? <md.Node>[]
+          else
+            row[i],
+        ],
+      ]),
+  ];
 }
 
 String _tableText(md.Element table) {

@@ -108,8 +108,69 @@ void main() {
       expect(find.text('Copied'), findsNothing);
       expect(tester.hasRunningAnimations, isFalse);
       expect(tester.takeException(), isNull);
-    });
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
   }
+  testWidgets('Android message and table menus publish labeled rows', (
+    tester,
+  ) async {
+    final List<Map<Object?, Object?>> writes = <Map<Object?, Object?>>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      richClipboardChannel,
+      (call) async {
+        writes.add(call.arguments as Map<Object?, Object?>);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        richClipboardChannel,
+        null,
+      ),
+    );
+    const String table =
+        '| What | Where |\n| - | - |\n| App | ~/.local/share/app |';
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: const Scaffold(
+          body: SelectionArea(
+            child: Column(
+              children: <Widget>[
+                CopyMenu(text: 'Before\n\n$table\n\nAfter'),
+                CopyMenu(text: table, table: true),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    for (final Finder button in <Finder>[
+      find.byTooltip('Copy message'),
+      find.text('Copy table'),
+    ]) {
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Copy for Slack'));
+      await tester.pumpAndSettle();
+    }
+    expect(writes, hasLength(2));
+    expect(
+      writes.first['text'],
+      'Before\n\nWhat: App\nWhere: ~/.local/share/app\n\nAfter',
+    );
+    expect(writes.last['text'], 'What: App\nWhere: ~/.local/share/app');
+    for (final Map<Object?, Object?> write in writes) {
+      expect(
+        write['html'],
+        contains(
+          '<strong>What: </strong>App<br><strong>Where: </strong>~/.local/share/app',
+        ),
+      );
+      expect(write['html'], isNot(contains('<pre>')));
+    }
+    await tester.pump(const Duration(seconds: 3));
+    expect(tester.takeException(), isNull);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
   testWidgets(
     'rich clipboard failure reports an error without plain-text fallback',
     (tester) async {

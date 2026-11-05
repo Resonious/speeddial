@@ -654,7 +654,10 @@ Performance rules for the app:
   dedicated copy headers excluded from selection, with brief clipboard confirmation.
   Message copy menus offer original Markdown, HTML source, and rich Slack content.
   Slack copies publish HTML and readable plain text together: tables become HTML
-  preformatted blocks, not literal backtick fences. Emphasis, links, lists, quotes,
+  preformatted blocks, not literal backtick fences. Android uses labeled fields
+  grouped by row in both representations because Slack can discard preformatted
+  HTML; long paths and prose wrap without relying on space-aligned columns.
+  Emphasis, links, lists, quotes,
   and code retain HTML structure. `lib/src/clipboard/` uses one browser ClipboardItem
   or the `sh.speeddial/clipboard` native channel: Windows CF_HTML plus UTF-16 text,
   Linux GTK HTML/text targets, Android ClipData.newHtmlText, and iOS pasteboard
