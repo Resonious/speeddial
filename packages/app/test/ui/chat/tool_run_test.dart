@@ -62,6 +62,134 @@ void main() {
       expect(grown.last.id, items.last.id);
     });
 
+    group('images', () {
+      const Attachment shot = Attachment(
+        id: 'shot',
+        name: 'shot.png',
+        mimeType: 'image/png',
+        size: 70,
+      );
+      ToolCall viewed(String id, {Attachment attachment = shot}) => ToolCall(
+        id: id,
+        title: 'View $id',
+        kind: 'read',
+        status: ToolCallStatus.completed,
+        content: <ToolCallContent>[
+          const ToolCallText(text: 'Read image file'),
+          ToolCallImage(attachment: attachment),
+        ],
+        locations: const <String>[],
+      );
+
+      test('an image ends the run and stands on its own', () {
+        final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+          ToolCallEvent(toolCall: _call('a', 'Read a'), seq: 1),
+          ToolCallEvent(toolCall: viewed('b'), seq: 2),
+          ToolCallEvent(toolCall: _call('c', 'Read c'), seq: 3),
+          ToolCallEvent(toolCall: _call('d', 'Read d'), seq: 4),
+        ]);
+
+        expect(items, hasLength(3));
+        final ToolRunItem before = items[0] as ToolRunItem;
+        expect(
+          before.calls.map((ToolCallTimelineItem c) => c.toolCall.id),
+          <String>['a', 'b'],
+        );
+        // Shown once: out in the timeline, not again in the call's details.
+        expect(
+          before.calls.last.toolCall.content.whereType<ToolCallImage>(),
+          isEmpty,
+        );
+        expect(
+          before.calls.last.toolCall.content.whereType<ToolCallText>(),
+          hasLength(1),
+        );
+        expect((items[1] as DisplayedImageItem).attachment.id, 'shot');
+        expect(
+          (items[2] as ToolRunItem).calls.map(
+            (ToolCallTimelineItem c) => c.toolCall.id,
+          ),
+          <String>['c', 'd'],
+        );
+      });
+
+      test('runs keep their identity when a later call brings an image', () {
+        final List<SessionEvent> events = <SessionEvent>[
+          ToolCallEvent(toolCall: _call('a', 'Read a'), seq: 1),
+          ToolCallEvent(
+            toolCall: _call('b', 'View b', status: ToolCallStatus.running),
+            seq: 2,
+          ),
+        ];
+        final List<TimelineItem> before = deriveTimelineItems(events);
+        final List<TimelineItem> after = deriveTimelineItems(<SessionEvent>[
+          ...events,
+          ToolCallEvent(toolCall: viewed('b'), seq: 3),
+        ]);
+
+        expect(after.first.id, before.first.id);
+        expect(after.last, isA<DisplayedImageItem>());
+      });
+
+      test('every image of a call gets its own row', () {
+        const Attachment other = Attachment(
+          id: 'other',
+          name: 'other.png',
+          mimeType: 'image/png',
+          size: 71,
+        );
+        final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+          const ToolCallEvent(
+            toolCall: ToolCall(
+              id: 'a',
+              title: 'Capture',
+              kind: 'other',
+              status: ToolCallStatus.completed,
+              content: <ToolCallContent>[
+                ToolCallImage(attachment: shot),
+                ToolCallImage(attachment: other),
+              ],
+              locations: <String>[],
+            ),
+            seq: 1,
+          ),
+        ]);
+
+        final List<DisplayedImageItem> images = items
+            .whereType<DisplayedImageItem>()
+            .toList();
+        expect(images.map((DisplayedImageItem i) => i.attachment.id), <String>[
+          'shot',
+          'other',
+        ]);
+        expect(
+          images.map((DisplayedImageItem i) => i.id).toSet(),
+          hasLength(2),
+        );
+      });
+
+      test('an image already displayed by event does not show twice', () {
+        // The same bytes under the id `display_image` persisted them with.
+        const Attachment copy = Attachment(
+          id: 'copy',
+          name: 'image.png',
+          mimeType: 'image/png',
+          size: 70,
+        );
+        final List<TimelineItem> items = deriveTimelineItems(<SessionEvent>[
+          ToolCallEvent(toolCall: viewed('a', attachment: copy), seq: 1),
+          const ImageEvent(attachment: shot, seq: 2),
+        ]);
+
+        expect(items.whereType<DisplayedImageItem>(), hasLength(1));
+        expect(
+          (items.first as ToolRunItem).calls.single.toolCall.content
+              .whereType<ToolCallImage>(),
+          hasLength(1),
+        );
+      });
+    });
+
     Widget app(List<ToolCallTimelineItem> calls) => MaterialApp(
       theme: buildSpeedDialTheme(),
       home: Scaffold(

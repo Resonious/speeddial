@@ -688,35 +688,100 @@ String _subagentName(String key) {
 
 /// Folds each stretch of tool calls and thinking into one [ToolRunItem],
 /// keyed by its first step so the cell keeps its place as the run grows.
+///
+/// An image from a tool call ends the run there and stands in the timeline as
+/// a [DisplayedImageItem], so what the agent saw stays easy to scroll back to;
+/// the steps after it start a run of their own.
 List<TimelineItem> _groupToolRuns(List<TimelineItem> items) {
-  // Providers think between calls more often than not, so thinking joins
-  // the run rather than breaking it.
-  bool isStep(TimelineItem item) =>
-      item is ToolCallTimelineItem || item is AgentThoughtItem;
+  // `display_image` reports its image as an event, and its result can carry
+  // the same bytes under another attachment id. Those stay in the call.
+  final Set<(String, int)> displayed = <(String, int)>{
+    for (final DisplayedImageItem item in items.whereType<DisplayedImageItem>())
+      (item.attachment.mimeType, item.attachment.size),
+  };
+  bool shown(ToolCallImage image) =>
+      displayed.contains((image.attachment.mimeType, image.attachment.size));
+
   final List<TimelineItem> grouped = <TimelineItem>[];
-  for (int i = 0; i < items.length;) {
-    final TimelineItem item = items[i];
-    if (!isStep(item)) {
-      grouped.add(item);
-      i++;
-      continue;
-    }
-    int end = i + 1;
-    while (end < items.length && isStep(items[end])) {
-      end++;
-    }
+  List<TimelineItem> steps = <TimelineItem>[];
+  int start = 0;
+  void closeRun() {
+    if (steps.isEmpty) return;
+    final TimelineItem first = steps.first;
     grouped.add(
       ToolRunItem(
         id: (
           'tools',
-          item.id ?? (item is ToolCallTimelineItem ? item.toolCall.id : i),
+          first.id ??
+              (first is ToolCallTimelineItem ? first.toolCall.id : start),
         ),
-        steps: List<TimelineItem>.unmodifiable(items.sublist(i, end)),
+        steps: List<TimelineItem>.unmodifiable(steps),
       ),
     );
-    i = end;
+    steps = <TimelineItem>[];
   }
+
+  for (int i = 0; i < items.length; i++) {
+    final TimelineItem item = items[i];
+    // Providers think between calls more often than not, so thinking joins
+    // the run rather than breaking it.
+    if (item is! ToolCallTimelineItem && item is! AgentThoughtItem) {
+      closeRun();
+      grouped.add(item);
+      continue;
+    }
+    if (steps.isEmpty) start = i;
+    final List<ToolCallImage> images = item is ToolCallTimelineItem
+        ? item.toolCall.content
+              .whereType<ToolCallImage>()
+              .where((ToolCallImage image) => !shown(image))
+              .toList(growable: false)
+        : const <ToolCallImage>[];
+    if (images.isEmpty) {
+      steps.add(item);
+      continue;
+    }
+    final ToolCallTimelineItem call = item as ToolCallTimelineItem;
+    steps.add(_withoutImages(call, images));
+    closeRun();
+    for (int j = 0; j < images.length; j++) {
+      grouped.add(
+        DisplayedImageItem(
+          id: ('tool-image', call.toolCall.id, j),
+          attachment: images[j].attachment,
+        ),
+      );
+    }
+  }
+  closeRun();
   return grouped;
+}
+
+/// [item] with [images] taken out of its details, now they show on their own.
+ToolCallTimelineItem _withoutImages(
+  ToolCallTimelineItem item,
+  List<ToolCallImage> images,
+) {
+  final ToolCall call = item.toolCall;
+  return ToolCallTimelineItem(
+    id: item.id,
+    toolCall: ToolCall(
+      id: call.id,
+      title: call.title,
+      kind: call.kind,
+      status: call.status,
+      content: <ToolCallContent>[
+        for (final ToolCallContent content in call.content)
+          if (!images.contains(content)) content,
+      ],
+      locations: call.locations,
+      rawInput: call.rawInput,
+      rawOutput: call.rawOutput,
+    ),
+    approval: item.approval,
+    active: item.active,
+    startedAt: item.startedAt,
+  );
 }
 
 /// The oven's state for a session: [sending] is true while a message from

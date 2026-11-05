@@ -100,10 +100,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    if (source == 'tool') {
-      await tester.tap(find.text('View image'));
-      await tester.pumpAndSettle();
-    }
     await tester.tap(find.byType(Image));
     await tester.pumpAndSettle();
     expect(find.byType(InteractiveViewer), findsOneWidget);
