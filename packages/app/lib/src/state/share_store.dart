@@ -8,6 +8,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../scope.dart';
 import 'sessions_store.dart';
+import 'settings_store.dart';
 import 'streamed_attachment.dart';
 import 'pull_request_link_store.dart';
 
@@ -301,8 +302,11 @@ class ShareStore extends ChangeNotifier {
         final List<ProviderInfo> providers =
             data.daemonConfig.infoFor(target.daemonId)?.providers ??
             const <ProviderInfo>[];
+        final NewSessionDefaults defaults = data.settings.newSessionDefaultsFor(
+          target.projectId,
+        );
         final ProviderInfo provider = providers.firstWhere(
-          (ProviderInfo p) => p.id == data.settings.providerId && p.available,
+          (ProviderInfo p) => p.id == defaults.providerId && p.available,
           orElse: () => providers.firstWhere((ProviderInfo p) => p.available),
         );
         await data.git.refresh(target.daemonId, target.projectId);
@@ -325,8 +329,8 @@ class ShareStore extends ChangeNotifier {
               provider.sandboxModes.contains(SessionSandboxMode.unrestricted)
               ? SessionSandboxMode.unrestricted
               : null,
-          yolo: data.newSessionYolo,
-          shortPrompt: data.newSessionShortPrompt,
+          yolo: defaults.yolo,
+          shortPrompt: defaults.shortPrompt,
           usedAt: DateTime.now().toUtc(),
         );
       }

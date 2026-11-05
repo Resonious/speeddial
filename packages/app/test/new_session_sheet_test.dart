@@ -516,6 +516,102 @@ void main() {
     expect(app.settings.providerId, 'claude');
   });
 
+  testWidgets('a project reopens with its own choices, not the last used', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = (await pumpSheet(tester)).app;
+
+    // Pick Ante with Short Prompt here, then use something else elsewhere.
+    await tester.tap(find.byKey(const Key('new-session-provider')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ante').last);
+    await tester.pumpAndSettle();
+    final Finder toggle = find.byKey(const Key('new-session-short-prompt'));
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await app.settings.rememberNewSessionDefaults(
+      'other-project',
+      providerId: 'claude',
+      yolo: false,
+      shortPrompt: false,
+    );
+
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+
+    final DropdownButtonFormField<String> picker = tester.widget(
+      find.byKey(const Key('new-session-provider')),
+    );
+    expect(picker.initialValue, 'ante');
+    expect(tester.widget<CheckboxListTile>(toggle).value, isTrue);
+    expect(
+      app.settings.newSessionDefaultsFor('third-project').providerId,
+      'claude',
+    );
+  });
+
+  testWidgets('a project with no memory opens with the last used choices', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = (await pumpSheet(tester)).app;
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await app.settings.rememberNewSessionDefaults(
+      'other-project',
+      providerId: 'ante',
+      yolo: true,
+      shortPrompt: true,
+    );
+
+    await tester.tap(find.text('open-sheet'));
+    await tester.pumpAndSettle();
+
+    final DropdownButtonFormField<String> picker = tester.widget(
+      find.byKey(const Key('new-session-provider')),
+    );
+    expect(picker.initialValue, 'ante');
+    expect(
+      tester
+          .widget<CheckboxListTile>(find.byKey(const Key('new-session-yolo')))
+          .value,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.byKey(const Key('new-session-short-prompt')),
+          )
+          .value,
+      isTrue,
+    );
+  });
+
+  testWidgets('creating with untouched defaults pins them to the project', (
+    WidgetTester tester,
+  ) async {
+    final (:app, :projectId) = await pumpSheet(tester);
+    final String used = tester
+        .widget<DropdownButtonFormField<String>>(
+          find.byKey(const Key('new-session-provider')),
+        )
+        .initialValue!;
+
+    await tester.tap(find.byKey(const Key('new-session-submit')));
+    await tester.pumpAndSettle();
+    final String other = used == 'claude' ? 'codex' : 'claude';
+    await app.settings.rememberNewSessionDefaults(
+      'other-project',
+      providerId: other,
+      yolo: false,
+      shortPrompt: false,
+    );
+
+    expect(app.settings.newSessionDefaultsFor(projectId).providerId, used);
+  });
+
   testWidgets('unchecking the worktree box hides the base branch and keeps '
       'the project cwd', (WidgetTester tester) async {
     final (:app, :projectId) = await pumpSheet(tester);

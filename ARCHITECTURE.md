@@ -417,7 +417,8 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              (per-daemon/session composer text persisted locally),
                              RepliesStore (in-memory replies to selected timeline text, staged
                              per daemon/session until a send succeeds),
-                             SettingsStore (theme mode persisted locally),
+                             SettingsStore (theme mode and per-project new-session
+                             choices persisted locally),
                              EmbeddedDaemonStore (persisted
                              interface/port/token of the built-in daemon; restart
                              errors surfaced for its settings page). Stores NEVER hold

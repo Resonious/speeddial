@@ -410,18 +410,6 @@ class AppData {
   final RepliesStore replies = RepliesStore();
   late final FileTransferStore fileTransfers;
 
-  /// Sticky default for the new-session sheet's "yolo mode" checkbox: the
-  /// sheet seeds its toggle from here and writes back on change, so the
-  /// choice carries over to the next sheet. In-memory only — deliberately
-  /// not persisted across launches, since yolo auto-approves every
-  /// permission request.
-  bool newSessionYolo = false;
-
-  /// Sticky default for the new-session sheet's "Short Prompt" checkbox,
-  /// mirroring [newSessionYolo]: in-memory only, not persisted across
-  /// launches.
-  bool newSessionShortPrompt = false;
-
   /// Endpoint id of the in-process daemon's non-persistent connection.
   static const String embeddedDaemonId = 'embedded';
 

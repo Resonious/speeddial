@@ -5,6 +5,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
 import '../../state/daemon_config_store.dart';
+import '../../state/settings_store.dart';
 import 'branch_picker.dart';
 
 /// Modal sheet used to create a session under [projectId] of [daemonId].
@@ -17,6 +18,9 @@ import 'branch_picker.dart';
 /// composer on the live session, fed by the options the agent advertises
 /// (`Session.models` / `Session.thinkingLevels`), before any message is
 /// sent.
+///
+/// Provider, yolo and Short Prompt start from what this project last used, or
+/// from the last used choice anywhere when the project has no memory yet.
 ///
 /// Provider options come from the daemon's `DaemonInfo`; the created session
 /// is selected in the rail as soon as it exists. [data] is resolved by the
@@ -69,6 +73,7 @@ String _anteProviderLabel(String qualified) {
 class _NewSessionSheetState extends State<NewSessionSheet> {
   bool _started = false;
   bool _loading = false;
+  String? _preferredProviderId;
   String? _providerId;
   ProviderInfo? _selectedProvider;
   String? _modelId;
@@ -87,10 +92,11 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
   @override
   void initState() {
     super.initState();
-    // Sticky across sheet opens: seed from the last choice (kept on
-    // AppData) instead of always starting unchecked.
-    _yolo = widget.data.newSessionYolo;
-    _shortPrompt = widget.data.newSessionShortPrompt;
+    final NewSessionDefaults defaults = widget.data.settings
+        .newSessionDefaultsFor(widget.projectId);
+    _preferredProviderId = defaults.providerId;
+    _yolo = defaults.yolo;
+    _shortPrompt = defaults.shortPrompt;
   }
 
   @override
@@ -153,7 +159,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
     });
   }
 
-  Future<void> _selectProvider(String providerId) async {
+  void _selectProvider(String providerId) {
     setState(() {
       _providerId = providerId;
       // Models are provider-scoped; a stale pick would mismatch the new
@@ -161,11 +167,25 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       _modelId = null;
       _customModel = null;
     });
+    unawaited(_rememberChoices());
+  }
+
+  /// Saves the whole form, so a project's memory is one coherent set of
+  /// choices. Runs on every change, which keeps a pick even if the sheet is
+  /// cancelled, and on create, which covers choices left at their defaults.
+  Future<void> _rememberChoices() async {
+    final String? providerId = _providerId;
+    if (providerId == null) return;
     try {
-      await widget.data.settings.setProviderId(providerId);
+      await widget.data.settings.rememberNewSessionDefaults(
+        widget.projectId,
+        providerId: providerId,
+        yolo: _yolo,
+        shortPrompt: _shortPrompt,
+      );
     } on Object {
       if (!mounted) return;
-      setState(() => _error = 'Failed to save provider preference');
+      setState(() => _error = 'Failed to save session preferences');
     }
   }
 
@@ -203,6 +223,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             ? _customModel
             : _modelId,
       );
+      unawaited(_rememberChoices());
       data.selection.selectSession(
         daemonId: widget.daemonId,
         projectId: session.projectId,
@@ -271,7 +292,7 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
       );
     }
 
-    final String? preferredProviderId = widget.data.settings.providerId;
+    final String? preferredProviderId = _preferredProviderId;
     final bool preferredProviderAvailable = providers.any(
       (ProviderInfo provider) =>
           provider.id == preferredProviderId && provider.available,
@@ -405,12 +426,10 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
           ),
           onChanged: _submitting
               ? null
-              : (bool? value) => setState(() {
-                  _yolo = value ?? false;
-                  // Sticky even when the sheet is cancelled: the next
-                  // sheet seeds from this.
-                  widget.data.newSessionYolo = _yolo;
-                }),
+              : (bool? value) {
+                  setState(() => _yolo = value ?? false);
+                  unawaited(_rememberChoices());
+                },
         ),
         // Ante-only: other harnesses have no prompt-verbosity switch, so
         // the checkbox would be dead weight (the flag is ignored).
@@ -427,12 +446,10 @@ class _NewSessionSheetState extends State<NewSessionSheet> {
             ),
             onChanged: _submitting
                 ? null
-                : (bool? value) => setState(() {
-                    _shortPrompt = value ?? false;
-                    // Sticky even when the sheet is cancelled: the next
-                    // sheet seeds from this.
-                    widget.data.newSessionShortPrompt = _shortPrompt;
-                  }),
+                : (bool? value) {
+                    setState(() => _shortPrompt = value ?? false);
+                    unawaited(_rememberChoices());
+                  },
           ),
         if (_loading) ...<Widget>[
           const SizedBox(height: 12),
