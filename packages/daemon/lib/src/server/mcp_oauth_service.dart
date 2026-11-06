@@ -339,7 +339,12 @@ class McpOAuthService {
           expiresAt: tokens.expiresAt,
           scopes: tokens.scopes,
         );
-        await _onChanged(profile.id);
+        // Agents never see tokens and bridges pick up the new one on their next
+        // call, so a routine rotation must not restart agents. Only a server
+        // recovering from a failure returns to their tool catalogs.
+        if (oauth.status != McpOAuthStatus.authorized) {
+          await _onChanged(profile.id);
+        }
       } on Object catch (error) {
         await _setRefreshFailure(
           profile.id,

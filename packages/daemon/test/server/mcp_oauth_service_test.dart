@@ -115,10 +115,7 @@ void main() {
       '${authorizationUrl.path}',
       base.resolve('/auth0-proxy/authorize').toString(),
     );
-    expect(
-      authorizationUrl.queryParameters['client_id'],
-      'dynamic-client-id',
-    );
+    expect(authorizationUrl.queryParameters['client_id'], 'dynamic-client-id');
     expect(
       authorizationUrl.queryParameters['resource'],
       base.resolve('/mcp').toString(),
@@ -129,6 +126,97 @@ void main() {
       oauth.tokenEndpoint,
       base.resolve('/auth0-tenant/oauth/token').toString(),
     );
+  });
+
+  test('only a refresh that recovers a failed server notifies', () async {
+    final Directory tempDir = await Directory.systemTemp.createTemp(
+      'mcp_oauth_service_test',
+    );
+    final DaemonStore store = DaemonStore(p.join(tempDir.path, 'speeddial.db'));
+    final HttpServer tokenServer = await HttpServer.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+    );
+    final StreamSubscription<HttpRequest> requests = tokenServer.listen((
+      HttpRequest request,
+    ) {
+      unawaited(() async {
+        await request.drain<void>();
+        request.response
+          ..headers.contentType = ContentType.json
+          ..write(
+            jsonEncode(<String, Object?>{
+              'access_token': 'rotated-access-token',
+              'token_type': 'Bearer',
+              'expires_in': 3600,
+            }),
+          );
+        await request.response.close();
+      }());
+    });
+    var changes = 0;
+    final McpOAuthService service = McpOAuthService(
+      store: store,
+      onChanged: (String _) async {
+        changes++;
+      },
+    );
+    addTearDown(() async {
+      service.close();
+      await requests.cancel();
+      await tokenServer.close(force: true);
+      store.dispose();
+      await tempDir.delete(recursive: true);
+    });
+
+    final String origin = 'http://127.0.0.1:${tokenServer.port}';
+    final DateTime now = DateTime.now().toUtc();
+    const String serverId = 'oauth-server';
+    store.insertMcpServer(
+      McpServerProfile(
+        id: serverId,
+        name: 'OAuth server',
+        transport: McpTransport.http,
+        enabled: true,
+        url: '$origin/mcp',
+        authType: McpAuthType.oauth,
+        secretNames: const <String>[],
+        createdAt: now,
+        updatedAt: now,
+      ),
+      const <String, String>{},
+    );
+    store.setMcpOAuthDiscovery(
+      serverId,
+      authorizationServer: origin,
+      authorizationEndpoint: '$origin/authorize',
+      tokenEndpoint: '$origin/token',
+      resource: '$origin/mcp',
+    );
+    store.setMcpOAuthClient(
+      serverId,
+      clientId: 'client-id',
+      tokenEndpointAuthMethod: 'none',
+      redirectUri: 'http://127.0.0.1:7331/oauth/callback',
+    );
+    void expireToken() => store.setMcpOAuthTokens(
+      serverId,
+      accessToken: 'expiring-access-token',
+      refreshToken: 'refresh-token',
+      expiresAt: now.subtract(const Duration(minutes: 1)),
+      scopes: const <String>['mcp:tools'],
+    );
+
+    expireToken();
+    await service.refreshEnabled();
+    expect(store.getMcpOAuth(serverId)!.accessToken, 'rotated-access-token');
+    expect(changes, 0, reason: 'a routine rotation must not reload sessions');
+
+    expireToken();
+    store.setMcpOAuthStatus(serverId, McpOAuthStatus.error, error: 'failed');
+    await service.refreshEnabled();
+    expect(store.getMcpOAuth(serverId)!.status, McpOAuthStatus.authorized);
+    expect(changes, 1, reason: 'recovered tools must reach agent catalogs');
   });
 
   test('identical OAuth refresh failures notify only once', () async {

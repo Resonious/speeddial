@@ -174,6 +174,8 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     catalog. LiveMcpProxy checks matching saved profiles and effective credentials
                     before each bridge listing/invocation, replacing stale McpProxySession
                     snapshots even during running turns or for agents that cannot resume.
+                    Upstreams whose connection inputs are unchanged move to the new snapshot, so
+                    one server's edit or token rotation never restarts stateful stdio servers.
                     In-flight operations retain their old snapshot until they finish; retired
                     upstreams then close without interrupting or replaying calls.
                     OAuth callbacks can
@@ -186,7 +188,8 @@ lib/src/mcp/        BuiltInMcpServer: daemon-owned stdio MCP JSON-RPC subprocess
                     existing single-project scopes without changing access. Settings show explicit
                     “Available to” labels and a multi-select project editor. HTTP OAuth 2.1 authorization-code + S256
                     PKCE discovery, registration, callback handling, and refresh live in
-                    server/mcp_oauth_service.dart. Repeated identical refresh failures remain
+                    server/mcp_oauth_service.dart. Routine token refreshes park no agents; only
+                    recovery from a failed status does. Repeated identical refresh failures remain
                     retryable without repeatedly parking the project's agent sessions.
 lib/src/providers/  Provider registry. Built-ins:
                       omp    → ["omp", "acp"]                              (ACP)

@@ -543,9 +543,11 @@ existing authenticated bridge, preserving its result and error status. These too
 when a harness has cached a startup catalog that omitted an unavailable upstream; calls are never
 automatically replayed. Each bridge listing or invocation checks the current enabled profiles for
 its project, including effective OAuth credentials. Changed configuration replaces its upstream
-snapshot without requiring the agent to resume or the bridge to reauthenticate. Operations already
-in flight finish on their original snapshot, whose connections then close; subsequent operations
-use the new configuration. OAuth authorization and successful bridge startup do not guarantee that
+snapshot without requiring the agent to resume or the bridge to reauthenticate. Only upstreams whose
+transport, command, arguments, URL, or credentials changed reconnect; the new snapshot adopts every
+other open connection, so stateful stdio servers survive unrelated changes. Operations already
+in flight finish on their original snapshot, whose remaining connections then close; subsequent
+operations use the new configuration. OAuth authorization and successful bridge startup do not guarantee that
 an upstream's tool discovery succeeded. These are MCP tools, not public app/daemon RPC methods.
 When injecting `speeddial`, Codex thread creation and resume also receive explicit developer
 instructions to discover external integrations before falling back to web access or reporting
@@ -561,8 +563,9 @@ profile change reloads every compatible session; a selected-project change reloa
 in the union of its previous and new project scopes. Idle resume-capable agents are parked immediately and running agents before their
 following turn. Agents without resume support retain their process and harness tool catalog, but
 bridge discovery and invocation still pick up saved changes. All new sessions receive the saved
-configuration. OAuth refresh failures remain retryable, but an unchanged repeated
-failure does not trigger another agent reload.
+configuration. A routine OAuth token refresh reloads no agents, because bridges pick up the new
+token on their next operation; only a refresh that recovers a failed server does. OAuth refresh
+failures remain retryable, but an unchanged repeated failure does not trigger another agent reload.
 
 Because `ante serve` ignores the settings default provider/model when `StartSession` carries no
 model (it resolves the subscription instead), the daemon reseeds new sessions with the Ante

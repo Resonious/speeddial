@@ -29,8 +29,11 @@ class McpProxySession {
     required this.cwd,
     this.discoveryTimeout = const Duration(seconds: 15),
     McpUpstreamConnector? connector,
+    Map<String, McpUpstreamConnection> adopted =
+        const <String, McpUpstreamConnection>{},
   }) : _servers = List<StoredMcpServer>.unmodifiable(servers),
-       _connector = connector ?? connectMcpUpstream;
+       _connector = connector ?? connectMcpUpstream,
+       _connections = Map<String, McpUpstreamConnection>.of(adopted);
 
   final List<StoredMcpServer> _servers;
   final String cwd;
@@ -39,8 +42,10 @@ class McpProxySession {
   /// Leave headroom below the agent's 30-second bridge startup timeout.
   final Duration discoveryTimeout;
   final McpUpstreamConnector _connector;
-  final Map<String, McpUpstreamConnection> _connections =
-      <String, McpUpstreamConnection>{};
+
+  /// Open upstreams by server id. This session closes only what is still here;
+  /// see [releaseConnection].
+  final Map<String, McpUpstreamConnection> _connections;
   final Map<String, _ToolRoute> _routes = <String, _ToolRoute>{};
   Future<McpProxyListResult>? _listing;
   bool _closed = false;
@@ -183,8 +188,9 @@ class McpProxySession {
     } on Object catch (error) {
       abandoned = true;
       final McpUpstreamConnection? upstream = connection;
-      if (upstream != null) {
-        if (identical(_connections[id], upstream)) _connections.remove(id);
+      // A connection released mid-discovery now belongs to its adopter.
+      if (upstream != null && identical(_connections[id], upstream)) {
+        _connections.remove(id);
         unawaited(_closeUpstream(upstream));
       }
       return _ServerTools(stored: stored, error: error);
@@ -216,6 +222,12 @@ class McpProxySession {
       };
     }
   }
+
+  /// Hands the open upstream for [serverId] to a successor session, or returns
+  /// null if there is none. Operations already routed to it keep working, but
+  /// this session no longer closes it.
+  McpUpstreamConnection? releaseConnection(String serverId) =>
+      _connections.remove(serverId);
 
   Future<void> close() async {
     if (_closed) return;
