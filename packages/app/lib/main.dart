@@ -11,6 +11,7 @@ import 'src/state/embedded_daemon_store.dart';
 import 'src/state/session_link_store.dart';
 import 'src/scope.dart';
 import 'src/theme.dart';
+import 'src/ui/hover_reset.dart';
 import 'src/ui/native_title_bar.dart';
 import 'src/ui/session_link_navigation.dart';
 import 'src/ui/shell.dart';
@@ -274,6 +275,8 @@ class _SpeedDialAppState extends State<SpeedDialApp>
           return SessionLinkNavigation(
             open: _openSessionLink,
             child: MaterialApp(
+              builder: (BuildContext context, Widget? child) =>
+                  HoverReset(child: child ?? const SizedBox.shrink()),
               navigatorKey: _navigator,
               // Session links select within the existing shell; they do not
               // create a second Navigator route on cold launch.

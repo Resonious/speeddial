@@ -357,6 +357,11 @@ WebSocket except `serve` and `token`:
 
 ## App
 
+`HoverReset` wraps the app navigator and clears abandoned mouse/stylus hover
+tracking on touch input or loss of app focus. This dismisses tooltips and prevents
+layout changes from triggering them at a stale pointer position. Real pointer
+events restore hover tracking; touch long-press tooltips remain available.
+
 The desktop embedded daemon owns its engine, SQLite store, and WebSocket server
 on a dedicated Dart isolate. The UI exchanges only startup configuration, endpoint,
 errors, and shutdown signals with that worker; regular requests still use WebSocket
