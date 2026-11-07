@@ -312,7 +312,12 @@ class _ImageThumbnail extends StatelessWidget {
       return _AttachmentMetaRow(attachment: attachment);
     }
     return GestureDetector(
-      onTap: () => showImageViewer(context, bytes, attachment.name),
+      onTap: () => showImageViewer(
+        context,
+        bytes,
+        attachment.name,
+        mimeType: attachment.mimeType,
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: Image.memory(

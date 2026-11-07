@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speeddial_app/src/theme.dart';
+import 'package:speeddial_app/src/ui/chat/image_viewer.dart';
 import 'package:speeddial_app/src/ui/chat/timeline.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -47,6 +48,7 @@ void main() {
   Future<void> open(
     WidgetTester tester, {
     String source = 'agent',
+    Attachment attachment = _attachment,
     bool dark = true,
     bool reducedMotion = false,
     double width = 390,
@@ -57,23 +59,23 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final SessionEvent event = switch (source) {
-      'user' => const UserMessageEvent(
+      'user' => UserMessageEvent(
         text: 'Attached image',
-        attachments: <Attachment>[_attachment],
+        attachments: <Attachment>[attachment],
         seq: 1,
       ),
-      'tool' => const ToolCallEvent(
+      'tool' => ToolCallEvent(
         toolCall: ToolCall(
           id: 'view',
           title: 'View image',
           kind: 'read',
           status: ToolCallStatus.completed,
-          content: <ToolCallContent>[ToolCallImage(attachment: _attachment)],
+          content: <ToolCallContent>[ToolCallImage(attachment: attachment)],
           locations: <String>[],
         ),
         seq: 1,
       ),
-      _ => const ImageEvent(attachment: _attachment, seq: 1),
+      _ => ImageEvent(attachment: attachment, seq: 1),
     };
     await tester.pumpWidget(
       MaterialApp(
@@ -90,8 +92,8 @@ void main() {
             items: deriveTimelineItems(<SessionEvent>[event]),
             attachmentLoader: (String id) async => AttachmentData(
               id: id,
-              name: _attachment.name,
-              mimeType: _attachment.mimeType,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
               size: base64Decode(_png).length,
               data: _png,
             ),
@@ -144,6 +146,57 @@ void main() {
       expect(find.byType(InteractiveViewer), findsNothing);
     }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
   }
+
+  for (final String source in <String>['user', 'agent', 'tool']) {
+    testWidgets('$source extensionless image suggests a PNG filename', (
+      WidgetTester tester,
+    ) async {
+      await open(
+        tester,
+        source: source,
+        attachment: const Attachment(
+          id: 'image',
+          name: 'generated-image',
+          mimeType: 'image/png',
+          size: 70,
+        ),
+      );
+      await tester.tap(find.byTooltip('Download image'));
+      await tester.pump();
+      expect(picker.suggestedName, 'generated-image.png');
+      picker.result.complete(null);
+      await tester.pumpAndSettle();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+  }
+
+  test('image download suffixes follow the MIME type', () {
+    for (final String extension in <String>[
+      'png',
+      'gif',
+      'webp',
+      'bmp',
+      'avif',
+      'heic',
+      'heif',
+    ]) {
+      expect(
+        imageDownloadName('image', 'image/$extension'),
+        'image.$extension',
+      );
+    }
+    expect(imageDownloadName('photo', 'image/jpeg'), 'photo.jpg');
+    expect(imageDownloadName('photo.JPEG', 'image/jpeg'), 'photo.JPEG');
+    expect(imageDownloadName('diagram', 'image/svg+xml'), 'diagram.svg');
+    expect(imageDownloadName('scan', 'image/tiff'), 'scan.tiff');
+    expect(imageDownloadName('icon', 'image/vnd.microsoft.icon'), 'icon.ico');
+    expect(
+      imageDownloadName('render.v2', 'Image/PNG; charset=binary'),
+      'render.v2.png',
+    );
+    expect(imageDownloadName('/tmp/image', 'image/png'), 'image.png');
+    expect(imageDownloadName('...', 'image/png'), 'image.png');
+    expect(imageDownloadName('image', 'application/octet-stream'), 'image');
+  });
 
   for (final bool dark in <bool>[true, false]) {
     for (final double width in <double>[390, 1440]) {

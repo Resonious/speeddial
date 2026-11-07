@@ -505,7 +505,8 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              MCP-displayed images with lazy attachment payload loading,
                              a shared full-screen image viewer (`chat/image_viewer.dart`)
                              for user, agent, and tool images with pan/zoom and original-byte
-                             downloads through the platform saver,
+                             downloads through the platform saver (adding an image extension from attachment
+                             MIME metadata when the display name lacks one),
                              markdown + syntax-highlighted code blocks, Mermaid flowcharts drawn
                              natively (`chat/mermaid/`: subset parser, layered layout, painter;
                              anything unsupported stays a code block), MCP `show_explainer`

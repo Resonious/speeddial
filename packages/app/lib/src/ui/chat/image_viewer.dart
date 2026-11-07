@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../files/downloaded_file_saver.dart';
 
@@ -8,13 +9,40 @@ import '../../files/downloaded_file_saver.dart';
 Future<void> showImageViewer(
   BuildContext context,
   Uint8List bytes,
-  String name,
-) => showDialog<void>(
+  String name, {
+  required String mimeType,
+}) => showDialog<void>(
   context: context,
   builder: (BuildContext context) => Dialog.fullscreen(
-    child: _ImageViewer(bytes: bytes, name: name),
+    child: _ImageViewer(bytes: bytes, name: imageDownloadName(name, mimeType)),
   ),
 );
+
+/// Keep image filenames intact; display labels need a suffix before saving.
+String imageDownloadName(String name, String mimeType) {
+  final String basename = name.split(RegExp(r'[/\\]')).last.trim();
+  if (isImageMimeType(mimeTypeForFileName(basename))) return basename;
+  final String type = mimeType.split(';').first.trim().toLowerCase();
+  final String? extension = switch (type) {
+    'image/png' => 'png',
+    'image/jpeg' || 'image/jpg' => 'jpg',
+    'image/gif' => 'gif',
+    'image/webp' => 'webp',
+    'image/bmp' => 'bmp',
+    'image/x-icon' || 'image/vnd.microsoft.icon' => 'ico',
+    'image/svg+xml' => 'svg',
+    'image/tiff' => 'tiff',
+    'image/avif' => 'avif',
+    'image/heic' => 'heic',
+    'image/heif' => 'heif',
+    _ => null,
+  };
+  if (extension == null || basename.toLowerCase().endsWith('.$extension')) {
+    return basename;
+  }
+  final String stem = basename.replaceFirst(RegExp(r'\.+$'), '');
+  return '${stem.isEmpty ? 'image' : stem}.$extension';
+}
 
 class _ImageViewer extends StatefulWidget {
   const _ImageViewer({required this.bytes, required this.name});
