@@ -537,6 +537,54 @@ void main() {
       },
     );
 
+    test('Try again explicitly resends the failed preparation queue', () async {
+      engine.configureMcpAuth(
+        prepare: () async {
+          throw StateError('startup unavailable');
+        },
+      );
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+        prepareInBackground: true,
+      );
+      await engine.sendMessage(session.id, 'weird');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      final error = store
+          .listEvents(session.id)
+          .events
+          .whereType<SessionErrorEvent>()
+          .single;
+      expect(error.retryMessageSeq, isNotNull);
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeProviders());
+      await engine.restore();
+      expect(
+        store
+            .listEvents(session.id)
+            .events
+            .whereType<SessionErrorEvent>()
+            .last
+            .retryMessageSeq,
+        error.retryMessageSeq,
+      );
+      engine.configureMcpAuth(prepare: () async {});
+      await engine.retryMessage(session.id, error.retryMessageSeq!);
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      expect(
+        store
+            .listEvents(session.id)
+            .events
+            .whereType<UserMessageEvent>()
+            .map((e) => e.text),
+        ['weird', 'weird'],
+      );
+    });
+
     test('a failed Ante start can pick another model and retry', () async {
       await eventsSub.cancel();
       await engine.dispose();
@@ -819,6 +867,113 @@ void main() {
     );
   }
 
+  test(
+    'authentication rejection retries saved text and attachments after reload',
+    () async {
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      final failure = File(p.join(tempDir.path, 'agent.reject_auth'))
+        ..writeAsStringSync('');
+      final upload = engine.uploads.begin(kMaxAttachmentBytes + 1);
+      for (int offset = 0; offset < kMaxAttachmentBytes + 1;) {
+        final length = (kMaxAttachmentBytes + 1 - offset).clamp(
+          0,
+          kMaxUploadChunkBytes,
+        );
+        await engine.uploads.append(
+          upload,
+          offset,
+          List<int>.filled(length, 7),
+        );
+        offset += length;
+      }
+      await engine.sendMessage(
+        session.id,
+        'weird',
+        attachments: <OutgoingAttachment>[
+          OutgoingAttachment(
+            name: 'notes.txt',
+            mimeType: 'text/plain',
+            data: base64Encode(utf8.encode('Original attachment')),
+          ),
+          OutgoingAttachment(
+            name: 'archive.bin',
+            mimeType: 'application/octet-stream',
+            uploadId: upload,
+          ),
+        ],
+      );
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      final history = store.listEvents(session.id).events;
+      final original = history.whereType<UserMessageEvent>().single;
+      final error = history.whereType<SessionErrorEvent>().single;
+      expect(history.whereType<AgentMessageChunkEvent>(), isNotEmpty);
+      expect(error.retryMessageSeq, original.seq);
+      final storedFile = store.attachmentFile(
+        session.id,
+        original.attachments.last.id,
+      )!;
+      expect(File(storedFile).lengthSync(), kMaxAttachmentBytes + 1);
+      final prompt = File(p.join(tempDir.path, 'agent.last_prompt.json'))
+          .readAsStringSync();
+      await engine.dispose();
+      engine = SessionEngine(store: store, providers: fakeProviders());
+      await engine.restore();
+      failure.deleteSync();
+      await engine.retryMessage(session.id, original.seq!);
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.idle,
+      );
+      final retried = store
+          .listEvents(session.id)
+          .events
+          .whereType<UserMessageEvent>()
+          .last;
+      expect(retried.text, original.text);
+      expect(
+        retried.attachments.map((a) => a.id),
+        original.attachments.map((a) => a.id),
+      );
+      expect(
+        File(p.join(tempDir.path, 'agent.last_prompt.json')).readAsStringSync(),
+        prompt,
+      );
+      await expectLater(
+        engine.retryMessage(session.id, original.seq!),
+        throwsA(isA<DaemonError>()),
+      );
+    },
+  );
+
+  test(
+    'authentication failure after agent work retains Continue semantics',
+    () async {
+      final session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      File(p.join(tempDir.path, 'agent.reject_auth'))
+          .writeAsStringSync('worked');
+      await engine.sendMessage(session.id, 'weird');
+      await waitFor(
+        () => store.getSession(session.id)!.status == SessionStatus.error,
+      );
+      expect(
+        store
+            .listEvents(session.id)
+            .events
+            .whereType<SessionErrorEvent>()
+            .single
+            .retryMessageSeq,
+        isNull,
+      );
+    },
+  );
+
   test('ACP request errors do not claim the process exited', () async {
     final session = await engine.createSession(
       projectId: project.id,
@@ -836,6 +991,20 @@ void main() {
           .single
           .message,
       'Agent request failed: Unrelated conflict',
+    );
+    expect(
+      store
+          .listEvents(session.id)
+          .events
+          .whereType<SessionErrorEvent>()
+          .single
+          .retryMessageSeq,
+      store
+          .listEvents(session.id)
+          .events
+          .whereType<UserMessageEvent>()
+          .single
+          .seq,
     );
     await engine.sendMessage(session.id, 'busy-once');
     await waitFor(

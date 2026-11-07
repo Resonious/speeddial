@@ -188,6 +188,7 @@ void main() {
     (
       event: SessionErrorEvent(
         message: 'agent crashed',
+        retryMessageSeq: 8,
         seq: 10,
         timestamp: timestamp,
       ),

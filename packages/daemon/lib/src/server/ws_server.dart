@@ -70,6 +70,7 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.create',
   'sessions.fork',
   'sessions.send',
+  'sessions.retry',
   'sessions.commands',
   'sessions.command',
   'sessions.cancel',
@@ -545,6 +546,7 @@ class SpeedDialServer {
       'sessions.create' => _sessionsCreate(params),
       'sessions.fork' => _sessionsFork(params),
       'sessions.send' => _sessionsSend(params),
+      'sessions.retry' => _sessionsRetry(params),
       'sessions.commands' => _sessionsCommands(params),
       'sessions.command' => _sessionsCommand(params),
       'sessions.cancel' => _sessionsCancel(params),
@@ -1491,6 +1493,18 @@ class SpeedDialServer {
       name,
       arguments: rawArguments as String? ?? '',
     );
+    return <String, Object?>{};
+  }
+
+  Future<Object?> _sessionsRetry(Map<String, Object?> params) async {
+    final seq = params['seq'];
+    if (seq is! int || seq < 1) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: seq',
+      );
+    }
+    await _engine.retryMessage(_requiredString(params, 'sessionId'), seq);
     return <String, Object?>{};
   }
 

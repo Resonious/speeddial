@@ -1003,6 +1003,14 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   }
 
   @override
+  Future<void> retryMessage(String sessionId, int seq) async {
+    await _requirePeer().call('sessions.retry', <String, Object?>{
+      'sessionId': sessionId,
+      'seq': seq,
+    });
+  }
+
+  @override
   Future<void> sendMessage(
     String sessionId,
     String text, {

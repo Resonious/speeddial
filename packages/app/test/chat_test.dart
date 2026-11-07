@@ -113,6 +113,90 @@ void main() {
     return (app, fakeClient);
   }
 
+  testWidgets('Try again resends rejected input and preserves the draft', (
+    tester,
+  ) async {
+    final fake = _ContinueFake();
+    final (app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const UserMessageEvent(text: 'Is backup replicating okay?'),
+    );
+    await tester.pumpAndSettle();
+    final original = app.chat
+        .eventsFor('sess-1')
+        .whereType<UserMessageEvent>()
+        .last;
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const AgentMessageChunkEvent(
+        text: 'Failed to authenticate: sign in again.',
+      ),
+    );
+    fake.emitBackgroundEvent(
+      'sess-1',
+      SessionErrorEvent(
+        message: 'Authentication required',
+        retryMessageSeq: original.seq,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Continue'), findsNothing);
+    await tester.enterText(find.byType(TextField), 'My unfinished draft');
+    await tester.tap(find.text('Try again'));
+    await tester.tap(find.text('Try again'));
+    await tester.pump();
+    expect(fake.sends, <String>['Is backup replicating okay?']);
+    expect(find.text('Try again'), findsNothing);
+    expect(find.text('My unfinished draft'), findsOneWidget);
+    fake.gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      app.chat.eventsFor('sess-1').whereType<UserMessageEvent>().last.text,
+      original.text,
+    );
+    expect(find.text('My unfinished draft'), findsOneWidget);
+  });
+
+  testWidgets('Try again failure is visible and remains retryable', (
+    tester,
+  ) async {
+    final fake = _ContinueFake()..fail = true;
+    final (app, _) = await pumpChat(tester, fake: fake);
+    addTearDown(app.dispose);
+    fake.emitBackgroundEvent(
+      'sess-1',
+      const UserMessageEvent(text: 'Original request'),
+    );
+    await tester.pumpAndSettle();
+    final original = app.chat
+        .eventsFor('sess-1')
+        .whereType<UserMessageEvent>()
+        .last;
+    fake.emitBackgroundEvent(
+      'sess-1',
+      SessionErrorEvent(
+        message: 'Authentication required',
+        retryMessageSeq: original.seq,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Try again'));
+    fake.gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Could not try again: Bad state: send failed'),
+      findsOneWidget,
+    );
+    expect(app.chat.lastError, isA<StateError>());
+    expect(find.text('Try again'), findsOneWidget);
+    fake.fail = false;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(fake.sends, <String>['Original request', 'Original request']);
+  });
+
   testWidgets('Continue resumes an error without changing the draft', (
     WidgetTester tester,
   ) async {

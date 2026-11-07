@@ -508,13 +508,22 @@ class TurnCompleteEvent extends SessionEvent {
 
 /// The session hit an unrecoverable error.
 class SessionErrorEvent extends SessionEvent {
-  const SessionErrorEvent({required this.message, super.seq, super.timestamp});
+  const SessionErrorEvent({
+    required this.message,
+    this.retryMessageSeq,
+    super.seq,
+    super.timestamp,
+  });
 
   final String message;
+
+  /// Original input to resend after a rejected request or failed preparation.
+  final int? retryMessageSeq;
 
   factory SessionErrorEvent.fromJson(Map<String, Object?> json) =>
       SessionErrorEvent(
         message: json['message']! as String,
+        retryMessageSeq: json['retryMessageSeq'] as int?,
         seq: json['seq'] as int?,
         timestamp: _parseTimestamp(json['timestamp']),
       );
@@ -526,6 +535,7 @@ class SessionErrorEvent extends SessionEvent {
     return <String, Object?>{
       'type': 'sessionError',
       'message': message,
+      'retryMessageSeq': ?retryMessageSeq,
       'seq': ?localSeq,
       if (localTimestamp != null) 'timestamp': _formatTimestamp(localTimestamp),
     };

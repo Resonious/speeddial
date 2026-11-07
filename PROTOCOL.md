@@ -292,7 +292,7 @@ SessionEvent =
   | { type: "usage", usage: UsageInfo }
   | { type: "agentActivity", activity: AgentActivity } // provider lifecycle/background activity; snapshots match by activity.id
   | { type: "turnComplete", stopReason: string }       // "end_turn" | "cancelled" | "refusal" | "max_tokens" | ...
-  | { type: "sessionError", message: string }
+  | { type: "sessionError", message: string, retryMessageSeq?: int } // rejected input eligible for sessions.retry
 
 ToolCall = {
   id: string, title: string,
@@ -703,6 +703,18 @@ Agent task-progress `plan` events remain supported.
   of selecting a different provider. Forks created by older daemons without either identity
   must be recreated from the original session.
   The source session and its agent remain unchanged.
+- `sessions.retry {sessionId: string, seq: int}` → `{}` — resends the saved user
+  message and its original attachments, including file-backed uploads, without reuploading.
+  `seq` must equal `retryMessageSeq` on the latest history event, which must be a
+  `sessionError`; otherwise returns `-32003`. Missing original input/attachments returns
+  `-32002`. Uses the same turn-start acknowledgement and busy checks as `sessions.send`.
+  The daemon supplies `retryMessageSeq` for failed queued preparation and ACP request
+  rejection before agent output/work. ACP authentication-required (-32000) errors may
+  include diagnostic text and still qualify, provided no thoughts, tools, permissions,
+  plans, images or explainers were produced. Transport failures and failures after work
+  retain Continue semantics; silence alone is not evidence of non-delivery.
+  Clients show “Try again” when the field is present and “Continue” otherwise. The field
+  survives history reload; older events without it retain their existing behavior.
 - `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
   While `preparing`, accepts one queued message (including attachments), persists it, sets
   status `running`, and acknowledges immediately. A second send returns `-32003`. The queued

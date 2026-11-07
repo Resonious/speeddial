@@ -457,6 +457,28 @@ Future<void> _runTurn(
   }
   final text = _promptText(promptParams);
 
+  final authFailure = File(p.join(cwd, 'agent.reject_auth'));
+  if (authFailure.existsSync()) {
+    if (authFailure.readAsStringSync() == 'worked') {
+      await _sendUpdate(<String, Object?>{
+        'sessionUpdate': 'agent_thought_chunk',
+        'content': <String, Object?>{
+          'type': 'text',
+          'text': 'Working on the request.',
+        },
+      });
+    }
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'agent_message_chunk',
+      'content': <String, Object?>{
+        'type': 'text',
+        'text': 'Failed to authenticate: sign in again.',
+      },
+    });
+    _pendingPrompts.remove(promptId);
+    return _sendError(promptId, -32000, 'Authentication required');
+  }
+
   if (text == 'busy-once' || text == 'busy-always' || text == 'rpc-error') {
     final marker = File(p.join(cwd, 'agent.busy_attempts'));
     final attempts = marker.existsSync()

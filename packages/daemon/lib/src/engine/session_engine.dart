@@ -85,6 +85,9 @@ class _LiveSession {
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
   bool maintaining = false;
+  int? userMessageSeq;
+  bool agentResponded = false;
+  bool agentWorked = false;
 
   /// Present only for an active turn when completion notifications are on.
   FinalReply? finalReply;
@@ -406,6 +409,9 @@ class SessionEngine {
         session.id,
         seq,
         SessionErrorEvent(
+          retryMessageSeq: session.preparing
+              ? _pendingUserMessage(session.id)?.seq
+              : null,
           message: session.preparing
               ? 'Daemon restarted during preparation. Send a message to retry; queued messages were not sent.'
               : 'Daemon restarted before the turn completed',
@@ -683,6 +689,9 @@ class SessionEngine {
               SessionErrorEvent(
                 message:
                     'Session preparation failed: $error. Send a message to retry; queued messages were not sent.',
+                retryMessageSeq: preparation.queued == null
+                    ? null
+                    : _pendingUserMessage(session.id)?.seq,
               ),
             );
             final List<String> models = await _modelsAfterFailedStart(session);
@@ -1244,6 +1253,76 @@ class SessionEngine {
     );
   }
 
+  UserMessageEvent? _pendingUserMessage(String sessionId) {
+    int? beforeSeq;
+    while (true) {
+      final page = _store.listEvents(sessionId, beforeSeq: beforeSeq);
+      for (final event in page.events.reversed) {
+        if (event is UserMessageEvent) return event;
+        if (event is SessionErrorEvent && event.retryMessageSeq != null) {
+          final original = _store
+              .listEvents(
+                sessionId,
+                limit: 1,
+                beforeSeq: event.retryMessageSeq! + 1,
+              )
+              .events;
+          return original.singleOrNull is UserMessageEvent &&
+                  original.single.seq == event.retryMessageSeq
+              ? original.single as UserMessageEvent
+              : null;
+        }
+        if (event is TurnCompleteEvent || event is SessionErrorEvent) {
+          return null;
+        }
+      }
+      if (!page.hasMore) return null;
+      beforeSeq = page.events.first.seq;
+    }
+  }
+
+  /// Retries only the input identified by the latest persisted failure.
+  Future<void> retryMessage(String sessionId, int seq) async {
+    final latest = _store.listEvents(sessionId, limit: 1).events;
+    if (latest.isEmpty ||
+        latest.single is! SessionErrorEvent ||
+        (latest.single as SessionErrorEvent).retryMessageSeq != seq) {
+      throw DaemonError(kErrConflict, 'This message is no longer retryable');
+    }
+    final events = _store
+        .listEvents(sessionId, limit: 1, beforeSeq: seq + 1)
+        .events;
+    if (events.isEmpty ||
+        events.single is! UserMessageEvent ||
+        events.single.seq != seq) {
+      throw DaemonError(kErrNotFound, 'Original message not found');
+    }
+    final message = events.single as UserMessageEvent;
+    final prepared = <_PreparedAttachment>[];
+    for (final attachment in message.attachments) {
+      final data = _store.getAttachment(sessionId, attachment.id);
+      if (data == null) {
+        throw DaemonError(kErrNotFound, 'Original attachment not found');
+      }
+      final file = _store.attachmentFile(sessionId, attachment.id);
+      prepared.add(
+        _PreparedAttachment(
+          data: data,
+          path: file,
+          text: file == null && isTextMimeType(data.mimeType)
+              ? utf8.decode(base64Decode(data.data))
+              : null,
+        ),
+      );
+    }
+    await _sendMessage(
+      sessionId,
+      message.text,
+      preparedAttachments: prepared,
+      retrySeq: seq,
+    );
+  }
+
   /// Starts a turn for [text] with the attached files. When the session's
   /// agent process is gone (exited or daemon restarted), it is first
   /// respawned and resumed through its provider — see [_resume]. Errors
@@ -1262,6 +1341,14 @@ class SessionEngine {
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+  }) => _sendMessage(sessionId, text, attachments: attachments);
+
+  Future<void> _sendMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
+    List<_PreparedAttachment>? preparedAttachments,
+    int? retrySeq,
   }) => _withSessionOperation(() async {
     final stored = _store.getSession(sessionId);
     if (stored?.preparing == true) {
@@ -1278,7 +1365,8 @@ class SessionEngine {
           'A message is already queued for this session',
         );
       }
-      final prepared = _prepareAttachments(sessionId, attachments);
+      final prepared =
+          preparedAttachments ?? _prepareAttachments(sessionId, attachments);
       preparation.queued = (text: text, attachments: prepared);
       _emitForSession(
         sessionId,
@@ -1337,13 +1425,22 @@ class SessionEngine {
         'A turn is already running for session "$sessionId"',
       );
     }
+    if (retrySeq != null) {
+      final latest = _store.listEvents(sessionId, limit: 1).events;
+      if (latest.isEmpty ||
+          latest.single is! SessionErrorEvent ||
+          (latest.single as SessionErrorEvent).retryMessageSeq != retrySeq) {
+        throw DaemonError(kErrConflict, 'This message is no longer retryable');
+      }
+    }
     final _ForkContext? forkContext = _prepareForkContext(sessionId);
     // Decode and persist each attachment before the turn starts so the
     // metadata rides on the user message event and the payload is fetchable
     // via `attachments.read`. The wire handler has already validated the
     // base64 and the size caps; the defensive decoding here turns a malformed
     // payload into a clean -32602 instead of an internal error.
-    final prepared = _prepareAttachments(sessionId, attachments);
+    final prepared =
+        preparedAttachments ?? _prepareAttachments(sessionId, attachments);
     // Persist the user message, name the session if needed, and flip to
     // running synchronously — every failure mode below happens before any
     // agent I/O, so the caller learns it from this future rather than after
@@ -2472,8 +2569,13 @@ class SessionEngine {
     live.finalReply = _onTurnComplete == null ? null : FinalReply();
     _toolCalls[sessionId] = <String, ToolCall>{};
     _toolCallImages[sessionId] = <String, Attachment>{};
+    live.agentResponded = false;
+    live.agentWorked = false;
     live.activityIds.clear();
     _breakSyntheticContent(live);
+    live.userMessageSeq = alreadyPersisted
+        ? _pendingUserMessage(sessionId)?.seq
+        : _store.nextSeq(sessionId);
     if (!alreadyPersisted) {
       _emit(
         live,
@@ -2534,7 +2636,20 @@ class SessionEngine {
         // respondPermission reports kErrNotFound and cannot flip the failed
         // session back to running.
         _expirePendingPermissions(live, message);
-        _emit(live, SessionErrorEvent(message: message));
+        _emit(
+          live,
+          SessionErrorEvent(
+            message: message,
+            // ACP authentication rejection may include a diagnostic message.
+            // Work already performed must never be replayed as a fresh request.
+            retryMessageSeq:
+                error is AcpJsonRpcException &&
+                    (!live.agentResponded ||
+                        (error.code == -32000 && !live.agentWorked))
+                ? live.userMessageSeq
+                : null,
+          ),
+        );
         _setStatus(live, SessionStatus.error, activity: true);
       }
     } finally {
@@ -3256,6 +3371,19 @@ class SessionEngine {
   }
 
   void _emitForSession(String sessionId, SessionEvent event) {
+    final live = _live[sessionId];
+    if (live != null) {
+      if (event is AgentMessageChunkEvent) live.agentResponded = true;
+      if (event is AgentThoughtChunkEvent ||
+          event is ToolCallEvent ||
+          event is PermissionRequestEvent ||
+          event is PlanEvent ||
+          event is ImageEvent ||
+          event is ExplainerEvent) {
+        live.agentResponded = true;
+        live.agentWorked = true;
+      }
+    }
     final int seq = _store.nextSeq(sessionId);
     final SessionEvent persisted = _store.appendEvent(sessionId, seq, event);
     if (!_eventsController.isClosed) {

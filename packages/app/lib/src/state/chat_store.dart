@@ -690,6 +690,16 @@ class ChatStore extends StoreBase {
         .readAttachment(sessionId, attachmentId);
   }
 
+  Future<void> retryMessage(String daemonId, String sessionId, int seq) async {
+    try {
+      await _clientFor(daemonId).retryMessage(sessionId, seq);
+    } on Object catch (error) {
+      _lastError = error;
+      _scheduleNotify();
+      rethrow;
+    }
+  }
+
   Future<void> cancel(String daemonId, String sessionId) =>
       _clientFor(daemonId).cancelSession(sessionId);
 

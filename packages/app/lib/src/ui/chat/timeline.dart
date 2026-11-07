@@ -325,8 +325,13 @@ class TurnCompleteItem extends TimelineItem {
 
 /// The session hit an error.
 class SessionErrorItem extends TimelineItem {
-  const SessionErrorItem({super.id, required this.message});
+  const SessionErrorItem({
+    super.id,
+    required this.message,
+    this.retryMessageSeq,
+  });
   final String message;
+  final int? retryMessageSeq;
 }
 
 /// Maps the shared, presentation-neutral session fold to full-client rows.
@@ -647,7 +652,13 @@ List<TimelineItem> deriveTimelineItems(
           case TurnCompleteEvent e:
             items.add(TurnCompleteItem(id: e.seq, stopReason: e.stopReason));
           case SessionErrorEvent e:
-            items.add(SessionErrorItem(id: e.seq, message: e.message));
+            items.add(
+              SessionErrorItem(
+                id: e.seq,
+                message: e.message,
+                retryMessageSeq: e.retryMessageSeq,
+              ),
+            );
           case HistoryRewoundEvent _:
           case UsageEvent _:
             break;
@@ -1725,6 +1736,7 @@ class _TimelineRow extends StatelessWidget {
       ),
       SessionErrorItem i => _ErrorBanner(
         message: i.message,
+        retry: i.retryMessageSeq != null,
         onContinue: onContinue,
       ),
     };
@@ -2376,7 +2388,13 @@ class _ActivityTag extends StatelessWidget {
 }
 
 class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message, this.onContinue});
+  const _ErrorBanner({
+    required this.message,
+    this.onContinue,
+    this.retry = false,
+  });
+
+  final bool retry;
 
   final String message;
   final VoidCallback? onContinue;
@@ -2409,8 +2427,11 @@ class _ErrorBanner extends StatelessWidget {
                 if (onContinue != null)
                   TextButton.icon(
                     onPressed: onContinue,
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text('Continue'),
+                    icon: Icon(
+                      retry ? Icons.refresh : Icons.play_arrow,
+                      size: 18,
+                    ),
+                    label: Text(retry ? 'Try again' : 'Continue'),
                   ),
               ],
             ),

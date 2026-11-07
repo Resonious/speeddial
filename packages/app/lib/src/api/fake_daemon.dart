@@ -1161,6 +1161,31 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Future<void> retryMessage(String sessionId, int seq) async {
+    final events = _history[sessionId] ?? const <SessionEvent>[];
+    if (events.isEmpty ||
+        events.last is! SessionErrorEvent ||
+        (events.last as SessionErrorEvent).retryMessageSeq != seq) {
+      throw DaemonError(kErrConflict, 'This message is no longer retryable');
+    }
+    final message = events.whereType<UserMessageEvent>().firstWhere(
+      (e) => e.seq == seq,
+    );
+    final attachments = <OutgoingAttachment>[];
+    for (final metadata in message.attachments) {
+      final data = await readAttachment(sessionId, metadata.id);
+      attachments.add(
+        OutgoingAttachment(
+          name: data.name,
+          mimeType: data.mimeType,
+          data: data.data,
+        ),
+      );
+    }
+    await sendMessage(sessionId, message.text, attachments: attachments);
+  }
+
+  @override
   Future<void> sendMessage(
     String sessionId,
     String text, {
@@ -2466,6 +2491,7 @@ class FakeDaemonClient implements DaemonClient {
         ),
         SessionErrorEvent e => SessionErrorEvent(
           message: e.message,
+          retryMessageSeq: e.retryMessageSeq,
           seq: seq,
           timestamp: timestamp,
         ),

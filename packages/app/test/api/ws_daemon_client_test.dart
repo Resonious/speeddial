@@ -67,6 +67,8 @@ class TestDaemonServer {
   final Map<String, Map<String, Map<String, Object?>>> attachments =
       <String, Map<String, Map<String, Object?>>>{};
 
+  final List<Map<String, Object?>> retries = <Map<String, Object?>>[];
+
   int connectionCount = 0;
   int seq = 0;
 
@@ -234,6 +236,10 @@ class TestDaemonServer {
           'sandboxMode': params['sandboxMode'],
         },
       };
+    });
+    peer.registerHandler('sessions.retry', (Map<String, Object?> params) {
+      retries.add(params);
+      return <String, Object?>{};
     });
     peer.registerHandler('sessions.send', (Map<String, Object?> params) {
       sends.add(params);
@@ -691,6 +697,19 @@ void main() {
     ]);
     expect(profile.authType, McpAuthType.oauthLocalhost);
     expect(profile.oauthStatus, McpOAuthStatus.authorized);
+  });
+
+  test('retryMessage sends the persisted input sequence', () async {
+    final server = await TestDaemonServer.start();
+    addTearDown(server.close);
+    final client = WsDaemonClient(url: server.url, token: 'secret');
+    addTearDown(client.dispose);
+    await client.connect();
+    await client.retryMessage('sess-1', 42);
+    expect(server.retries, [
+      {'sessionId': 'sess-1', 'seq': 42},
+    ]);
+    expect(server.sends, isEmpty);
   });
 
   test(

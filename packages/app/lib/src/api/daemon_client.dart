@@ -161,6 +161,9 @@ abstract class DaemonClient {
   /// preserves native state at complete boundaries; other cuts copy context.
   Future<Session> forkSession(String sessionId, int? seq);
 
+  /// Resends the saved input identified by the latest error's retryMessageSeq.
+  Future<void> retryMessage(String sessionId, int seq);
+
   /// Starts a turn with [text]. Events stream via [sessionEvents].
   ///
   /// Binary files are accepted; providers without native support receive a

@@ -887,3 +887,9 @@ turn events, retaining the outcome after later sends and history reloads.
 Cancellation before any reply, thought, tool call or permission request is labelled
 “Cancelled before agent response”; this does not assert that the provider never
 received the input. Cancelled turn dividers retain their stop reason.
+
+Rejected inputs carry `sessionError.retryMessageSeq`. The error banner offers “Try again”
+for that persisted message; `sessions.retry` reuses its text and stored attachments,
+including file-backed uploads, through the normal send path. Busy, offline, historical
+error and draft-preservation behavior matches Continue. Failures after agent work and
+ambiguous process loss retain Continue; an ACP authentication diagnostic is not work.

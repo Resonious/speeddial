@@ -635,20 +635,34 @@ class _SessionSurfaceState extends State<_SessionSurface> {
 
   Future<void> _continueSession() async {
     if (_continuing.value) return;
+    final int? retrySeq = switch (_items.lastOrNull) {
+      SessionErrorItem(:final retryMessageSeq) => retryMessageSeq,
+      _ => null,
+    };
     _continuing.value = true;
     try {
-      await widget.data.chat.send(
-        widget.daemonId,
-        widget.sessionId,
-        'Keep going',
-      );
+      if (retrySeq != null) {
+        await widget.data.chat.retryMessage(
+          widget.daemonId,
+          widget.sessionId,
+          retrySeq,
+        );
+      } else {
+        await widget.data.chat.send(
+          widget.daemonId,
+          widget.sessionId,
+          'Keep going',
+        );
+      }
       if (mounted) _followLatestRequest.value++;
     } on Object catch (error) {
       if (!mounted) return;
       if (error is DaemonError) {
         await _showError(error);
       } else {
-        await _showMessage('Could not continue: $error');
+        await _showMessage(
+          'Could not ${retrySeq == null ? 'continue' : 'try again'}: $error',
+        );
       }
     } finally {
       if (mounted) _continuing.value = false;

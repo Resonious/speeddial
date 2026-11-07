@@ -322,6 +322,68 @@ void main() {
     return server!;
   }
 
+  test('sessions.retry resends the rejected message over RPC', () async {
+    await startServer();
+    final client = await connect(server!.port);
+    addTearDown(client.close);
+    final project = Project(
+      id: 'retry-project',
+      name: 'Retry',
+      path: tempDir.path,
+      addedAt: DateTime.utc(2026),
+      lastActiveAt: DateTime.utc(2026),
+    );
+    store.insertProject(project);
+    final session = await engine!.createSession(
+      projectId: project.id,
+      providerId: 'fake',
+    );
+    final rejection = File(p.join(tempDir.path, 'agent.reject_auth'))
+      ..writeAsStringSync('');
+    final failed = waitForEvent(client, (event) => event is SessionErrorEvent);
+    await client.peer.call('sessions.send', {
+      'sessionId': session.id,
+      'text': 'weird',
+    });
+    final params = await failed;
+    final error = SessionEvent.fromJson(
+      (params['event'] as Map).cast<String, Object?>(),
+    ) as SessionErrorEvent;
+    expect(error.retryMessageSeq, isNotNull);
+    rejection.deleteSync();
+    final completed = waitForEvent(
+      client,
+      (event) => event is TurnCompleteEvent,
+    );
+    await client.peer.call('sessions.retry', {
+      'sessionId': session.id,
+      'seq': error.retryMessageSeq,
+    });
+    await completed;
+    expect(
+      store
+          .listEvents(session.id)
+          .events
+          .whereType<UserMessageEvent>()
+          .map((e) => e.text),
+      ['weird', 'weird'],
+    );
+    await expectLater(
+      client.peer.call('sessions.retry', {
+        'sessionId': session.id,
+        'seq': error.retryMessageSeq,
+      }),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
+    );
+    await expectLater(
+      client.peer.call('sessions.retry', {
+        'sessionId': session.id,
+        'seq': 'invalid',
+      }),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+    );
+  });
+
   test('PR lookup RPC returns sessions including archived forks', () async {
     final pr = _LookupPr();
     await startServer(prService: pr);
