@@ -895,3 +895,16 @@ for that persisted message; `sessions.retry` reuses its text and stored attachme
 including file-backed uploads, through the normal send path. Busy, offline, historical
 error and draft-preservation behavior matches Continue. Failures after agent work and
 ambiguous process loss retain Continue; an ACP authentication diagnostic is not work.
+
+### Mid-session worktrees
+
+Successful native EnterWorktree receipts are parsed before tool-output truncation,
+then verified against Git registration and the project's common Git directory.
+SessionEngine serializes directory changes, persists the new cwd through the
+existing session.updated stream, and drains changes before turn completion and
+teardown. Unknown native creation bases stay null. The built-in new_worktree tool
+creates a unique checkout from current HEAD and returns explicit cwd instructions;
+MCP cannot change a running harness's default directory. Old checkouts and dirty
+files remain intact. Relative MCP image paths query the current session directory.
+Managed MCP connections restart in the new cwd on their next use, draining
+in-flight calls in the old directory. The Git pane reloads and closes its old diff when the selected session's cwd changes.

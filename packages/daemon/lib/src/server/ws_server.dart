@@ -112,6 +112,8 @@ const List<String> _kInternalMcpMethods = <String>[
   'internal.mcpReadSessionTranscript',
   'internal.mcpArchiveSession',
   'internal.mcpSetSessionSummary',
+  'internal.mcpNewWorktree',
+  'internal.mcpSessionContext',
   'internal.mcpDisplayImage',
   'internal.mcpShowExplainer',
 ];
@@ -498,6 +500,8 @@ class SpeedDialServer {
           client,
           params,
         ),
+        'internal.mcpNewWorktree' => _mcpNewWorktree(client, params),
+        'internal.mcpSessionContext' => _mcpSessionContext(client),
         'internal.mcpDisplayImage' => _mcpDisplayImage(client, params),
         'internal.mcpShowExplainer' => _mcpShowExplainer(client, params),
         _ => throw DaemonError(
@@ -600,12 +604,14 @@ class SpeedDialServer {
     client.mcpProxy = LiveMcpProxy(
       servers: () => _store.listEnabledMcpServersFor(credential.projectId),
       cwd: credential.cwd,
+      currentCwd: () => _store.getSession(sessionId)?.cwd ?? credential.cwd,
       connector: _mcpConnector,
     );
     return <String, Object?>{'ok': true};
   }
 
   Future<Object?> _mcpListTools(_Client client) async {
+    await _engine.sessionWorkingDirectory(client.mcpSessionId!);
     final McpProxyListResult result = await client.mcpProxy!.listTools();
     return <String, Object?>{
       'tools': result.tools,
@@ -623,6 +629,7 @@ class SpeedDialServer {
       final Map value => value.cast<String, Object?>(),
       _ => throw DaemonError(_kErrInvalidParams, 'arguments must be an object'),
     };
+    await _engine.sessionWorkingDirectory(client.mcpSessionId!);
     return client.mcpProxy!.callTool(name, arguments);
   }
 
@@ -757,6 +764,28 @@ class SpeedDialServer {
     }
     final Session session = await _engine.rename(client.mcpSessionId!, summary);
     return <String, Object?>{'session': session.toJson()};
+  }
+
+  Future<Object?> _mcpSessionContext(_Client client) async => <String, Object?>{
+    'cwd': await _engine.sessionWorkingDirectory(client.mcpSessionId!),
+  };
+
+  Future<Object?> _mcpNewWorktree(
+    _Client client,
+    Map<String, Object?> params,
+  ) async {
+    final Session session = await _engine.newWorktree(
+      client.mcpSessionId!,
+      _requiredString(params, 'name'),
+    );
+    return <String, Object?>{
+      'session': session.toJson(),
+      'instructions':
+          'Use ${session.cwd} as the working directory for all '
+          'subsequent commands and file edits. Use absolute paths or an explicit '
+          'workdir/cd; this tool cannot change your running harness process cwd. '
+          'Existing uncommitted changes remain in the previous directory.',
+    };
   }
 
   Future<Object?> _mcpDisplayImage(

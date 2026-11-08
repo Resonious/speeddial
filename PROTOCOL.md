@@ -893,6 +893,17 @@ alter the user's persisted message or add a turn. It exposes:
 - `set_session_summary {summary: string}` — sets the calling session’s title to a brief
   summary, trims surrounding whitespace, and rejects empty text. Persists the title and
   broadcasts the existing `session.updated` notification to UI clients.
+- `new_worktree {name: string}` — creates a SpeedDial-managed linked worktree on a
+  unique branch from the calling session's current HEAD, updates its `cwd` and
+  `baseBranch`, and broadcasts `session.updated`. Name is 1–64 ASCII letters,
+  digits, hyphens or underscores, starting with a letter or digit. Uncommitted
+  files remain in the previous checkout. Returns `{session: Session, instructions: string}`;
+  the agent must use the returned absolute cwd for subsequent commands and edits:
+  MCP cannot change a running harness's default directory. No fetch is performed.
+  Successful native `EnterWorktree` receipts also update `cwd`, after verifying
+  that the reported path is a registered linked worktree of the same repository.
+  Their creation base is unknown, so `baseBranch` is cleared. Failed calls,
+  inputs alone and ordinary transcript text never change the session directory.
 - `display_image {path?: string, data?: string, mimeType?: string, name?: string}` — requires
   exactly one of a filesystem path on the daemon host or a base64 payload. Absolute paths and
   symlinks may point anywhere; relative paths resolve from the session cwd, including `..`.
@@ -920,6 +931,9 @@ receives that session-bound secret. It may then call
 `internal.mcpArchiveSession {sessionId: string, archived: boolean}`,
 `internal.mcpSetSessionSummary {summary: string}` → `{session: Session}` (the authenticated
 session only),
+`internal.mcpNewWorktree {name: string}` → `{session: Session, instructions: string}`,
+`internal.mcpSessionContext {}` → `{cwd: string}` (both authenticated session only;
+image paths use the current directory, including after a native worktree switch),
 `internal.mcpDisplayImage`, and `internal.mcpShowExplainer {explainer: Explainer}` → `{ok: true}`
 (revalidated; `-32602` with the errors when invalid). It cannot call the public daemon API and receives no broadcasts. Public
 clients cannot use the internal methods without the MCP secret.

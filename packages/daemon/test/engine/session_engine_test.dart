@@ -4244,6 +4244,84 @@ void main() {
       return (repoPath: repoPath, originTip: tip);
     }
 
+    test('native worktree preserves dirty files and session fields', () async {
+      final repo = await setupGitProject();
+      final SessionEngine gitEngine = SessionEngine(
+        store: store, providers: fakeProviders(), git: GitService());
+      addTearDown(gitEngine.dispose);
+      final Session original = await gitEngine.createSession(
+          projectId: 'gitp', providerId: 'fake', title: 'Keep my title');
+      await gitEngine.pin(original.id, true);
+      File(p.join(repo.repoPath, 'a.txt')).writeAsStringSync('dirty');
+      final Session updated = await gitEngine.newWorktree(original.id, 'feature');
+      expect(updated.cwd, isNot(original.cwd));
+      expect(updated.baseBranch, 'main');
+      expect(updated.title, 'Keep my title');
+      expect(updated.pinned, isTrue);
+      expect(store.getSession(original.id)!.cwd, updated.cwd);
+      expect(File(p.join(repo.repoPath, 'a.txt')).readAsStringSync(), 'dirty');
+      expect(File(p.join(updated.cwd, 'a.txt')).readAsStringSync(), 'v1\n');
+      expect(await runGit(updated.cwd, ['rev-parse', 'HEAD']), repo.originTip);
+      expect(await runGit(updated.cwd, ['branch', '--show-current']),
+          startsWith('speeddial/feature-'));
+      await expectLater(gitEngine.newWorktree(original.id, '../escape'),
+          throwsA(isA<DaemonError>()));
+      expect(store.getSession(original.id)!.cwd, updated.cwd);
+    });
+
+    test('completed EnterWorktree is adopted before turn completion', () async {
+      final repo = await setupGitProject();
+      final SessionEngine gitEngine = SessionEngine(
+        store: store, providers: fakeProviders(), git: GitService());
+      addTearDown(gitEngine.dispose);
+      final Session session = await gitEngine.createSession(
+          projectId: 'gitp', providerId: 'fake');
+      final String target = p.join(repo.repoPath, '.claude', 'worktrees', 'one');
+      await runGit(repo.repoPath, ['worktree', 'add', '-b', 'one', target]);
+      final Future<Session> idle = gitEngine.sessionChanges.firstWhere(
+          (Session value) => value.id == session.id &&
+              value.completionRevision == 1);
+      await gitEngine.sendMessage(session.id, 'enter-worktree:${jsonEncode({
+        'output': 'Created worktree at “$target” on branch “one”',
+        'readPath': p.join(target, 'a.txt'),
+      })}');
+      final Session updated = await idle.timeout(const Duration(seconds: 10));
+      expect(updated.cwd, target);
+      expect(updated.baseBranch, isNull);
+      expect(store.getSession(session.id)!.cwd, target);
+    });
+
+    test('failed and foreign EnterWorktree receipts do not move the session', () async {
+      final repo = await setupGitProject();
+      final SessionEngine gitEngine = SessionEngine(
+        store: store, providers: fakeProviders(), git: GitService());
+      addTearDown(gitEngine.dispose);
+      final Session session = await gitEngine.createSession(
+          projectId: 'gitp', providerId: 'fake');
+      final String foreign = p.join(tempDir.path, 'foreign');
+      await runGit(tempDir.path, ['init', '-b', 'main', foreign]);
+      final String target = p.join(tempDir.path, 'foreign-worktree');
+      await runGit(foreign, ['fetch', repo.repoPath, 'main']);
+      await runGit(foreign, ['worktree', 'add', '-b', 'other', target, 'FETCH_HEAD']);
+      final List<SessionEvent> receipts = [];
+      final sub = gitEngine.events.listen((event) => receipts.add(event.event));
+      addTearDown(sub.cancel);
+      int revision = 0;
+      for (final String status in ['failed', 'completed']) {
+        revision++;
+        final int expected = revision;
+        final Future<Session> idle = gitEngine.sessionChanges.firstWhere(
+            (Session value) => value.completionRevision == expected);
+        await gitEngine.sendMessage(session.id, 'enter-worktree:${jsonEncode({
+          'status': status, 'output': {'worktreePath': target},
+        })}');
+        expect((await idle.timeout(const Duration(seconds: 10))).cwd, repo.repoPath);
+        await waitFor(() => !gitEngine.hasActiveSessions);
+      }
+      expect(receipts.whereType<SessionErrorEvent>().single.message,
+          contains('different repository'));
+    });
+
     test('createSession with baseBranch runs the agent in a worktree off '
         'origin/<base>', () async {
       final git = await setupGitProject();

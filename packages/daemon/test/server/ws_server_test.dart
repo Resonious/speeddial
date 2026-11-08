@@ -2424,6 +2424,15 @@ void main() {
       final WsClient client = await connect(server!.port);
       final Directory dir = Directory(p.join(tempDir.path, 'mcp-project'))
         ..createSync();
+      for (final List<String> args in <List<String>>[
+        ['init', '-b', 'main'],
+        ['-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+          'commit', '--allow-empty', '-m', 'initial'],
+      ]) {
+        final ProcessResult result = await Process.run('git', args,
+            workingDirectory: dir.path);
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+      }
       File(p.join(dir.path, 'agent.capture_mcp')).writeAsStringSync('');
       final Project project = Project.fromJson(
         (j(
@@ -2683,6 +2692,22 @@ void main() {
         'Summarize the session',
       );
 
+      for (final String method in ['internal.mcpNewWorktree', 'internal.mcpSessionContext']) {
+        await expectLater(client.peer.call(method, {'name': 'denied'}),
+            throwsA(isA<DaemonError>().having((error) => error.code,
+                'code', kErrUnauthenticated)));
+      }
+      final Map<String, Object?> worktreeResult = j(await mcp.peer.call(
+          'internal.mcpNewWorktree', {'name': 'bridge', 'sessionId': other.id}));
+      final Session moved = Session.fromJson(j(worktreeResult['session']));
+      expect(moved.id, owner.id);
+      expect(moved.cwd, isNot(owner.cwd));
+      expect(moved.baseBranch, 'main');
+      expect(store.getSession(other.id)!.cwd, other.cwd);
+      expect(j(await mcp.peer.call('internal.mcpSessionContext', {}))['cwd'], moved.cwd);
+      expect(worktreeResult['instructions'], contains(moved.cwd));
+      expect(worktreeResult['instructions'], contains('cannot change'));
+
       const String imageData =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
       await mcp.peer.call('internal.mcpDisplayImage', <String, Object?>{
@@ -2838,7 +2863,8 @@ void main() {
           'tools/list',
           const <String, Object?>{},
         );
-        expect((listed['result']! as Map)['tools'], hasLength(10));
+        expect((listed['result']! as Map)['tools'], hasLength(11));
+        expect(jsonEncode(listed['result']), contains('new_worktree'));
         final Map<String, Object?> searched = await request(
           3,
           'tools/call',

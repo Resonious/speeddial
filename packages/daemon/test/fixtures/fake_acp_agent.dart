@@ -496,6 +496,36 @@ Future<void> _runTurn(
     return _resolvePrompt(promptId, 'end_turn');
   }
 
+  if (text.startsWith('enter-worktree:')) {
+    final Map<String, Object?> receipt =
+        (jsonDecode(text.substring('enter-worktree:'.length)) as Map)
+            .cast<String, Object?>();
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'worktree-call',
+      'title': 'EnterWorktree',
+      'kind': 'other',
+      'status': 'in_progress',
+      'rawInput': {'name': 'fixture'},
+    });
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'worktree-call',
+      'status': receipt['status'] ?? 'completed',
+      'rawOutput': receipt['output'],
+    });
+    if (receipt['readPath'] case final String path) {
+      final result = await _request('fs/read_text_file', <String, Object?>{
+        'sessionId': sessionId, 'path': path,
+      });
+      await _sendUpdate(<String, Object?>{
+        'sessionUpdate': 'agent_message_chunk',
+        'content': {'type': 'text', 'text': result['content']},
+      });
+    }
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
   if (text == 'cancel') return; // Left pending; session/cancel resolves it.
 
   if (text == 'notification-reply') {

@@ -64,7 +64,7 @@ class BuiltInMcpServer {
        _daemonCall = daemonCall; // ignore: prefer_initializing_formals
 
   final String _sessionId;
-  final String _cwd;
+  String _cwd;
   final McpDaemonCall _daemonCall;
   final void Function(String message)? onWarning;
 
@@ -212,6 +212,7 @@ class BuiltInMcpServer {
         'read_session_transcript' => await _readSessionTranscript(arguments),
         'archive_session' => await _setSessionArchived(arguments, true),
         'unarchive_session' => await _setSessionArchived(arguments, false),
+        'new_worktree' => await _newWorktree(arguments),
         'set_session_summary' => await _setSessionSummary(arguments),
         'display_image' => await _displayImage(arguments),
         'show_explainer' => await _showExplainer(arguments),
@@ -378,6 +379,25 @@ class BuiltInMcpServer {
     return _textResult(_pretty(result));
   }
 
+  Future<Map<String, Object?>> _newWorktree(
+    Map<String, Object?> arguments,
+  ) async {
+    final String? name = _optionalString(arguments, 'name');
+    if (name == null ||
+        !RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$').hasMatch(name)) {
+      throw ArgumentError(
+        'name must be 1–64 letters, digits, hyphens or underscores',
+      );
+    }
+    return _textResult(
+      _pretty(
+        await _daemonCall('internal.mcpNewWorktree', <String, Object?>{
+          'name': name,
+        }),
+      ),
+    );
+  }
+
   Future<Map<String, Object?>> _displayImage(
     Map<String, Object?> arguments,
   ) async {
@@ -391,6 +411,16 @@ class BuiltInMcpServer {
     final String name;
     final String mimeType;
     if (path != null) {
+      if (!p.isAbsolute(path)) {
+        final Object? context = await _daemonCall(
+          'internal.mcpSessionContext',
+          const <String, Object?>{},
+        );
+        if (context is! Map || context['cwd'] is! String) {
+          throw const FormatException('Missing current session directory');
+        }
+        _cwd = context['cwd'] as String;
+      }
       final File file = _imageFile(path);
       final List<int> bytes = file.readAsBytesSync();
       if (bytes.length > kMaxAttachmentBytes) {
@@ -721,6 +751,33 @@ class BuiltInMcpServer {
         'readOnlyHint': false,
         'destructiveHint': false,
         'idempotentHint': true,
+        'openWorldHint': false,
+      },
+    },
+    <String, Object?>{
+      'name': 'new_worktree',
+      'title': 'Create a session worktree',
+      'description':
+          'Create a new git worktree from this session’s current HEAD '
+          'and move the SpeedDial session to it. Existing uncommitted changes '
+          'stay in the previous directory. Use the returned absolute cwd for '
+          'every subsequent command and file edit; a running harness’s default '
+          'directory is not changed by MCP.',
+      'inputSchema': <String, Object?>{
+        'type': 'object',
+        'properties': <String, Object?>{
+          'name': <String, Object?>{
+            'type': 'string',
+            'pattern': r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+          },
+        },
+        'required': <String>['name'],
+        'additionalProperties': false,
+      },
+      'annotations': <String, Object?>{
+        'readOnlyHint': false,
+        'destructiveHint': false,
+        'idempotentHint': false,
         'openWorldHint': false,
       },
     },

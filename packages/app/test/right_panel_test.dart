@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -165,6 +167,27 @@ void main() {
     app.selection.selectedSessionId = null;
     await tester.pumpAndSettle();
     expect(find.text('lib/main.dart'), findsOneWidget);
+  });
+
+  testWidgets('git tab reloads when the same session moves worktrees',
+      (WidgetTester tester) async {
+    final _MovingWorktreeFake fake = _MovingWorktreeFake();
+    final AppData app = await pumpRightPanel(tester, fake);
+    await app.sessions.refresh('fake');
+    app.selection.selectedSessionId = 'sess-1';
+    await tester.tap(find.text('Git'));
+    await tester.pumpAndSettle();
+    final int before = fake.statusReads;
+    final Session session = app.sessions.byId('sess-1')!;
+    fake.updates.add(Session.fromJson({
+      ...session.toJson(), 'cwd': '/new-worktree',
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+    }));
+    await tester.pumpAndSettle();
+    expect(fake.statusReads, greaterThan(before));
+    expect(find.text('moved-branch'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    app.dispose();
   });
 
   testWidgets('tapping a changed file shows its diff with colored lines',
@@ -382,5 +405,36 @@ class _FlakyFilesFake extends FakeDaemonClient {
       throw const DaemonError(kErrNotFound, 'no such directory: .');
     }
     return super.listFiles(projectId, path);
+  }
+}
+
+class _MovingWorktreeFake extends FakeDaemonClient {
+  final StreamController<Session> updates = StreamController<Session>.broadcast();
+  int statusReads = 0;
+
+  @override
+  Stream<Session> get sessionUpdates => updates.stream;
+
+  @override
+  Future<GitStatus> gitStatus(String projectId, {String? sessionId}) async {
+    statusReads++;
+    if (statusReads > 1) {
+      return const GitStatus(branch: 'moved-branch', ahead: 0, behind: 0, files: []);
+    }
+    return super.gitStatus(projectId, sessionId: sessionId);
+  }
+
+  @override
+  Future<List<Branch>> gitBranches(String projectId, {String? sessionId}) async {
+    if (statusReads > 1) {
+      return const [Branch(name: 'moved-branch', isCurrent: true)];
+    }
+    return super.gitBranches(projectId, sessionId: sessionId);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await updates.close();
+    await super.dispose();
   }
 }

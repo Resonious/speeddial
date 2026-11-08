@@ -376,6 +376,26 @@ class GitService {
     return commonDir;
   }
 
+  /// Checks both registration and repository identity before adopting a path.
+  Future<String> validateSessionWorktree(String repoPath, String path) async {
+    if (!p.isAbsolute(path)) {
+      throw DaemonError(kErrGit, 'Worktree path must be absolute: $path');
+    }
+    final String canonical = await Directory(path).resolveSymbolicLinks();
+    final String common = await _linkedWorktreeCommonDir(canonical);
+    final ProcessResult result = await _run(repoPath, <String>[
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
+    final String expected = await Directory((result.stdout as String).trim())
+        .resolveSymbolicLinks();
+    if (common != expected) {
+      throw DaemonError(kErrGit, 'Worktree belongs to a different repository');
+    }
+    return canonical;
+  }
+
   Future<void> validateLinkedWorktree(String path) async {
     await _linkedWorktreeCommonDir(path);
   }

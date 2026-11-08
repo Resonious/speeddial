@@ -44,6 +44,7 @@ import '../store/daemon_store.dart';
 import '../store/upload_store.dart';
 import 'event_mapper.dart';
 import 'archive_service.dart';
+import 'worktree_result.dart';
 
 /// JSON-RPC code: invalid params (PROTOCOL.md `-32602`), used for
 /// `sessions.create` cwd confinement rejects.
@@ -85,6 +86,8 @@ class _LiveSession {
   /// The in-flight turn future, or null when idle.
   Future<void>? turn;
   bool maintaining = false;
+  Future<void> worktreeUpdates = Future<void>.value();
+  final Set<String> adoptedWorktreeCalls = <String>{};
   int? userMessageSeq;
   bool agentResponded = false;
   bool agentWorked = false;
@@ -2181,6 +2184,110 @@ class SessionEngine {
   Future<Session> rename(String sessionId, String title) =>
       _updateSession(sessionId, (session) => _withTitle(session, title));
 
+  /// Creates an isolated checkout without restarting an in-flight harness.
+  /// The MCP result tells the agent to use the returned absolute directory.
+  Future<Session> newWorktree(String sessionId, String name) =>
+      _withSessionOperation(() async {
+        if (!RegExp(r'^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$').hasMatch(name)) {
+          throw DaemonError(
+            _kErrInvalidParams,
+            'name must be 1–64 letters, digits, hyphens or underscores',
+          );
+        }
+        final _LiveSession? live = _live[sessionId];
+        if (live == null || live.closed || live.session.preparing) {
+          throw DaemonError(kErrConflict, 'Session is not ready');
+        }
+        final Completer<Session> result = Completer<Session>();
+        live.worktreeUpdates = live.worktreeUpdates.then((_) async {
+          String? createdPath;
+          final GitService git = _git ?? GitService();
+          final String source = live.cwd;
+          try {
+            if (live.closed) throw DaemonError(kErrConflict, 'Session closed');
+            final Project project = _store.getProject(live.session.projectId)!;
+            final String suffix = _uuid.v4().substring(0, 8);
+            final String path = p.join(
+              p.dirname(project.path),
+              '.speeddial-worktrees',
+              '${p.basename(project.path)}-$name-$suffix',
+            );
+            final String branch = (await git.status(source)).branch;
+            await git.addWorktree(
+              source,
+              path: path,
+              branch: 'speeddial/$name-$suffix',
+              baseRef: 'HEAD',
+            );
+            createdPath = path;
+            if (live.closed) throw DaemonError(kErrConflict, 'Session closed');
+            final Session updated = await _adoptWorktree(
+              live,
+              path,
+              baseBranch:
+                  branch == 'HEAD' || branch == '(detached)' || branch.isEmpty
+                  ? null
+                  : branch,
+            );
+            result.complete(updated);
+          } on Object catch (error, stack) {
+            if (createdPath != null) {
+              try {
+                await git.removeWorktree(source, createdPath);
+              } on Object catch (cleanupError) {
+                stderr.writeln('Worktree rollback failed: $cleanupError');
+              }
+            }
+            result.completeError(error, stack);
+          }
+        });
+        return result.future;
+      });
+
+  Future<Session> _adoptWorktree(
+    _LiveSession live,
+    String path, {
+    String? baseBranch,
+  }) async {
+    final GitService git = _git ?? GitService();
+    final Project project = _store.getProject(live.session.projectId)!;
+    final String cwd = await git.validateSessionWorktree(project.path, path);
+    if (live.closed) throw DaemonError(kErrConflict, 'Session closed');
+    return _updateSession(
+      live.sessionId,
+      (Session current) => _withWorkingDirectory(current, cwd, baseBranch),
+    );
+  }
+
+  void _observeWorktree(_LiveSession live, ToolCall call) {
+    final String? path = enteredWorktreePath(call);
+    if (path == null || !live.adoptedWorktreeCalls.add(call.id)) return;
+    live.worktreeUpdates = live.worktreeUpdates.then((_) async {
+      if (live.closed) return;
+      try {
+        // A receipt does not identify the creation base. Keep it unknown
+        // rather than enabling merge/rebase against a guessed branch.
+        await _adoptWorktree(live, path);
+      } on Object catch (error) {
+        if (!live.closed) {
+          _emit(
+            live,
+            SessionErrorEvent(
+              message: 'Could not follow EnterWorktree: $error',
+            ),
+          );
+        }
+      }
+    });
+  }
+
+  Future<String> sessionWorkingDirectory(String sessionId) async {
+    await _live[sessionId]?.worktreeUpdates;
+    final Session? session = _store.getSession(sessionId);
+    if (session == null) throw DaemonError(kErrNotFound, 'Unknown session');
+    return session.cwd;
+  }
+
   Future<Session> pin(String sessionId, bool pinned) =>
       _updateSession(sessionId, (session) => _withPinned(session, pinned));
 
@@ -2504,6 +2611,7 @@ class SessionEngine {
       _toolCallImages.remove(sessionId);
       await live.updatesSubscription?.cancel();
       await live.client.dispose();
+      await live.worktreeUpdates;
     }
     _store.deleteSession(sessionId);
     if (!_sessionRemovalsController.isClosed) {
@@ -2534,6 +2642,7 @@ class SessionEngine {
       _expirePendingPermissions(live, 'Daemon shutting down');
       await live.updatesSubscription?.cancel();
       await live.client.dispose();
+      await live.worktreeUpdates;
     }
     _live.clear();
     await Future.wait(_turnNotifications.toList());
@@ -2572,6 +2681,7 @@ class SessionEngine {
     live.agentResponded = false;
     live.agentWorked = false;
     live.activityIds.clear();
+    live.adoptedWorktreeCalls.clear();
     _breakSyntheticContent(live);
     live.userMessageSeq = alreadyPersisted
         ? _pendingUserMessage(sessionId)?.seq
@@ -2612,6 +2722,7 @@ class SessionEngine {
   }) async {
     try {
       final result = await run();
+      await live.worktreeUpdates;
       if (live.closed) return;
       if (forkContext != null) {
         _store.setForkContextSeq(live.sessionId, null);
@@ -3051,6 +3162,7 @@ class SessionEngine {
           sessionId,
           () => <String, ToolCall>{},
         )[mapped.id] = mapped;
+        _observeWorktree(live, mapped);
         return ToolCallEvent(toolCall: boundInitialToolCallForEmit(mapped));
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
@@ -3089,6 +3201,7 @@ class SessionEngine {
         )[toolCallId] = merged;
         // Persisted/broadcast progress is metadata-only. The in-memory state
         // stays complete so the terminal event can carry a bounded preview.
+        _observeWorktree(live, merged);
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
       case final AcpPlan plan:
         _breakSyntheticContent(live);
@@ -3247,6 +3360,7 @@ class SessionEngine {
   // -------------------------------------------------------------------------
 
   Future<String> _readTextFile(String sessionId, String path) async {
+    await _live[sessionId]?.worktreeUpdates;
     final file = _resolveInCwd(sessionId, path);
     return file.readAsString();
   }
@@ -3256,6 +3370,7 @@ class SessionEngine {
     String path,
     String content,
   ) async {
+    await _live[sessionId]?.worktreeUpdates;
     final file = _resolveInCwd(sessionId, path);
     await file.parent.create(recursive: true);
     await file.writeAsString(content);
@@ -3458,6 +3573,36 @@ class SessionEngine {
       updatedAt: now,
     );
   }
+
+  Session _withWorkingDirectory(
+    Session session,
+    String cwd,
+    String? baseBranch,
+  ) => Session(
+    id: session.id,
+    projectId: session.projectId,
+    providerId: session.providerId,
+    title: session.title,
+    status: session.status,
+    model: session.model,
+    models: session.models,
+    cwd: cwd,
+    baseBranch: baseBranch,
+    thinkingLevel: session.thinkingLevel,
+    thinkingLevels: session.thinkingLevels,
+    sandboxMode: session.sandboxMode,
+    yolo: session.yolo,
+    shortPrompt: session.shortPrompt,
+    preparing: session.preparing,
+    preparationStep: session.preparationStep,
+    completionRevision: session.completionRevision,
+    done: session.done,
+    archived: session.archived,
+    pinned: session.pinned,
+    createdAt: session.createdAt,
+    lastActivityAt: session.lastActivityAt,
+    updatedAt: DateTime.now().toUtc(),
+  );
 
   Session _withPinned(Session session, bool pinned) => Session(
     id: session.id,

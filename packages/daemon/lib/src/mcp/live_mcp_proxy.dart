@@ -6,10 +6,16 @@ import 'mcp_proxy.dart';
 
 /// Keeps an authenticated bridge current even while its agent cannot reload.
 class LiveMcpProxy {
-  LiveMcpProxy({required this.servers, required this.cwd, this.connector});
+  LiveMcpProxy({
+    required this.servers,
+    required this.cwd,
+    this.currentCwd,
+    this.connector,
+  });
 
   final List<StoredMcpServer> Function() servers;
   final String cwd;
+  final String Function()? currentCwd;
   final McpUpstreamConnector? connector;
   final Set<_Generation> _generations = <_Generation>{};
   _Generation? _current;
@@ -28,7 +34,9 @@ class LiveMcpProxy {
     final List<StoredMcpServer> snapshot = servers();
     // Include effective secrets: OAuth can rotate tokens without changing the
     // profile. This key remains private to the daemon, like the snapshot itself.
+    final String workingDirectory = currentCwd?.call() ?? cwd;
     final String key = jsonEncode([
+      workingDirectory,
       for (final StoredMcpServer server in snapshot)
         {'profile': server.profile.toJson(), 'secrets': _sortedSecrets(server)},
     ]);
@@ -37,14 +45,17 @@ class LiveMcpProxy {
       final _Generation? previous = current;
       final Map<String, String> connectionKeys = <String, String>{
         for (final StoredMcpServer server in snapshot)
-          server.profile.id: _connectionKey(server),
+          server.profile.id: jsonEncode([
+            workingDirectory,
+            _connectionKey(server),
+          ]),
       };
       current = _Generation(
         key,
         connectionKeys,
         McpProxySession(
           servers: snapshot,
-          cwd: cwd,
+          cwd: workingDirectory,
           connector: connector,
           adopted: _adoptUnchanged(previous, connectionKeys),
         ),

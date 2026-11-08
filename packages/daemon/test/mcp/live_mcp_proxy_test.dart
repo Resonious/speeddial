@@ -7,6 +7,28 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('worktree changes reconnect tools in the new directory', () async {
+    String cwd = '/old';
+    final List<String> directories = [];
+    final List<_Connection> connections = [];
+    final LiveMcpProxy proxy = LiveMcpProxy(
+      servers: () => [_server('token')], cwd: cwd, currentCwd: () => cwd,
+      connector: (server, directory) async {
+        directories.add(directory);
+        final _Connection connection = _Connection('token');
+        connections.add(connection);
+        return connection;
+      },
+    );
+    addTearDown(proxy.close);
+    await proxy.listTools();
+    cwd = '/new';
+    await proxy.listTools();
+    expect(directories, ['/old', '/new']);
+    expect(connections.first.closed, isTrue);
+    expect(connections.last.closed, isFalse);
+  });
+
   test(
     'new credentials retire connections after in-flight calls finish',
     () async {

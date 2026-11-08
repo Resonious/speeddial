@@ -58,6 +58,7 @@ class GitTab extends StatelessWidget {
                   ? session.id
                   : null,
           sessionBaseBranch: session?.baseBranch,
+          sessionCwd: session?.cwd,
         );
       },
     );
@@ -70,6 +71,7 @@ class _GitPane extends StatefulWidget {
     required this.projectId,
     required this.sessionId,
     required this.sessionBaseBranch,
+    required this.sessionCwd,
   });
 
   final String daemonId;
@@ -82,6 +84,7 @@ class _GitPane extends StatefulWidget {
   /// Base branch the selected session's worktree was created from; enables
   /// the merge-back and rebase actions. Null without a worktree session.
   final String? sessionBaseBranch;
+  final String? sessionCwd;
 
   @override
   State<_GitPane> createState() => _GitPaneState();
@@ -105,7 +108,8 @@ class _GitPaneState extends State<_GitPane> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.projectId != widget.projectId ||
         oldWidget.daemonId != widget.daemonId ||
-        oldWidget.sessionId != widget.sessionId) {
+        oldWidget.sessionId != widget.sessionId ||
+        oldWidget.sessionCwd != widget.sessionCwd) {
       _loadedKey = null;
       _ensureLoaded();
     }
@@ -119,7 +123,7 @@ class _GitPaneState extends State<_GitPane> {
   /// own [ListenableBuilder] dirty mid-build (`!_dirty` assertion).
   void _ensureLoaded() {
     final String key =
-        '${widget.daemonId}\x00${widget.projectId}\x00${widget.sessionId}';
+        '${widget.daemonId}\x00${widget.projectId}\x00${widget.sessionId}\x00${widget.sessionCwd}';
     if (_loadedKey == key) return;
     _loadedKey = key;
     _openDiff = null;

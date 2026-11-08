@@ -23,6 +23,7 @@ void main() {
       daemonCall: (String method, Map<String, Object?> params) async {
         calls.add((method: method, params: params));
         return switch (method) {
+          'internal.mcpSessionContext' => <String, Object?>{'cwd': tempDir.path},
           'internal.mcpSearchProjects' => <String, Object?>{
             'projects': <Object?>[
               <String, Object?>{'id': 'p1', 'name': 'Demo'},
@@ -128,6 +129,7 @@ void main() {
       'archive_session',
       'unarchive_session',
       'set_session_summary',
+      'new_worktree',
       'display_image',
       'show_explainer',
       'workspace__read',
@@ -164,6 +166,24 @@ void main() {
       expect(calls, isEmpty);
     },
   );
+
+  test('new_worktree validates names and uses the session-bound bridge', () async {
+    final Map<String, Object?> response = await request(1, 'tools/call', {
+      'name': 'new_worktree',
+      'arguments': {'name': 'feature-one', 'sessionId': 'other'},
+    });
+    expect((response['result'] as Map)['isError'], isFalse);
+    expect(calls.single.method, 'internal.mcpNewWorktree');
+    expect(calls.single.params, {'name': 'feature-one'});
+    calls.clear();
+    for (final Object? name in [null, '', '../escape', '-option', 'a/b', 42]) {
+      final Map<String, Object?> invalid = await request(2, 'tools/call', {
+        'name': 'new_worktree', 'arguments': {'name': name},
+      });
+      expect((invalid['result'] as Map)['isError'], isTrue);
+    }
+    expect(calls, isEmpty);
+  });
 
   test('discovery returns filtered schemas and visible warnings', () async {
     final Map<String, Object?> response = await request(1, 'tools/call', {
@@ -543,9 +563,25 @@ void main() {
     expect(content.first['type'], 'image');
     expect(content.first['data'], png);
     expect(content.first['mimeType'], 'image/png');
-    expect(calls.single.method, 'internal.mcpDisplayImage');
-    expect(calls.single.params['name'], 'pixel.png');
-    expect(calls.single.params['data'], png);
+    expect(calls.last.method, 'internal.mcpDisplayImage');
+    expect(calls.last.params['name'], 'pixel.png');
+    expect(calls.last.params['data'], png);
+  });
+
+  test('relative image paths follow a changed session directory', () async {
+    final Directory moved = Directory(p.join(tempDir.path, 'moved'))..createSync();
+    File(p.join(moved.path, 'pixel.png')).writeAsBytesSync([1, 2, 3]);
+    server = BuiltInMcpServer(
+      sessionId: 'current-session', cwd: '/stale-launch-directory',
+      daemonCall: (method, params) async => method == 'internal.mcpSessionContext'
+          ? {'cwd': moved.path} : {},
+    );
+    final response = await request(1, 'tools/call', {
+      'name': 'display_image', 'arguments': {'path': 'pixel.png'},
+    });
+    final Map result = response['result'] as Map;
+    expect(result['isError'], isFalse);
+    expect((result['content'] as List).first['data'], 'AQID');
   });
 
   for (final String pathKind in <String>['absolute', 'relative', 'symlink']) {
@@ -571,7 +607,7 @@ void main() {
           cwd: cwd.path,
           daemonCall: (String method, Map<String, Object?> params) async {
             calls.add((method: method, params: params));
-            return <String, Object?>{};
+            return <String, Object?>{'cwd': cwd.path};
           },
         );
 
@@ -590,8 +626,8 @@ void main() {
         expect(content.first['type'], 'image');
         expect(content.first['data'], 'AQID');
         expect(content.first['mimeType'], 'image/png');
-        expect(calls.single.method, 'internal.mcpDisplayImage');
-        expect(calls.single.params['data'], 'AQID');
+        expect(calls.last.method, 'internal.mcpDisplayImage');
+        expect(calls.last.params['data'], 'AQID');
       },
     );
   }
