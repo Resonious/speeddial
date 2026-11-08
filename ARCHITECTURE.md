@@ -683,9 +683,11 @@ Performance rules for the app:
   Linux GTK HTML/text targets, Android ClipData.newHtmlText, and iOS pasteboard
   representations. Windows fragment offsets count UTF-8 bytes. A failed rich write
   reports an error instead of silently falling back to the broken text-only path. Table headers offer the same formats
-  plus RFC-style CSV quoting, scoped to the table's original Markdown. A custom
+  plus RFC-style CSV quoting, scoped to the table's original Markdown. Download CSV
+  saves the same UTF-8 content as `table.csv` through the shared platform file saver,
+  with the existing success/error toast and silent picker cancellation. A custom
   table syntax wraps the standard AST so the existing renderer keeps cell layout,
-  selection, and scrolling. Conversion runs only on copy; confirmations reuse the
+  selection, and scrolling. Conversion runs only on selection; copy confirmations reuse the
   still ember check and expire after two seconds (`copy_menu.dart`, `copy_formats.dart`).
   Tables size columns to their contents and scroll horizontally with a visible scrollbar
   when wider than the message, keeping identifiers and multilingual names readable.

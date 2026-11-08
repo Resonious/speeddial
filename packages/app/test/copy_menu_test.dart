@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -73,6 +75,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(copied, isEmpty);
       expect(find.text('Copy as CSV'), findsNothing);
+      expect(find.text('Download CSV'), findsNothing);
       await tester.tap(find.text('Copy Markdown'));
       await tester.pumpAndSettle();
       expect(copied.single, 'Before\n\n$table\n\nAfter');
@@ -171,6 +174,75 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     expect(tester.takeException(), isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  for (final String outcome in <String>['saved', 'cancelled', 'error']) {
+    testWidgets('Android CSV download: $outcome', (tester) async {
+      final Directory directory = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('csv-test-'),
+      ))!;
+      const MethodChannel channel = MethodChannel('sh.speeddial/downloads');
+      String? savedText;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'getCacheDirectory') return directory.path;
+        expect(call.method, 'save');
+        final Map args = call.arguments as Map;
+        expect(args['name'], 'table.csv');
+        savedText = await File(args['path'] as String).readAsString();
+        if (outcome == 'error') throw PlatformException(code: 'save_failed');
+        return outcome == 'saved';
+      });
+      addTearDown(() async {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        );
+        await directory.delete(recursive: true);
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildSpeedDialTheme(),
+          home: const Scaffold(
+            body: CopyMenu(
+              text: '| Name | Note |\n| - | - |\n| 東京 | a, "quote" |',
+              table: true,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Copy table'));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        tester
+            .widget<MenuItemButton>(
+              find.widgetWithText(MenuItemButton, 'Download CSV'),
+            )
+            .onPressed!();
+        // Drain native file staging and the mocked platform save.
+        for (int i = 0; i < 100 && savedText == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        for (int i = 0; i < 100 && directory.listSync().isNotEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pumpAndSettle();
+      expect(savedText, 'Name,Note\r\n東京,"a, ""quote"""');
+      expect(
+        find.text('CSV saved'),
+        outcome == 'saved' ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('Could not download CSV'),
+        outcome == 'error' ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('Copied'), findsNothing);
+      expect(directory.listSync(), isEmpty);
+      await tester.pump(const Duration(seconds: 9));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+  }
   testWidgets(
     'rich clipboard failure reports an error without plain-text fallback',
     (tester) async {

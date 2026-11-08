@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../../files/downloaded_file_saver.dart';
 import '../toast.dart';
 import 'copy_formats.dart';
 import 'copy_clipboard.dart';
@@ -20,6 +23,43 @@ class CopyMenu extends StatefulWidget {
 class _CopyMenuState extends State<CopyMenu> {
   Timer? _reset;
   bool _copied = false;
+  bool _saving = false;
+
+  Future<void> _downloadCsv() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final DownloadedFileResult result = await saveDownloadedStream(
+        'table.csv',
+        Stream<Uint8List>.value(
+          Uint8List.fromList(
+            utf8.encode(formatCopy(widget.text, CopyFormat.csv)),
+          ),
+        ),
+      );
+      if (!mounted) return;
+      switch (result.status) {
+        case DownloadedFileStatus.saved:
+          showToast(context, 'CSV saved', tone: ToastTone.success);
+        case DownloadedFileStatus.browserDownload:
+          showToast(context, 'Sent to browser · Check your downloads');
+        case DownloadedFileStatus.cancelled:
+          break;
+        case DownloadedFileStatus.unsupported:
+          showToast(
+            context,
+            'Downloads are not supported on this platform',
+            tone: ToastTone.error,
+          );
+      }
+    } catch (_) {
+      if (mounted) {
+        showToast(context, 'Could not download CSV', tone: ToastTone.error);
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   void didUpdateWidget(CopyMenu oldWidget) {
@@ -68,6 +108,11 @@ class _CopyMenuState extends State<CopyMenu> {
               onPressed: () => _copy(format),
               child: Text(format.label),
             ),
+        if (widget.table)
+          MenuItemButton(
+            onPressed: _saving ? null : _downloadCsv,
+            child: Text(_saving ? 'Saving CSV…' : 'Download CSV'),
+          ),
       ],
       builder: (context, controller, child) {
         void toggle() =>
