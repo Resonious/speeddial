@@ -34,11 +34,13 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
 
   String _interface = _loopback;
   bool _applying = false;
+  bool _enabled = true;
 
   @override
   void initState() {
     super.initState();
     final EmbeddedDaemonConfig config = widget.initial;
+    _enabled = config.enabled;
     _interface = switch (config.host) {
       _loopback || 'localhost' => _loopback,
       _anyInterface => _anyInterface,
@@ -63,6 +65,7 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
         : _interface;
     final int port = int.tryParse(_port.text.trim()) ?? 0;
     return EmbeddedDaemonConfig(
+      enabled: _enabled,
       host: host,
       port: port,
       token: _token.text.trim(),
@@ -71,18 +74,25 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
 
   Future<void> _apply() async {
     final AppData data = AppScope.of(context);
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_enabled && !(_formKey.currentState?.validate() ?? false)) return;
     // Restarting kills the daemon's agent processes; sessions survive and
     // respawn on their next turn, but a running turn is interrupted.
     final bool confirmed =
         await showDialog<bool>(
           context: context,
           builder: (BuildContext context) => AlertDialog(
-            title: const Text('Restart built-in daemon?'),
-            content: const Text(
-              'The built-in daemon restarts with the new settings. Running '
-              'agent turns are interrupted; their sessions resume on the '
-              'next message.',
+            title: Text(
+              _enabled
+                  ? 'Restart built-in daemon?'
+                  : 'Turn off built-in daemon?',
+            ),
+            content: Text(
+              !_enabled
+                  ? 'Running agent turns are interrupted. Saved sessions remain '
+                        'available when you turn the built-in daemon back on.'
+                  : 'The built-in daemon restarts with the new settings. Running '
+                        'agent turns are interrupted; their sessions resume on the '
+                        'next message.',
             ),
             actions: <Widget>[
               TextButton(
@@ -92,7 +102,7 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
               FilledButton(
                 key: const Key('embedded-daemon-restart-confirm'),
                 onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Restart'),
+                child: Text(_enabled ? 'Restart' : 'Turn off'),
               ),
             ],
           ),
@@ -104,7 +114,11 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
       await data.applyEmbeddedDaemonConfig(_currentConfig());
     } on Object catch (error) {
       if (mounted) {
-        showToast(context, 'Failed to restart: $error', tone: ToastTone.error);
+        showToast(
+          context,
+          'Failed to apply settings: $error',
+          tone: ToastTone.error,
+        );
       }
     } finally {
       if (mounted) setState(() => _applying = false);
@@ -137,6 +151,23 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: <Widget>[
+                SwitchListTile(
+                  key: const Key('embedded-daemon-enabled'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Enable built-in daemon'),
+                  subtitle: const Text(
+                    'Run a daemon on this computer. Turn off to use only '
+                    'other daemons. Changes take effect when applied and '
+                    'are remembered on restart.',
+                  ),
+                  value: _enabled,
+                  onChanged: busy
+                      ? null
+                      : (bool value) {
+                          setState(() => _enabled = value);
+                        },
+                ),
+                const SizedBox(height: 16),
                 if (endpoint != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
@@ -154,115 +185,123 @@ class _EmbeddedDaemonPageState extends State<EmbeddedDaemonPage> {
                     child: Text(
                       'Last start failed: $error',
                       key: const Key('embedded-daemon-error'),
-                      style: textTheme.bodySmall?.copyWith(
-                        color: scheme.error,
+                      style: textTheme.bodySmall?.copyWith(color: scheme.error),
+                    ),
+                  ),
+                if (_enabled) ...<Widget>[
+                  DropdownButtonFormField<String>(
+                    key: const Key('embedded-daemon-interface'),
+                    initialValue: _interface,
+                    decoration: const InputDecoration(
+                      labelText: 'Interface',
+                      helperText: 'Where the daemon accepts connections.',
+                    ),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem<String>(
+                        value: _loopback,
+                        child: Text('Loopback only (127.0.0.1)'),
                       ),
-                    ),
+                      DropdownMenuItem<String>(
+                        value: _anyInterface,
+                        child: Text('All interfaces (0.0.0.0)'),
+                      ),
+                      DropdownMenuItem<String>(
+                        value: _custom,
+                        child: Text('Custom address'),
+                      ),
+                    ],
+                    onChanged: (String? value) {
+                      if (value == null) return;
+                      setState(() => _interface = value);
+                    },
                   ),
-                DropdownButtonFormField<String>(
-                  key: const Key('embedded-daemon-interface'),
-                  initialValue: _interface,
-                  decoration: const InputDecoration(
-                    labelText: 'Interface',
-                    helperText: 'Where the daemon accepts connections.',
-                  ),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem<String>(
-                      value: _loopback,
-                      child: Text('Loopback only (127.0.0.1)'),
-                    ),
-                    DropdownMenuItem<String>(
-                      value: _anyInterface,
-                      child: Text('All interfaces (0.0.0.0)'),
-                    ),
-                    DropdownMenuItem<String>(
-                      value: _custom,
-                      child: Text('Custom address'),
+                  if (_interface == _custom) ...<Widget>[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const Key('embedded-daemon-custom-host'),
+                      controller: _customHost,
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                        labelText: 'Bind address',
+                        hintText: '192.168.1.10 or ::1',
+                      ),
+                      validator: (String? value) =>
+                          (value == null || value.trim().isEmpty)
+                          ? 'Bind address is required'
+                          : null,
                     ),
                   ],
-                  onChanged: (String? value) {
-                    if (value == null) return;
-                    setState(() => _interface = value);
-                  },
-                ),
-                if (_interface == _custom) ...<Widget>[
                   const SizedBox(height: 12),
                   TextFormField(
-                    key: const Key('embedded-daemon-custom-host'),
-                    controller: _customHost,
-                    keyboardType: TextInputType.url,
+                    key: const Key('embedded-daemon-port'),
+                    controller: _port,
+                    keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                      labelText: 'Bind address',
-                      hintText: '192.168.1.10 or ::1',
+                      labelText: 'Port',
+                      hintText: 'Automatic',
+                      helperText:
+                          'Fixed port, or leave blank to pick a free '
+                          'one at each launch.',
                     ),
-                    validator: (String? value) =>
-                        (value == null || value.trim().isEmpty)
-                        ? 'Bind address is required'
-                        : null,
+                    validator: (String? value) {
+                      final String trimmed = value?.trim() ?? '';
+                      if (trimmed.isEmpty) return null;
+                      final int? port = int.tryParse(trimmed);
+                      if (port == null || port < 1 || port > 65535) {
+                        return 'Enter a port between 1 and 65535';
+                      }
+                      return null;
+                    },
                   ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const Key('embedded-daemon-token'),
+                    controller: _token,
+                    decoration: InputDecoration(
+                      labelText: 'Token',
+                      helperText:
+                          'Required for non-loopback interfaces. '
+                          'Clients sign in with this token.',
+                      suffixIcon: IconButton(
+                        key: const Key('embedded-daemon-generate-token'),
+                        tooltip: 'Generate random token',
+                        icon: const Icon(Icons.auto_awesome, size: 18),
+                        onPressed: () => setState(
+                          () => _token.text = generateEmbeddedDaemonToken(),
+                        ),
+                      ),
+                    ),
+                    validator: (String? value) {
+                      if (_currentConfig().isLoopback) return null;
+                      if (value == null || value.trim().isEmpty) {
+                        return 'A token is required unless the daemon is '
+                            'loopback-only';
+                      }
+                      return null;
+                    },
+                  ),
+                  if (!_currentConfig().isLoopback)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'The daemon becomes reachable from your network.',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                 ],
-                const SizedBox(height: 12),
-                TextFormField(
-                  key: const Key('embedded-daemon-port'),
-                  controller: _port,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Port',
-                    hintText: 'Automatic',
-                    helperText: 'Fixed port, or leave blank to pick a free '
-                        'one at each launch.',
-                  ),
-                  validator: (String? value) {
-                    final String trimmed = value?.trim() ?? '';
-                    if (trimmed.isEmpty) return null;
-                    final int? port = int.tryParse(trimmed);
-                    if (port == null || port < 1 || port > 65535) {
-                      return 'Enter a port between 1 and 65535';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  key: const Key('embedded-daemon-token'),
-                  controller: _token,
-                  decoration: InputDecoration(
-                    labelText: 'Token',
-                    helperText: 'Required for non-loopback interfaces. '
-                        'Clients sign in with this token.',
-                    suffixIcon: IconButton(
-                      key: const Key('embedded-daemon-generate-token'),
-                      tooltip: 'Generate random token',
-                      icon: const Icon(Icons.auto_awesome, size: 18),
-                      onPressed: () => setState(
-                        () => _token.text = generateEmbeddedDaemonToken(),
-                      ),
-                    ),
-                  ),
-                  validator: (String? value) {
-                    if (_currentConfig().isLoopback) return null;
-                    if (value == null || value.trim().isEmpty) {
-                      return 'A token is required unless the daemon is '
-                          'loopback-only';
-                    }
-                    return null;
-                  },
-                ),
-                if (!_currentConfig().isLoopback)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'The daemon becomes reachable from your network.',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
                 const SizedBox(height: 24),
                 FilledButton(
                   key: const Key('embedded-daemon-apply'),
                   onPressed: busy ? null : _apply,
-                  child: Text(busy ? 'Restarting…' : 'Apply & restart'),
+                  child: Text(
+                    busy
+                        ? 'Applying…'
+                        : _enabled
+                        ? 'Apply & restart'
+                        : 'Apply & turn off',
+                  ),
                 ),
               ],
             ),

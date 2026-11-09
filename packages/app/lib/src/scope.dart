@@ -326,7 +326,7 @@ class SelectionStore extends ChangeNotifier {
   }
 
   /// Selects a daemon without retaining a project/session from another one.
-  void selectDaemon(String daemonId) {
+  void selectDaemon(String? daemonId) {
     if (_selectedDaemonId == daemonId &&
         _selectedProjectId == null &&
         _selectedSessionId == null) {
@@ -646,6 +646,16 @@ class AppData {
     embedded.setRestarting(true);
     try {
       await controller.stop();
+      if (!config.enabled) {
+        if (selection.selectedDaemonId == embeddedDaemonId) {
+          final Iterable<DaemonEndpoint> others = connections.endpoints.where(
+            (DaemonEndpoint endpoint) => endpoint.id != embeddedDaemonId,
+          );
+          selection.selectDaemon(others.firstOrNull?.id);
+        }
+        await connections.removeEndpoint(embeddedDaemonId);
+        return;
+      }
       final String? url = await controller.start(
         host: config.host,
         port: config.port,

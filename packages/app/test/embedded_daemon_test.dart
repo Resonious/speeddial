@@ -42,6 +42,7 @@ class FakeLocalDaemonController implements LocalDaemonController {
     if (nextUrl != null) url = nextUrl!;
     return url;
   }
+
   @override
   Future<void> stop() async {
     stopCalls++;
@@ -79,7 +80,6 @@ void main() {
       expect(fresh.config.isLoopback, isTrue);
     });
 
-
     test('save normalizes and persists', () async {
       final EmbeddedDaemonStore store = EmbeddedDaemonStore();
       await store.save(
@@ -96,70 +96,75 @@ void main() {
   });
 
   group('AppData.applyEmbeddedDaemonConfig', () {
-    test('restarts the controller and repoints the embedded endpoint', () async {
-      final AppData data = AppData()
-        ..registerClient(AppData.embeddedDaemonId, FakeDaemonClient());
-      addTearDown(data.dispose);
-      final FakeLocalDaemonController controller = FakeLocalDaemonController(
-        'ws://127.0.0.1:40001/ws',
-      );
-      data.localDaemon = controller;
-      await data.connections.addEndpoint(
-        id: AppData.embeddedDaemonId,
-        name: 'This computer',
-        url: 'ws://127.0.0.1:40001/ws',
-        token: '',
-        persist: false,
-        embedded: true,
-      );
+    test(
+      'restarts the controller and repoints the embedded endpoint',
+      () async {
+        final AppData data = AppData()
+          ..registerClient(AppData.embeddedDaemonId, FakeDaemonClient());
+        addTearDown(data.dispose);
+        final FakeLocalDaemonController controller = FakeLocalDaemonController(
+          'ws://127.0.0.1:40001/ws',
+        );
+        data.localDaemon = controller;
+        await data.connections.addEndpoint(
+          id: AppData.embeddedDaemonId,
+          name: 'This computer',
+          url: 'ws://127.0.0.1:40001/ws',
+          token: '',
+          persist: false,
+          embedded: true,
+        );
 
-      controller.nextUrl = 'ws://127.0.0.1:7331/ws';
-      await data.applyEmbeddedDaemonConfig(
-        const EmbeddedDaemonConfig(
-          host: '127.0.0.1',
-          port: 7331,
-          token: 'sekret',
-        ),
-      );
+        controller.nextUrl = 'ws://127.0.0.1:7331/ws';
+        await data.applyEmbeddedDaemonConfig(
+          const EmbeddedDaemonConfig(
+            host: '127.0.0.1',
+            port: 7331,
+            token: 'sekret',
+          ),
+        );
 
-      expect(controller.stopCalls, 1);
-      expect(controller.startCalls, 1);
-      expect(controller.lastHost, '127.0.0.1');
-      expect(controller.lastPort, 7331);
-      expect(controller.lastToken, 'sekret');
-      final DaemonEndpoint endpoint = data.connections.endpoints.single;
-      expect(endpoint.embedded, isTrue);
-      expect(endpoint.url, 'ws://127.0.0.1:7331/ws');
-      expect(endpoint.token, 'sekret');
-      expect(data.embeddedDaemon.lastError, isNull);
-      expect(data.embeddedDaemon.restarting, isFalse);
-      // Embedded endpoints never reach preferences.
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString(ConnectionsStore.storageKey), '[]');
-    });
+        expect(controller.stopCalls, 1);
+        expect(controller.startCalls, 1);
+        expect(controller.lastHost, '127.0.0.1');
+        expect(controller.lastPort, 7331);
+        expect(controller.lastToken, 'sekret');
+        final DaemonEndpoint endpoint = data.connections.endpoints.single;
+        expect(endpoint.embedded, isTrue);
+        expect(endpoint.url, 'ws://127.0.0.1:7331/ws');
+        expect(endpoint.token, 'sekret');
+        expect(data.embeddedDaemon.lastError, isNull);
+        expect(data.embeddedDaemon.restarting, isFalse);
+        // Embedded endpoints never reach preferences.
+        final SharedPreferences prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString(ConnectionsStore.storageKey), '[]');
+      },
+    );
 
-    test('records the failure and keeps the saved config for next launch',
-        () async {
-      final AppData data = AppData()
-        ..registerClient(AppData.embeddedDaemonId, FakeDaemonClient());
-      addTearDown(data.dispose);
-      final FakeLocalDaemonController controller = FakeLocalDaemonController(
-        'ws://127.0.0.1:40002/ws',
-      )..failWith = StateError('port in use');
-      data.localDaemon = controller;
+    test(
+      'records the failure and keeps the saved config for next launch',
+      () async {
+        final AppData data = AppData()
+          ..registerClient(AppData.embeddedDaemonId, FakeDaemonClient());
+        addTearDown(data.dispose);
+        final FakeLocalDaemonController controller = FakeLocalDaemonController(
+          'ws://127.0.0.1:40002/ws',
+        )..failWith = StateError('port in use');
+        data.localDaemon = controller;
 
-      await expectLater(
-        data.applyEmbeddedDaemonConfig(
-          const EmbeddedDaemonConfig(port: 7331, token: 'sekret'),
-        ),
-        throwsStateError,
-      );
-      expect(controller.startCalls, 1);
-      expect(data.embeddedDaemon.lastError, isNotNull);
-      expect(data.embeddedDaemon.restarting, isFalse);
-      // The settings are still persisted so the next launch retries them.
-      expect(data.embeddedDaemon.config.port, 7331);
-    });
+        await expectLater(
+          data.applyEmbeddedDaemonConfig(
+            const EmbeddedDaemonConfig(port: 7331, token: 'sekret'),
+          ),
+          throwsStateError,
+        );
+        expect(controller.startCalls, 1);
+        expect(data.embeddedDaemon.lastError, isNotNull);
+        expect(data.embeddedDaemon.restarting, isFalse);
+        // The settings are still persisted so the next launch retries them.
+        expect(data.embeddedDaemon.config.port, 7331);
+      },
+    );
 
     test('adds the embedded endpoint when boot start had failed', () async {
       final AppData data = AppData()
@@ -178,6 +183,62 @@ void main() {
       expect(endpoint.id, AppData.embeddedDaemonId);
       expect(endpoint.embedded, isTrue);
       expect(data.selection.selectedDaemonId, AppData.embeddedDaemonId);
+    });
+
+    test('disable persists and can re-enable', () async {
+      final AppData data = AppData()
+        ..registerClient(AppData.embeddedDaemonId, FakeDaemonClient());
+      addTearDown(data.dispose);
+      final FakeLocalDaemonController controller = FakeLocalDaemonController(
+        'ws://127.0.0.1:7331/ws',
+      );
+      data.localDaemon = controller;
+      await data.applyEmbeddedDaemonConfig(const EmbeddedDaemonConfig());
+      data.selection.selectSession(
+        daemonId: AppData.embeddedDaemonId,
+        projectId: 'p',
+        sessionId: 's',
+      );
+      await data.applyEmbeddedDaemonConfig(
+        const EmbeddedDaemonConfig(enabled: false),
+      );
+      expect(controller.startCalls, 1);
+      expect(controller.stopCalls, 2);
+      expect(data.localDaemon, same(controller));
+      expect(data.connections.endpoints, isEmpty);
+      expect(data.selection.selectedDaemonId, isNull);
+      expect(data.selection.selectedSessionId, isNull);
+      final EmbeddedDaemonStore restored = EmbeddedDaemonStore();
+      addTearDown(restored.dispose);
+      await restored.init();
+      expect(restored.config.enabled, isFalse);
+      await data.applyEmbeddedDaemonConfig(const EmbeddedDaemonConfig());
+      expect(controller.startCalls, 2);
+      expect(data.connections.endpoints.single.embedded, isTrue);
+    });
+
+    test('disabling preserves the selected remote daemon', () async {
+      final AppData data = AppData()
+        ..registerClient('remote', FakeDaemonClient());
+      addTearDown(data.dispose);
+      data.localDaemon = FakeLocalDaemonController('ws://127.0.0.1:7331/ws');
+      await data.connections.addEndpoint(
+        id: 'remote',
+        name: 'Remote',
+        url: 'ws://remote/ws',
+        token: '',
+      );
+      data.selection.selectSession(
+        daemonId: 'remote',
+        projectId: 'p',
+        sessionId: 's',
+      );
+      await data.applyEmbeddedDaemonConfig(
+        const EmbeddedDaemonConfig(enabled: false),
+      );
+      expect(data.connections.endpoints.single.id, 'remote');
+      expect(data.selection.selectedSessionId, 's');
+      expect(data.selection.selectedDaemonId, 'remote');
     });
 
     test('without a controller it only persists', () async {
@@ -205,8 +266,35 @@ void main() {
       return data;
     }
 
-    testWidgets('applies interface, port, and token through the restart',
-        (WidgetTester tester) async {
+    testWidgets('turns off the daemon from settings', (tester) async {
+      final AppData data = AppData();
+      addTearDown(data.dispose);
+      final FakeLocalDaemonController controller = FakeLocalDaemonController(
+        'ws://127.0.0.1:7331/ws',
+      );
+      data.localDaemon = controller;
+      await pumpPage(tester, data);
+      await tester.tap(find.byKey(const Key('embedded-daemon-enabled')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('embedded-daemon-port')), findsNothing);
+      await tester.ensureVisible(
+        find.byKey(const Key('embedded-daemon-apply')),
+      );
+      await tester.tap(find.byKey(const Key('embedded-daemon-apply')));
+      await tester.pumpAndSettle();
+      expect(find.text('Turn off built-in daemon?'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const Key('embedded-daemon-restart-confirm')),
+      );
+      await tester.pumpAndSettle();
+      expect(controller.stopCalls, 1);
+      expect(controller.startCalls, 0);
+      expect(data.embeddedDaemon.config.enabled, isFalse);
+    });
+
+    testWidgets('applies interface, port, and token through the restart', (
+      WidgetTester tester,
+    ) async {
       final AppData data = AppData();
       addTearDown(data.dispose);
       final FakeLocalDaemonController controller = FakeLocalDaemonController(
@@ -227,9 +315,14 @@ void main() {
         find.byKey(const Key('embedded-daemon-token')),
         'net-token',
       );
+      await tester.ensureVisible(
+        find.byKey(const Key('embedded-daemon-apply')),
+      );
       await tester.tap(find.byKey(const Key('embedded-daemon-apply')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('embedded-daemon-restart-confirm')));
+      await tester.tap(
+        find.byKey(const Key('embedded-daemon-restart-confirm')),
+      );
       await tester.pumpAndSettle();
 
       expect(controller.lastHost, '0.0.0.0');
@@ -251,6 +344,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('All interfaces (0.0.0.0)').last);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('embedded-daemon-apply')),
+      );
       await tester.tap(find.byKey(const Key('embedded-daemon-apply')));
       await tester.pumpAndSettle();
 
@@ -274,34 +370,32 @@ void main() {
       data.embeddedDaemon.setLastError(StateError('address in use'));
       await pumpPage(tester, data);
 
-      expect(
-        find.byKey(const Key('embedded-daemon-url')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('embedded-daemon-url')), findsOneWidget);
       expect(find.byKey(const Key('embedded-daemon-error')), findsOneWidget);
     });
 
-    testWidgets('left rail exposes the settings entry for the embedded daemon',
-        (WidgetTester tester) async {
-      final AppData data = AppData();
-      addTearDown(data.dispose);
-      data.localDaemon = FakeLocalDaemonController('ws://127.0.0.1:7331/ws');
-      await tester.pumpWidget(
-        MaterialApp(home: AppScope(data: data, child: const LeftRail())),
-      );
-      await tester.pumpAndSettle();
+    testWidgets(
+      'left rail exposes the settings entry for the embedded daemon',
+      (WidgetTester tester) async {
+        final AppData data = AppData();
+        addTearDown(data.dispose);
+        data.localDaemon = FakeLocalDaemonController('ws://127.0.0.1:7331/ws');
+        await tester.pumpWidget(
+          MaterialApp(
+            home: AppScope(data: data, child: const LeftRail()),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('embedded-daemon-settings')),
-        findsOneWidget,
-      );
-      await tester.tap(find.byKey(const Key('embedded-daemon-settings')));
-      await tester.pumpAndSettle();
-      expect(find.text('Built-in daemon'), findsOneWidget);
-      expect(
-        find.byKey(const Key('embedded-daemon-apply')),
-        findsOneWidget,
-      );
-    });
+        expect(
+          find.byKey(const Key('embedded-daemon-settings')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const Key('embedded-daemon-settings')));
+        await tester.pumpAndSettle();
+        expect(find.text('Built-in daemon'), findsOneWidget);
+        expect(find.byKey(const Key('embedded-daemon-apply')), findsOneWidget);
+      },
+    );
   });
 }

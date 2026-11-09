@@ -908,3 +908,7 @@ MCP cannot change a running harness's default directory. Old checkouts and dirty
 files remain intact. Relative MCP image paths query the current session directory.
 Managed MCP connections restart in the new cwd on their next use, draining
 in-flight calls in the old directory. The Git pane reloads and closes its old diff when the selected session's cwd changes.
+
+The desktop built-in daemon settings include a persisted enabled flag (default true).
+Disabling stops the daemon and removes its ephemeral endpoint; the controller and
+settings entry remain available to re-enable it. Startup skips disabled daemons.

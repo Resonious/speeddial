@@ -10,6 +10,7 @@ import 'store_base.dart';
 @immutable
 class EmbeddedDaemonConfig {
   const EmbeddedDaemonConfig({
+    this.enabled = true,
     this.host = '127.0.0.1',
     this.port = 0,
     this.token = '',
@@ -17,11 +18,15 @@ class EmbeddedDaemonConfig {
 
   factory EmbeddedDaemonConfig.fromJson(Map<String, Object?> json) {
     return EmbeddedDaemonConfig(
+      enabled: (json['enabled'] as bool?) ?? true,
       host: (json['host'] as String?) ?? '127.0.0.1',
       port: (json['port'] as int?) ?? 0,
       token: (json['token'] as String?) ?? '',
     );
   }
+
+  /// Whether the desktop app starts its built-in daemon.
+  final bool enabled;
 
   /// Bind interface: `127.0.0.1` (default) keeps the daemon loopback-only;
   /// `0.0.0.0`/`::` expose it to every interface; any other address binds
@@ -38,6 +43,7 @@ class EmbeddedDaemonConfig {
       host == '127.0.0.1' || host == '::1' || host == 'localhost';
 
   Map<String, Object?> toJson() => <String, Object?>{
+    if (!enabled) 'enabled': false,
     if (host != '127.0.0.1') 'host': host,
     if (port != 0) 'port': port,
     if (token.isNotEmpty) 'token': token,
@@ -46,14 +52,14 @@ class EmbeddedDaemonConfig {
   @override
   bool operator ==(Object other) =>
       other is EmbeddedDaemonConfig &&
+      other.enabled == enabled &&
       other.host == host &&
       other.port == port &&
       other.token == token;
 
   @override
-  int get hashCode => Object.hash(host, port, token);
+  int get hashCode => Object.hash(enabled, host, port, token);
 }
-
 
 /// Configuration of the embedded in-process daemon: the persisted
 /// [EmbeddedDaemonConfig] plus live restart state written by
@@ -95,6 +101,7 @@ class EmbeddedDaemonStore extends StoreBase {
   /// notifies listeners. Clears [lastError]: a new attempt is starting.
   Future<void> save(EmbeddedDaemonConfig config) async {
     _config = EmbeddedDaemonConfig(
+      enabled: config.enabled,
       host: config.host.trim(),
       port: config.port,
       token: config.token.trim(),

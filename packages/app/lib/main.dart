@@ -51,27 +51,29 @@ Future<void> main(List<String> args) async {
       final LocalDaemonController localDaemon = createLocalDaemonController();
       data.localDaemon = localDaemon;
       final EmbeddedDaemonConfig config = embedded.config;
-      final String? url = await localDaemon.start(
-        host: config.host,
-        port: config.port,
-        token: config.token,
-      );
-      if (url != null && !data.isDisposed) {
-        await data.connections.addEndpoint(
-          id: AppData.embeddedDaemonId,
-          name: 'This computer',
-          url: url,
+      if (config.enabled) {
+        final String? url = await localDaemon.start(
+          host: config.host,
+          port: config.port,
           token: config.token,
-          persist: false,
-          embedded: true,
         );
-        data.selection.selectedDaemonId = AppData.embeddedDaemonId;
-      } else if (url == null && !data.isDisposed) {
-        // Bind failure (e.g. configured port in use): surface it through the
-        // store so the embedded-daemon settings page can show it.
-        embedded.setLastError(
-          localDaemon.lastError ?? StateError('unknown start failure'),
-        );
+        if (url != null && !data.isDisposed) {
+          await data.connections.addEndpoint(
+            id: AppData.embeddedDaemonId,
+            name: 'This computer',
+            url: url,
+            token: config.token,
+            persist: false,
+            embedded: true,
+          );
+          data.selection.selectedDaemonId = AppData.embeddedDaemonId;
+        } else if (url == null && !data.isDisposed) {
+          // Bind failure (e.g. configured port in use): surface it through the
+          // store so the embedded-daemon settings page can show it.
+          embedded.setLastError(
+            localDaemon.lastError ?? StateError('unknown start failure'),
+          );
+        }
       }
     }
     // Connect every saved endpoint; failures land in their connection
