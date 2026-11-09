@@ -2085,6 +2085,9 @@ class SpeedDialServer {
       base: explicitBase ?? session?.baseBranch,
       draft: rawDraft is bool ? rawDraft : false,
     );
+    if (session != null && url.startsWith('https://')) {
+      _store.claimPullRequest(session.id, url, DateTime.now().toUtc());
+    }
     _summaryWatcher.expirePullRequests(project.id);
     return <String, Object?>{'url': url};
   }
@@ -2147,7 +2150,10 @@ class SpeedDialServer {
     final List<Session> sessions = _store.listSessions(projectId: project.id);
     final List<SessionGitSummary> summaries = await _git.sessionSummaries(
       sessions,
-      pullRequestFor: _pr.pullRequestLookup(project.id),
+      pullRequestFor: _pr.sessionPullRequests(
+        project.id,
+        _store.pullRequestClaims(project.id),
+      ),
     );
     return <String, Object?>{
       'summaries': summaries

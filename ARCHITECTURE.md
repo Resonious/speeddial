@@ -318,6 +318,13 @@ lib/src/git/        GitService: shells out to `git` (never libgit2). Parses porc
                     and reports changed projects so the server broadcasts
                     `git.changed`. PrService uses `gh pr create` and `gh pr list`; the
                     list fails silently. All ops take an absolute repo path.
+                    A session's pull request badge is attributed by receipt, not by
+                    cwd: the engine claims the URL printed by each of the session's
+                    own finished `gh pr create` calls (pull_request_receipt.dart,
+                    stored in `session_pull_requests`), and the cwd branch is only a
+                    fallback for pull requests no session claimed. Forks share their
+                    source's cwd and agents `cd` into other checkouts, so the cwd
+                    branch alone hangs one pull request on every sibling.
 lib/src/server/     WebSocket server (dart:io HttpServer + WebSocketTransformer) speaking
                     PROTOCOL.md. JsonRpcPeer from the protocol package does framing. FsService
                     confines project browsing, including symlink resolution. Binary chat-link

@@ -4487,4 +4487,34 @@ void main() {
       },
     );
   });
+
+  test('a gh pr create receipt claims its pull request for the session',
+      () async {
+    final Session session =
+        await engine.createSession(projectId: 'p1', providerId: 'fake');
+    for (final (int revision, Map<String, Object?> receipt) in [
+      (1, <String, Object?>{
+        'id': 'view',
+        'rawInput': {'command': 'gh pr view 7'},
+        'output': 'https://github.com/org/repo/pull/7',
+      }),
+      (2, <String, Object?>{
+        'id': 'create',
+        'rawInput': {'command': 'git push -u origin HEAD && gh pr create --fill'},
+        'output': 'remote:   https://github.com/org/repo/pull/new/feature\n'
+            'https://github.com/org/repo/pull/42\n',
+      }),
+    ]) {
+      final Future<Session> idle = engine.sessionChanges.firstWhere(
+          (Session value) =>
+              value.id == session.id && value.completionRevision == revision);
+      await engine.sendMessage(
+          session.id, 'tool-receipt:${jsonEncode(receipt)}');
+      await idle.timeout(const Duration(seconds: 10));
+      await waitFor(() => !engine.hasActiveSessions);
+    }
+    expect(store.pullRequestClaims('p1'), <String, List<String>>{
+      session.id: <String>['https://github.com/org/repo/pull/42'],
+    });
+  });
 }

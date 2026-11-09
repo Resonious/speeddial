@@ -496,6 +496,35 @@ Future<void> _runTurn(
     return _resolvePrompt(promptId, 'end_turn');
   }
 
+  // One finished tool call: {"id", "title", "rawInput", "status", "output"}.
+  // The output arrives as text content, the way shell tools report it.
+  if (text.startsWith('tool-receipt:')) {
+    final Map<String, Object?> receipt =
+        (jsonDecode(text.substring('tool-receipt:'.length)) as Map)
+            .cast<String, Object?>();
+    final Object id = receipt['id'] ?? 'receipt-call';
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call',
+      'toolCallId': id,
+      'title': receipt['title'] ?? 'Bash',
+      'kind': 'execute',
+      'status': 'in_progress',
+      'rawInput': receipt['rawInput'],
+    });
+    await _sendUpdate(<String, Object?>{
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': id,
+      'status': receipt['status'] ?? 'completed',
+      'content': [
+        {
+          'type': 'content',
+          'content': {'type': 'text', 'text': receipt['output'] ?? ''},
+        },
+      ],
+    });
+    return _resolvePrompt(promptId, 'end_turn');
+  }
+
   if (text.startsWith('enter-worktree:')) {
     final Map<String, Object?> receipt =
         (jsonDecode(text.substring('enter-worktree:'.length)) as Map)

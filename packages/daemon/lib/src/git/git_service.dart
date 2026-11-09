@@ -84,7 +84,7 @@ class GitService {
     required String repoPath,
     String? baseBranch,
     DateTime? createdAt,
-    SessionPullRequest? Function(String branch)? pullRequestFor,
+    SessionPullRequest? Function(String? branch)? pullRequestFor,
   }) async {
     bool? dirty;
     try {
@@ -139,10 +139,10 @@ class GitService {
     SessionPullRequest? pullRequest;
     if (pullRequestFor != null) {
       try {
-        final String? branch = await _currentBranch(repoPath);
-        if (branch != null) pullRequest = pullRequestFor(branch);
+        pullRequest = pullRequestFor(await _currentBranch(repoPath));
       } on ProcessException {
-        pullRequest = null;
+        // The directory is gone; a claimed pull request still stands.
+        pullRequest = pullRequestFor(null);
       }
     }
 
@@ -159,11 +159,14 @@ class GitService {
   /// One summary per session (see [sessionSummary]), computed concurrently.
   /// Shared by the `git.sessionSummaries` handler and the summary watcher.
   ///
-  /// [pullRequestFor] maps a branch name to its pull request; leave it null
-  /// when no pull requests are known, to skip reading each session's branch.
+  /// [pullRequestFor] picks a session's pull request from its id and the
+  /// branch checked out in its cwd (see `PrService.sessionPullRequests`);
+  /// leave it null when no pull requests are known, to skip reading each
+  /// session's branch.
   Future<List<SessionGitSummary>> sessionSummaries(
     Iterable<Session> sessions, {
-    SessionPullRequest? Function(String branch)? pullRequestFor,
+    SessionPullRequest? Function(String sessionId, String? branch)?
+    pullRequestFor,
   }) {
     return Future.wait(<Future<SessionGitSummary>>[
       for (final Session session in sessions)
@@ -172,7 +175,9 @@ class GitService {
           repoPath: session.cwd,
           baseBranch: session.baseBranch,
           createdAt: session.createdAt,
-          pullRequestFor: pullRequestFor,
+          pullRequestFor: pullRequestFor == null
+              ? null
+              : (String? branch) => pullRequestFor(session.id, branch),
         ),
     ]);
   }

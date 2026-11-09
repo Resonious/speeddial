@@ -109,7 +109,10 @@ class SummaryWatcher {
     if (_closed) return;
     final List<SessionGitSummary> summaries = await _git.sessionSummaries(
       sessions,
-      pullRequestFor: _pr.pullRequestLookup(project.id),
+      pullRequestFor: _pr.sessionPullRequests(
+        project.id,
+        _store.pullRequestClaims(project.id),
+      ),
     );
     if (_closed) return;
     final String json = jsonEncode(summaries);

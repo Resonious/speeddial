@@ -37,6 +37,7 @@ import '../agents/native_commands.dart';
 import '../ante/ante_client.dart';
 import '../codex/codex_client.dart';
 import '../git/git_service.dart';
+import '../git/pull_request_receipt.dart';
 import '../mcp/built_in_mcp_server.dart';
 import '../notifications/final_reply.dart';
 import '../providers/provider_registry.dart';
@@ -2281,6 +2282,15 @@ class SessionEngine {
     });
   }
 
+  /// Records a pull request this session opened, so its row shows that one
+  /// rather than whatever its (possibly shared) cwd has checked out. Only
+  /// live calls get here: a fork's copied history never claims anything.
+  void _observePullRequest(_LiveSession live, ToolCall call) {
+    final String? url = createdPullRequestUrl(call);
+    if (url == null) return;
+    _store.claimPullRequest(live.sessionId, url, DateTime.now().toUtc());
+  }
+
   Future<String> sessionWorkingDirectory(String sessionId) async {
     await _live[sessionId]?.worktreeUpdates;
     final Session? session = _store.getSession(sessionId);
@@ -3163,6 +3173,7 @@ class SessionEngine {
           () => <String, ToolCall>{},
         )[mapped.id] = mapped;
         _observeWorktree(live, mapped);
+        _observePullRequest(live, mapped);
         return ToolCallEvent(toolCall: boundInitialToolCallForEmit(mapped));
       case final AcpToolCallUpdate toolCallUpdate:
         final toolCallId = toolCallUpdate.toolCallId;
@@ -3202,6 +3213,7 @@ class SessionEngine {
         // Persisted/broadcast progress is metadata-only. The in-memory state
         // stays complete so the terminal event can carry a bounded preview.
         _observeWorktree(live, merged);
+        _observePullRequest(live, merged);
         return ToolCallEvent(toolCall: trimToolCallUpdateForEmit(merged));
       case final AcpPlan plan:
         _breakSyntheticContent(live);

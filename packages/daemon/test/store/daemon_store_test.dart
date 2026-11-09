@@ -77,6 +77,81 @@ void main() {
     }
   });
 
+  group('pull request claims', () {
+    const String pr1 = 'https://github.com/org/repo/pull/1';
+    const String pr2 = 'https://github.com/org/repo/pull/2';
+
+    ToolCallEvent receipt(String id, String url, {String? command}) =>
+        ToolCallEvent(
+          toolCall: ToolCall(
+            id: id,
+            title: 'Bash',
+            kind: 'execute',
+            status: ToolCallStatus.completed,
+            content: <ToolCallContent>[ToolCallText(text: '$url\n')],
+            locations: const <String>[],
+            rawInput: <String, Object?>{
+              'command': command ?? 'gh pr create --fill',
+            },
+          ),
+        );
+
+    test('are per session, newest last, across archived sessions and '
+        'projects', () {
+      store.insertProject(project());
+      store.insertProject(project(id: 'p2'));
+      store.insertSession(session(id: 'a'));
+      store.insertSession(session(id: 'b', archived: true));
+      store.insertSession(session(id: 'c', projectId: 'p2'));
+      store.claimPullRequest('a', pr1, DateTime.utc(2026, 1, 3));
+      store.claimPullRequest('a', pr2, DateTime.utc(2026, 1, 4));
+      store.claimPullRequest('b', pr2, DateTime.utc(2026, 1, 5));
+      store.claimPullRequest('c', pr1, DateTime.utc(2026, 1, 5));
+      store.claimPullRequest('missing', pr1, DateTime.utc(2026, 1, 5));
+      expect(store.pullRequestClaims('p1'), <String, List<String>>{
+        'a': <String>[pr1, pr2],
+        'b': <String>[pr2],
+      });
+
+      // Claiming again makes it the newest; deleting drops the claims.
+      store.claimPullRequest('a', pr1, DateTime.utc(2026, 1, 6));
+      expect(store.pullRequestClaims('p1')['a'], <String>[pr2, pr1]);
+      store.deleteSession('b');
+      expect(store.pullRequestClaims('p1').keys, <String>['a']);
+    });
+
+    test('are backfilled from receipts, never by a fork for its source', () {
+      store.insertProject(project());
+      store.insertSession(session(id: 'source'));
+      store.insertSession(session(id: 'fork'));
+      store.insertSession(session(id: 'quiet'));
+      // The fork's history holds a copy of its source's receipt.
+      store.appendEvent('source', 1, receipt('call-1', pr1));
+      store.appendEvent('fork', 1, receipt('call-1', pr1));
+      store.appendEvent('fork', 2, receipt('call-2', pr2));
+      store.appendEvent(
+        'quiet',
+        1,
+        receipt('call-3', pr2, command: 'gh pr view --web'),
+      );
+      store.dispose();
+      final Database db = sqlite3.open(p.join(tempDir.path, 'speeddial.db'));
+      try {
+        db.execute('DROP TABLE session_pull_requests');
+        db.execute(
+          "UPDATE sessions SET created_at = created_at + 1 WHERE id = 'fork'",
+        );
+      } finally {
+        db.close();
+      }
+      store = openStore(tempDir);
+      expect(store.pullRequestClaims('p1'), <String, List<String>>{
+        'source': <String>[pr1],
+        'fork': <String>[pr2],
+      });
+    });
+  });
+
   test('legacy plan rows load without exposing a session mode', () {
     store.insertProject(project());
     store.insertSession(session(id: 'legacy'));

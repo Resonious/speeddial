@@ -109,7 +109,9 @@ void main() {
       String branch,
     ) async {
       await service.refreshPullRequests('project', Directory.systemTemp.path);
-      return service.pullRequestLookup('project')?.call(branch);
+      return service
+          .sessionPullRequests('project', const <String, List<String>>{})
+          ?.call('session', branch);
     }
 
     test('runs in the repository and lists every state', () async {
@@ -217,18 +219,72 @@ void main() {
       expect((await lookup(service, 'feature'))?.number, 1);
     });
 
+    group('sessionPullRequests', () {
+      String url(int number) => 'https://github.com/org/repo/pull/$number';
+
+      Future<SessionPullRequest? Function(String, String?)> resolver(
+        Map<String, List<String>> claims,
+      ) async {
+        final service = await serviceListing(<Map<String, Object?>>[
+          pr(9, 'shared'),
+          pr(8, 'own-branch'),
+          pr(7, 'other', state: 'MERGED'),
+          pr(6, 'unclaimed'),
+        ]);
+        await service.refreshPullRequests('project', Directory.systemTemp.path);
+        return service.sessionPullRequests('project', claims)!;
+      }
+
+      test('a session shows the pull request it opened, not its cwd '
+          "branch's", () async {
+        final resolve = await resolver(<String, List<String>>{
+          'opener': <String>[url(9)],
+          'fork-a': <String>[url(7), url(8)],
+        });
+        // All three share one checkout on branch "shared" (#9).
+        expect(resolve('opener', 'shared')?.number, 9);
+        expect(resolve('fork-a', 'shared')?.number, 8);
+        // A fork that opened nothing must not wear its source's #9.
+        expect(resolve('fork-b', 'shared'), isNull);
+      });
+
+      test('newest claim in this repository wins; others fall through', () async {
+        final resolve = await resolver(<String, List<String>>{
+          's': <String>[
+            url(7),
+            url(8),
+            'https://github.com/org/other-repo/pull/1',
+          ],
+          'gone': <String>['https://github.com/org/repo/pull/12345'],
+          'cased': <String>['https://github.com/ORG/Repo/pull/7'],
+        });
+        expect(resolve('s', null)?.number, 8);
+        // A claim outside the cache leaves the unclaimed cwd branch.
+        expect(resolve('gone', 'unclaimed')?.number, 6);
+        expect(resolve('gone', 'shared')?.number, 9);
+        expect(resolve('cased', null)?.number, 7);
+      });
+
+      test('without claims the cwd branch decides, as before', () async {
+        final resolve = await resolver(const <String, List<String>>{});
+        expect(resolve('s', 'unclaimed')?.number, 6);
+        expect(resolve('s', 'missing'), isNull);
+        expect(resolve('s', null), isNull);
+      });
+    });
+
     test('no gh, no auth and a missing directory yield no lookup', () async {
       final loggedOut = await serviceWith('echo "not logged in" >&2; exit 4');
       await loggedOut.refreshPullRequests('project', Directory.systemTemp.path);
-      expect(loggedOut.pullRequestLookup('project'), isNull);
+      expect(loggedOut.sessionPullRequests('project', const {}), isNull);
 
       final missing = PrService(ghPath: '/nonexistent/gh');
       await missing.refreshPullRequests('project', Directory.systemTemp.path);
-      expect(missing.pullRequestLookup('project'), isNull);
+      expect(missing.sessionPullRequests('project', const {}), isNull);
 
       final goneDir = await serviceWith('echo "[]"');
       await goneDir.refreshPullRequests('project', '/nonexistent/repo');
-      expect(goneDir.pullRequestLookup('project'), isNull);
+      expect(goneDir.sessionPullRequests('project', const {}), isNull);
     });
   });
 

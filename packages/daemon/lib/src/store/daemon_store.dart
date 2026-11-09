@@ -30,6 +30,9 @@
 ///                      [DaemonStore.filesPath])
 ///   * `daemon_environment` name TEXT PK, value TEXT; values are write-only
 ///                          over the public daemon API
+///   * `session_pull_requests` session_id FK→sessions ON DELETE CASCADE, url,
+///                          claimed_at; PK (session_id, url). Pull requests a
+///                          session opened itself (see [createdPullRequestUrl])
 library;
 
 import 'dart:io';
@@ -40,6 +43,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' hide Session;
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import '../git/pull_request_receipt.dart';
 import 'daemon_database_lock.dart';
 import 'session_search_index.dart';
 
@@ -387,11 +391,111 @@ class DaemonStore {
         value TEXT NOT NULL
       );
     ''');
+    final bool hasPullRequestClaims = _db.select(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'session_pull_requests'",
+    ).isNotEmpty;
+    if (!hasPullRequestClaims) {
+      _db.execute('BEGIN');
+      try {
+        _db.execute('''
+          CREATE TABLE session_pull_requests (
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            claimed_at INTEGER NOT NULL,
+            PRIMARY KEY (session_id, url)
+          );
+        ''');
+        _backfillPullRequestClaims();
+        _db.execute('COMMIT');
+      } on Object {
+        _db.execute('ROLLBACK');
+        rethrow;
+      }
+    }
     _db.execute(
       "UPDATE mcp_oauth SET status = 'not_connected', "
       "error = 'Authorization was interrupted by a daemon restart' "
       "WHERE status = 'authorizing'",
     );
+  }
+
+  /// Claims the pull requests that sessions opened before claims were
+  /// recorded, from their `gh pr create` receipts.
+  ///
+  /// A fork's history holds copies of its source's tool calls under the same
+  /// ids, so a receipt belongs to the earliest-created session holding it:
+  /// a fork never claims what its source opened.
+  void _backfillPullRequestClaims() {
+    final ResultSet rows = _db.select(
+      'SELECT e.session_id, e.timestamp, e.json, s.created_at '
+      'FROM session_events e JOIN sessions s ON s.id = e.session_id '
+      "WHERE e.json LIKE '%\"toolCall\"%' AND e.json LIKE '%gh%pr%create%' "
+      "AND e.json LIKE '%/pull/%'",
+    );
+    final Map<String, ({String sessionId, int createdAt, String url, int at})>
+    receipts = <String, ({String sessionId, int createdAt, String url, int at})>{};
+    for (final Row row in rows) {
+      final SessionEvent event;
+      try {
+        event = SessionEvent.fromJson(
+          jsonDecode(row['json'] as String) as Map<String, Object?>,
+        );
+      } on Object {
+        continue; // An event from an older format; nothing to claim.
+      }
+      if (event is! ToolCallEvent) continue;
+      final String? url = createdPullRequestUrl(event.toolCall);
+      if (url == null) continue;
+      final int createdAt = row['created_at'] as int;
+      final existing = receipts[event.toolCall.id];
+      if (existing != null && existing.createdAt <= createdAt) continue;
+      receipts[event.toolCall.id] = (
+        sessionId: row['session_id'] as String,
+        createdAt: createdAt,
+        url: url,
+        at: row['timestamp'] as int,
+      );
+    }
+    for (final receipt in receipts.values) {
+      _db.execute(
+        'INSERT INTO session_pull_requests (session_id, url, claimed_at) '
+        'VALUES (?, ?, ?) ON CONFLICT (session_id, url) DO UPDATE SET '
+        'claimed_at = MAX(claimed_at, excluded.claimed_at)',
+        <Object?>[receipt.sessionId, receipt.url, receipt.at],
+      );
+    }
+  }
+
+  /// Records that [sessionId] opened the pull request at [url]. Claiming one
+  /// again makes it the session's latest.
+  void claimPullRequest(String sessionId, String url, DateTime at) {
+    _db.execute(
+      'INSERT INTO session_pull_requests (session_id, url, claimed_at) '
+      'SELECT id, ?, ? FROM sessions WHERE id = ? '
+      'ON CONFLICT (session_id, url) DO UPDATE SET '
+      'claimed_at = excluded.claimed_at',
+      <Object?>[url, at.toUtc().microsecondsSinceEpoch, sessionId],
+    );
+  }
+
+  /// Session id → URLs of the pull requests it opened, oldest claim first,
+  /// for every session of [projectId] including archived ones (an archived
+  /// session still owns its pull requests).
+  Map<String, List<String>> pullRequestClaims(String projectId) {
+    final ResultSet rows = _db.select(
+      'SELECT c.session_id, c.url FROM session_pull_requests c '
+      'JOIN sessions s ON s.id = c.session_id WHERE s.project_id = ? '
+      'ORDER BY c.claimed_at ASC, c.url ASC',
+      <Object?>[projectId],
+    );
+    final Map<String, List<String>> claims = <String, List<String>>{};
+    for (final Row row in rows) {
+      claims
+          .putIfAbsent(row['session_id'] as String, () => <String>[])
+          .add(row['url'] as String);
+    }
+    return claims;
   }
 
   void _restrictDatabasePermissions(String path) {
