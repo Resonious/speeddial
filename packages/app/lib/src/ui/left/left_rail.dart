@@ -10,6 +10,7 @@ import '../toast.dart';
 import 'inbox_tab.dart';
 import 'new_session_sheet.dart';
 import 'session_list.dart';
+import 'selected_item_scroll_view.dart';
 import 'session_search_dialog.dart';
 import '../settings/environment_page.dart';
 import '../settings/archive_page.dart';
@@ -168,26 +169,39 @@ class _SessionsTab extends StatelessWidget {
             else
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 232),
-                child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
+                child: SelectedItemScrollView(
+                  selectedIndex: endpoints.indexWhere(
+                    (DaemonEndpoint endpoint) =>
+                        endpoint.id == data.selection.selectedDaemonId,
+                  ),
+                  itemLabel: 'daemon',
                   shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
                   itemCount: endpoints.length,
-                  itemBuilder: (BuildContext context, int index) {
-                    final DaemonEndpoint endpoint = endpoints[index];
-                    return _EndpointTile(
-                      endpoint: endpoint,
-                      status: data.connections.statusOf(endpoint.id),
-                      selected: data.selection.selectedDaemonId == endpoint.id,
-                      onTap: () => _selectDaemon(context, endpoint),
-                      onRetry: () => data.reconnect(endpoint.id),
-                      onMcpServers: () => _showMcpServers(context, endpoint),
-                      onHarnesses: () => _showHarnesses(context, endpoint),
-                      onEnvironment: () => _showEnvironment(context, endpoint),
-                      onArchive: () => _showArchive(context, endpoint),
-                      onEdit: () => _showDaemonDialog(context, endpoint),
-                      onRemove: () => _removeDaemon(context, endpoint),
-                    );
-                  },
+                  itemBuilder:
+                      (BuildContext context, int index, bool selected) {
+                        final DaemonEndpoint endpoint = endpoints[index];
+                        return RailSelectionTarget(
+                          selected: selected,
+                          child: _EndpointTile(
+                            endpoint: endpoint,
+                            status: data.connections.statusOf(endpoint.id),
+                            selected:
+                                data.selection.selectedDaemonId == endpoint.id,
+                            onTap: () => _selectDaemon(context, endpoint),
+                            onRetry: () => data.reconnect(endpoint.id),
+                            onMcpServers: () =>
+                                _showMcpServers(context, endpoint),
+                            onHarnesses: () =>
+                                _showHarnesses(context, endpoint),
+                            onEnvironment: () =>
+                                _showEnvironment(context, endpoint),
+                            onArchive: () => _showArchive(context, endpoint),
+                            onEdit: () => _showDaemonDialog(context, endpoint),
+                            onRemove: () => _removeDaemon(context, endpoint),
+                          ),
+                        );
+                      },
                 ),
               ),
             const Divider(height: 1),
@@ -447,24 +461,31 @@ class _ProjectTree extends StatelessWidget {
               )
             else
               Expanded(
-                child: ListView(
-                  // Let the last project scroll clear of the system
-                  // navigation area on edge-to-edge Android; the rail
-                  // surface extends behind it.
+                child: SelectedItemScrollView(
+                  selectedIndex: projects.indexWhere(
+                    (Project project) =>
+                        project.id == data.selection.selectedProjectId,
+                  ),
+                  itemLabel: data.selection.selectedSessionId == null
+                      ? 'project'
+                      : 'session',
                   padding: EdgeInsets.only(
                     bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
                   ),
-                  children: <Widget>[
-                    for (final Project project in projects)
-                      _ProjectTile(
-                        key: ValueKey<String>(
-                          'project-$daemonId-${project.id}',
-                        ),
-                        project: project,
-                        daemonId: daemonId,
-                        onSessionCreated: onSessionCreated,
-                      ),
-                  ],
+                  itemCount: projects.length,
+                  itemBuilder:
+                      (BuildContext context, int index, bool selected) {
+                        final Project project = projects[index];
+                        return _ProjectTile(
+                          key: ValueKey<String>(
+                            'project-$daemonId-${project.id}',
+                          ),
+                          project: project,
+                          daemonId: daemonId,
+                          trackSelection: selected,
+                          onSessionCreated: onSessionCreated,
+                        );
+                      },
                 ),
               ),
           ],
@@ -523,8 +544,10 @@ class _ProjectTile extends StatefulWidget {
     required this.project,
     required this.daemonId,
     this.onSessionCreated,
+    this.trackSelection = false,
   });
 
+  final bool trackSelection;
   final Project project;
   final String daemonId;
   final VoidCallback? onSessionCreated;
@@ -648,73 +671,93 @@ class _ProjectTileState extends State<_ProjectTile> {
       daemonId: daemonId,
     );
 
-    return ExpansionTile(
-      key: ValueKey<String>('project-$daemonId-${project.id}'),
-      controller: _controller,
-      tilePadding: const EdgeInsets.only(left: 8, right: 4),
-      childrenPadding: const EdgeInsets.only(bottom: 4),
-      shape: const Border(),
-      collapsedShape: const Border(),
-      title: Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              project.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          IconButton(
-            key: ValueKey<String>('new-session-${project.id}'),
-            tooltip: 'New session',
-            icon: const Icon(Icons.add_comment_outlined, size: 18),
-            visualDensity: VisualDensity.compact,
-            onPressed: () => _showNewSessionSheet(context),
-          ),
-          PopupMenuButton<_ProjectAction>(
-            tooltip: 'Project actions',
-            icon: const Icon(Icons.more_vert, size: 18),
-            onSelected: (_ProjectAction action) {
-              switch (action) {
-                case _ProjectAction.remove:
-                  _removeProject(context);
-              }
-            },
-            itemBuilder: (BuildContext context) =>
-                const <PopupMenuEntry<_ProjectAction>>[
-                  PopupMenuItem<_ProjectAction>(
-                    value: _ProjectAction.remove,
-                    child: Text('Remove'),
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (BuildContext context, Widget? _) {
+        final bool hasSelectedSession =
+            _controller.isExpanded &&
+            sessions.any(
+              (Session session) =>
+                  session.id == data.selection.selectedSessionId,
+            );
+        return Material(
+          type: MaterialType.transparency,
+          child: ExpansionTile(
+            key: ValueKey<String>('project-$daemonId-${project.id}'),
+            controller: _controller,
+            tilePadding: const EdgeInsets.only(left: 8, right: 4),
+            childrenPadding: const EdgeInsets.only(bottom: 4),
+            shape: const Border(),
+            collapsedShape: const Border(),
+            title: RailSelectionTarget(
+              selected: widget.trackSelection && !hasSelectedSession,
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      project.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    key: ValueKey<String>('new-session-${project.id}'),
+                    tooltip: 'New session',
+                    icon: const Icon(Icons.add_comment_outlined, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _showNewSessionSheet(context),
+                  ),
+                  PopupMenuButton<_ProjectAction>(
+                    tooltip: 'Project actions',
+                    icon: const Icon(Icons.more_vert, size: 18),
+                    onSelected: (_ProjectAction action) {
+                      switch (action) {
+                        case _ProjectAction.remove:
+                          _removeProject(context);
+                      }
+                    },
+                    itemBuilder: (BuildContext context) =>
+                        const <PopupMenuEntry<_ProjectAction>>[
+                          PopupMenuItem<_ProjectAction>(
+                            value: _ProjectAction.remove,
+                            child: Text('Remove'),
+                          ),
+                        ],
                   ),
                 ],
+              ),
+            ),
+            subtitle: Text(
+              project.path,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            onExpansionChanged: (bool expanded) {
+              if (expanded) {
+                data.selection.selectedProjectId = project.id;
+                // Fetch the git badges for this project's sessions. Fires for
+                // selection-driven expansion too (ExpansibleController.expand
+                // routes through onExpansionChanged), so this is the single kick.
+                data.git.refreshSessionSummaries(daemonId, project.id);
+              }
+            },
+            children: <Widget>[
+              SessionList(
+                sessions: sessions,
+                trackSelection: hasSelectedSession && widget.trackSelection,
+                daemonId: daemonId,
+                projectId: project.id,
+              ),
+            ],
           ),
-        ],
-      ),
-      subtitle: Text(
-        project.path,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-      ),
-      onExpansionChanged: (bool expanded) {
-        if (expanded) {
-          data.selection.selectedProjectId = project.id;
-          // Fetch the git badges for this project's sessions. Fires for
-          // selection-driven expansion too (ExpansibleController.expand
-          // routes through onExpansionChanged), so this is the single kick.
-          data.git.refreshSessionSummaries(daemonId, project.id);
-        }
+        );
       },
-      children: <Widget>[
-        SessionList(
-          sessions: sessions,
-          daemonId: daemonId,
-          projectId: project.id,
-        ),
-      ],
     );
   }
 }
@@ -841,81 +884,84 @@ class _EndpointTile extends StatelessWidget {
     // Embedded daemons expose configuration and retry, but not URL
     // editing/removal.
     final bool embedded = endpoint.embedded;
-    return ListTile(
-      dense: true,
-      leading: SizedBox(
-        width: 24,
-        height: 24,
-        child: Center(child: ConnectionStatusIndicator(status: status)),
-      ),
-      title: Text(
-        endpoint.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.bodyMedium,
-      ),
-      subtitle: Text(
-        endpoint.url,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-      ),
-      trailing: PopupMenuButton<_EndpointAction>(
-        key: Key('endpoint-actions-${endpoint.id}'),
-        tooltip: 'Daemon actions',
-        icon: const Icon(Icons.more_vert, size: 18),
-        itemBuilder: (BuildContext context) =>
-            <PopupMenuEntry<_EndpointAction>>[
-              const PopupMenuItem<_EndpointAction>(
-                key: Key('endpoint-action-mcp-servers'),
-                value: _EndpointAction.mcpServers,
-                child: Text('MCP servers'),
-              ),
-              const PopupMenuItem<_EndpointAction>(
-                key: Key('endpoint-action-harnesses'),
-                value: _EndpointAction.harnesses,
-                child: Text('Harnesses'),
-              ),
-              const PopupMenuItem<_EndpointAction>(
-                key: Key('endpoint-action-environment'),
-                value: _EndpointAction.environment,
-                child: Text('Environment'),
-              ),
-              const PopupMenuItem<_EndpointAction>(
-                key: Key('endpoint-action-archive'),
-                value: _EndpointAction.archive,
-                child: Text('Clear archive…'),
-              ),
-              if (canRetry)
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        leading: SizedBox(
+          width: 24,
+          height: 24,
+          child: Center(child: ConnectionStatusIndicator(status: status)),
+        ),
+        title: Text(
+          endpoint.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodyMedium,
+        ),
+        subtitle: Text(
+          endpoint.url,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+        ),
+        trailing: PopupMenuButton<_EndpointAction>(
+          key: Key('endpoint-actions-${endpoint.id}'),
+          tooltip: 'Daemon actions',
+          icon: const Icon(Icons.more_vert, size: 18),
+          itemBuilder: (BuildContext context) =>
+              <PopupMenuEntry<_EndpointAction>>[
                 const PopupMenuItem<_EndpointAction>(
-                  key: Key('endpoint-action-retry'),
-                  value: _EndpointAction.retry,
-                  child: Text('Retry now'),
+                  key: Key('endpoint-action-mcp-servers'),
+                  value: _EndpointAction.mcpServers,
+                  child: Text('MCP servers'),
                 ),
-              if (!embedded)
                 const PopupMenuItem<_EndpointAction>(
-                  value: _EndpointAction.edit,
-                  child: Text('Edit'),
+                  key: Key('endpoint-action-harnesses'),
+                  value: _EndpointAction.harnesses,
+                  child: Text('Harnesses'),
                 ),
-              if (!embedded)
                 const PopupMenuItem<_EndpointAction>(
-                  value: _EndpointAction.remove,
-                  child: Text('Remove'),
+                  key: Key('endpoint-action-environment'),
+                  value: _EndpointAction.environment,
+                  child: Text('Environment'),
                 ),
-            ],
-        onSelected: (_EndpointAction action) => switch (action) {
-          _EndpointAction.retry => onRetry(),
-          _EndpointAction.mcpServers => onMcpServers(),
-          _EndpointAction.harnesses => onHarnesses(),
-          _EndpointAction.environment => onEnvironment(),
-          _EndpointAction.archive => onArchive(),
-          _EndpointAction.edit => onEdit(),
-          _EndpointAction.remove => onRemove(),
-        },
+                const PopupMenuItem<_EndpointAction>(
+                  key: Key('endpoint-action-archive'),
+                  value: _EndpointAction.archive,
+                  child: Text('Clear archive…'),
+                ),
+                if (canRetry)
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-retry'),
+                    value: _EndpointAction.retry,
+                    child: Text('Retry now'),
+                  ),
+                if (!embedded)
+                  const PopupMenuItem<_EndpointAction>(
+                    value: _EndpointAction.edit,
+                    child: Text('Edit'),
+                  ),
+                if (!embedded)
+                  const PopupMenuItem<_EndpointAction>(
+                    value: _EndpointAction.remove,
+                    child: Text('Remove'),
+                  ),
+              ],
+          onSelected: (_EndpointAction action) => switch (action) {
+            _EndpointAction.retry => onRetry(),
+            _EndpointAction.mcpServers => onMcpServers(),
+            _EndpointAction.harnesses => onHarnesses(),
+            _EndpointAction.environment => onEnvironment(),
+            _EndpointAction.archive => onArchive(),
+            _EndpointAction.edit => onEdit(),
+            _EndpointAction.remove => onRemove(),
+          },
+        ),
+        selected: selected,
+        selectedTileColor: scheme.surfaceContainerHighest,
+        onTap: onTap,
       ),
-      selected: selected,
-      selectedTileColor: scheme.surfaceContainerHighest,
-      onTap: onTap,
     );
   }
 }

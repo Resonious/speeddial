@@ -461,7 +461,13 @@ lib/src/ui/toast.dart        showToast/showToastOn: app notices and failures (in
                              timer, repeats restart instead of stacking, at most three.
                              Use instead of SnackBar (Wear keeps SnackBars).
 lib/src/ui/left/             tabbed rail: Sessions keeps the selected daemon's project/session
-                             hierarchy and connection controls; Inbox lists sessions across
+                             hierarchy and connection controls; row-local Materials keep
+                             selection ink inside scroll/expansion clips. The shared lazy
+                             SelectedItemScrollView marks offscreen selections with still
+                             edge buttons that reveal the selection using lazy index seeking,
+                             then align the measured row; user scrolling cancels the seek.
+                             It measures nested session rows when expanded and
+                             the project header when collapsed. Inbox lists sessions across
                              every configured daemon (pinned first, then activity), with
                              a daemon/project chooser for new sessions. Session rows show
                              title, status chip, provider badge, and daemon/project in Inbox;

@@ -7,6 +7,7 @@ import '../../theme.dart';
 import '../chat/typed_text.dart';
 import '../pull_request_status.dart';
 import '../toast.dart';
+import 'selected_item_scroll_view.dart';
 import 'session_status_glyph.dart';
 
 /// Palette color for a session lifecycle status.
@@ -368,124 +369,131 @@ class SessionRow extends StatelessWidget {
     // be over: show it as last known rather than live.
     final bool dormant = _inProgress && link.outOfReach;
 
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.only(left: 24, right: 4),
-      selected: selected,
-      selectedTileColor: scheme.surfaceContainerHighest,
-      leading: Tooltip(
-        message: _statusTooltip(context, done, link),
-        child: SizedBox(
-          width: 22,
-          child: Center(
-            child: SessionStatusGlyph(
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.only(left: 24, right: 4),
+        selected: selected,
+        selectedTileColor: scheme.surfaceContainerHighest,
+        leading: Tooltip(
+          message: _statusTooltip(context, done, link),
+          child: SizedBox(
+            width: 22,
+            child: Center(
+              child: SessionStatusGlyph(
+                status: session.status,
+                lastActivityAt: session.lastActivityAt,
+                done: done,
+                color: done
+                    ? context.speedDialColors.success
+                    : sessionStatusColor(
+                        context.speedDialColors,
+                        session.status,
+                      ),
+                phase: (session.id.hashCode % 997) / 997,
+                dormant: link.outOfReach,
+              ),
+            ),
+          ),
+        ),
+        // A new name backspaces the old one and types itself in, like a
+        // tool call's line.
+        title: TypedText(
+          session.title,
+          style: textTheme.bodySmall?.copyWith(
+            color: selected ? scheme.primary : null,
+          ),
+          caretColor: Theme.of(context).brightness == Brightness.dark
+              ? context.speedDialColors.flameTip
+              : context.speedDialColors.flameRoot,
+        ),
+        subtitle: Wrap(
+          spacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            if (daemonName != null)
+              Text(
+                daemonName!,
+                style: textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 10,
+                ),
+              ),
+            if (projectName != null)
+              Text(
+                projectName!,
+                style: textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 10,
+                ),
+              ),
+            if (session.pinned)
+              const Tooltip(
+                message: 'Pinned',
+                child: Icon(Icons.push_pin, size: 12),
+              ),
+            ProviderBadge(providerId: session.providerId),
+            SessionStatusChip(
               status: session.status,
-              lastActivityAt: session.lastActivityAt,
               done: done,
-              color: done
-                  ? context.speedDialColors.success
-                  : sessionStatusColor(context.speedDialColors, session.status),
-              phase: (session.id.hashCode % 997) / 997,
-              dormant: link.outOfReach,
+              dormant: dormant,
             ),
-          ),
+            SessionGitBadges(session: session, daemonId: daemonId),
+          ],
         ),
-      ),
-      // A new name backspaces the old one and types itself in, like a
-      // tool call's line.
-      title: TypedText(
-        session.title,
-        style: textTheme.bodySmall?.copyWith(
-          color: selected ? scheme.primary : null,
+        trailing: PopupMenuButton<_SessionAction>(
+          tooltip: 'Session actions',
+          icon: const Icon(Icons.more_vert, size: 18),
+          onSelected: (_SessionAction action) {
+            switch (action) {
+              case _SessionAction.pin:
+                _pin(context, data);
+              case _SessionAction.rename:
+                _rename(context, data);
+              case _SessionAction.archive:
+                _archive(context, data);
+              case _SessionAction.delete:
+                _delete(context, data);
+            }
+          },
+          itemBuilder: (BuildContext context) =>
+              <PopupMenuEntry<_SessionAction>>[
+                PopupMenuItem<_SessionAction>(
+                  value: _SessionAction.pin,
+                  child: Text(session.pinned ? 'Unpin' : 'Pin'),
+                ),
+                PopupMenuItem<_SessionAction>(
+                  value: _SessionAction.rename,
+                  child: Text('Rename'),
+                ),
+                PopupMenuItem<_SessionAction>(
+                  value: _SessionAction.archive,
+                  child: Text('Archive'),
+                ),
+                PopupMenuItem<_SessionAction>(
+                  value: _SessionAction.delete,
+                  child: Text('Delete'),
+                ),
+              ],
         ),
-        caretColor: Theme.of(context).brightness == Brightness.dark
-            ? context.speedDialColors.flameTip
-            : context.speedDialColors.flameRoot,
-      ),
-      subtitle: Wrap(
-        spacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          if (daemonName != null)
-            Text(
-              daemonName!,
-              style: textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-                fontSize: 10,
-              ),
-            ),
-          if (projectName != null)
-            Text(
-              projectName!,
-              style: textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-                fontSize: 10,
-              ),
-            ),
-          if (session.pinned)
-            const Tooltip(
-              message: 'Pinned',
-              child: Icon(Icons.push_pin, size: 12),
-            ),
-          ProviderBadge(providerId: session.providerId),
-          SessionStatusChip(
-            status: session.status,
-            done: done,
-            dormant: dormant,
-          ),
-          SessionGitBadges(session: session, daemonId: daemonId),
-        ],
-      ),
-      trailing: PopupMenuButton<_SessionAction>(
-        tooltip: 'Session actions',
-        icon: const Icon(Icons.more_vert, size: 18),
-        onSelected: (_SessionAction action) {
-          switch (action) {
-            case _SessionAction.pin:
-              _pin(context, data);
-            case _SessionAction.rename:
-              _rename(context, data);
-            case _SessionAction.archive:
-              _archive(context, data);
-            case _SessionAction.delete:
-              _delete(context, data);
+        onTap: () {
+          data.selection.selectSession(
+            daemonId: daemonId,
+            projectId: projectId,
+            sessionId: session.id,
+          );
+          // On narrow layouts the rail lives in a drawer; selecting a session
+          // should dismiss it so the chat is immediately visible. The wide
+          // layout has no open drawer, so this is a no-op there.
+          final ScaffoldState? scaffold = Scaffold.maybeOf(context);
+          if (scaffold != null && scaffold.isDrawerOpen) {
+            Navigator.of(context).pop();
           }
         },
-        itemBuilder: (BuildContext context) => <PopupMenuEntry<_SessionAction>>[
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.pin,
-            child: Text(session.pinned ? 'Unpin' : 'Pin'),
-          ),
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.rename,
-            child: Text('Rename'),
-          ),
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.archive,
-            child: Text('Archive'),
-          ),
-          PopupMenuItem<_SessionAction>(
-            value: _SessionAction.delete,
-            child: Text('Delete'),
-          ),
-        ],
       ),
-      onTap: () {
-        data.selection.selectSession(
-          daemonId: daemonId,
-          projectId: projectId,
-          sessionId: session.id,
-        );
-        // On narrow layouts the rail lives in a drawer; selecting a session
-        // should dismiss it so the chat is immediately visible. The wide
-        // layout has no open drawer, so this is a no-op there.
-        final ScaffoldState? scaffold = Scaffold.maybeOf(context);
-        if (scaffold != null && scaffold.isDrawerOpen) {
-          Navigator.of(context).pop();
-        }
-      },
     );
   }
 }
@@ -557,8 +565,10 @@ class SessionList extends StatelessWidget {
     this.projectId,
     this.projectNames = const <String, String>{},
     this.now,
+    this.trackSelection = false,
   });
 
+  final bool trackSelection;
   final List<Session> sessions;
   final String daemonId;
   final String? projectId;
@@ -598,15 +608,22 @@ class SessionList extends StatelessWidget {
         for (int index = 0; index < sessions.length; index++) ...<Widget>[
           if (showPreviousDaysDivider && index == firstPreviousDay)
             const _SessionDateDivider(label: 'Previous days'),
-          SessionRow(
+          RailSelectionTarget(
             key: ValueKey<String>('session-${sessions[index].id}'),
-            session: sessions[index],
             selected:
+                trackSelection &&
                 data.selection.selectedDaemonId == daemonId &&
                 data.selection.selectedSessionId == sessions[index].id,
-            daemonId: daemonId,
-            projectId: projectId ?? sessions[index].projectId,
-            projectName: projectNames[sessions[index].projectId],
+            child: SessionRow(
+              key: ValueKey<String>('session-${sessions[index].id}'),
+              session: sessions[index],
+              selected:
+                  data.selection.selectedDaemonId == daemonId &&
+                  data.selection.selectedSessionId == sessions[index].id,
+              daemonId: daemonId,
+              projectId: projectId ?? sessions[index].projectId,
+              projectName: projectNames[sessions[index].projectId],
+            ),
           ),
         ],
       ],
@@ -657,10 +674,24 @@ class InboxSessionList extends StatelessWidget {
           recent.session.lastActivityAt.toLocal().isBefore(startOfToday),
     );
     final bool showPreviousDaysDivider = firstPreviousDay > 0;
-    return ListView.builder(
+    final int selectedSessionIndex = sessions.indexWhere(
+      (RecentSession recent) =>
+          recent.daemonId == data.selection.selectedDaemonId &&
+          recent.session.id == data.selection.selectedSessionId,
+    );
+    final int selectedIndex = selectedSessionIndex < 0
+        ? -1
+        : selectedSessionIndex +
+              (showPreviousDaysDivider &&
+                      selectedSessionIndex >= firstPreviousDay
+                  ? 1
+                  : 0);
+    return SelectedItemScrollView(
+      selectedIndex: selectedIndex,
+      itemLabel: 'session',
       padding: const EdgeInsets.only(bottom: 8),
       itemCount: sessions.length + (showPreviousDaysDivider ? 1 : 0),
-      itemBuilder: (BuildContext context, int index) {
+      itemBuilder: (BuildContext context, int index, bool selected) {
         if (showPreviousDaysDivider && index == firstPreviousDay) {
           return const _SessionDateDivider(label: 'Previous days');
         }
@@ -668,7 +699,10 @@ class InboxSessionList extends StatelessWidget {
             showPreviousDaysDivider && index > firstPreviousDay
             ? index - 1
             : index;
-        return _row(data, sessions[sessionIndex]);
+        return RailSelectionTarget(
+          selected: selected,
+          child: _row(data, sessions[sessionIndex]),
+        );
       },
     );
   }
