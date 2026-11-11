@@ -66,5 +66,15 @@ abstract interface class AgentClient {
 
   Future<void> cancel(String sessionId);
 
+  /// Whether [steer] can deliver input into a running turn. Meaningful once
+  /// [initialized] completes.
+  bool get supportsSteering;
+
+  /// Delivers [promptBlocks] into the turn currently running for
+  /// [sessionId], without starting a new one. Throws [UnsupportedError]
+  /// when [supportsSteering] is false and [StateError] when no turn is
+  /// running; the caller keeps the input in that case.
+  Future<void> steer(String sessionId, List<Map<String, Object?>> promptBlocks);
+
   Future<void> dispose();
 }

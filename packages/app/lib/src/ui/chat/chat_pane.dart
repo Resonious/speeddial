@@ -618,13 +618,15 @@ class _SessionSurfaceState extends State<_SessionSurface> {
                     data.replies.remove(daemonId, sessionId, ids),
                 onSend:
                     (String text, List<OutgoingAttachment> attachments) async {
-                      if (status == SessionStatus.running) {
-                        return;
-                      }
                       await _sendOrRunCommand(text, attachments);
                       if (mounted) _followLatestRequest.value++;
                     },
                 onStop: () => unawaited(_cancelTurn()),
+                queue: chat.queueFor(sessionId),
+                queueEnabled: !data.connections.statusOf(daemonId).outOfReach,
+                onSendQueued: _sendQueued,
+                onEditQueued: _editQueued,
+                onRemoveQueued: _removeQueued,
               ),
             ),
           ],
@@ -755,6 +757,74 @@ class _SessionSurfaceState extends State<_SessionSurface> {
       // Delegate the text+attachments restore to the composer, which knows
       // the draft.
       rethrow;
+    }
+  }
+
+  Future<void> _sendQueued(QueuedMessage message) async {
+    try {
+      await widget.data.chat.sendQueued(
+        widget.daemonId,
+        widget.sessionId,
+        message.id,
+      );
+      if (mounted) _followLatestRequest.value++;
+    } on Object catch (error) {
+      await _reportQueueFailure('send', error);
+      rethrow;
+    }
+  }
+
+  /// Re-fetches the queued message's files first, so a message whose files
+  /// cannot come back stays queued instead of losing them.
+  Future<({String text, List<OutgoingAttachment> attachments})> _editQueued(
+    QueuedMessage message,
+  ) async {
+    try {
+      final List<OutgoingAttachment> attachments = <OutgoingAttachment>[
+        for (final Attachment file in message.attachments)
+          await widget.data.chat
+              .attachmentData(widget.daemonId, widget.sessionId, file.id)
+              .then(
+                (AttachmentData data) => OutgoingAttachment(
+                  name: data.name,
+                  mimeType: data.mimeType,
+                  data: data.data,
+                ),
+              ),
+      ];
+      final QueuedMessage removed = await widget.data.chat.unqueue(
+        widget.daemonId,
+        widget.sessionId,
+        message.id,
+      );
+      return (text: removed.text, attachments: attachments);
+    } on Object catch (error) {
+      await _reportQueueFailure('edit', error);
+      rethrow;
+    }
+  }
+
+  Future<void> _removeQueued(QueuedMessage message) async {
+    try {
+      await widget.data.chat.unqueue(
+        widget.daemonId,
+        widget.sessionId,
+        message.id,
+      );
+    } on Object catch (error) {
+      await _reportQueueFailure('remove', error);
+      rethrow;
+    }
+  }
+
+  Future<void> _reportQueueFailure(String action, Object error) async {
+    if (error is DaemonConnectionError) {
+      await _showError(error);
+    } else {
+      await _showMessage(
+        'Could not $action the queued message: '
+        '${error is DaemonError ? error.message : error}',
+      );
     }
   }
 

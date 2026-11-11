@@ -13,6 +13,7 @@ class InitializeResult {
     required this.protocolVersion,
     required this.agentCapabilities,
     required this.authMethods,
+    this.steering = false,
   });
 
   factory InitializeResult.fromJson(Map<String, Object?> json) {
@@ -20,6 +21,7 @@ class InitializeResult {
       protocolVersion: (json['protocolVersion'] as num?)?.toInt() ?? 0,
       agentCapabilities: _asMap(json['agentCapabilities']),
       authMethods: _authMethodIds(json['authMethods']),
+      steering: _asMap(_asMap(json['_meta'])['steering'])['supported'] == true,
     );
   }
 
@@ -31,6 +33,11 @@ class InitializeResult {
 
   /// IDs of the authentication methods advertised by the agent.
   final List<String> authMethods;
+
+  /// The agent advertises the `_session/steering` extension request
+  /// (`InitializeResponse._meta.steering.supported`), which injects input
+  /// into a running turn.
+  final bool steering;
 
   static Map<String, Object?> _asMap(Object? value) {
     if (value is Map) return Map<String, Object?>.from(value);

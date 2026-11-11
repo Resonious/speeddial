@@ -70,6 +70,9 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.create',
   'sessions.fork',
   'sessions.send',
+  'sessions.queue',
+  'sessions.unqueue',
+  'sessions.sendQueued',
   'sessions.retry',
   'sessions.commands',
   'sessions.command',
@@ -240,6 +243,7 @@ class SpeedDialServer {
   _eventsSub;
   late final StreamSubscription<Session> _changesSub;
   late final StreamSubscription<String> _removalsSub;
+  late final StreamSubscription<SessionQueue> _queueSub;
   bool _closed = false;
 
   /// Session ids whose `session.created` broadcast has been sent. The engine
@@ -262,6 +266,7 @@ class SpeedDialServer {
     await _eventsSub.cancel();
     await _changesSub.cancel();
     await _removalsSub.cancel();
+    await _queueSub.cancel();
     for (final client in _clients.toList()) {
       await client.mcpProxy?.close();
       client.peer.close();
@@ -321,6 +326,10 @@ class SpeedDialServer {
       _broadcast('session.updated', <String, Object?>{
         'session': session.toJson(),
       });
+    });
+    _queueSub = _engine.queueChanges.listen((SessionQueue queue) {
+      if (!_createdBroadcast.contains(queue.sessionId)) return;
+      _broadcast('session.queue', <String, Object?>{'queue': queue.toJson()});
     });
     _removalsSub = _engine.sessionRemovals.listen((sessionId) {
       _createdBroadcast.remove(sessionId);
@@ -554,6 +563,9 @@ class SpeedDialServer {
       'sessions.create' => _sessionsCreate(params),
       'sessions.fork' => _sessionsFork(params),
       'sessions.send' => _sessionsSend(params),
+      'sessions.queue' => _sessionsQueue(params),
+      'sessions.unqueue' => _sessionsUnqueue(params),
+      'sessions.sendQueued' => _sessionsSendQueued(params),
       'sessions.retry' => _sessionsRetry(params),
       'sessions.commands' => _sessionsCommands(params),
       'sessions.command' => _sessionsCommand(params),
@@ -1659,9 +1671,42 @@ class SpeedDialServer {
         'Missing or invalid parameter: text',
       );
     }
+    final Object? queue = params['queue'];
+    if (queue != null && queue is! bool) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'Missing or invalid parameter: queue',
+      );
+    }
     // Provider adapters handle binary uploads, including disk-path fallbacks.
-    await _engine.sendMessage(sessionId, text, attachments: attachments);
-    return <String, Object?>{};
+    final QueuedMessage? queued = await _engine.sendMessage(
+      sessionId,
+      text,
+      attachments: attachments,
+      queue: queue == true,
+    );
+    return <String, Object?>{if (queued != null) 'queued': queued.toJson()};
+  }
+
+  Object? _sessionsQueue(Map<String, Object?> params) => <String, Object?>{
+    'queue': _engine.queueOf(_requiredString(params, 'sessionId')).toJson(),
+  };
+
+  Object? _sessionsUnqueue(Map<String, Object?> params) => <String, Object?>{
+    'message': _engine
+        .unqueue(
+          _requiredString(params, 'sessionId'),
+          _requiredString(params, 'messageId'),
+        )
+        .toJson(),
+  };
+
+  Future<Object?> _sessionsSendQueued(Map<String, Object?> params) async {
+    final bool steered = await _engine.sendQueued(
+      _requiredString(params, 'sessionId'),
+      _requiredString(params, 'messageId'),
+    );
+    return <String, Object?>{'steered': steered};
   }
 
   Object? _attachmentsRead(Map<String, Object?> params) {

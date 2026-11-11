@@ -384,6 +384,102 @@ void main() {
     );
   });
 
+  test('queues sends during a turn and exposes the queue over RPC', () async {
+    await startServer();
+    final client = await connect(server!.port);
+    addTearDown(client.close);
+    store.insertProject(
+      Project(
+        id: 'queue-project',
+        name: 'Queue',
+        path: tempDir.path,
+        addedAt: DateTime.utc(2026),
+        lastActiveAt: DateTime.utc(2026),
+      ),
+    );
+    final created = j(
+      await client.createReady(<String, Object?>{
+        'projectId': 'queue-project',
+        'providerId': 'fake',
+      }),
+    );
+    final String sessionId = (created['session']! as Map)['id']! as String;
+    expect(
+      j(
+        await client.peer.call('sessions.send', <String, Object?>{
+          'sessionId': sessionId,
+          'text': 'hold',
+          'queue': true,
+        }),
+      ),
+      isEmpty,
+    );
+    final Map<String, Object?> queued = j(
+      await client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': sessionId,
+        'text': 'weird',
+        'queue': true,
+      }),
+    );
+    final QueuedMessage message = QueuedMessage.fromJson(
+      (queued['queued']! as Map).cast<String, Object?>(),
+    );
+    expect(message.text, 'weird');
+    await untilRecorded(client, 'session.queue', 1);
+    final SessionQueue announced = SessionQueue.fromJson(
+      (client.of('session.queue').last.params['queue']! as Map)
+          .cast<String, Object?>(),
+    );
+    expect(announced.sessionId, sessionId);
+    expect(announced.messages.single.id, message.id);
+    final SessionQueue fetched = SessionQueue.fromJson(
+      (j(
+                await client.peer.call('sessions.queue', <String, Object?>{
+                  'sessionId': sessionId,
+                }),
+              )['queue']!
+              as Map)
+          .cast<String, Object?>(),
+    );
+    expect(fetched.messages.single.id, message.id);
+    expect(fetched.canSteer, isFalse);
+    await expectLater(
+      client.peer.call('sessions.sendQueued', <String, Object?>{
+        'sessionId': sessionId,
+        'messageId': message.id,
+      }),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
+    );
+    final Map<String, Object?> removed = j(
+      await client.peer.call('sessions.unqueue', <String, Object?>{
+        'sessionId': sessionId,
+        'messageId': message.id,
+      }),
+    );
+    expect((removed['message']! as Map)['text'], 'weird');
+    await untilRecorded(client, 'session.queue', 2);
+    expect(
+      (client.of('session.queue').last.params['queue']! as Map)['messages'],
+      isEmpty,
+    );
+    await expectLater(
+      client.peer.call('sessions.unqueue', <String, Object?>{
+        'sessionId': sessionId,
+        'messageId': message.id,
+      }),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+    );
+    await expectLater(
+      client.peer.call('sessions.send', <String, Object?>{
+        'sessionId': sessionId,
+        'text': 'x',
+        'queue': 'yes',
+      }),
+      throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+    );
+    File(p.join(tempDir.path, 'agent.release')).writeAsStringSync('go');
+  });
+
   test('PR lookup RPC returns sessions including archived forks', () async {
     final pr = _LookupPr();
     await startServer(prService: pr);

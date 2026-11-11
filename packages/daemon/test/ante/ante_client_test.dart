@@ -417,6 +417,45 @@ void main() {
     },
   );
 
+  test('steers input into the running turn with the Steer op', () async {
+    final Directory dir = await Directory.systemTemp.createTemp('ante_steer');
+    addTearDown(() => dir.delete(recursive: true));
+    final File report = File(p.join(dir.path, 'steer.txt'));
+    final AnteClient client = spawnAnte(
+      environment: <String, String>{'FAKE_ANTE_STEER_REPORT': report.path},
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    expect(client.supportsSteering, isTrue);
+    await expectLater(
+      client.steer(created.sessionId, textBlocks('too early')),
+      throwsStateError,
+    );
+    final List<AcpSessionUpdate> updates = <AcpSessionUpdate>[];
+    final subscription = client
+        .sessionUpdates(created.sessionId)
+        .listen(updates.add);
+    addTearDown(subscription.cancel);
+
+    final Future<PromptResult> prompt = client.prompt(
+      created.sessionId,
+      textBlocks('cancel'),
+    );
+    // The turn id is assigned once the prompt text is prepared.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    await client.steer(created.sessionId, textBlocks('go left'));
+    final DateTime deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (!updates.whereType<AcpAgentMessageChunk>().any(
+      (AcpAgentMessageChunk c) => c.text == 'steered: go left',
+    )) {
+      if (DateTime.now().isAfter(deadline)) fail('steer output never arrived');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(await report.readAsString(), 'go left');
+    await client.cancel(created.sessionId);
+    expect((await prompt).stopReason, 'cancelled');
+  });
+
   test('native yolo mode prevents Ante approval pauses', () async {
     var permissionRequests = 0;
     final AnteClient client = spawnAnte(

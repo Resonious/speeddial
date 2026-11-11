@@ -4517,4 +4517,213 @@ void main() {
       session.id: <String>['https://github.com/org/repo/pull/42'],
     });
   });
+
+  group('message queue', () {
+    late StreamSubscription<SessionQueue> queueSub;
+    final List<SessionQueue> queues = <SessionQueue>[];
+
+    setUp(() {
+      queues.clear();
+      queueSub = engine.queueChanges.listen(queues.add);
+    });
+
+    tearDown(() => queueSub.cancel());
+
+    List<String> userTexts() => <String>[
+      for (final tuple in events)
+        if (tuple.event case final UserMessageEvent event) event.text,
+    ];
+
+    int turnCompletions() =>
+        events.where((tuple) => tuple.event is TurnCompleteEvent).length;
+
+    void release() =>
+        File(p.join(tempDir.path, 'agent.release')).writeAsStringSync('go');
+
+    test('a send without queue still conflicts with a running turn', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'hold');
+      await expectLater(
+        engine.sendMessage(session.id, 'later'),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
+      );
+      expect(engine.queueOf(session.id).messages, isEmpty);
+      release();
+      await waitFor(() => !engine.hasActiveSessions);
+    });
+
+    test('queued messages run as their own turns, in order', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      expect(await engine.sendMessage(session.id, 'hold', queue: true), isNull);
+      final QueuedMessage? first = await engine.sendMessage(
+        session.id,
+        'hold',
+        queue: true,
+      );
+      final QueuedMessage? second = await engine.sendMessage(
+        session.id,
+        'weird',
+        queue: true,
+      );
+      expect(first, isNotNull);
+      expect(second, isNotNull);
+      expect(engine.queueOf(session.id).messages.map((m) => m.id), <String>[
+        first!.id,
+        second!.id,
+      ]);
+      expect(queues.last.messages, hasLength(2));
+      expect(userTexts(), <String>['hold']);
+
+      release();
+      await waitFor(() => userTexts().length == 2);
+      // The first queued message is now the running turn.
+      expect(engine.queueOf(session.id).messages.map((m) => m.id), <String>[
+        second.id,
+      ]);
+      expect(store.getSession(session.id)!.status, SessionStatus.running);
+
+      release();
+      await waitFor(() => turnCompletions() == 3 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['hold', 'hold', 'weird']);
+      expect(engine.queueOf(session.id).messages, isEmpty);
+      expect(queues.last.messages, isEmpty);
+      expect(store.getSession(session.id)!.status, SessionStatus.idle);
+    });
+
+    test('cancel pauses the queue until a queued message is sent', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'cancel', queue: true);
+      final QueuedMessage? a = await engine.sendMessage(
+        session.id,
+        'weird',
+        queue: true,
+      );
+      final QueuedMessage? b = await engine.sendMessage(
+        session.id,
+        'weird',
+        queue: true,
+      );
+      await engine.cancel(session.id);
+      await waitFor(() => !engine.hasActiveSessions);
+      final SessionQueue paused = engine.queueOf(session.id);
+      expect(paused.paused, isTrue);
+      expect(paused.messages.map((m) => m.id), <String>[a!.id, b!.id]);
+      expect(userTexts(), <String>['cancel']);
+
+      // Delivering one by hand resumes the rest.
+      expect(await engine.sendQueued(session.id, b.id), isFalse);
+      await waitFor(() => turnCompletions() == 3 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['cancel', 'weird', 'weird']);
+      expect(engine.queueOf(session.id).messages, isEmpty);
+    });
+
+    test('a send while the queue is paused starts right away', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'cancel');
+      await engine.sendMessage(session.id, 'weird', queue: true);
+      await engine.cancel(session.id);
+      await waitFor(() => !engine.hasActiveSessions);
+      expect(engine.queueOf(session.id).paused, isTrue);
+
+      expect(await engine.sendMessage(session.id, 'hold', queue: true), isNull);
+      expect(engine.queueOf(session.id).paused, isFalse);
+      release();
+      await waitFor(() => turnCompletions() == 3 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['cancel', 'hold', 'weird']);
+    });
+
+    test('unqueue removes a message and returns it', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'hold');
+      final QueuedMessage? queued = await engine.sendMessage(
+        session.id,
+        'never mind',
+        queue: true,
+        attachments: const <OutgoingAttachment>[
+          OutgoingAttachment(name: 'a.txt', mimeType: 'text/plain', data: 'aGk='),
+        ],
+      );
+      final QueuedMessage removed = engine.unqueue(session.id, queued!.id);
+      expect(removed.text, 'never mind');
+      expect(removed.attachments.single.name, 'a.txt');
+      // The payload stays readable so a client can restore the draft.
+      expect(
+        store.getAttachment(session.id, removed.attachments.single.id)?.data,
+        'aGk=',
+      );
+      expect(engine.queueOf(session.id).messages, isEmpty);
+      expect(
+        () => engine.unqueue(session.id, queued.id),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound)),
+      );
+      release();
+      await waitFor(() => turnCompletions() == 1 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['hold']);
+    });
+
+    test('steers a queued message into the running turn', () async {
+      File(p.join(tempDir.path, 'agent.steering')).writeAsStringSync('');
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'hold');
+      final QueuedMessage? queued = await engine.sendMessage(
+        session.id,
+        'go left',
+        queue: true,
+      );
+      expect(engine.queueOf(session.id).canSteer, isTrue);
+
+      expect(await engine.sendQueued(session.id, queued!.id), isTrue);
+      expect(engine.queueOf(session.id).messages, isEmpty);
+      expect(userTexts(), <String>['hold', 'go left']);
+      expect(
+        File(p.join(tempDir.path, 'agent.steered')).readAsStringSync(),
+        'go left\n',
+      );
+      // Still one turn, which ends normally.
+      expect(store.getSession(session.id)!.status, SessionStatus.running);
+      release();
+      await waitFor(() => turnCompletions() == 1 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['hold', 'go left']);
+    });
+
+    test('cannot steer when the agent does not support it', () async {
+      final Session session = await engine.createSession(
+        projectId: project.id,
+        providerId: 'fake',
+      );
+      await engine.sendMessage(session.id, 'hold');
+      final QueuedMessage? queued = await engine.sendMessage(
+        session.id,
+        'weird',
+        queue: true,
+      );
+      expect(engine.queueOf(session.id).canSteer, isFalse);
+      await expectLater(
+        engine.sendQueued(session.id, queued!.id),
+        throwsA(isA<DaemonError>().having((e) => e.code, 'code', kErrConflict)),
+      );
+      expect(engine.queueOf(session.id).messages, hasLength(1));
+      release();
+      await waitFor(() => turnCompletions() == 2 && !engine.hasActiveSessions);
+      expect(userTexts(), <String>['hold', 'weird']);
+    });
+  });
 }

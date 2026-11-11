@@ -61,10 +61,13 @@ class _DaemonNotifications {
       StreamController<SessionNote>.broadcast();
   final StreamController<String> noteRemovals =
       StreamController<String>.broadcast();
+  final StreamController<SessionQueue> queues =
+      StreamController<SessionQueue>.broadcast();
 
   Future<void> close() async {
     await notes.close();
     await noteRemovals.close();
+    await queues.close();
     await sessions.close();
     await git.close();
     await events.close();
@@ -596,6 +599,17 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
             _cacheOperation(localHistory!.remove(sessionId));
           }
         }
+      case 'session.queue':
+        final Object? queue = params['queue'];
+        if (queue is Map) {
+          try {
+            _notifications.queues.add(
+              SessionQueue.fromJson(Map<String, Object?>.from(queue)),
+            );
+          } on Object {
+            // Malformed queue: drop.
+          }
+        }
       case 'git.changed':
         final Object? projectId = params['projectId'];
         if (projectId is String) {
@@ -640,6 +654,9 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
 
   @override
   Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
+
+  @override
+  Stream<SessionQueue> get queueUpdates => _notifications.queues.stream;
 
   @override
   Stream<String> get gitChanged => _gitChangedController.stream;
@@ -1055,6 +1072,60 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
             .map((OutgoingAttachment a) => a.toJson())
             .toList(growable: false),
     });
+  }
+
+  @override
+  Future<QueuedMessage?> queueMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.send',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'text': text,
+        if (attachments.isNotEmpty)
+          'attachments': attachments
+              .map((OutgoingAttachment a) => a.toJson())
+              .toList(growable: false),
+        'queue': true,
+      },
+    );
+    final Object? queued = result is Map ? result['queued'] : null;
+    return queued is Map
+        ? QueuedMessage.fromJson(Map<String, Object?>.from(queued))
+        : null;
+  }
+
+  @override
+  Future<SessionQueue> sessionQueue(String sessionId) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.queue',
+      <String, Object?>{'sessionId': sessionId},
+    );
+    return SessionQueue.fromJson(_resultMap(_resultField(result, 'queue')));
+  }
+
+  @override
+  Future<QueuedMessage> unqueueMessage(
+    String sessionId,
+    String messageId,
+  ) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.unqueue',
+      <String, Object?>{'sessionId': sessionId, 'messageId': messageId},
+    );
+    return QueuedMessage.fromJson(_resultMap(_resultField(result, 'message')));
+  }
+
+  @override
+  Future<bool> sendQueuedMessage(String sessionId, String messageId) async {
+    final Object? result = await _requirePeer().call(
+      'sessions.sendQueued',
+      <String, Object?>{'sessionId': sessionId, 'messageId': messageId},
+    );
+    return _resultField(result, 'steered') == true;
   }
 
   @override

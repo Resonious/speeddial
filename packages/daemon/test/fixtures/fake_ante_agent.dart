@@ -249,6 +249,15 @@ Future<void> _dispatch(Map<String, Object?> message) async {
     case 'UserInput':
       final String text = variant.value as String? ?? '';
       await _runTurn(parent, text);
+    case 'Steer':
+      final String text = variant.value as String? ?? '';
+      if (_pendingTurn == null) {
+        await _event(<String, Object?>{'Error': 'No turn to steer'}, parent);
+        return;
+      }
+      final String? report = Platform.environment['FAKE_ANTE_STEER_REPORT'];
+      if (report != null) await File(report).writeAsString(text, flush: true);
+      await _event(<String, Object?>{'MessageDelta': 'steered: $text'}, parent);
     case 'Compact':
       await _event('CompactStart', parent);
       await _event(<String, Object?>{

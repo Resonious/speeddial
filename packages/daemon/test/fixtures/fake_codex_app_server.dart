@@ -614,6 +614,19 @@ Future<void> _handle(Map<String, Object?> message) async {
           'error': null,
         },
       });
+    case 'turn/steer':
+      if (_pendingTurn == null || params['expectedTurnId'] != _turnId) {
+        await _emit(<String, Object?>{
+          'id': id,
+          'error': <String, Object?>{
+            'code': -32600,
+            'message': 'no active turn to steer',
+          },
+        });
+        return;
+      }
+      await _writeReport('FAKE_CODEX_STEER_REPORT', params);
+      await _respond(id, <String, Object?>{'turnId': _turnId});
     case 'turn/interrupt':
       await _respond(id, const <String, Object?>{});
       if (_pendingTurn != null) {

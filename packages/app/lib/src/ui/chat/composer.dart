@@ -13,6 +13,7 @@ import '../../state/replies_store.dart';
 import '../../theme.dart';
 import 'compaction.dart' show compactTokens;
 import 'model_picker.dart';
+import 'queued_messages.dart';
 import 'replies.dart';
 import 'typed_text.dart';
 
@@ -70,9 +71,10 @@ typedef ClipboardImageReader = Future<Uint8List?> Function();
 }
 
 /// Multiline message composer: Enter sends, Shift+Enter inserts a newline,
-/// send is disabled while empty, a stop button replaces send while the
-/// session is running, plus mode/model controls, a file-attach button, a
-/// pending-attachment chip row and a usage footer.
+/// send is disabled while empty, and while the session is running a stop
+/// button sits beside send, which then queues the message for after the
+/// turn. Also mode/model controls, a file-attach button, the queued-message
+/// tray, a pending-attachment chip row and a usage footer.
 class Composer extends StatefulWidget {
   const Composer({
     super.key,
@@ -105,6 +107,11 @@ class Composer extends StatefulWidget {
     this.onRepliesSent,
     required this.onSend,
     required this.onStop,
+    this.queue,
+    this.queueEnabled = true,
+    this.onSendQueued,
+    this.onEditQueued,
+    this.onRemoveQueued,
   });
 
   /// Optional focus node owned by the shell so session creation can move
@@ -192,6 +199,24 @@ class Composer extends StatefulWidget {
   onSend;
   final VoidCallback onStop;
 
+  /// Messages the daemon holds until the running turn ends; the tray shows
+  /// when non-empty.
+  final SessionQueue? queue;
+
+  /// False while the daemon is out of reach: queued actions are disabled.
+  final bool queueEnabled;
+
+  /// Steers a queued message into the running turn, or sends it now.
+  final Future<void> Function(QueuedMessage message)? onSendQueued;
+
+  /// Takes a queued message out of the queue, returning its draft (text and
+  /// re-fetched attachments) for the composer to restore.
+  final Future<({String text, List<OutgoingAttachment> attachments})> Function(
+    QueuedMessage message,
+  )?
+  onEditQueued;
+  final Future<void> Function(QueuedMessage message)? onRemoveQueued;
+
   @override
   State<Composer> createState() => _ComposerState();
 }
@@ -268,6 +293,9 @@ class _ComposerState extends State<Composer>
 
   /// The staged reply whose editor is open, if any.
   int? _openReply;
+
+  /// Queued messages with an action in flight.
+  final Set<String> _queueBusy = <String>{};
 
   /// Replies staged before this composer mounted; only later ones pop in.
   late final Set<int> _settledReplies = <int>{
@@ -421,7 +449,6 @@ class _ComposerState extends State<Composer>
   }
 
   Future<bool> _pasteImage() async {
-    if (_running) return false;
     final ClipboardImageReader reader =
         widget.clipboardImageReader ?? (() => Pasteboard.image);
     final Uint8List? bytes;
@@ -437,10 +464,7 @@ class _ComposerState extends State<Composer>
 
   void _onContentInserted(KeyboardInsertedContent content) {
     final Uint8List? bytes = content.data;
-    if (_running ||
-        !isImageMimeType(content.mimeType) ||
-        bytes == null ||
-        bytes.isEmpty) {
+    if (!isImageMimeType(content.mimeType) || bytes == null || bytes.isEmpty) {
       return;
     }
     unawaited(_addPastedImage(bytes, fallbackMimeType: content.mimeType));
@@ -546,7 +570,6 @@ class _ComposerState extends State<Composer>
     final List<ReplyDraft> replies = List<ReplyDraft>.of(widget.replies);
     final String message = formatMessageWithReplies(replies, text);
     if ((message.isEmpty && attachments.isEmpty) ||
-        _running ||
         widget.sending ||
         !mounted) {
       return;
@@ -660,6 +683,7 @@ class _ComposerState extends State<Composer>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
+                  _queueTray(),
                   if (_attachments.isNotEmpty ||
                       widget.sharedAttachments.isNotEmpty ||
                       widget.replies.isNotEmpty)
@@ -783,19 +807,40 @@ class _ComposerState extends State<Composer>
                             ),
                         contextMenuBuilder: _buildContextMenu,
                         decoration: InputDecoration(
-                          hintText: 'Message the agent…',
+                          hintText: _running
+                              ? 'Queue a message for after this turn…'
+                              : 'Message the agent…',
                           prefixIcon: IconButton(
                             tooltip: 'Attach files',
                             icon: const Icon(Icons.attach_file),
-                            // Keep the draft stable while a turn is running;
-                            // sending is disabled then too.
-                            onPressed: _running ? null : _pickFiles,
+                            onPressed: _pickFiles,
                           ),
                           suffixIcon: _running
-                              ? IconButton(
-                                  tooltip: 'Stop',
-                                  icon: const Icon(Icons.stop_circle_outlined),
-                                  onPressed: widget.onStop,
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: <Widget>[
+                                    if (_canSend)
+                                      IconButton(
+                                        key: const Key('composer-queue'),
+                                        tooltip: 'Queue for after this turn',
+                                        icon: const Icon(
+                                          Icons.schedule_send_outlined,
+                                          size: 18,
+                                        ),
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: scheme.primary,
+                                          foregroundColor: scheme.onPrimary,
+                                        ),
+                                        onPressed: _send,
+                                      ),
+                                    IconButton(
+                                      tooltip: 'Stop',
+                                      icon: const Icon(
+                                        Icons.stop_circle_outlined,
+                                      ),
+                                      onPressed: widget.onStop,
+                                    ),
+                                  ],
                                 )
                               : Padding(
                                   padding: const EdgeInsets.all(4),
@@ -822,6 +867,85 @@ class _ComposerState extends State<Composer>
           _UsageFooter(usage: widget.usage),
         ],
       ),
+    );
+  }
+
+  /// The queued-message tray, easing open and shut above the draft.
+  Widget _queueTray() {
+    final SessionQueue? queue = widget.queue;
+    final Widget tray = queue == null || queue.messages.isEmpty
+        ? const SizedBox(width: double.infinity)
+        : QueuedMessagesTray(
+            queue: queue,
+            running: _running,
+            enabled: widget.queueEnabled,
+            busy: _queueBusy,
+            onSend: (QueuedMessage message) =>
+                _runQueued(message, widget.onSendQueued),
+            onRemove: (QueuedMessage message) =>
+                _runQueued(message, widget.onRemoveQueued),
+            onEdit: _editQueued,
+          );
+    if (MediaQuery.maybeDisableAnimationsOf(context) ?? false) return tray;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomCenter,
+      child: tray,
+    );
+  }
+
+  void _runQueued(
+    QueuedMessage message,
+    Future<void> Function(QueuedMessage message)? action,
+  ) {
+    if (action == null || _queueBusy.contains(message.id)) return;
+    setState(() => _queueBusy.add(message.id));
+    unawaited(
+      action(message)
+          .then<void>(
+            (_) {},
+            onError: (Object _) {
+              // The pane reports the failure; the message stays queued.
+            },
+          )
+          .whenComplete(() {
+            if (mounted) setState(() => _queueBusy.remove(message.id));
+          }),
+    );
+  }
+
+  /// Pulls a queued message back into the draft: its text joins whatever is
+  /// already typed, its files rejoin the chip row.
+  void _editQueued(QueuedMessage message) {
+    final Future<({String text, List<OutgoingAttachment> attachments})>
+    Function(QueuedMessage message)?
+    edit = widget.onEditQueued;
+    if (edit == null || _queueBusy.contains(message.id)) return;
+    setState(() => _queueBusy.add(message.id));
+    unawaited(
+      edit(message)
+          .then<void>(
+            (({String text, List<OutgoingAttachment> attachments}) draft) {
+              if (!mounted) return;
+              final String current = _controller.text.trimRight();
+              final String text = current.isEmpty
+                  ? draft.text
+                  : '$current\n\n${draft.text}';
+              _controller.value = TextEditingValue(
+                text: text,
+                selection: TextSelection.collapsed(offset: text.length),
+              );
+              setState(() => _attachments.addAll(draft.attachments));
+              (widget.focusNode ?? _ownedFocusNode).requestFocus();
+            },
+            onError: (Object _) {
+              // The pane reports the failure; the message stays queued.
+            },
+          )
+          .whenComplete(() {
+            if (mounted) setState(() => _queueBusy.remove(message.id));
+          }),
     );
   }
 

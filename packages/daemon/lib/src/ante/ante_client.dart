@@ -522,6 +522,24 @@ class AnteClient implements AgentClient, NativeCommandClient {
     return completer.future;
   }
 
+  /// Ante's `Steer` operation feeds input into the running turn; its
+  /// output keeps streaming under the turn already in flight.
+  @override
+  bool get supportsSteering => true;
+
+  @override
+  Future<void> steer(
+    String sessionId,
+    List<Map<String, Object?>> promptBlocks,
+  ) async {
+    _requireSession(sessionId);
+    if (_currentTurnOp == null) {
+      throw StateError('No Ante turn is running.');
+    }
+    final String text = await _textFromPromptBlocks(promptBlocks);
+    await _sendOp(<String, Object?>{'Steer': text}, _nextOpId());
+  }
+
   @override
   Future<void> cancel(String sessionId) async {
     _requireSession(sessionId);

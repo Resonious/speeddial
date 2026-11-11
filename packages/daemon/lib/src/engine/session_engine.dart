@@ -161,6 +161,24 @@ class _SessionPreparation {
   ({String text, List<_PreparedAttachment> attachments})? queued;
 }
 
+/// One message waiting in a session's queue, with its attachments already
+/// persisted so later delivery needs no client payloads.
+class _QueuedEntry {
+  _QueuedEntry(this.message, this.attachments);
+
+  final QueuedMessage message;
+  final List<_PreparedAttachment> attachments;
+}
+
+/// Messages sent while a turn was running, delivered one turn at a time in
+/// order. Held in memory: a daemon restart discards them.
+class _SessionQueueState {
+  final List<_QueuedEntry> entries = <_QueuedEntry>[];
+
+  /// The last turn was cancelled or failed, so delivery waits for the user.
+  bool paused = false;
+}
+
 /// Orchestrates agent transports and the project session lifecycle.
 class SessionEngine {
   SessionEngine({
@@ -214,6 +232,7 @@ class SessionEngine {
 
   final Map<String, _LiveSession> _live = {};
   final Map<String, _SessionPreparation> _preparations = {};
+  final Map<String, _SessionQueueState> _queues = {};
   int _pendingOperations = 0;
   bool _restarting = false;
   bool _clearingArchive = false;
@@ -223,6 +242,7 @@ class SessionEngine {
       _pendingOperations > 0 ||
       _preparations.isNotEmpty ||
       _resuming.isNotEmpty ||
+      _queues.keys.any(_hasPendingQueue) ||
       _live.values.any(
         (live) =>
             live.turn != null ||
@@ -381,6 +401,8 @@ class SessionEngine {
       StreamController.broadcast(sync: true);
   final StreamController<String> _sessionRemovalsController =
       StreamController.broadcast(sync: true);
+  final StreamController<SessionQueue> _queueChangesController =
+      StreamController.broadcast(sync: true);
 
   /// Persisted/broadcast events with their per-session sequence numbers.
   Stream<({String sessionId, int seq, SessionEvent event})> get events =>
@@ -391,6 +413,9 @@ class SessionEngine {
 
   /// Session ids deleted (agent killed, rows removed).
   Stream<String> get sessionRemovals => _sessionRemovalsController.stream;
+
+  /// A session's message queue changed (PROTOCOL.md `session.queue`).
+  Stream<SessionQueue> get queueChanges => _queueChangesController.stream;
 
   /// Reconciles persisted sessions with a fresh process table after a daemon
   /// restart. Agent processes are gone, but sessions persist them lazily:
@@ -675,16 +700,13 @@ class SessionEngine {
               queued.attachments,
               alreadyPersisted: true,
             );
-            live.turn =
-                _driveTurn(
-                  live,
-                  () => live.client.prompt(
-                    live.providerSessionId,
-                    _promptBlocks(live, queued.text, queued.attachments),
-                  ),
-                ).whenComplete(() {
-                  live.turn = null;
-                });
+            _runTurn(
+              live,
+              () => live.client.prompt(
+                live.providerSessionId,
+                _promptBlocks(live, queued.text, queued.attachments),
+              ),
+            );
           }
         } on Object catch (error) {
           if (!preparation.cancelled && _store.getSession(session.id) != null) {
@@ -1341,19 +1363,31 @@ class SessionEngine {
   /// client that backgrounds the app mid-turn would otherwise see the socket
   /// drop error its still-pending `sessions.send` and restore the draft over
   /// a message the daemon already received (PROTOCOL.md: turn-start ack).
-  Future<void> sendMessage(
+  ///
+  /// With [queue], a send that would conflict with a running turn is held in
+  /// the session's queue instead and returned; it starts its own turn once
+  /// the queue reaches it (PROTOCOL.md `sessions.send`). Returns null when
+  /// the message started (or was accepted as) a turn.
+  Future<QueuedMessage?> sendMessage(
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
-  }) => _sendMessage(sessionId, text, attachments: attachments);
+    bool queue = false,
+  }) => _sendMessage(sessionId, text, attachments: attachments, queue: queue);
 
-  Future<void> _sendMessage(
+  Future<QueuedMessage?> _sendMessage(
     String sessionId,
     String text, {
     List<OutgoingAttachment> attachments = const <OutgoingAttachment>[],
     List<_PreparedAttachment>? preparedAttachments,
     int? retrySeq,
+    bool queue = false,
+    _QueuedEntry? fromQueue,
   }) => _withSessionOperation(() async {
+    // Later messages wait behind earlier queued ones.
+    if (queue && fromQueue == null && _hasPendingQueue(sessionId)) {
+      return _enqueue(sessionId, text, attachments, preparedAttachments);
+    }
     final stored = _store.getSession(sessionId);
     if (stored?.preparing == true) {
       final preparation = _startPreparation(stored!);
@@ -1364,6 +1398,9 @@ class SessionEngine {
         );
       }
       if (preparation.queued != null) {
+        if (queue && fromQueue == null) {
+          return _enqueue(sessionId, text, attachments, preparedAttachments);
+        }
         throw DaemonError(
           kErrConflict,
           'A message is already queued for this session',
@@ -1371,6 +1408,7 @@ class SessionEngine {
       }
       final prepared =
           preparedAttachments ?? _prepareAttachments(sessionId, attachments);
+      _takeFromQueue(sessionId, fromQueue);
       preparation.queued = (text: text, attachments: prepared);
       _emitForSession(
         sessionId,
@@ -1386,7 +1424,7 @@ class SessionEngine {
         }
         return _withStatus(current, SessionStatus.running, activity: true);
       });
-      return;
+      return null;
     }
     // Concurrent sends to the same not-live session share one resume.
     _LiveSession? live = _live[sessionId];
@@ -1401,6 +1439,9 @@ class SessionEngine {
     if (live != null &&
         (environmentReload || _mcpReloadPending.contains(sessionId))) {
       if (live.turn != null) {
+        if (queue && fromQueue == null && !live.maintaining) {
+          return _enqueue(sessionId, text, attachments, preparedAttachments);
+        }
         throw DaemonError(
           kErrConflict,
           'A turn is already running for session "$sessionId"',
@@ -1424,6 +1465,9 @@ class SessionEngine {
       }),
     );
     if (live.turn != null) {
+      if (queue && fromQueue == null && !live.maintaining) {
+        return _enqueue(sessionId, text, attachments, preparedAttachments);
+      }
       throw DaemonError(
         kErrConflict,
         'A turn is already running for session "$sessionId"',
@@ -1445,6 +1489,7 @@ class SessionEngine {
     // payload into a clean -32602 instead of an internal error.
     final prepared =
         preparedAttachments ?? _prepareAttachments(sessionId, attachments);
+    _takeFromQueue(sessionId, fromQueue);
     // Persist the user message, name the session if needed, and flip to
     // running synchronously — every failure mode below happens before any
     // agent I/O, so the caller learns it from this future rather than after
@@ -1455,18 +1500,264 @@ class SessionEngine {
     // turn that dies after it started is the session's problem, not the
     // sender's, and the client already cleared its draft on ack.
     final active = live;
-    active.turn =
-        _driveTurn(
-          active,
-          () => active.client.prompt(
-            active.providerSessionId,
-            _promptBlocks(active, text, prepared, forkContext: forkContext),
-          ),
-          forkContext: forkContext,
-        ).whenComplete(() {
-          active.turn = null;
-        });
+    _runTurn(
+      active,
+      () => active.client.prompt(
+        active.providerSessionId,
+        _promptBlocks(active, text, prepared, forkContext: forkContext),
+      ),
+      forkContext: forkContext,
+    );
+    return null;
   });
+
+  // -------------------------------------------------------------------------
+  // Message queue
+  // -------------------------------------------------------------------------
+
+  /// Whether [sessionId] has queued messages that will be delivered without
+  /// further user action.
+  bool _hasPendingQueue(String sessionId) {
+    final _SessionQueueState? state = _queues[sessionId];
+    return state != null && state.entries.isNotEmpty && !state.paused;
+  }
+
+  /// The queue snapshot for [sessionId]; errors `kErrNotFound` for an
+  /// unknown session.
+  SessionQueue queueOf(String sessionId) {
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    return _queueSnapshot(sessionId);
+  }
+
+  SessionQueue _queueSnapshot(String sessionId) {
+    final _SessionQueueState? state = _queues[sessionId];
+    final _LiveSession? live = _live[sessionId];
+    return SessionQueue(
+      sessionId: sessionId,
+      messages: <QueuedMessage>[
+        for (final _QueuedEntry entry
+            in state?.entries ?? const <_QueuedEntry>[])
+          entry.message,
+      ],
+      canSteer:
+          live != null &&
+          !live.closed &&
+          !live.client.isClosed &&
+          live.client.supportsSteering,
+      paused: state != null && state.entries.isNotEmpty && state.paused,
+    );
+  }
+
+  void _publishQueue(String sessionId) {
+    final _SessionQueueState? state = _queues[sessionId];
+    if (state != null && state.entries.isEmpty) {
+      _queues.remove(sessionId);
+    }
+    if (!_queueChangesController.isClosed) {
+      _queueChangesController.add(_queueSnapshot(sessionId));
+    }
+  }
+
+  /// Persists the attachments and appends a message to the queue. Attachment
+  /// validation errors reach the sender, exactly as for an immediate send.
+  QueuedMessage _enqueue(
+    String sessionId,
+    String text,
+    List<OutgoingAttachment> attachments,
+    List<_PreparedAttachment>? preparedAttachments,
+  ) {
+    final List<_PreparedAttachment> prepared =
+        preparedAttachments ?? _prepareAttachments(sessionId, attachments);
+    final QueuedMessage message = QueuedMessage(
+      id: _uuid.v4(),
+      text: text,
+      attachments: <Attachment>[
+        for (final _PreparedAttachment item in prepared)
+          Attachment(
+            id: item.data.id,
+            name: item.data.name,
+            mimeType: item.data.mimeType,
+            size: item.data.size,
+          ),
+      ],
+      createdAt: DateTime.now().toUtc(),
+    );
+    _queues
+        .putIfAbsent(sessionId, _SessionQueueState.new)
+        .entries
+        .add(_QueuedEntry(message, prepared));
+    _publishQueue(sessionId);
+    return message;
+  }
+
+  /// Removes [entry] as its turn begins. Synchronous with the turn's
+  /// `userMessage` so no client sees the message both queued and sent.
+  void _takeFromQueue(String sessionId, _QueuedEntry? entry) {
+    if (entry == null) return;
+    final _SessionQueueState? state = _queues[sessionId];
+    if (state == null || !state.entries.remove(entry)) return;
+    state.paused = false;
+    _publishQueue(sessionId);
+  }
+
+  _QueuedEntry _queuedEntry(String sessionId, String messageId) {
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    for (final _QueuedEntry entry
+        in _queues[sessionId]?.entries ?? const <_QueuedEntry>[]) {
+      if (entry.message.id == messageId) return entry;
+    }
+    throw DaemonError(kErrNotFound, 'Queued message not found: $messageId');
+  }
+
+  /// Removes a queued message without sending it. Its persisted attachments
+  /// stay fetchable so a client can restore the draft.
+  QueuedMessage unqueue(String sessionId, String messageId) {
+    final _QueuedEntry entry = _queuedEntry(sessionId, messageId);
+    _queues[sessionId]!.entries.remove(entry);
+    _publishQueue(sessionId);
+    return entry.message;
+  }
+
+  /// Delivers a queued message now. During a running turn the harness
+  /// steers it into that turn (`kErrConflict` when it cannot); otherwise it
+  /// starts a turn, resuming a paused queue. Returns whether it steered.
+  Future<bool> sendQueued(String sessionId, String messageId) =>
+      _withSessionOperation(() async {
+        final _QueuedEntry entry = _queuedEntry(sessionId, messageId);
+        final _LiveSession? live = _live[sessionId];
+        if (live != null && live.turn != null && !live.closed) {
+          if (live.maintaining || !live.client.supportsSteering) {
+            throw DaemonError(
+              kErrConflict,
+              'This agent cannot take messages during a turn',
+            );
+          }
+          final _SessionQueueState state = _queues[sessionId]!;
+          final int index = state.entries.indexOf(entry);
+          state.entries.removeAt(index);
+          _publishQueue(sessionId);
+          try {
+            await live.client.steer(
+              live.providerSessionId,
+              _promptBlocks(live, entry.message.text, entry.attachments),
+            );
+          } on Object catch (error) {
+            final _SessionQueueState restored = _queues.putIfAbsent(
+              sessionId,
+              _SessionQueueState.new,
+            );
+            restored.entries.insert(
+              index.clamp(0, restored.entries.length),
+              entry,
+            );
+            _publishQueue(sessionId);
+            if (error is StateError && live.turn == null && !live.closed) {
+              // The turn finished first: send it as the next turn instead.
+              restored.paused = false;
+              _drainQueue(sessionId);
+              return false;
+            }
+            if (error is StateError) {
+              throw DaemonError(kErrConflict, 'The turn already finished');
+            }
+            throw DaemonError(kErrAgentProcess, 'Steering failed: $error');
+          }
+          if (!live.closed) {
+            _emit(
+              live,
+              UserMessageEvent(
+                text: entry.message.text,
+                attachments: <Attachment>[
+                  for (final _PreparedAttachment item in entry.attachments)
+                    item.data,
+                ],
+              ),
+            );
+          }
+          return true;
+        }
+        await _sendMessage(
+          sessionId,
+          entry.message.text,
+          preparedAttachments: entry.attachments,
+          fromQueue: entry,
+        );
+        return false;
+      });
+
+  /// Starts the next queued message as its own turn, if the queue is live.
+  /// A busy session keeps the message for that turn's own completion; any
+  /// other failure pauses the queue and is reported in the timeline.
+  void _drainQueue(String sessionId) {
+    if (!_hasPendingQueue(sessionId)) return;
+    final _QueuedEntry next = _queues[sessionId]!.entries.first;
+    unawaited(
+      _sendMessage(
+        sessionId,
+        next.message.text,
+        preparedAttachments: next.attachments,
+        fromQueue: next,
+      ).then<void>(
+        (_) {},
+        onError: (Object error) {
+          if (_store.getSession(sessionId) == null) return;
+          final _LiveSession? live = _live[sessionId];
+          if (live != null && live.turn != null) return;
+          if (error is DaemonError &&
+              error.code == kErrConflict &&
+              _restarting) {
+            return;
+          }
+          final _SessionQueueState? state = _queues[sessionId];
+          if (state == null || !state.entries.contains(next)) return;
+          state.paused = true;
+          _emitForSession(
+            sessionId,
+            SessionErrorEvent(
+              message:
+                  'Queued message was not sent: ${error is DaemonError ? error.message : error}',
+            ),
+          );
+          _publishQueue(sessionId);
+        },
+      ),
+    );
+  }
+
+  /// Runs [run] as the session's turn and, once its slot is free, delivers
+  /// the next queued message — or pauses the queue after a cancelled or
+  /// failed turn so the user decides what happens next.
+  void _runTurn(
+    _LiveSession live,
+    Future<PromptResult> Function() run, {
+    _ForkContext? forkContext,
+  }) {
+    final _SessionQueueState? state = _queues[live.sessionId];
+    if (state != null && state.paused) {
+      state.paused = false;
+      _publishQueue(live.sessionId);
+    }
+    bool completed = false;
+    live.turn = _driveTurn(live, run, forkContext: forkContext)
+        .then<void>((bool ok) => completed = ok)
+        .whenComplete(() {
+          live.turn = null;
+          if (live.closed) return;
+          if (completed) {
+            _drainQueue(live.sessionId);
+          } else {
+            final _SessionQueueState? queue = _queues[live.sessionId];
+            if (queue != null && queue.entries.isNotEmpty && !queue.paused) {
+              queue.paused = true;
+              _publishQueue(live.sessionId);
+            }
+          }
+        });
+  }
 
   List<_PreparedAttachment> _prepareAttachments(
     String sessionId,
@@ -1668,14 +1959,14 @@ class SessionEngine {
     final String text = '/$name${arguments.isEmpty ? '' : ' $arguments'}';
     _beginTurn(live, text, const <_PreparedAttachment>[]);
     final NativeCommand command = selected;
-    live.turn = _driveTurn(
+    _runTurn(
       live,
       () => nativeClient.runNativeCommand(
         live.providerSessionId,
         command,
         arguments,
       ),
-    ).whenComplete(() => live.turn = null);
+    );
   });
 
   Future<void> _runAnteControl(
@@ -2161,6 +2452,11 @@ class SessionEngine {
     if (preparation != null) {
       if (preparation.queued != null) {
         preparation.queued = null;
+        final _SessionQueueState? queue = _queues[sessionId];
+        if (queue != null && queue.entries.isNotEmpty) {
+          queue.paused = true;
+          _publishQueue(sessionId);
+        }
         _emitForSession(sessionId, TurnCompleteEvent(stopReason: 'cancelled'));
         await _updateSession(
           sessionId,
@@ -2313,6 +2609,7 @@ class SessionEngine {
         _preparations.containsKey(sessionId) ||
         _resuming.containsKey(sessionId) ||
         live?.turn != null ||
+        _hasPendingQueue(sessionId) ||
         live?.pendingPermissions.isNotEmpty == true;
   }
 
@@ -2623,6 +2920,7 @@ class SessionEngine {
       await live.client.dispose();
       await live.worktreeUpdates;
     }
+    _queues.remove(sessionId);
     _store.deleteSession(sessionId);
     if (!_sessionRemovalsController.isClosed) {
       _sessionRemovalsController.add(sessionId);
@@ -2666,6 +2964,8 @@ class SessionEngine {
     if (!_sessionRemovalsController.isClosed) {
       _sessionRemovalsController.close();
     }
+    _queues.clear();
+    if (!_queueChangesController.isClosed) _queueChangesController.close();
   }
 
   // -------------------------------------------------------------------------
@@ -2725,7 +3025,10 @@ class SessionEngine {
   /// and marks the session `error` (a turn that dies after it started is the
   /// session's problem, not the sender's — the sender already got its ack).
   /// [cancel] and [dispose] observe the in-flight future via `live.turn`.
-  Future<void> _driveTurn(
+  ///
+  /// Resolves true when the turn ran to completion without being cancelled,
+  /// which lets the session's queue continue.
+  Future<bool> _driveTurn(
     _LiveSession live,
     Future<PromptResult> Function() run, {
     _ForkContext? forkContext,
@@ -2733,16 +3036,21 @@ class SessionEngine {
     try {
       final result = await run();
       await live.worktreeUpdates;
-      if (live.closed) return;
+      if (live.closed) return false;
       if (forkContext != null) {
         _store.setForkContextSeq(live.sessionId, null);
       }
       _emit(live, TurnCompleteEvent(stopReason: result.stopReason));
       _setStatus(live, SessionStatus.idle, activity: true, completed: true);
       final String finalText = live.finalReply?.text ?? '';
-      if (result.stopReason != 'cancelled' && finalText.isNotEmpty) {
+      final bool finished = result.stopReason != 'cancelled';
+      // A queued follow-up is about to start; notify when the queue is done.
+      if (finished &&
+          finalText.isNotEmpty &&
+          !_hasPendingQueue(live.sessionId)) {
         _notifyTurnComplete(live.session, finalText);
       }
+      return finished;
     } on Object catch (error) {
       if (!live.closed) {
         final String message = switch (error) {
@@ -2773,6 +3081,7 @@ class SessionEngine {
         );
         _setStatus(live, SessionStatus.error, activity: true);
       }
+      return false;
     } finally {
       live.finalReply = null;
       // The client normally ends the wait through its busyWaitChanged

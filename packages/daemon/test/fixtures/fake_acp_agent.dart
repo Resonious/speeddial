@@ -35,8 +35,14 @@
 //       - "die": parks a session/request_permission, then exits the process
 //         when `<cwd>/agent.turn.die` appears (mid-request agent death).
 //       - "hang": sends nothing and never resolves the turn.
+//       - "hold": sends nothing until `<cwd>/agent.release` appears, then
+//         deletes it and resolves `end_turn`.
 //   * `session/cancel` (notification) resolves any pending prompt with
 //     `cancelled`.
+//   * `_session/steering` is advertised (`_meta.steering.supported`) only
+//     when `<cwd>/agent.steering` exists at initialize. With a turn pending it
+//     appends the prompt text to `<cwd>/agent.steered`, streams
+//     `steered: <text>`, and answers `injected`; otherwise `promptRequired`.
 //   * the `FAKE_ACP_TARGET` environment variable is the target file path used
 //     by the tool_call locations / fs/read requests (defaults to
 //     `$cwd/example.txt`).
@@ -253,6 +259,10 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
           'title': 'Fake ACP Agent',
           'version': '0.1.0',
         },
+        if (File('${Directory.current.path}/agent.steering').existsSync())
+          '_meta': <String, Object?>{
+            'steering': <String, Object?>{'supported': true},
+          },
       });
     case 'authenticate':
       if (File('${Directory.current.path}/agent.terminal_auth').existsSync()) {
@@ -352,6 +362,26 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
       for (final promptId in _pendingPrompts.keys.toList()) {
         _resolvePrompt(promptId, 'cancelled');
       }
+    case '_session/steering':
+      if (!_pendingPrompts.containsValue(false)) {
+        await _sendResponse(id!, <String, Object?>{
+          'outcome': 'promptRequired',
+          'reason': 'noRunningTurn',
+        });
+        break;
+      }
+      final String steered = _promptText(params(message));
+      File(
+        p.join(Directory.current.path, 'agent.steered'),
+      ).writeAsStringSync('$steered\n', mode: FileMode.append);
+      await _sendUpdate(<String, Object?>{
+        'sessionUpdate': 'agent_message_chunk',
+        'content': <String, Object?>{
+          'type': 'text',
+          'text': 'steered: $steered',
+        },
+      });
+      await _sendResponse(id!, <String, Object?>{'outcome': 'injected'});
     default:
       if (id != null) {
         await _sendError(id, -32601, 'Method not found: $method');
@@ -596,6 +626,17 @@ Future<void> _runTurn(
     return _resolvePrompt(promptId, 'end_turn');
   }
   if (text == 'hang') return; // Never resolves; used with dispose().
+  if (text == 'hold') {
+    final File release = File(p.join(cwd, 'agent.release'));
+    while (_pendingPrompts[promptId] == false) {
+      if (release.existsSync()) {
+        release.deleteSync();
+        return _resolvePrompt(promptId, 'end_turn');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    return;
+  }
   if (text == 'die') {
     // Park a permission request at the engine, then wait for the test's kill
     // signal (`<cwd>/agent.turn.die`) and exit mid-request: the engine must

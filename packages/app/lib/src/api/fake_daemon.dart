@@ -78,6 +78,16 @@ class FakeDaemonClient implements DaemonClient {
   /// sessions currently executing a scripted turn; a second send conflicts.
   final Set<String> _runningScripts = <String>{};
   final Set<String> _cancelRequested = <String>{};
+
+  /// Messages queued behind a running turn, oldest first (PROTOCOL.md
+  /// `sessions.send` with `queue`).
+  final Map<String, List<QueuedMessage>> _queues =
+      <String, List<QueuedMessage>>{};
+  final Set<String> _pausedQueues = <String>{};
+  int _queueCounter = 0;
+
+  /// Whether the fake harness accepts steering (`SessionQueue.canSteer`).
+  bool steering = true;
   final Map<String, String> _pendingPermissions = <String, String>{};
 
   /// Attachments per session, keyed by attachment id; payloads are served by
@@ -113,6 +123,7 @@ class FakeDaemonClient implements DaemonClient {
   late final StreamController<String> gitChangedController;
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
+  late final StreamController<SessionQueue> _queueController;
   late final StreamController<void> _projectsChangedController;
   late final StreamController<SessionNote> _noteUpdatesController;
   late final StreamController<String> _noteRemovalsController;
@@ -268,6 +279,7 @@ class FakeDaemonClient implements DaemonClient {
       );
     _sessionUpdatesController = StreamController<Session>.broadcast();
     _sessionRemovalsController = StreamController<String>.broadcast();
+    _queueController = StreamController<SessionQueue>.broadcast();
     _projectsChangedController = StreamController<void>.broadcast();
     gitChangedController = StreamController<String>.broadcast();
     _noteUpdatesController = StreamController<SessionNote>.broadcast();
@@ -1223,8 +1235,134 @@ class FakeDaemonClient implements DaemonClient {
     if (_runningScripts.contains(sessionId)) {
       throw const DaemonError(kErrConflict, 'a turn is already running');
     }
-    // Mirror the daemon: each outgoing file is persisted under an id unique
-    // within the session; message events carry only the metadata.
+    await _startTurn(
+      sessionId,
+      text,
+      _persistAttachments(sessionId, attachments),
+    );
+  }
+
+  @override
+  Future<QueuedMessage?> queueMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  }) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final List<QueuedMessage> queue = _queues[sessionId] ?? <QueuedMessage>[];
+    final bool waiting = queue.isNotEmpty && !_pausedQueues.contains(sessionId);
+    if (!_runningScripts.contains(sessionId) && !waiting) {
+      await sendMessage(sessionId, text, attachments: attachments);
+      return null;
+    }
+    final QueuedMessage message = QueuedMessage(
+      id: 'queued-${++_queueCounter}',
+      text: text,
+      attachments: _persistAttachments(sessionId, attachments),
+      createdAt: DateTime.now().toUtc(),
+    );
+    _queues.putIfAbsent(sessionId, () => <QueuedMessage>[]).add(message);
+    _publishQueue(sessionId);
+    return message;
+  }
+
+  @override
+  Future<SessionQueue> sessionQueue(String sessionId) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    return _queueSnapshot(sessionId);
+  }
+
+  @override
+  Future<QueuedMessage> unqueueMessage(
+    String sessionId,
+    String messageId,
+  ) async {
+    _ensureSeeded();
+    final QueuedMessage message = _queuedMessage(sessionId, messageId);
+    _queues[sessionId]!.remove(message);
+    _publishQueue(sessionId);
+    return message;
+  }
+
+  @override
+  Future<bool> sendQueuedMessage(String sessionId, String messageId) async {
+    _ensureSeeded();
+    final QueuedMessage message = _queuedMessage(sessionId, messageId);
+    if (_runningScripts.contains(sessionId)) {
+      if (!steering) {
+        throw const DaemonError(
+          kErrConflict,
+          'This agent cannot take messages during a turn',
+        );
+      }
+      _queues[sessionId]!.remove(message);
+      _publishQueue(sessionId);
+      _emit(
+        sessionId,
+        UserMessageEvent(text: message.text, attachments: message.attachments),
+      );
+      return true;
+    }
+    _queues[sessionId]!.remove(message);
+    _pausedQueues.remove(sessionId);
+    _publishQueue(sessionId);
+    await _startTurn(sessionId, message.text, message.attachments);
+    return false;
+  }
+
+  QueuedMessage _queuedMessage(String sessionId, String messageId) {
+    _requireSession(sessionId);
+    for (final QueuedMessage message
+        in _queues[sessionId] ?? const <QueuedMessage>[]) {
+      if (message.id == messageId) return message;
+    }
+    throw DaemonError(kErrNotFound, 'Queued message not found: $messageId');
+  }
+
+  SessionQueue _queueSnapshot(String sessionId) {
+    final List<QueuedMessage> messages =
+        _queues[sessionId] ?? const <QueuedMessage>[];
+    return SessionQueue(
+      sessionId: sessionId,
+      messages: List<QueuedMessage>.unmodifiable(messages),
+      canSteer: steering,
+      paused: messages.isNotEmpty && _pausedQueues.contains(sessionId),
+    );
+  }
+
+  void _publishQueue(String sessionId) {
+    if (_queues[sessionId]?.isEmpty ?? false) {
+      _queues.remove(sessionId);
+      _pausedQueues.remove(sessionId);
+    }
+    if (_disposed) return;
+    _queueController.add(_queueSnapshot(sessionId));
+  }
+
+  /// After a turn: start the next queued message, or pause the queue when
+  /// the turn was cancelled, like the daemon.
+  void _afterTurn(String sessionId, String stopReason) {
+    final List<QueuedMessage>? queue = _queues[sessionId];
+    if (queue == null || queue.isEmpty) return;
+    if (stopReason == 'cancelled') {
+      _pausedQueues.add(sessionId);
+      _publishQueue(sessionId);
+      return;
+    }
+    if (_pausedQueues.contains(sessionId)) return;
+    final QueuedMessage next = queue.removeAt(0);
+    _publishQueue(sessionId);
+    unawaited(_startTurn(sessionId, next.text, next.attachments));
+  }
+
+  /// Mirror the daemon: each outgoing file is persisted under an id unique
+  /// within the session; message events carry only the metadata.
+  List<Attachment> _persistAttachments(
+    String sessionId,
+    List<OutgoingAttachment> attachments,
+  ) {
     final List<Attachment> metadata = <Attachment>[];
     if (attachments.isNotEmpty) {
       final Map<String, AttachmentData> store = _attachmentsBySession
@@ -1267,6 +1405,15 @@ class FakeDaemonClient implements DaemonClient {
         );
       }
     }
+    return metadata;
+  }
+
+  Future<void> _startTurn(
+    String sessionId,
+    String text,
+    List<Attachment> metadata,
+  ) async {
+    _pausedQueues.remove(sessionId);
     _runningScripts.add(sessionId);
     _cancelRequested.remove(sessionId);
     if (sendLatency > Duration.zero) {
@@ -2155,6 +2302,12 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   @override
+  Stream<SessionQueue> get queueUpdates {
+    _ensureSeeded();
+    return _queueController.stream;
+  }
+
+  @override
   Stream<String> get gitChanged {
     _ensureSeeded();
     return gitChangedController.stream;
@@ -2210,6 +2363,7 @@ class FakeDaemonClient implements DaemonClient {
     if (_seeded) {
       await _sessionUpdatesController.close();
       await _sessionRemovalsController.close();
+      await _queueController.close();
       await _projectsChangedController.close();
       await gitChangedController.close();
       await _noteUpdatesController.close();
@@ -2359,6 +2513,7 @@ class FakeDaemonClient implements DaemonClient {
     _pendingPermissions.remove(sessionId);
     _runningScripts.remove(sessionId);
     _setStatus(sessionId, SessionStatus.idle, activity: true, completed: true);
+    _afterTurn(sessionId, reason);
   }
 
   bool _isCancelled(String sessionId) => _cancelRequested.contains(sessionId);
@@ -2508,6 +2663,8 @@ class FakeDaemonClient implements DaemonClient {
     _seqBySession.remove(sessionId);
     _runningScripts.remove(sessionId);
     _cancelRequested.remove(sessionId);
+    _queues.remove(sessionId);
+    _pausedQueues.remove(sessionId);
     _pendingPermissions.remove(sessionId);
     _attachmentsBySession.remove(sessionId);
     _attachmentCounters.remove(sessionId);

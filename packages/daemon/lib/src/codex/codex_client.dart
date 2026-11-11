@@ -457,6 +457,30 @@ class CodexClient implements AgentClient, NativeCommandClient {
     }
   }
 
+  /// Codex app-server's `turn/steer` adds input to the active turn.
+  @override
+  bool get supportsSteering => true;
+
+  @override
+  Future<void> steer(
+    String sessionId,
+    List<Map<String, Object?>> promptBlocks,
+  ) async {
+    final _CodexSessionState state = _requireSession(sessionId);
+    String? turnId = state.activeTurnId;
+    if (turnId == null && state.turnCompleter != null) {
+      turnId = await state.turnStartCompleter?.future;
+    }
+    if (turnId == null || state.turnCompleter == null) {
+      throw StateError('No Codex turn is running.');
+    }
+    await _request('turn/steer', <String, Object?>{
+      'threadId': sessionId,
+      'input': await _inputsFromPromptBlocks(promptBlocks),
+      'expectedTurnId': turnId,
+    });
+  }
+
   @override
   Future<void> cancel(String sessionId) async {
     final _CodexSessionState state = _requireSession(sessionId);

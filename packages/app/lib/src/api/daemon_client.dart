@@ -178,6 +178,26 @@ abstract class DaemonClient {
     List<OutgoingAttachment> attachments = const [],
   });
 
+  /// Like [sendMessage], but a message that would collide with a running
+  /// turn (or arrives behind earlier queued ones) waits in the daemon's
+  /// queue and is returned; null when it started a turn right away
+  /// (PROTOCOL.md `sessions.send` with `queue`).
+  Future<QueuedMessage?> queueMessage(
+    String sessionId,
+    String text, {
+    List<OutgoingAttachment> attachments = const [],
+  });
+
+  /// Current queue snapshot for [sessionId] (`sessions.queue`).
+  Future<SessionQueue> sessionQueue(String sessionId);
+
+  /// Removes a queued message without sending it (`sessions.unqueue`).
+  Future<QueuedMessage> unqueueMessage(String sessionId, String messageId);
+
+  /// Delivers a queued message now: steered into the running turn when the
+  /// harness can, otherwise started as a turn. Returns whether it steered.
+  Future<bool> sendQueuedMessage(String sessionId, String messageId);
+
   /// Native operations exposed by this session's harness.
   Future<List<NativeCommand>> listCommands(String sessionId);
 
@@ -365,6 +385,9 @@ abstract class DaemonClient {
 
   /// Ids of sessions that were removed.
   Stream<String> get sessionRemovals;
+
+  /// `session.queue` notifications: a session's message queue changed.
+  Stream<SessionQueue> get queueUpdates;
 
   /// Project ids whose session git summaries moved daemon-side (the
   /// watcher noticed commits, dirty-state changes, or a periodic fetch

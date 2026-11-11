@@ -464,7 +464,41 @@ class AcpClient implements AgentClient {
         'version': '0.1.0',
       },
     }).timeout(initTimeout);
-    return InitializeResult.fromJson(result);
+    final InitializeResult initialized = InitializeResult.fromJson(result);
+    _steering = initialized.steering;
+    return initialized;
+  }
+
+  bool _steering = false;
+
+  /// True once `initialize` advertised the `_session/steering` extension.
+  @override
+  bool get supportsSteering => _steering;
+
+  /// Injects [promptBlocks] into the running turn through the ACP steering
+  /// extension. Opts into `promptRequired` so an idle agent hands the
+  /// content back instead of starting a detached turn the engine cannot see.
+  @override
+  Future<void> steer(
+    String sessionId,
+    List<Map<String, Object?>> promptBlocks,
+  ) async {
+    if (!_steering) {
+      throw UnsupportedError('This agent does not support steering.');
+    }
+    final Map<String, Object?> result = await _request(
+      '_session/steering',
+      <String, Object?>{
+        'sessionId': sessionId,
+        'prompt': promptBlocks,
+        '_meta': <String, Object?>{
+          'steering': <String, Object?>{'idleBehavior': 'promptRequired'},
+        },
+      },
+    );
+    if (result['outcome'] == 'promptRequired') {
+      throw StateError('No turn is running.');
+    }
   }
 
   /// Authenticates with the given advertised method id.

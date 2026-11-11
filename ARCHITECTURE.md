@@ -603,6 +603,15 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              context used/limit/percentage and optional cost estimate
                              (exact counts in a tooltip; no turn token totals). A leading `/` opens a
                              filtered menu of commands discovered from the live session.
+                             Message queue (queued_messages.dart): while a turn runs the
+                             composer keeps accepting drafts and files; send (a filled
+                             "queue" button beside Stop) calls `sessions.send` with `queue`,
+                             and the daemon's queue (ChatStore.queueFor, fed by
+                             `sessions.queue` + `session.queue`) sits above the draft as
+                             still dough rows: Steer (harness `canSteer`, running) or Send
+                             now (idle/paused), Edit (re-fetches files, unqueues, merges
+                             into the draft) and Remove. A message leaving the queue pops in
+                             the timeline like a confirmed send.
                              Replies (replies.dart): selecting timeline text adds Reply to the
                              selection menu, which opens an inline reply box beside the text;
                              the reply stages as a composer chip that opens to the quote and
@@ -837,6 +846,17 @@ Links use already saved endpoints and credentials; they never add a connection.
 If the same project/session IDs exist on multiple daemons, the app reports the
 ambiguity instead of opening an arbitrary copy. Native desktop URL-scheme
 registration is not provided; desktop notification links can use a hosted web app.
+
+### Message queue and steering
+
+`SessionEngine` keeps a per-session in-memory queue of messages sent with `queue` while a
+turn (or an earlier queued message) is in the way. Attachments are persisted at enqueue time.
+Every turn runs through `_runTurn`: a turn that completes uncancelled starts the oldest queued
+message as the next turn (removed from the queue in the same synchronous step that emits its
+`userMessage`); a cancelled or failed turn pauses the queue until the user sends something.
+`sendQueued` steers into a running turn through `AgentClient.steer` — ACP `_session/steering`
+(when `initialize` advertises `_meta.steering.supported`), Codex `turn/steer`, Ante `Steer` —
+or starts the message as a turn when idle. Queue changes broadcast `session.queue`.
 
 ### Session preparation
 

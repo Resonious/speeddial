@@ -120,6 +120,14 @@ class _SessionBuffer {
   /// Seqs of `userMessage` events that retired an [outgoing] entry.
   final Set<int> deliveredSeqs = <int>{};
   late final Set<int> deliveredView = UnmodifiableSetView(deliveredSeqs);
+
+  /// Latest daemon queue snapshot (PROTOCOL.md `session.queue`); null until
+  /// fetched or announced.
+  SessionQueue? queue;
+
+  /// Messages that recently left [queue] to be delivered, so their
+  /// `userMessage` echo pops like a confirmed send. Bounded.
+  final List<QueuedMessage> leftQueue = <QueuedMessage>[];
 }
 
 /// Scratch state for a run of consecutive same-kind chunk deltas.
@@ -224,6 +232,8 @@ class ChatStore extends StoreBase {
       <String, StreamSubscription<Session>>{};
   final Map<String, StreamSubscription<String>> _removalSubs =
       <String, StreamSubscription<String>>{};
+  final Map<String, StreamSubscription<SessionQueue>> _queueSubs =
+      <String, StreamSubscription<SessionQueue>>{};
 
   /// One `resynced` subscription per daemon, alive with the session watches.
   /// After a reconnect the client re-emits [DaemonClient.resynced] and we
@@ -265,6 +275,10 @@ class ChatStore extends StoreBase {
   /// that the daemon has not echoed back yet, oldest first (see [send]).
   List<OutgoingMessage> outgoingFor(String sessionId) =>
       _bufferFor(sessionId)?.outgoingView ?? const <OutgoingMessage>[];
+
+  /// Messages waiting in [sessionId]'s daemon queue, plus whether they can
+  /// be steered; null when unknown (not watched, or not fetched yet).
+  SessionQueue? queueFor(String sessionId) => _bufferFor(sessionId)?.queue;
 
   /// Seqs of [sessionId]'s `userMessage` events that confirmed a message
   /// sent from this client while the session was watched.
@@ -429,6 +443,7 @@ class ChatStore extends StoreBase {
         unawaited(_resyncBuffer(client, retained));
       }
       unawaited(_seedSession(client, daemonId, sessionId));
+      unawaited(_seedQueue(client, retained));
       return;
     }
     final _SessionBuffer buffer = _SessionBuffer(sessionId, daemonId);
@@ -447,6 +462,7 @@ class ChatStore extends StoreBase {
     // Cheap, once per watch: make statusOf correct before the first
     // live event or session.updated notification arrives.
     unawaited(_seedSession(client, daemonId, sessionId));
+    unawaited(_seedQueue(client, buffer));
   }
 
   /// Stops buffering [sessionId] (the preferred cross-daemon match) and
@@ -498,12 +514,33 @@ class ChatStore extends StoreBase {
         outgoing.any((OutgoingAttachment a) => a is StreamedAttachment)
         ? ValueNotifier<double>(0)
         : null;
+    // While a turn runs (or earlier messages still wait) the message joins
+    // the daemon's queue instead of conflicting with the turn.
+    final SessionQueue? queue =
+        _buffers[_scopedKey(daemonId, sessionId)]?.queue;
+    final bool queueing =
+        _statusById[_scopedKey(daemonId, sessionId)] == SessionStatus.running ||
+        (queue != null && queue.messages.isNotEmpty && !queue.paused);
+    Future<bool> deliver(
+      DaemonClient client,
+      List<OutgoingAttachment> files,
+    ) async {
+      if (!queueing) {
+        await client.sendMessage(sessionId, text, attachments: files);
+        return false;
+      }
+      final QueuedMessage? queued = await client.queueMessage(
+        sessionId,
+        text,
+        attachments: files,
+      );
+      if (queued != null) _noteQueued(daemonId, sessionId, queued);
+      return queued != null;
+    }
+
     return _sendOutgoing(daemonId, sessionId, text, attachments, () async {
       final DaemonClient client = _clientFor(daemonId);
-      if (upload == null) {
-        await client.sendMessage(sessionId, text, attachments: outgoing);
-        return;
-      }
+      if (upload == null) return deliver(client, outgoing);
       final List<String> uploadIds = <String>[];
       try {
         final List<OutgoingAttachment> sent = await _uploadStreamed(
@@ -512,7 +549,7 @@ class ChatStore extends StoreBase {
           uploadIds,
           upload,
         );
-        await client.sendMessage(sessionId, text, attachments: sent);
+        return await deliver(client, sent);
       } on Object {
         for (final String id in uploadIds) {
           // The send's own error is what gets recorded and rethrown; a failed
@@ -634,16 +671,22 @@ class ChatStore extends StoreBase {
     // as the turn's user event.
     '/$name${arguments.isEmpty ? '' : ' $arguments'}',
     const <OutgoingAttachment>[],
-    () =>
-        _clientFor(daemonId).runCommand(sessionId, name, arguments: arguments),
+    () async {
+      await _clientFor(daemonId)
+          .runCommand(sessionId, name, arguments: arguments);
+      return false;
+    },
   );
 
+  /// Runs [request], showing the message as outgoing until the daemon
+  /// echoes it. A request that reports the message as queued retires it at
+  /// once: the queue tray shows it from then on.
   Future<void> _sendOutgoing(
     String daemonId,
     String sessionId,
     String text,
     List<OutgoingAttachment> attachments,
-    Future<void> Function() request, {
+    Future<bool> Function() request, {
     ValueListenable<double>? upload,
   }) async {
     final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
@@ -659,8 +702,9 @@ class ChatStore extends StoreBase {
       buffer!.outgoing.add(message);
       _scheduleNotify();
     }
+    final bool queued;
     try {
-      await request();
+      queued = await request();
     } on Object catch (error) {
       _lastError = error;
       _scheduleNotify();
@@ -669,10 +713,136 @@ class ChatStore extends StoreBase {
       }
       rethrow;
     }
-    // Usually the echo already retired it; otherwise it is still in flight.
-    if (message != null && buffer!.outgoing.contains(message)) {
-      buffer.acknowledged.add(message.id);
+    if (message == null || !buffer!.outgoing.contains(message)) return;
+    if (queued) {
+      buffer.outgoing.remove(message);
+      _scheduleNotify();
+      return;
     }
+    // Usually the echo already retired it; otherwise it is still in flight.
+    buffer.acknowledged.add(message.id);
+  }
+
+  /// Adds [message] to the cached queue right away; the daemon's
+  /// `session.queue` notification usually got there first.
+  void _noteQueued(String daemonId, String sessionId, QueuedMessage message) {
+    final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
+    if (buffer == null) return;
+    final SessionQueue? current = buffer.queue;
+    if (current != null &&
+        current.messages.any((QueuedMessage m) => m.id == message.id)) {
+      return;
+    }
+    buffer.queue = SessionQueue(
+      sessionId: sessionId,
+      messages: <QueuedMessage>[...?current?.messages, message],
+      canSteer: current?.canSteer ?? false,
+      paused: current?.paused ?? false,
+    );
+    _scheduleNotify();
+  }
+
+  /// Removes a queued message without sending it and returns it, so the
+  /// composer can take the draft back.
+  Future<QueuedMessage> unqueue(
+    String daemonId,
+    String sessionId,
+    String messageId,
+  ) async {
+    try {
+      final QueuedMessage message = await _clientFor(daemonId)
+          .unqueueMessage(sessionId, messageId);
+      final _SessionBuffer? buffer = _buffers[_scopedKey(daemonId, sessionId)];
+      if (buffer != null) {
+        buffer.leftQueue.removeWhere((QueuedMessage m) => m.id == messageId);
+        _applyQueue(
+          buffer,
+          _withoutQueued(buffer.queue, sessionId, messageId),
+          sent: false,
+        );
+      }
+      return message;
+    } on Object catch (error) {
+      _lastError = error;
+      _scheduleNotify();
+      rethrow;
+    }
+  }
+
+  /// Delivers a queued message now: steered into the running turn when the
+  /// harness supports it, otherwise started as the next turn. Returns
+  /// whether it steered.
+  Future<bool> sendQueued(
+    String daemonId,
+    String sessionId,
+    String messageId,
+  ) async {
+    try {
+      return await _clientFor(daemonId).sendQueuedMessage(sessionId, messageId);
+    } on Object catch (error) {
+      _lastError = error;
+      _scheduleNotify();
+      rethrow;
+    }
+  }
+
+  static SessionQueue? _withoutQueued(
+    SessionQueue? queue,
+    String sessionId,
+    String messageId,
+  ) {
+    if (queue == null) return null;
+    return SessionQueue(
+      sessionId: sessionId,
+      messages: <QueuedMessage>[
+        for (final QueuedMessage m in queue.messages)
+          if (m.id != messageId) m,
+      ],
+      canSteer: queue.canSteer,
+      paused: queue.paused,
+    );
+  }
+
+  /// Replaces [buffer]'s queue snapshot. Messages that left it are kept
+  /// briefly (when [sent]) so their delivery can be celebrated.
+  void _applyQueue(
+    _SessionBuffer buffer,
+    SessionQueue? next, {
+    bool sent = true,
+  }) {
+    final SessionQueue? previous = buffer.queue;
+    if (sent && previous != null) {
+      for (final QueuedMessage message in previous.messages) {
+        final bool stays =
+            next?.messages.any((QueuedMessage m) => m.id == message.id) ??
+            false;
+        if (!stays) buffer.leftQueue.add(message);
+      }
+      while (buffer.leftQueue.length > 8) {
+        buffer.leftQueue.removeAt(0);
+      }
+    }
+    buffer.queue = next;
+    _scheduleNotify();
+  }
+
+  /// Fetches the queue once per watch and after reconnects. Daemons that
+  /// predate queueing answer method-not-found; their queue stays unknown.
+  Future<void> _seedQueue(DaemonClient client, _SessionBuffer buffer) async {
+    try {
+      final SessionQueue queue = await client.sessionQueue(buffer.sessionId);
+      if (_buffers[buffer.key] != buffer) return;
+      _applyQueue(buffer, queue, sent: false);
+    } on Object {
+      // Best effort like [_seedSession]: live session.queue keeps it fresh.
+    }
+  }
+
+  void _onQueueUpdate(String daemonId, SessionQueue queue) {
+    final _SessionBuffer? buffer =
+        _buffers[_scopedKey(daemonId, queue.sessionId)];
+    if (buffer == null) return;
+    _applyQueue(buffer, queue);
   }
 
   /// Fetches an attachment's payload, memoized per composite
@@ -777,6 +947,12 @@ class ChatStore extends StoreBase {
         (String sessionId) => _onSessionRemoved(daemonId, sessionId),
       ),
     );
+    _queueSubs.putIfAbsent(
+      daemonId,
+      () => client.queueUpdates.listen(
+        (SessionQueue queue) => _onQueueUpdate(daemonId, queue),
+      ),
+    );
     _resyncSubs.putIfAbsent(
       daemonId,
       () => client.resynced.listen((void _) {
@@ -792,6 +968,7 @@ class ChatStore extends StoreBase {
     if (stillWatched) return;
     _updateSubs.remove(daemonId)?.cancel();
     _removalSubs.remove(daemonId)?.cancel();
+    _queueSubs.remove(daemonId)?.cancel();
     _resyncSubs.remove(daemonId)?.cancel();
   }
 
@@ -938,6 +1115,7 @@ class ChatStore extends StoreBase {
       // Replayed pages never set status (see [_noteEvent]); a missed
       // session.updated while out of reach is recovered from a snapshot.
       unawaited(_seedSession(client, buffer.daemonId, buffer.sessionId));
+      unawaited(_seedQueue(client, buffer));
       buffer.savedOnly = false;
       buffer.savedComplete = buffer.savedComplete || !buffer.hasOlderHistory;
       buffer.replaceOnResync = false;
@@ -1319,6 +1497,7 @@ class ChatStore extends StoreBase {
     switch (event) {
       case final UserMessageEvent message:
         _deliverOutgoing(buffer, message);
+        if (live) _deliverQueued(buffer, message);
       case TurnCompleteEvent():
         if (live) _statusById[buffer.key] = SessionStatus.idle;
         _dropAcknowledged(buffer);
@@ -1352,6 +1531,20 @@ class ChatStore extends StoreBase {
       if (seq != null) buffer.deliveredSeqs.add(seq);
       return;
     }
+  }
+
+  /// Marks [event] delivered when it is a message that just left the queue
+  /// (a queued turn starting, or a steer), so it pops like a fresh send.
+  void _deliverQueued(_SessionBuffer buffer, UserMessageEvent event) {
+    final int index = buffer.leftQueue.indexWhere(
+      (QueuedMessage m) =>
+          m.text == event.text &&
+          m.attachments.length == event.attachments.length,
+    );
+    if (index < 0) return;
+    buffer.leftQueue.removeAt(index);
+    final int? seq = event.seq;
+    if (seq != null) buffer.deliveredSeqs.add(seq);
   }
 
   /// Events arrive in seq order and an acknowledged send's echo precedes the
@@ -1393,6 +1586,10 @@ class ChatStore extends StoreBase {
       sub.cancel();
     }
     _removalSubs.clear();
+    for (final StreamSubscription<SessionQueue> sub in _queueSubs.values) {
+      sub.cancel();
+    }
+    _queueSubs.clear();
     for (final StreamSubscription<void> sub in _resyncSubs.values) {
       sub.cancel();
     }

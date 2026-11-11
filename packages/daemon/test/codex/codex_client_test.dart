@@ -640,6 +640,36 @@ void main() {
     },
   );
 
+  test('steers input into the active turn with turn/steer', () async {
+    final Directory dir = await Directory.systemTemp.createTemp('codex_steer');
+    addTearDown(() => dir.delete(recursive: true));
+    final File report = File(p.join(dir.path, 'steer.json'));
+    final CodexClient client = spawnCodex(
+      environment: <String, String>{'FAKE_CODEX_STEER_REPORT': report.path},
+    );
+    addTearDown(client.dispose);
+    final created = await client.newSession(cwd: Directory.current.path);
+    expect(client.supportsSteering, isTrue);
+    await expectLater(
+      client.steer(created.sessionId, textBlocks('too early')),
+      throwsStateError,
+    );
+
+    final Future<PromptResult> prompt = client.prompt(
+      created.sessionId,
+      textBlocks('wait for cancel'),
+    );
+    await client.steer(created.sessionId, textBlocks('go left'));
+    final Map<String, Object?> steer = await readJsonMap(report);
+    expect(steer['threadId'], created.sessionId);
+    expect(steer['expectedTurnId'], isNotNull);
+    expect(steer['input'], <Object?>[
+      <String, Object?>{'type': 'text', 'text': 'go left'},
+    ]);
+    await client.cancel(created.sessionId);
+    expect((await prompt).stopReason, 'cancelled');
+  });
+
   test('cancels while turn/start is still in flight', () async {
     final CodexClient client = spawnCodex();
     addTearDown(client.dispose);

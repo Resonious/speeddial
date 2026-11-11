@@ -223,6 +223,20 @@ Attachment = {                   // metadata carried by userMessage/image events
 }
 AttachmentData = Attachment & { data: string }   // attachments.read result: metadata + base64
 
+// Message queue (messages sent while a turn runs; see sessions.send `queue`)
+QueuedMessage = {
+  id: string,                    // daemon-assigned, unique within the session's queue
+  text: string,
+  attachments?: Attachment[],    // metadata; payloads are persisted and readable via attachments.read
+  createdAt: string,
+}
+SessionQueue = {
+  sessionId: string,
+  messages: QueuedMessage[],     // oldest first; each becomes its own turn
+  canSteer: boolean,             // the live harness accepts input into a running turn
+  paused: boolean,               // the last turn was cancelled/failed; delivery waits for the user
+}
+
 GitStatusFile = { path: string, indexStatus: string, worktreeStatus: string, staged: boolean }
 GitStatus = { branch: string, ahead: int, behind: int, files: GitStatusFile[] }
 GitDiff = { path: string, patch: string, isNew: boolean, isDeleted: boolean, isBinary: boolean }
@@ -726,7 +740,38 @@ Agent task-progress `plan` events remain supported.
   retain Continue semantics; silence alone is not evidence of non-delivery.
   Clients show “Try again” when the field is present and “Continue” otherwise. The field
   survives history reload; older events without it retain their existing behavior.
-- `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[]}` → `{}` — starts a turn; errors `-32003` if a turn is already running.
+- `sessions.send {sessionId: string, text: string, attachments?: OutgoingAttachment[], queue?: boolean}` → `{queued?: QueuedMessage}` — starts a turn; errors `-32003` if a turn is already running.
+  With `queue: true`, a send that would hit a running turn (or arrives while earlier queued
+  messages are still waiting) is appended to the session's queue instead and returned as
+  `queued`; the result has no `queued` when the message started a turn. Attachments are validated
+  and persisted at enqueue time, so upload ids are consumed then. After a turn completes without
+  being cancelled, the daemon starts the oldest queued message as the next turn (its `userMessage`
+  is emitted then, and it leaves the queue in the same step). A cancelled or failed turn pauses the
+  queue (`paused: true`) until `sessions.sendQueued` or a new turn starts; a send while paused
+  starts immediately, and the queue resumes after it. If starting a queued turn fails, the daemon
+  pauses the queue and appends a `sessionError` explaining that the message was not sent. The
+  turn-completion push notification is skipped while more queued messages will follow. Queues live
+  in daemon memory: a daemon restart discards them. Brief maintenance locks (Ante model switches,
+  provider controls, native forks) still return `-32003`. Without `queue`, behavior is unchanged.
+- `sessions.queue {sessionId: string}` → `{queue: SessionQueue}` — current queue snapshot;
+  `-32002` for an unknown session. Clients fetch it when opening a session and on reconnect, then
+  follow `session.queue` notifications.
+- `sessions.unqueue {sessionId: string, messageId: string}` → `{message: QueuedMessage}` — removes
+  a queued message without sending it; `-32002` when it is no longer queued. Its attachment
+  payloads stay readable through `attachments.read`, so a client can restore the draft.
+- `sessions.sendQueued {sessionId: string, messageId: string}` → `{steered: boolean}` — delivers a
+  queued message now. While a turn is running, the harness steers it into that turn
+  (`steered: true`): the daemon emits its `userMessage` once the harness accepts it, the turn
+  continues, and no `turnComplete` is added. Without steering support (`canSteer: false`) this is
+  `-32003` and the message stays queued; a harness failure is `-32011` and also leaves it queued.
+  When no turn is running it starts the message as a normal turn (`steered: false`), with the same
+  acknowledgement as `sessions.send`, and resumes a paused queue. If the turn finishes while the
+  steer is in flight, the message goes back to its place and the queue continues normally
+  (`steered: false`).
+  Steering transports: ACP agents that advertise `InitializeResponse._meta.steering.supported`
+  receive the `_session/steering` request (with `_meta.steering.idleBehavior: "promptRequired"`);
+  Codex uses `turn/steer` with `expectedTurnId`; Ante uses its `Steer` operation. Other providers
+  report `canSteer: false`.
   While `preparing`, accepts one queued message (including attachments), persists it, sets
   status `running`, and acknowledges immediately. A second send returns `-32003`. The queued
   message is delivered once preparation succeeds, without a second `userMessage` event.
@@ -1022,6 +1067,8 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `session.created {session: Session}`
 - `session.updated {session: Session}` — any metadata/status change
 - `session.removed {sessionId: string}`
+- `session.queue {queue: SessionQueue}` — a session's message queue changed (message queued,
+  removed, delivered or steered; paused or resumed). Carries the full snapshot.
 - `session.event {sessionId: string, seq: int, event: SessionEvent}`
 - `git.changed {projectId: string}` — a daemon-side watcher noticed the project's session git summaries move (a session gained/lost commits or dirty state, a merge/rebase advanced the local base branch under its siblings, a periodic fetch advanced `origin/<baseBranch>`, or a session's pull request changed); clients refresh their badges with `git.sessionSummaries`. Sent at most once per watcher pass per project and only for actual changes; a watcher pass recomputes from local state every ~15s while any client is connected.
 - `projects.changed {}` — clients refetch `projects.list`
