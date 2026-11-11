@@ -33,6 +33,9 @@
 ///   * `session_pull_requests` session_id FK→sessions ON DELETE CASCADE, url,
 ///                          claimed_at; PK (session_id, url). Pull requests a
 ///                          session opened itself (see [createdPullRequestUrl])
+///   * `session_notes`  id PK, session_id FK→sessions ON DELETE CASCADE, text,
+///                      done INT, created_at, updated_at, done_at NULL. A
+///                      session's to-do list; open notes block auto-archival
 library;
 
 import 'dart:io';
@@ -302,6 +305,25 @@ class DaemonStore {
     if (!attachmentColumns.contains('path')) {
       _db.execute('ALTER TABLE attachments ADD COLUMN path TEXT');
     }
+    _db.execute('''
+      CREATE TABLE IF NOT EXISTS session_notes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        done_at INTEGER
+      );
+    ''');
+    _db.execute(
+      'CREATE INDEX IF NOT EXISTS session_notes_by_session '
+      'ON session_notes(session_id, created_at)',
+    );
+    _db.execute(
+      'CREATE INDEX IF NOT EXISTS session_notes_open '
+      'ON session_notes(session_id) WHERE done = 0',
+    );
     _db.execute('''
       CREATE TABLE IF NOT EXISTS mcp_servers (
         id TEXT PRIMARY KEY,
@@ -1082,8 +1104,9 @@ class DaemonStore {
   }
 
   /// Oldest eligible sessions, limited to the excess above [keep] unarchived,
-  /// non-pinned sessions in each project. Active sessions count toward their
-  /// project's minimum but cannot be archival candidates.
+  /// non-pinned sessions in each project. Active sessions and sessions with
+  /// open (unchecked) notes count toward their project's minimum but cannot be
+  /// archival candidates.
   List<Session> autoArchiveCandidates(DateTime cutoff, {required int keep}) {
     final ResultSet projects = _db.select(
       'SELECT project_id, COUNT(*) AS session_count FROM sessions '
@@ -1098,6 +1121,8 @@ class DaemonStore {
         'WHERE project_id = ? AND archived = 0 AND pinned = 0 AND preparing = 0 '
         "AND status NOT IN ('running', 'waitingPermission') "
         'AND last_activity_at <= ? '
+        'AND NOT EXISTS (SELECT 1 FROM session_notes '
+        'WHERE session_id = sessions.id AND done = 0) '
         'AND COALESCE((SELECT timestamp FROM session_events '
         'WHERE session_id = sessions.id ORDER BY seq DESC LIMIT 1), '
         'last_activity_at) <= ? ORDER BY last_activity_at, id LIMIT ?',
@@ -1112,6 +1137,88 @@ class DaemonStore {
     }
     return candidates;
   }
+
+  // -------------------------------------------------------------------------
+  // Session notes
+  // -------------------------------------------------------------------------
+
+  static const String _noteColumns =
+      'n.id, n.session_id, s.project_id, n.text, n.done, n.created_at, '
+      'n.updated_at, n.done_at';
+
+  /// Notes oldest first, optionally limited to one session and/or to open
+  /// (unchecked) notes.
+  List<SessionNote> listNotes({String? sessionId, bool openOnly = false}) {
+    final ResultSet rows = _db.select(
+      'SELECT $_noteColumns FROM session_notes n '
+      'JOIN sessions s ON s.id = n.session_id '
+      'WHERE (? IS NULL OR n.session_id = ?) AND (? = 0 OR n.done = 0) '
+      'ORDER BY n.created_at ASC, n.id ASC',
+      <Object?>[sessionId, sessionId, openOnly ? 1 : 0],
+    );
+    return rows.map(_noteFromRow).toList(growable: false);
+  }
+
+  /// The note with [id], or null when unknown.
+  SessionNote? getNote(String id) {
+    final ResultSet rows = _db.select(
+      'SELECT $_noteColumns FROM session_notes n '
+      'JOIN sessions s ON s.id = n.session_id WHERE n.id = ?',
+      <Object?>[id],
+    );
+    return rows.isEmpty ? null : _noteFromRow(rows.first);
+  }
+
+  void insertNote(SessionNote note) {
+    _db.execute(
+      'INSERT INTO session_notes (id, session_id, text, done, created_at, '
+      'updated_at, done_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        note.id,
+        note.sessionId,
+        note.text,
+        note.done ? 1 : 0,
+        _ts(note.createdAt),
+        _ts(note.updatedAt),
+        note.doneAt == null ? null : _ts(note.doneAt!),
+      ],
+    );
+  }
+
+  /// Replaces the text and checked state of an existing note.
+  void updateNote(SessionNote note) {
+    _db.execute(
+      'UPDATE session_notes SET text = ?, done = ?, updated_at = ?, '
+      'done_at = ? WHERE id = ?',
+      <Object?>[
+        note.text,
+        note.done ? 1 : 0,
+        _ts(note.updatedAt),
+        note.doneAt == null ? null : _ts(note.doneAt!),
+        note.id,
+      ],
+    );
+    if (_db.updatedRows == 0) {
+      throw DaemonError(kErrNotFound, 'Note not found: ${note.id}');
+    }
+  }
+
+  /// Removes [id]; false when it did not exist.
+  bool deleteNote(String id) {
+    _db.execute('DELETE FROM session_notes WHERE id = ?', <Object?>[id]);
+    return _db.updatedRows > 0;
+  }
+
+  SessionNote _noteFromRow(Row row) => SessionNote(
+    id: row['id'] as String,
+    sessionId: row['session_id'] as String,
+    projectId: row['project_id'] as String,
+    text: row['text'] as String,
+    done: (row['done'] as int) != 0,
+    createdAt: _fromTs(row['created_at'] as int),
+    updatedAt: _fromTs(row['updated_at'] as int),
+    doneAt: row['done_at'] == null ? null : _fromTs(row['done_at']! as int),
+  );
 
   /// The session with [id], or null when unknown.
   Session? getSession(String id) {

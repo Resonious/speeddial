@@ -236,7 +236,8 @@ lib/src/engine/     SessionEngine owns live AgentClient processes per session, m
                     requiring clients. A partial SQLite activity index selects only
                     eligible rows, with a latest-event lookup excluding recent
                     background output; running/permission-waiting/preparing/resuming
-                    sessions and in-flight turns are excluded. The
+                    sessions, sessions with open (unchecked) `session_notes`, and
+                    in-flight turns are excluded. The
                     per-project autoArchiveKeep minimum (default 5) counts only
                     unarchived non-pinned sessions, including active/preparing
                     ones within that project. Indexed counts and per-project
@@ -435,7 +436,10 @@ lib/src/state/               stores: ConnectionsStore (daemon add/remove/connect
                              dropped at turn end), and the shared presentation-neutral session timeline
                              fold used by both the full client and Wear (logical content
                              identity plus tool/activity snapshot replacement),
-                             FilesStore, FileTransferStore (active transfers and dismissible receipts),
+                             NotesStore (per-daemon session notes: loads on first ask, follows
+                             note.updated/note.removed/session.removed, reloads on resync and
+                             retries on connection change; optimistic check-off/delete with
+                             rollback), FileTransferStore (active transfers and dismissible receipts),
                              ShareStore (floating files and staged attachments), GitStore, McpStore, DaemonConfigStore (installed
                              harnesses + write-only environment names), DraftsStore
                              (per-daemon/session composer text persisted locally),
@@ -630,9 +634,14 @@ lib/src/ui/chat/             timeline (virtualized centered CustomScrollView, re
                              its report rendered as a message.
                              Codex compact/review/skills and Ante compact/context/skills dispatch
                              through their native transports, with the usual turn events.
-lib/src/ui/right/            tabbed panel: Files (lazy tree, tap → viewer with syntax
-                             highlight) and Git (branch picker, staged/unstaged lists,
-                             per-file diff view, commit field + button, push, create PR)
+lib/src/ui/right/            Notes (notes_panel.dart): every open note across daemons and
+                             projects, grouped by session, the selected session first with
+                             an add field and its checked-off notes behind a "N done" toggle;
+                             tap a note to edit, a group header to open its session. A
+                             note checked off elsewhere lingers struck through, then folds
+                             away (note_check.dart pops the check). Session rows in the rail
+                             carry a SessionNotesBadge ("1/5" done/total); the top-bar
+                             toggle shows the open count.
 ```
 
 The mobile top-bar session title opens `session_title_dialog.dart`: a top-aligned,

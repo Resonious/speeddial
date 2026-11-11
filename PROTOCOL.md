@@ -166,6 +166,17 @@ Session = {
   updatedAt: string,
 }
 
+SessionNote = {             // a to-do item attached to a session
+  id: string,
+  sessionId: string,
+  projectId: string,         // the session's project
+  text: string,              // trimmed, 1–4000 UTF-16 code units
+  done: boolean,             // checked off
+  createdAt: string,
+  updatedAt: string,
+  doneAt: string | null,     // when it was last checked off; null while open
+}
+
 FileEntry = { name: string, path: string, isDir: boolean, size: int, modifiedAt: string }
 SessionSearchCursor = { lastActivityAt: string, id: string }
 SessionSearchResult = {
@@ -938,6 +949,25 @@ image paths use the current directory, including after a native worktree switch)
 (revalidated; `-32602` with the errors when invalid). It cannot call the public daemon API and receives no broadcasts. Public
 clients cannot use the internal methods without the MCP secret.
 
+### Notes
+
+Notes are a per-session to-do list stored by the daemon. They are not sent to the agent.
+Deleting a session deletes its notes (no `note.removed` is sent; clients drop a removed
+session's notes on `session.removed`). Archiving keeps them. A session with any open note is
+never auto-archived (see below); explicit `sessions.archive` is unaffected.
+
+- `notes.list {sessionId?: string, open?: boolean}` → `{notes: SessionNote[]}` — every note on
+  the daemon (archived sessions included), or one session's; `open: true` returns only notes
+  that are not checked off. Ordered oldest first by `createdAt`.
+- `notes.create {sessionId: string, text: string}` → `{note: SessionNote}` — an open note.
+  Unknown sessions return `-32002`; empty (after trimming) or over-long text returns `-32602`.
+- `notes.update {noteId: string, text?: string, done?: boolean}` → `{note: SessionNote}` —
+  edits text and/or checks the note off (`done: true` stamps `doneAt`; `done: false` clears it).
+  Unknown notes return `-32002`.
+- `notes.delete {noteId: string}` → `{}` — unknown notes return `-32002`.
+
+Every successful create/update publishes `note.updated`; delete publishes `note.removed`.
+
 ### Files
 - `fs.list {projectId: string, path?: string}` → `{entries: FileEntry[]}` — default path `"."`; skips `.git` internals; dirs first, then name ascending
 - `fs.read {projectId: string, path: string, maxBytes?: int}` → `{content: string, truncated: boolean, isBinary: boolean}` — default maxBytes 512 KiB, hard cap 4 MiB; binary files return `isBinary: true` with empty content
@@ -995,6 +1025,8 @@ session must belong to `projectId` (`-32602` otherwise; `-32002` when unknown).
 - `session.event {sessionId: string, seq: int, event: SessionEvent}`
 - `git.changed {projectId: string}` — a daemon-side watcher noticed the project's session git summaries move (a session gained/lost commits or dirty state, a merge/rebase advanced the local base branch under its siblings, a periodic fetch advanced `origin/<baseBranch>`, or a session's pull request changed); clients refresh their badges with `git.sessionSummaries`. Sent at most once per watcher pass per project and only for actual changes; a watcher pass recomputes from local state every ~15s while any client is connected.
 - `projects.changed {}` — clients refetch `projects.list`
+- `note.updated {note: SessionNote}` — a note was created or changed
+- `note.removed {noteId: string, sessionId: string}` — a note was deleted via `notes.delete`
 
 `seq` is a per-session monotonically increasing integer starting at 1. Clients use it for
 gap detection: on reconnect, refetch history with `beforeSeq` of the oldest known gap.
@@ -1005,7 +1037,9 @@ Automatic archival retains a minimum of five unarchived, non-pinned sessions in
 each project, removing that project's oldest eligible sessions only above its
 minimum. Sessions in other projects do not affect this minimum. Pinned and
 already archived sessions do not count; running/preparing sessions do count but
-cannot be auto-archived. The minimum is `autoArchiveKeep` in config.json or the
+cannot be auto-archived. Sessions with open (unchecked) notes likewise count but are
+never auto-archived; checking off or deleting the last open note makes them eligible again.
+The minimum is `autoArchiveKeep` in config.json or the
 standalone `serve --auto-archive-keep` override (default 5; 0 removes the minimum).
 The same configured value applies independently to every project on the daemon.
 This does not constrain explicit `sessions.archive` or `sessions.clearArchive` calls.

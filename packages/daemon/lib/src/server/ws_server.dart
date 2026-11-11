@@ -85,6 +85,10 @@ const List<String> _kProtocolMethods = <String>[
   'sessions.setThinkingLevel',
   'sessions.history',
   'sessions.respondPermission',
+  'notes.list',
+  'notes.create',
+  'notes.update',
+  'notes.delete',
   'fs.list',
   'fs.read',
   'fs.download',
@@ -567,6 +571,10 @@ class SpeedDialServer {
       'sessions.setThinkingLevel' => _sessionsSetThinkingLevel(params),
       'sessions.history' => _sessionsHistory(params),
       'sessions.respondPermission' => _sessionsRespondPermission(params),
+      'notes.list' => _notesList(params),
+      'notes.create' => _notesCreate(params),
+      'notes.update' => _notesUpdate(params),
+      'notes.delete' => _notesDelete(params),
       'fs.list' => _fsList(params),
       'fs.read' => _fsRead(params),
       'fs.download' => _fsDownload(params),
@@ -1943,6 +1951,108 @@ class SpeedDialServer {
     return _fs
         .download(rootPath: session.cwd, path: _requiredString(params, 'path'))
         .toJson();
+  }
+
+  // -------------------------------------------------------------------------
+  // notes.*
+  // -------------------------------------------------------------------------
+
+  Object? _notesList(Map<String, Object?> params) {
+    final Object? sessionId = params['sessionId'];
+    if (sessionId != null && (sessionId is! String || sessionId.isEmpty)) {
+      throw DaemonError(_kErrInvalidParams, 'sessionId must be a string');
+    }
+    final Object open = params['open'] ?? false;
+    if (open is! bool) {
+      throw DaemonError(_kErrInvalidParams, 'open must be a boolean');
+    }
+    return <String, Object?>{
+      'notes': _store
+          .listNotes(sessionId: sessionId as String?, openOnly: open)
+          .map((SessionNote note) => note.toJson())
+          .toList(growable: false),
+    };
+  }
+
+  Object? _notesCreate(Map<String, Object?> params) {
+    final String sessionId = _requiredString(params, 'sessionId');
+    final String text = _noteText(params);
+    if (_store.getSession(sessionId) == null) {
+      throw DaemonError(kErrNotFound, 'Unknown session: $sessionId');
+    }
+    final DateTime now = DateTime.now().toUtc();
+    final String id = _uuid.v4();
+    _store.insertNote(
+      SessionNote(
+        id: id,
+        sessionId: sessionId,
+        projectId: '',
+        text: text,
+        done: false,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final SessionNote note = _store.getNote(id)!;
+    _broadcast('note.updated', <String, Object?>{'note': note.toJson()});
+    return <String, Object?>{'note': note.toJson()};
+  }
+
+  Object? _notesUpdate(Map<String, Object?> params) {
+    final SessionNote existing = _requireNote(params);
+    final String? text = params.containsKey('text') ? _noteText(params) : null;
+    final Object? done = params['done'];
+    if (done != null && done is! bool) {
+      throw DaemonError(_kErrInvalidParams, 'done must be a boolean');
+    }
+    final bool nextDone = (done as bool?) ?? existing.done;
+    final DateTime now = DateTime.now().toUtc();
+    final SessionNote next = existing.copyWith(
+      text: text,
+      done: nextDone,
+      updatedAt: now,
+      doneAt: nextDone == existing.done ? null : () => nextDone ? now : null,
+    );
+    _store.updateNote(next);
+    final SessionNote note = _store.getNote(existing.id)!;
+    _broadcast('note.updated', <String, Object?>{'note': note.toJson()});
+    return <String, Object?>{'note': note.toJson()};
+  }
+
+  Object? _notesDelete(Map<String, Object?> params) {
+    final SessionNote existing = _requireNote(params);
+    if (_store.deleteNote(existing.id)) {
+      _broadcast('note.removed', <String, Object?>{
+        'noteId': existing.id,
+        'sessionId': existing.sessionId,
+      });
+    }
+    return <String, Object?>{};
+  }
+
+  SessionNote _requireNote(Map<String, Object?> params) {
+    final String noteId = _requiredString(params, 'noteId');
+    final SessionNote? note = _store.getNote(noteId);
+    if (note == null) {
+      throw DaemonError(kErrNotFound, 'Unknown note: $noteId');
+    }
+    return note;
+  }
+
+  /// Trimmed, nonempty note text within [kMaxNoteLength].
+  String _noteText(Map<String, Object?> params) {
+    final Object? raw = params['text'];
+    final String text = raw is String ? raw.trim() : '';
+    if (text.isEmpty) {
+      throw DaemonError(_kErrInvalidParams, 'text must be a nonempty string');
+    }
+    if (text.length > kMaxNoteLength) {
+      throw DaemonError(
+        _kErrInvalidParams,
+        'text must be at most $kMaxNoteLength characters',
+      );
+    }
+    return text;
   }
 
   // -------------------------------------------------------------------------

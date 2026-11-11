@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../scope.dart';
+import '../state/notes_store.dart';
 import '../state/settings_store.dart';
 import '../theme.dart';
 import 'chat/chat_pane.dart';
@@ -428,8 +429,8 @@ class _ShellState extends State<_Shell> {
                       const _ThemeModeButton(),
                       const SizedBox(width: 4),
                       IconButton(
-                        tooltip: 'Open right panel',
-                        icon: const Icon(Icons.tune),
+                        tooltip: 'Open notes',
+                        icon: const _NotesIcon(),
                         onPressed: () => _openRightSheet(context),
                       ),
                     ],
@@ -468,8 +469,7 @@ class _ShellState extends State<_Shell> {
       useSafeArea: true,
       // The modal route doesn't consume the keyboard's viewInsets, so pad
       // the sheet here (same as the new-session sheet in left_rail.dart):
-      // the footer of the Git tab — the commit field — rides up above the
-      // keyboard while the TabBar stays on screen.
+      // the note fields ride up above the keyboard.
       builder: (BuildContext context) => Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(context).bottom,
@@ -479,6 +479,31 @@ class _ShellState extends State<_Shell> {
           child: const RightPanel(),
         ),
       ),
+    );
+  }
+}
+
+/// The notes toggle's icon, badged with the number of open notes.
+class _NotesIcon extends StatelessWidget {
+  const _NotesIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    final NotesStore notes = data.notes;
+    for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+      notes.ensureLoaded(endpoint.id);
+    }
+    return ListenableBuilder(
+      listenable: notes,
+      builder: (BuildContext context, Widget? _) {
+        final int open = notes.openCount;
+        return Badge(
+          isLabelVisible: open > 0,
+          label: Text('$open'),
+          child: const Icon(Icons.checklist_rounded),
+        );
+      },
     );
   }
 }
@@ -530,8 +555,10 @@ class _DesktopTopBar extends StatelessWidget {
               const _ThemeModeButton(),
               const SizedBox(width: 4),
               IconButton(
-                tooltip: 'Toggle right panel',
-                icon: Icon(rightOpen ? Icons.chevron_right : Icons.tune),
+                tooltip: 'Toggle notes',
+                icon: rightOpen
+                    ? const Icon(Icons.chevron_right)
+                    : const _NotesIcon(),
                 onPressed: onToggleRight,
               ),
               const SizedBox(width: 4),

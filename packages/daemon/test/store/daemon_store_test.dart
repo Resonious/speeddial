@@ -212,6 +212,63 @@ void main() {
     },
   );
 
+  test('notes list per session or open-only and cascade with the session', () {
+    store.insertProject(project());
+    store.insertSession(session(id: 's1'));
+    store.insertSession(session(id: 's2'));
+    SessionNote note(
+      String id,
+      String sessionId,
+      int minute, {
+      bool done = false,
+    }) => SessionNote(
+      id: id,
+      sessionId: sessionId,
+      projectId: 'ignored',
+      text: 'note $id',
+      done: done,
+      createdAt: DateTime.utc(2026, 1, 3, 0, minute),
+      updatedAt: DateTime.utc(2026, 1, 3, 0, minute),
+      doneAt: done ? DateTime.utc(2026, 1, 4) : null,
+    );
+    store.insertNote(note('b', 's1', 2));
+    store.insertNote(note('a', 's1', 1, done: true));
+    store.insertNote(note('c', 's2', 3));
+
+    expect(store.listNotes().map((SessionNote n) => n.id), <String>[
+      'a',
+      'b',
+      'c',
+    ]);
+    expect(
+      store.listNotes(sessionId: 's1').map((SessionNote n) => n.id),
+      <String>['a', 'b'],
+    );
+    expect(
+      store.listNotes(openOnly: true).map((SessionNote n) => n.id),
+      <String>['b', 'c'],
+    );
+    final SessionNote a = store.getNote('a')!;
+    expect(a.projectId, 'p1');
+    expect(a.done, isTrue);
+    expect(a.doneAt, DateTime.utc(2026, 1, 4));
+
+    store.updateNote(
+      a.copyWith(text: 'edited', done: false, doneAt: () => null),
+    );
+    expect(store.getNote('a')!.text, 'edited');
+    expect(store.getNote('a')!.doneAt, isNull);
+    expect(
+      () => store.updateNote(note('missing', 's1', 0)),
+      throwsA(isA<DaemonError>()),
+    );
+
+    expect(store.deleteNote('c'), isTrue);
+    expect(store.deleteNote('c'), isFalse);
+    store.deleteSession('s1');
+    expect(store.listNotes(), isEmpty);
+  });
+
   test('database files are owner-readable only on POSIX', () {
     if (!Platform.isLinux && !Platform.isMacOS) return;
     final FileStat stat = File(p.join(tempDir.path, 'speeddial.db')).statSync();

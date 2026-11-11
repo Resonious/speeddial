@@ -922,6 +922,154 @@ void main() {
     });
   });
 
+  group('notes', () {
+    test(
+      'create, check off, edit, list and delete broadcast changes',
+      () async {
+        await startServer();
+        final client = await connect(server!.port);
+        addTearDown(client.close);
+        final DateTime now = DateTime.now().toUtc();
+        store.insertProject(
+          Project(
+            id: 'notes-project',
+            name: 'Notes',
+            path: tempDir.path,
+            addedAt: now,
+            lastActiveAt: now,
+          ),
+        );
+        store.insertSession(
+          Session(
+            id: 'notes-session',
+            projectId: 'notes-project',
+            providerId: 'fake',
+            title: 'Notes',
+            status: SessionStatus.idle,
+            model: null,
+            cwd: tempDir.path,
+            baseBranch: null,
+            yolo: false,
+            archived: false,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+        SessionNote noteOf(Object? result) => SessionNote.fromJson(
+          (j(result)['note']! as Map).cast<String, Object?>(),
+        );
+        List<String> textsOf(Object? result) => (j(result)['notes']! as List)
+            .map(
+              (Object? note) =>
+                  SessionNote.fromJson((note! as Map).cast<String, Object?>())
+                      .text,
+            )
+            .toList();
+
+        final SessionNote first = noteOf(
+          await client.peer.call('notes.create', <String, Object?>{
+            'sessionId': 'notes-session',
+            'text': '  Write tests  ',
+          }),
+        );
+        expect(first.text, 'Write tests');
+        expect(first.projectId, 'notes-project');
+        expect(first.done, isFalse);
+        await client.peer.call('notes.create', <String, Object?>{
+          'sessionId': 'notes-session',
+          'text': 'Ship it',
+        });
+
+        final SessionNote checked = noteOf(
+          await client.peer.call('notes.update', <String, Object?>{
+            'noteId': first.id,
+            'done': true,
+          }),
+        );
+        expect(checked.done, isTrue);
+        expect(checked.doneAt, isNotNull);
+        final SessionNote edited = noteOf(
+          await client.peer.call('notes.update', <String, Object?>{
+            'noteId': first.id,
+            'text': 'Write more tests',
+          }),
+        );
+        expect(edited.done, isTrue);
+        expect(edited.doneAt, checked.doneAt);
+
+        expect(
+          textsOf(await client.peer.call('notes.list', <String, Object?>{})),
+          <String>['Write more tests', 'Ship it'],
+        );
+        expect(
+          textsOf(
+            await client.peer.call('notes.list', <String, Object?>{
+              'open': true,
+            }),
+          ),
+          <String>['Ship it'],
+        );
+        expect(
+          textsOf(
+            await client.peer.call('notes.list', <String, Object?>{
+              'sessionId': 'other',
+            }),
+          ),
+          isEmpty,
+        );
+
+        for (final Map<String, Object?> invalid in <Map<String, Object?>>[
+          <String, Object?>{'sessionId': 'notes-session', 'text': '   '},
+          <String, Object?>{'sessionId': 'notes-session'},
+          <String, Object?>{
+            'sessionId': 'notes-session',
+            'text': 'x' * (kMaxNoteLength + 1),
+          },
+        ]) {
+          await expectLater(
+            client.peer.call('notes.create', invalid),
+            throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+          );
+        }
+        await expectLater(
+          client.peer.call('notes.create', <String, Object?>{
+            'sessionId': 'missing',
+            'text': 'x',
+          }),
+          throwsA(
+            isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound),
+          ),
+        );
+        await expectLater(
+          client.peer.call('notes.update', <String, Object?>{
+            'noteId': first.id,
+            'done': 'yes',
+          }),
+          throwsA(isA<DaemonError>().having((e) => e.code, 'code', -32602)),
+        );
+
+        await client.peer.call('notes.delete', <String, Object?>{
+          'noteId': first.id,
+        });
+        await expectLater(
+          client.peer.call('notes.delete', <String, Object?>{
+            'noteId': first.id,
+          }),
+          throwsA(
+            isA<DaemonError>().having((e) => e.code, 'code', kErrNotFound),
+          ),
+        );
+
+        await untilRecorded(client, 'note.removed', 1);
+        expect(client.of('note.updated'), hasLength(4));
+        expect(client.of('note.removed').single.params, <String, Object?>{
+          'noteId': first.id,
+          'sessionId': 'notes-session',
+        });
+      },
+    );
+  });
+
   group('sessions', () {
     test(
       'archive preview and clear validate IDs and broadcast removals',

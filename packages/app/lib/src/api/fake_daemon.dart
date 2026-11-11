@@ -114,6 +114,12 @@ class FakeDaemonClient implements DaemonClient {
   late final StreamController<Session> _sessionUpdatesController;
   late final StreamController<String> _sessionRemovalsController;
   late final StreamController<void> _projectsChangedController;
+  late final StreamController<SessionNote> _noteUpdatesController;
+  late final StreamController<String> _noteRemovalsController;
+
+  /// Notes in creation order, keyed by note id (`notes.*`).
+  final Map<String, SessionNote> _notes = <String, SessionNote>{};
+  int _noteCounter = 0;
 
   // ---------------------------------------------------------------------
   // Setup
@@ -264,6 +270,27 @@ class FakeDaemonClient implements DaemonClient {
     _sessionRemovalsController = StreamController<String>.broadcast();
     _projectsChangedController = StreamController<void>.broadcast();
     gitChangedController = StreamController<String>.broadcast();
+    _noteUpdatesController = StreamController<SessionNote>.broadcast();
+    _noteRemovalsController = StreamController<String>.broadcast();
+    // A short to-do list on each demo session, one item already done.
+    for (final (String sessionId, String text, bool done)
+        in <(String, String, bool)>[
+          ('sess-1', 'Check the empty-state copy', true),
+          ('sess-1', 'Add a widget test for the retry card', false),
+          ('sess-2', 'Ask about the release date', false),
+        ]) {
+      final String id = 'note-${++_noteCounter}';
+      _notes[id] = SessionNote(
+        id: id,
+        sessionId: sessionId,
+        projectId: project.id,
+        text: text,
+        done: done,
+        createdAt: now,
+        updatedAt: now,
+        doneAt: done ? now : null,
+      );
+    }
   }
 
   Project _project(String id) {
@@ -2018,6 +2045,88 @@ class FakeDaemonClient implements DaemonClient {
   }
 
   // ---------------------------------------------------------------------
+  // Notes
+  // ---------------------------------------------------------------------
+
+  @override
+  Future<List<SessionNote>> listNotes({
+    String? sessionId,
+    bool open = false,
+  }) async {
+    _ensureSeeded();
+    return <SessionNote>[
+      for (final SessionNote note in _notes.values)
+        if ((sessionId == null || note.sessionId == sessionId) &&
+            (!open || !note.done))
+          note,
+    ];
+  }
+
+  @override
+  Future<SessionNote> createNote(String sessionId, String text) async {
+    _ensureSeeded();
+    _requireSession(sessionId);
+    final String trimmed = _noteText(text);
+    final DateTime now = DateTime.now().toUtc();
+    final String id = 'note-${++_noteCounter}';
+    final SessionNote note = SessionNote(
+      id: id,
+      sessionId: sessionId,
+      projectId: _sessions[sessionId]!.projectId,
+      text: trimmed,
+      done: false,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _notes[id] = note;
+    if (!_disposed) _noteUpdatesController.add(note);
+    return note;
+  }
+
+  @override
+  Future<SessionNote> updateNote(
+    String noteId, {
+    String? text,
+    bool? done,
+  }) async {
+    _ensureSeeded();
+    final SessionNote existing = _requireNote(noteId);
+    final bool nextDone = done ?? existing.done;
+    final DateTime now = DateTime.now().toUtc();
+    final SessionNote note = existing.copyWith(
+      text: text == null ? null : _noteText(text),
+      done: nextDone,
+      updatedAt: now,
+      doneAt: nextDone == existing.done ? null : () => nextDone ? now : null,
+    );
+    _notes[noteId] = note;
+    if (!_disposed) _noteUpdatesController.add(note);
+    return note;
+  }
+
+  @override
+  Future<void> deleteNote(String noteId) async {
+    _ensureSeeded();
+    _requireNote(noteId);
+    _notes.remove(noteId);
+    if (!_disposed) _noteRemovalsController.add(noteId);
+  }
+
+  SessionNote _requireNote(String noteId) {
+    final SessionNote? note = _notes[noteId];
+    if (note == null) throw DaemonError(kErrNotFound, 'unknown note: $noteId');
+    return note;
+  }
+
+  static String _noteText(String text) {
+    final String trimmed = text.trim();
+    if (trimmed.isEmpty || trimmed.length > kMaxNoteLength) {
+      throw const DaemonError(-32602, 'text must be a nonempty string');
+    }
+    return trimmed;
+  }
+
+  // ---------------------------------------------------------------------
   // Live streams
   // ---------------------------------------------------------------------
 
@@ -2057,6 +2166,18 @@ class FakeDaemonClient implements DaemonClient {
     return _projectsChangedController.stream;
   }
 
+  @override
+  Stream<SessionNote> get noteUpdates {
+    _ensureSeeded();
+    return _noteUpdatesController.stream;
+  }
+
+  @override
+  Stream<String> get noteRemovals {
+    _ensureSeeded();
+    return _noteRemovalsController.stream;
+  }
+
   final StreamController<void> _resyncController =
       StreamController<void>.broadcast();
 
@@ -2091,6 +2212,8 @@ class FakeDaemonClient implements DaemonClient {
       await _sessionRemovalsController.close();
       await _projectsChangedController.close();
       await gitChangedController.close();
+      await _noteUpdatesController.close();
+      await _noteRemovalsController.close();
     }
   }
 
@@ -2388,6 +2511,9 @@ class FakeDaemonClient implements DaemonClient {
     _pendingPermissions.remove(sessionId);
     _attachmentsBySession.remove(sessionId);
     _attachmentCounters.remove(sessionId);
+    _notes.removeWhere(
+      (String _, SessionNote note) => note.sessionId == sessionId,
+    );
     final StreamController<SessionEvent>? controller = _eventControllers.remove(
       sessionId,
     );

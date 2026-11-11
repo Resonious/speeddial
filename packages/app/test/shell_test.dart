@@ -84,8 +84,7 @@ void main() {
     // Chat pane.
     expect(find.text('Select or create a session'), findsOneWidget);
     // Right panel.
-    expect(find.text('Files'), findsOneWidget);
-    expect(find.text('Git'), findsOneWidget);
+    expect(find.text('Notes'), findsOneWidget);
   });
 
   testWidgets('connecting daemon uses spinners instead of connected dots', (
@@ -116,20 +115,18 @@ void main() {
     WidgetTester tester,
   ) async {
     await pumpApp(tester);
-    expect(find.text('Files'), findsOneWidget);
+    expect(find.text('Notes'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Toggle right panel'));
+    await tester.tap(find.byTooltip('Toggle notes'));
     await tester.pumpAndSettle();
-    expect(find.text('Files'), findsNothing);
-    expect(find.text('Git'), findsNothing);
+    expect(find.text('Notes'), findsNothing);
     // Chat and left rail remain visible while the right panel is hidden.
     expect(find.text('Select or create a session'), findsOneWidget);
     expect(find.text('Daemons'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Toggle right panel'));
+    await tester.tap(find.byTooltip('Toggle notes'));
     await tester.pumpAndSettle();
-    expect(find.text('Files'), findsOneWidget);
-    expect(find.text('Git'), findsOneWidget);
+    expect(find.text('Notes'), findsOneWidget);
   });
 
   testWidgets('desktop: dragging the rail divider resizes within limits', (
@@ -225,7 +222,7 @@ void main() {
     expect(find.byKey(const Key('left-rail-resize-handle')), findsNothing);
     expect(find.text('Select or create a session'), findsOneWidget);
     expect(find.text('Daemons'), findsNothing);
-    expect(find.text('Files'), findsNothing);
+    expect(find.text('Notes'), findsNothing);
 
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
@@ -548,7 +545,13 @@ void main() {
     // The rail shows the seeded project without any user interaction.
     expect(data.selection.selectedDaemonId, 'demo');
     expect(find.text('Local demo'), findsOneWidget);
-    expect(find.text('Demo Project'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(LeftRail),
+        matching: find.text('Demo Project'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('No projects yet'), findsNothing);
 
     // The demo opens straight into a live session: project + session

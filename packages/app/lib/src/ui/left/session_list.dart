@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../../state/notes_store.dart';
 import '../../state/sessions_store.dart';
 import '../../theme.dart';
 import '../chat/typed_text.dart';
@@ -247,6 +248,77 @@ class _PullRequestBadge extends StatelessWidget {
   }
 }
 
+/// A session's note progress, "1/5" for one of five notes checked off.
+/// Ember while any note is open, grey once all are done; nothing without
+/// notes. A new count fades through the old one; reduced motion swaps it.
+class SessionNotesBadge extends StatelessWidget {
+  const SessionNotesBadge({
+    super.key,
+    required this.session,
+    required this.daemonId,
+  });
+
+  static const Duration _duration = Duration(milliseconds: 240);
+
+  final Session session;
+  final String daemonId;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppData data = AppScope.of(context);
+    data.notes.ensureLoaded(daemonId);
+    return ListenableBuilder(
+      listenable: data.notes,
+      builder: (BuildContext context, Widget? _) {
+        final NoteCounts counts = data.notes.countsFor(daemonId, session.id);
+        if (counts.total == 0) return const SizedBox.shrink();
+        final int open = counts.total - counts.done;
+        final Color color = open > 0
+            ? Theme.of(context).colorScheme.primary
+            : context.speedDialColors.idle;
+        final Widget badge = Tooltip(
+          key: ValueKey<String>('${counts.done}/${counts.total}'),
+          message: open > 0
+              ? '${counts.done} of ${counts.total} notes done · '
+                    'kept out of the archive'
+              : 'All ${counts.total} notes done',
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.checklist_rounded, size: 11, color: color),
+                const SizedBox(width: 3),
+                Text(
+                  '${counts.done}/${counts.total}',
+                  style: Theme.of(context).textTheme.labelSmall
+                      ?.copyWith(color: color, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+        );
+        if (MediaQuery.of(context).disableAnimations) return badge;
+        return AnimatedSize(
+          duration: _duration,
+          curve: Curves.easeOut,
+          alignment: Alignment.centerLeft,
+          child: AnimatedSwitcher(
+            duration: _duration,
+            switchInCurve: const Interval(0.5, 1),
+            switchOutCurve: const Interval(0.5, 1),
+            child: badge,
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// One session row inside an expanded project: status chip, provider badge,
 /// title, and a rename/archive/delete menu. Tapping selects the session.
 class SessionRow extends StatelessWidget {
@@ -441,6 +513,7 @@ class SessionRow extends StatelessWidget {
               done: done,
               dormant: dormant,
             ),
+            SessionNotesBadge(session: session, daemonId: daemonId),
             SessionGitBadges(session: session, daemonId: daemonId),
           ],
         ),

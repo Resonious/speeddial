@@ -339,6 +339,21 @@ abstract class DaemonClient {
   Future<List<SessionGitSummary>> gitSessionSummaries(String projectId);
 
   // ---------------------------------------------------------------------
+  // Notes
+  // ---------------------------------------------------------------------
+
+  /// `notes.list`: every note on the daemon (or [sessionId]'s), oldest first;
+  /// [open] limits the result to notes not yet checked off.
+  Future<List<SessionNote>> listNotes({String? sessionId, bool open = false});
+
+  Future<SessionNote> createNote(String sessionId, String text);
+
+  /// Edits [text] and/or checks the note off ([done]).
+  Future<SessionNote> updateNote(String noteId, {String? text, bool? done});
+
+  Future<void> deleteNote(String noteId);
+
+  // ---------------------------------------------------------------------
   // Live streams
   // ---------------------------------------------------------------------
 
@@ -356,6 +371,12 @@ abstract class DaemonClient {
   /// advancing the base branch); consumers refetch
   /// `gitSessionSummaries(projectId)`.
   Stream<String> get gitChanged;
+
+  /// `note.updated` notifications: a note was created or changed.
+  Stream<SessionNote> get noteUpdates;
+
+  /// Ids of notes removed through `notes.delete` (`note.removed`).
+  Stream<String> get noteRemovals;
 
   /// Emits whenever the daemon announces `projects.changed` (a project was
   /// added, renamed, or removed on the daemon side); consumers refetch

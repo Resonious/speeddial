@@ -86,40 +86,35 @@ void main() {
         greaterThanOrEqualTo(kPhoneInsets.top));
   });
 
-  testWidgets('narrow right sheet lifts the commit field above the keyboard',
+  testWidgets('narrow notes sheet lifts the note field above the keyboard',
       (WidgetTester tester) async {
     const Size size = Size(390, 844);
     const double keyboard = 300;
     await pumpShell(tester, size);
 
-    await tester.tap(find.byTooltip('Open right panel'));
+    await tester.tap(find.byTooltip('Open notes'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Git'));
-    await tester.pumpAndSettle();
+    final Finder field = find.byKey(const Key('note-composer'));
+    expect(field, findsOneWidget);
 
-    // Tapping the commit field opens the keyboard: Android reports it as
+    // Tapping the note field opens the keyboard: Android reports it as
     // viewInsets and consumes the bottom system padding.
     tester.view.viewInsets = const FakeViewPadding(bottom: keyboard);
     tester.view.padding = FakeViewPadding(top: kPhoneInsets.top);
     await tester.pumpAndSettle();
 
-    expect(
-        tester
-            .getBottomLeft(
-                find.widgetWithText(FilledButton, 'Commit'))
-            .dy,
+    expect(tester.getBottomLeft(field).dy,
         lessThanOrEqualTo(size.height - keyboard));
-    // The sheet grew toward full height instead of overflowing: the TabBar
+    // The sheet grew toward full height instead of overflowing: the header
     // stays on screen.
-    expect(tester.getTopLeft(find.text('Files')).dy, greaterThanOrEqualTo(0));
+    expect(tester.getTopLeft(find.text('Notes')).dy, greaterThanOrEqualTo(0));
 
     // Dismissing the keyboard sinks the sheet back to the bottom edge.
     tester.view.viewInsets = FakeViewPadding.zero;
     tester.view.padding = FakeViewPadding(
         top: kPhoneInsets.top, bottom: kPhoneInsets.bottom);
     await tester.pumpAndSettle();
-    expect(
-        tester.getBottomLeft(find.widgetWithText(FilledButton, 'Commit')).dy,
+    expect(tester.getBottomLeft(field).dy,
         lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
   });
 
@@ -137,13 +132,13 @@ void main() {
     expect(tester.getBottomLeft(find.byType(Composer)).dy,
         lessThanOrEqualTo(size.height - kPhoneInsets.bottom));
 
-    // The right panel pads its tab content off the bottom inset: the panel
-    // root is a bottom-only SafeArea, whose child is the tab controller.
+    // The right panel pads its content off the bottom inset: the panel
+    // root is a bottom-only SafeArea around the notes column.
     expect(
         tester
             .getBottomLeft(find.descendant(
               of: find.byType(RightPanel),
-              matching: find.byType(DefaultTabController),
+              matching: find.byType(ListView),
             ))
             .dy,
         lessThanOrEqualTo(size.height - kPhoneInsets.bottom));

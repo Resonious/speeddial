@@ -5,6 +5,7 @@ library;
 export 'src/errors.dart';
 export 'src/archive.dart';
 export 'src/models.dart';
+export 'src/notes.dart';
 export 'src/oauth_callback_page.dart';
 export 'src/events.dart';
 export 'src/explainer/explainer.dart';

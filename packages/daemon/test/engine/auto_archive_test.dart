@@ -145,6 +145,35 @@ void main() {
     );
   });
 
+  test('sessions with open notes are never auto-archived', () async {
+    final DateTime old = now.subtract(const Duration(days: 4));
+    insert('with-open-note');
+    insert('with-done-note');
+    insert('plain');
+    SessionNote note(String id, String sessionId, {bool done = false}) =>
+        SessionNote(
+          id: id,
+          sessionId: sessionId,
+          projectId: 'p1',
+          text: id,
+          done: done,
+          createdAt: old,
+          updatedAt: old,
+          doneAt: done ? old : null,
+        );
+    store.insertNote(note('open', 'with-open-note'));
+    store.insertNote(note('checked', 'with-open-note', done: true));
+    store.insertNote(note('done', 'with-done-note', done: true));
+    engine.archiveInactiveSessions(now: now);
+    expect(store.getSession('with-open-note')!.archived, isFalse);
+    expect(store.getSession('with-done-note')!.archived, isTrue);
+    expect(store.getSession('plain')!.archived, isTrue);
+
+    store.updateNote(note('open', 'with-open-note', done: true));
+    engine.archiveInactiveSessions(now: now);
+    expect(store.getSession('with-open-note')!.archived, isTrue);
+  });
+
   test('custom keep count archives the oldest excess and leaves the most recent sessions', () async {
     await engine.dispose();
     engine = createEngine(keep: 2);

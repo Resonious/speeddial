@@ -57,8 +57,14 @@ class _DaemonNotifications {
   final StreamController<String> removals =
       StreamController<String>.broadcast();
   final StreamController<void> projects = StreamController<void>.broadcast();
+  final StreamController<SessionNote> notes =
+      StreamController<SessionNote>.broadcast();
+  final StreamController<String> noteRemovals =
+      StreamController<String>.broadcast();
 
   Future<void> close() async {
+    await notes.close();
+    await noteRemovals.close();
     await sessions.close();
     await git.close();
     await events.close();
@@ -597,6 +603,22 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
         }
       case 'projects.changed':
         _projectsChangedController.add(null);
+      case 'note.updated':
+        final Object? note = params['note'];
+        if (note is Map) {
+          try {
+            _notifications.notes.add(
+              SessionNote.fromJson(note.cast<String, Object?>()),
+            );
+          } on Object {
+            // Malformed note: drop.
+          }
+        }
+      case 'note.removed':
+        final Object? noteId = params['noteId'];
+        if (noteId is String) {
+          _notifications.noteRemovals.add(noteId);
+        }
     }
   }
 
@@ -627,6 +649,12 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
 
   @override
   Stream<void> get resynced => _resyncController.stream;
+
+  @override
+  Stream<SessionNote> get noteUpdates => _notifications.notes.stream;
+
+  @override
+  Stream<String> get noteRemovals => _notifications.noteRemovals.stream;
 
   // ---------------------------------------------------------------------
   // Daemon / projects
@@ -1482,6 +1510,47 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
       _resultField(result, 'summaries'),
       SessionGitSummary.fromJson,
     );
+  }
+
+  @override
+  Future<List<SessionNote>> listNotes({
+    String? sessionId,
+    bool open = false,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'notes.list',
+      <String, Object?>{'sessionId': ?sessionId, if (open) 'open': true},
+    );
+    return _decodeList(_resultField(result, 'notes'), SessionNote.fromJson);
+  }
+
+  @override
+  Future<SessionNote> createNote(String sessionId, String text) async {
+    final Object? result = await _requirePeer().call(
+      'notes.create',
+      <String, Object?>{'sessionId': sessionId, 'text': text},
+    );
+    return SessionNote.fromJson(_resultMap(_resultField(result, 'note')));
+  }
+
+  @override
+  Future<SessionNote> updateNote(
+    String noteId, {
+    String? text,
+    bool? done,
+  }) async {
+    final Object? result = await _requirePeer().call(
+      'notes.update',
+      <String, Object?>{'noteId': noteId, 'text': ?text, 'done': ?done},
+    );
+    return SessionNote.fromJson(_resultMap(_resultField(result, 'note')));
+  }
+
+  @override
+  Future<void> deleteNote(String noteId) async {
+    await _requirePeer().call('notes.delete', <String, Object?>{
+      'noteId': noteId,
+    });
   }
 
   // ---------------------------------------------------------------------

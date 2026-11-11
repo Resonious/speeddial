@@ -88,7 +88,7 @@ void build_controls(TitleBar* self) {
 
   // pack_end fills from the right edge inwards.
   self->right_button =
-      new_toggle("sidebar-show-right-symbolic", "Toggle right panel");
+      new_toggle("sidebar-show-right-symbolic", "Toggle notes");
   self->right_handler = g_signal_connect(self->right_button, "toggled",
                                          G_CALLBACK(right_toggled_cb), self);
   gtk_header_bar_pack_end(bar, self->right_button);

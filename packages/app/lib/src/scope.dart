@@ -14,9 +14,9 @@ import 'state/chat_store.dart';
 import 'state/daemon_config_store.dart';
 import 'state/drafts_store.dart';
 import 'state/embedded_daemon_store.dart';
-import 'state/files_store.dart';
 import 'state/file_transfer_store.dart';
 import 'state/git_store.dart';
+import 'state/notes_store.dart';
 import 'state/mcp_store.dart';
 import 'state/projects_store.dart';
 import 'state/replies_store.dart';
@@ -380,8 +380,16 @@ class AppData {
       historyPageSize: chatHistoryPageSize,
       retainedSessionLimit: chatRetainedSessionLimit,
     );
-    files = FilesStore(clientFor: this.clientFor);
     git = GitStore(clientFor: this.clientFor);
+    notes = NotesStore(
+      clientFor: this.clientFor,
+      canLoad: (String daemonId) => switch (this.connections.statusOf(
+        daemonId,
+      )) {
+        ConnectionStatus.connected || ConnectionStatus.disconnected => true,
+        _ => false,
+      },
+    );
     mcp = McpStore(clientFor: this.clientFor);
     daemonConfig = DaemonConfigStore(clientFor: this.clientFor);
     shares = ShareStore(this);
@@ -389,6 +397,7 @@ class AppData {
     // Endpoints added after construction connect on arrival; status-only
     // changes are filtered out by [_connectedEndpointIds] to avoid churn.
     this.connections.addListener(_onConnectionsChanged);
+    this.connections.addListener(_onNotesConnectionsChanged);
   }
 
   final ConnectionsStore connections;
@@ -400,8 +409,10 @@ class AppData {
   late final ProjectsStore projects;
   late final SessionsStore sessions;
   late final ChatStore chat;
-  late final FilesStore files;
   late final GitStore git;
+
+  /// Session notes (per-session to-do lists) across daemons.
+  late final NotesStore notes;
   late final McpStore mcp;
   late final DaemonConfigStore daemonConfig;
   late final ShareStore shares;
@@ -487,6 +498,14 @@ class AppData {
       _connectedEndpointIds.add(endpoint.id);
       await _connectQuietly(endpoint.id);
     }
+  }
+
+  void _onNotesConnectionsChanged() {
+    notes.retainDaemons(<String>{
+      for (final DaemonEndpoint endpoint in connections.endpoints) endpoint.id,
+      ..._clients.keys,
+    });
+    notes.onConnectionChanged();
   }
 
   void _onConnectionsChanged() {
@@ -711,6 +730,7 @@ class AppData {
     if (_disposed) return;
     _disposed = true;
     connections.removeListener(_onConnectionsChanged);
+    connections.removeListener(_onNotesConnectionsChanged);
     for (final MapEntry<String, VoidCallback> entry
         in _statusListeners.entries) {
       _websocketClients[entry.key]?.connState.removeListener(entry.value);
@@ -729,8 +749,8 @@ class AppData {
     projects.dispose();
     sessions.dispose();
     chat.dispose();
-    files.dispose();
     git.dispose();
+    notes.dispose();
     mcp.dispose();
     daemonConfig.dispose();
     drafts.dispose();

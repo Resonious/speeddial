@@ -1803,50 +1803,6 @@ void main() {
     );
   });
 
-  group('files', () {
-    test(
-      'entriesFor is null until loaded, then cached per directory',
-      () async {
-        final String projectId = (await fake.listProjects()).single.id;
-
-        expect(app.files.entriesFor(projectId, '.'), isNull);
-
-        await app.files.loadDir('fake', projectId, '.');
-        final List<FileEntry>? root = app.files.entriesFor(projectId, '.');
-        expect(root, isNotNull);
-        expect(root!.map((FileEntry e) => e.name), <String>[
-          'lib',
-          'main.dart',
-          'pubspec.yaml',
-        ]);
-        expect(root.map((FileEntry e) => e.isDir).toList(), <bool>[
-          true,
-          false,
-          false,
-        ]);
-
-        // Subdirectory loads independently.
-        expect(app.files.entriesFor(projectId, 'lib'), isNull);
-        await app.files.loadDir('fake', projectId, 'lib');
-        expect(
-          app.files.entriesFor(projectId, 'lib')!.single.name,
-          'main.dart',
-        );
-      },
-    );
-
-    test('readFile passes through content from the client', () async {
-      final String projectId = (await fake.listProjects()).single.id;
-      final FileReadResult result = await app.files.readFile(
-        'fake',
-        projectId,
-        'lib/main.dart',
-      );
-      expect(result.content, contains('runApp'));
-      expect(result.isBinary, isFalse);
-    });
-  });
-
   group('git', () {
     test('refresh populates status/branches with a busy flag', () async {
       final String projectId = (await fake.listProjects()).single.id;
