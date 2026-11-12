@@ -7,6 +7,7 @@ import '../../state/sessions_store.dart';
 import '../../theme.dart';
 import '../chat/typed_text.dart';
 import '../pull_request_status.dart';
+import '../session_restored_notice.dart';
 import '../toast.dart';
 import 'selected_item_scroll_view.dart';
 import 'session_status_glyph.dart';
@@ -330,6 +331,8 @@ class SessionRow extends StatelessWidget {
     required this.projectId,
     this.projectName,
     this.daemonName,
+    this.excerpt,
+    this.highlight,
   });
 
   final Session session;
@@ -338,6 +341,11 @@ class SessionRow extends StatelessWidget {
   final String projectId;
   final String? projectName;
   final String? daemonName;
+
+  /// Matched text from a search, shown under the badges when it isn't just
+  /// the title. [highlight] is the query marked within it.
+  final String? excerpt;
+  final String? highlight;
 
   Future<void> _rename(BuildContext context, AppData data) async {
     final String? title = await showDialog<String>(
@@ -359,7 +367,9 @@ class SessionRow extends StatelessWidget {
   }
 
   Future<void> _archive(BuildContext context, AppData data) async {
-    await data.sessions.archive(daemonId, session.id, true);
+    final bool restoring = session.archived;
+    await data.sessions.archive(daemonId, session.id, !restoring);
+    if (restoring && context.mounted) showSessionRestoredNotice(context);
   }
 
   Future<void> _delete(BuildContext context, AppData data) async {
@@ -480,42 +490,50 @@ class SessionRow extends StatelessWidget {
               ? context.speedDialColors.flameTip
               : context.speedDialColors.flameRoot,
         ),
-        subtitle: Wrap(
-          spacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: <Widget>[
-            if (daemonName != null)
-              Text(
-                daemonName!,
-                style: textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 10,
+        subtitle: _subtitle(
+          context,
+          Wrap(
+            spacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              if (daemonName != null)
+                Text(
+                  daemonName!,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10,
+                  ),
                 ),
-              ),
-            if (projectName != null)
-              Text(
-                projectName!,
-                style: textTheme.labelSmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 10,
+              if (projectName != null)
+                Text(
+                  projectName!,
+                  style: textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10,
+                  ),
                 ),
+              if (session.pinned)
+                const Tooltip(
+                  message: 'Pinned',
+                  child: Icon(Icons.push_pin, size: 12),
+                ),
+              if (session.archived)
+                const Tooltip(
+                  message: 'Archived',
+                  child: Icon(Icons.inventory_2_outlined, size: 12),
+                ),
+              ProviderBadge(providerId: session.providerId),
+              SessionStatusChip(
+                status: session.status,
+                done: done,
+                dormant: dormant,
               ),
-            if (session.pinned)
-              const Tooltip(
-                message: 'Pinned',
-                child: Icon(Icons.push_pin, size: 12),
-              ),
-            ProviderBadge(providerId: session.providerId),
-            SessionStatusChip(
-              status: session.status,
-              done: done,
-              dormant: dormant,
-            ),
-            SessionNotesBadge(session: session, daemonId: daemonId),
-            SessionGitBadges(session: session, daemonId: daemonId),
-          ],
+              SessionNotesBadge(session: session, daemonId: daemonId),
+              SessionGitBadges(session: session, daemonId: daemonId),
+            ],
+          ),
         ),
         trailing: PopupMenuButton<_SessionAction>(
           tooltip: 'Session actions',
@@ -544,7 +562,7 @@ class SessionRow extends StatelessWidget {
                 ),
                 PopupMenuItem<_SessionAction>(
                   value: _SessionAction.archive,
-                  child: Text('Archive'),
+                  child: Text(session.archived ? 'Unarchive' : 'Archive'),
                 ),
                 PopupMenuItem<_SessionAction>(
                   value: _SessionAction.delete,
@@ -569,9 +587,78 @@ class SessionRow extends StatelessWidget {
       ),
     );
   }
+
+  Widget _subtitle(BuildContext context, Widget badges) {
+    final String? text = excerpt;
+    if (text == null || text.isEmpty || text == session.title) return badges;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        badges,
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: SearchExcerpt(text: text, highlight: highlight),
+        ),
+      ],
+    );
+  }
 }
 
 enum _SessionAction { pin, rename, archive, delete }
+
+/// A search hit's surrounding text, two lines at most, with each occurrence of
+/// [highlight] marked in steady ember (no motion: a result, not a moment).
+class SearchExcerpt extends StatelessWidget {
+  const SearchExcerpt({super.key, required this.text, this.highlight});
+
+  final String text;
+  final String? highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextStyle? style = Theme.of(context).textTheme.labelSmall
+        ?.copyWith(color: scheme.onSurfaceVariant);
+    final TextStyle mark = TextStyle(
+      color: scheme.primary,
+      fontWeight: FontWeight.w700,
+    );
+    final String needle = highlight?.toLowerCase() ?? '';
+    final List<TextSpan> spans = <TextSpan>[];
+    if (needle.isEmpty) {
+      spans.add(TextSpan(text: text));
+    } else {
+      final String haystack = text.toLowerCase();
+      int start = 0;
+      // Lower-casing can change length for a few scripts; fall back to plain
+      // text rather than mark the wrong characters.
+      if (haystack.length == text.length) {
+        int match = haystack.indexOf(needle);
+        while (match >= 0) {
+          if (match > start) {
+            spans.add(TextSpan(text: text.substring(start, match)));
+          }
+          spans.add(
+            TextSpan(
+              text: text.substring(match, match + needle.length),
+              style: mark,
+            ),
+          );
+          start = match + needle.length;
+          match = haystack.indexOf(needle, start);
+        }
+      }
+      if (start < text.length) spans.add(TextSpan(text: text.substring(start)));
+    }
+    return Text.rich(
+      TextSpan(children: spans),
+      key: const Key('session-search-excerpt'),
+      style: style,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
 
 /// Pre-filled single-field dialog renaming a session title. Pops with the
 /// trimmed new title, or null when cancelled / left empty.
@@ -713,12 +800,18 @@ class InboxSessionList extends StatelessWidget {
     required this.sessions,
     required this.daemonNames,
     required this.projectNames,
+    this.excerpts = const <String, String>{},
+    this.highlight,
     this.now,
   });
 
   final List<RecentSession> sessions;
   final Map<String, String> daemonNames;
   final Map<String, Map<String, String>> projectNames;
+
+  /// `daemonId/sessionId` → matched text from a search.
+  final Map<String, String> excerpts;
+  final String? highlight;
   final DateTime? now;
 
   @override
@@ -793,6 +886,8 @@ class InboxSessionList extends StatelessWidget {
       projectId: session.projectId,
       projectName: projectNames[daemonId]?[session.projectId],
       daemonName: daemonNames[daemonId],
+      excerpt: excerpts['$daemonId/${session.id}'],
+      highlight: highlight,
     );
   }
 }

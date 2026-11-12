@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -94,6 +96,46 @@ Session testSession({
   lastActivityAt: lastActivityAt,
   updatedAt: lastActivityAt,
 );
+
+/// Answers inbox searches from the test: a gate holds the reply, and [hits]
+/// names the sessions it returns with a message excerpt.
+class _GatedSearchDaemon extends FakeDaemonClient {
+  _GatedSearchDaemon() : super(eventDelay: const Duration(milliseconds: 1));
+
+  final List<bool> archivedFlags = <bool>[];
+  Map<String, String> hits = <String, String>{};
+  Completer<void>? gate;
+  Object? failure;
+
+  @override
+  Future<SessionSearchPage> searchSessions({
+    required String query,
+    String? projectId,
+    bool includeArchived = false,
+    int limit = 50,
+    SessionSearchCursor? cursor,
+  }) async {
+    archivedFlags.add(includeArchived);
+    final Completer<void>? wait = gate;
+    if (wait != null) await wait.future;
+    final Object? error = failure;
+    if (error != null) throw error;
+    final List<Session> sessions = await listSessions(
+      includeArchived: includeArchived,
+    );
+    return SessionSearchPage(
+      results: <SessionSearchResult>[
+        for (final Session session in sessions)
+          if (hits.containsKey(session.id))
+            SessionSearchResult(
+              session: session,
+              projectName: null,
+              excerpt: hits[session.id]!,
+            ),
+      ],
+    );
+  }
+}
 
 class _SearchCountingDaemon extends FakeDaemonClient {
   int listCalls = 0;
@@ -425,7 +467,7 @@ void main() {
 
       await tester.enterText(search, 'Demo Project');
       await tester.pumpAndSettle();
-      expect(find.text('No matching summaries'), findsOneWidget);
+      expect(find.text('No matching sessions'), findsOneWidget);
       expect(find.byType(SessionRow), findsNothing);
 
       await tester.tap(find.byTooltip('Clear search'));
@@ -434,12 +476,14 @@ void main() {
       expect(find.text('Plan the refactor'), findsOneWidget);
       expect(find.text('Build another feature'), findsOneWidget);
       expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+      final int searchCalls = client.searchCalls;
+      expect(searchCalls, greaterThan(0));
 
       await tester.enterText(search, '   ');
       await tester.pumpAndSettle();
       expect(find.byType(SessionRow), findsNWidgets(4));
       expect(client.listCalls, initialListCalls);
-      expect(client.searchCalls, 0);
+      expect(client.searchCalls, searchCalls);
       expect(tester.takeException(), isNull);
     },
   );
@@ -1457,5 +1501,93 @@ void main() {
     expect(app.selection.selectedDaemonId, isNull);
     expect(app.selection.selectedProjectId, isNull);
     expect(app.selection.selectedSessionId, isNull);
+  });
+
+  testWidgets('Inbox searches messages on every daemon in parallel', (
+    WidgetTester tester,
+  ) async {
+    final _GatedSearchDaemon slow = _GatedSearchDaemon()
+      ..gate = Completer<void>();
+    final AppData app = await pumpRail(tester, client: slow);
+    final _GatedSearchDaemon other = _GatedSearchDaemon()
+      ..hits = <String, String>{'sess-2': 'wired up the flux capacitor today'};
+    app.registerClient('other', other);
+    await app.connections.addEndpoint(
+      id: 'other',
+      name: 'Other daemon',
+      url: 'fake://other',
+      token: '',
+    );
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byKey(const Key('inbox-search-field')),
+      'capacitor',
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 200));
+    // Both daemons were asked while the first is still answering, and the
+    // second's hit shows without waiting for it.
+    expect(slow.archivedFlags, <bool>[false]);
+    expect(other.archivedFlags, <bool>[false]);
+    expect(find.text('Plan the refactor'), findsOneWidget);
+    expect(find.text('Build the feature'), findsNothing);
+    expect(find.byKey(const Key('session-search-excerpt')), findsOneWidget);
+    expect(find.text('Searching…'), findsOneWidget);
+
+    slow.failure = DaemonError(-32603, 'index locked');
+    slow.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Could not search Fake daemon'), findsOneWidget);
+    expect(find.text('Plan the refactor'), findsOneWidget);
+
+    slow
+      ..failure = null
+      ..gate = null
+      ..hits = <String, String>{'sess-1': 'capacitor notes'};
+    await tester.tap(find.byKey(const Key('inbox-search-retry')));
+    await tester.pumpAndSettle();
+    expect(find.text('Could not search Fake daemon'), findsNothing);
+    expect(find.byType(SessionRow), findsNWidgets(2));
+
+    await tester.tap(find.byKey(const Key('inbox-include-archived')));
+    await tester.pumpAndSettle();
+    expect(slow.archivedFlags.last, isTrue);
+    expect(other.archivedFlags.last, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Inbox archived checkbox lists and restores archived sessions', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.text('Plan the refactor'), findsOneWidget);
+
+    await app.sessions.archive('fake', 'sess-2', true);
+    await tester.pumpAndSettle();
+    expect(find.text('Plan the refactor'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('inbox-include-archived')));
+    await tester.pumpAndSettle();
+    expect(find.text('Plan the refactor'), findsOneWidget);
+    expect(find.byTooltip('Archived'), findsOneWidget);
+
+    final Finder row = find.ancestor(
+      of: find.text('Plan the refactor'),
+      matching: find.byType(SessionRow),
+    );
+    await tester.tap(
+      find.descendant(of: row, matching: find.byTooltip('Session actions')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unarchive'));
+    await tester.pumpAndSettle();
+    expect(app.sessions.sessionOnDaemon('fake', 'sess-2')!.archived, isFalse);
+    expect(find.byTooltip('Archived'), findsNothing);
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpAndSettle();
   });
 }

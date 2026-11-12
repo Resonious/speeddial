@@ -663,9 +663,15 @@ sessions replace the ember with a green success dot (keyed separately so the
 switcher animates the change).
 
 Performance rules for the app:
-- Inbox search filters cached session titles (agent summaries) across configured daemons,
-  case-insensitively, without requests. It preserves activity ordering and updates with
-  session notifications; archived sessions remain outside the inbox.
+- Inbox search filters the rail itself. Cached titles match locally on every keystroke (no
+  requests, following renames); queries of 3+ characters also run `sessions.search` on every
+  configured daemon in parallel (`state/inbox_search_store.dart`), debounced 250 ms, one round
+  in flight, stale replies dropped. Each daemon's hits merge in as it answers, keeping activity
+  ordering, with the matched excerpt (query marked in steady ember) under the row; hits not
+  yet cached join SessionsStore so rows stay live. A failing daemon gets a status line with
+  Retry and doesn't hide the others; `indexing` repeats the search every 500 ms. One page
+  (100) per daemon. The "Archived" checkbox adds archived sessions to the list and to the
+  search; archived rows show a box icon and offer Unarchive.
 - Session search: the rail opens a daemon-scoped modal. Queries debounce for 250 ms and
   coalesce while a request is outstanding; stale replies cannot replace newer text or filters.
   Results use a virtualized list of bounded excerpts and keyset pages. Only the selected result

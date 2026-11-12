@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import '../../scope.dart';
+import '../../state/inbox_search_store.dart';
 import '../../state/sessions_store.dart';
 import 'inbox_new_session.dart';
 import 'session_list.dart';
@@ -31,6 +32,27 @@ class _InboxTabState extends State<InboxTab> {
   final ValueNotifier<int> _loadRevision = ValueNotifier<int>(0);
   bool _refreshScheduled = false;
 
+  late final InboxSearchStore _searchStore = InboxSearchStore(
+    (String daemonId) => _data!.clientFor(daemonId),
+  );
+  Timer? _searchTimer;
+  Timer? _slowSearchTimer;
+  bool _searchInFlight = false;
+  bool _searchPending = false;
+
+  /// The search has been running long enough to say so (motion rule 5).
+  bool _slowSearch = false;
+
+  /// The daemons the current results came from; a change re-runs the search.
+  Set<String> _searchedDaemons = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _search.addListener(_queryChanged);
+    _searchStore.addListener(_rememberSearchResults);
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -45,6 +67,7 @@ class _InboxTabState extends State<InboxTab> {
       _summariesRequested.clear();
       _loading.clear();
       _errors.clear();
+      _searchedDaemons = <String>{};
     }
     _scheduleRefresh();
   }
@@ -54,8 +77,93 @@ class _InboxTabState extends State<InboxTab> {
     _data?.connections.removeListener(_scheduleRefresh);
     _data?.projects.removeListener(_scheduleRefresh);
     _loadRevision.dispose();
+    _searchTimer?.cancel();
+    _slowSearchTimer?.cancel();
     _search.dispose();
+    _searchStore.dispose();
     super.dispose();
+  }
+
+  Set<String> get _configuredDaemons => <String>{
+    for (final DaemonEndpoint endpoint
+        in _data?.connections.endpoints ?? const <DaemonEndpoint>[])
+      endpoint.id,
+  };
+
+  void _queryChanged() {
+    if (_search.text.trim() == _searchStore.query) return;
+    _searchStore.update(query: _search.text);
+    _scheduleSearch(const Duration(milliseconds: 250));
+  }
+
+  void _setIncludeArchived(bool value) {
+    _searchStore.update(includeArchived: value);
+    _scheduleSearch(Duration.zero);
+  }
+
+  void _scheduleSearch(Duration delay) {
+    _searchTimer?.cancel();
+    if (!_searchStore.canSearch) {
+      _searchPending = false;
+      return;
+    }
+    _searchTimer = Timer(delay, _requestSearch);
+  }
+
+  void _requestSearch() {
+    _searchTimer?.cancel();
+    _searchPending = true;
+    unawaited(_drainSearches());
+  }
+
+  /// One search round is in flight at a time; edits during a slow one
+  /// coalesce into the latest query and the store drops stale replies.
+  Future<void> _drainSearches() async {
+    if (_searchInFlight) return;
+    _searchInFlight = true;
+    _slowSearchTimer?.cancel();
+    _slowSearchTimer = Timer(const Duration(milliseconds: 150), () {
+      _slowSearch = true;
+      if (mounted) _loadRevision.value++;
+    });
+    try {
+      while (_searchPending && mounted) {
+        _searchPending = false;
+        _searchedDaemons = _configuredDaemons;
+        try {
+          await _searchStore.search(_searchedDaemons);
+        } on Object {
+          // The store records each daemon's failure; the status line below
+          // the search field renders them with a retry action.
+        }
+      }
+    } finally {
+      _searchInFlight = false;
+      _slowSearchTimer?.cancel();
+      _slowSearch = false;
+      if (mounted) _loadRevision.value++;
+    }
+    if (mounted &&
+        _searchStore.indexing &&
+        !(_searchTimer?.isActive ?? false)) {
+      _scheduleSearch(const Duration(milliseconds: 500));
+    }
+  }
+
+  /// Hits from daemons whose sessions aren't cached yet (or were never
+  /// listed) join the sessions store so rows stay live and actionable.
+  void _rememberSearchResults() {
+    final AppData? data = _data;
+    if (data == null) return;
+    for (final MapEntry<String, List<SessionSearchResult>> entry
+        in _searchStore.results.entries) {
+      for (final SessionSearchResult result in entry.value) {
+        if (data.sessions.sessionOnDaemon(entry.key, result.session.id) ==
+            null) {
+          data.sessions.rememberSearchResult(entry.key, result.session);
+        }
+      }
+    }
   }
 
   void _scheduleRefresh() {
@@ -93,6 +201,11 @@ class _InboxTabState extends State<InboxTab> {
       if (!_requested.add(daemonId)) continue;
       _loading.add(daemonId);
       unawaited(_loadDaemon(data, daemonId));
+    }
+    if (_searchStore.canSearch &&
+        (configured.length != _searchedDaemons.length ||
+            !configured.containsAll(_searchedDaemons))) {
+      _scheduleSearch(Duration.zero);
     }
     _loadRevision.value++;
   }
@@ -150,21 +263,39 @@ class _InboxTabState extends State<InboxTab> {
         data.selection,
         _loadRevision,
         _search,
+        _searchStore,
       ]),
       builder: (BuildContext context, Widget? _) {
         final List<DaemonEndpoint> endpoints = data.connections.endpoints;
         final Set<String> daemonIds = <String>{
           for (final DaemonEndpoint endpoint in endpoints) endpoint.id,
         };
-        final String query = _search.text.trim().toLowerCase();
+        final String rawQuery = _search.text.trim();
+        final String query = rawQuery.toLowerCase();
+        final bool includeArchived = _searchStore.includeArchived;
+        final bool remote = _searchStore.canSearch;
+        final Map<String, String> excerpts = <String, String>{
+          if (remote)
+            for (final MapEntry<String, List<SessionSearchResult>> entry
+                in _searchStore.results.entries)
+              for (final SessionSearchResult result in entry.value)
+                '${entry.key}/${result.session.id}': result.excerpt,
+        };
         final List<RecentSession> allSessions = data.sessions.recentSessions(
           daemonIds: daemonIds,
+          includeArchived: includeArchived,
         );
+        // Titles filter locally so rows answer every keystroke (and follow
+        // renames); the daemons add sessions whose messages match.
         final List<RecentSession> sessions = query.isEmpty
             ? allSessions
-            : allSessions.where((RecentSession entry) {
-                return entry.session.title.toLowerCase().contains(query);
-              }).toList();
+            : data.sessions.recentSessions(
+                daemonIds: daemonIds,
+                includeArchived: includeArchived,
+                where: (String daemonId, Session session) =>
+                    session.title.toLowerCase().contains(query) ||
+                    excerpts.containsKey('$daemonId/${session.id}'),
+              );
         final bool waitingForConnection = endpoints.any((
           DaemonEndpoint endpoint,
         ) {
@@ -212,7 +343,7 @@ class _InboxTabState extends State<InboxTab> {
                 controller: _search,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
-                  hintText: 'Search summaries…',
+                  hintText: 'Search sessions…',
                   prefixIcon: const Icon(Icons.search, size: 20),
                   suffixIcon: _search.text.isEmpty
                       ? null
@@ -223,6 +354,13 @@ class _InboxTabState extends State<InboxTab> {
                         ),
                 ),
               ),
+            ),
+            _SearchOptions(
+              includeArchived: includeArchived,
+              onIncludeArchivedChanged: _setIncludeArchived,
+              status: remote ? _searchStatus(endpoints) : null,
+              failed: remote && _searchStore.errors.isNotEmpty,
+              onRetry: _requestSearch,
             ),
             if (_errors.isNotEmpty)
               Padding(
@@ -261,7 +399,15 @@ class _InboxTabState extends State<InboxTab> {
                   : sessions.isEmpty
                   ? Center(
                       child: Text(
-                        query.isEmpty ? 'No sessions' : 'No matching summaries',
+                        query.isEmpty
+                            ? (includeArchived
+                                  ? 'No sessions'
+                                  : 'No active sessions')
+                            : remote && _searchStore.searching
+                            ? 'Searching…'
+                            : remote && _searchStore.indexing
+                            ? 'Searching saved messages…'
+                            : 'No matching sessions',
                         style: textTheme.bodySmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -269,6 +415,8 @@ class _InboxTabState extends State<InboxTab> {
                     )
                   : InboxSessionList(
                       sessions: sessions,
+                      excerpts: excerpts,
+                      highlight: remote ? rawQuery : null,
                       daemonNames: <String, String>{
                         for (final DaemonEndpoint endpoint in endpoints)
                           endpoint.id: endpoint.name,
@@ -287,6 +435,97 @@ class _InboxTabState extends State<InboxTab> {
           ],
         );
       },
+    );
+  }
+
+  /// One quiet line under the search field while a daemon search is live.
+  String? _searchStatus(List<DaemonEndpoint> endpoints) {
+    final Map<String, Object> errors = _searchStore.errors;
+    if (errors.isNotEmpty) {
+      final List<String> names = <String>[
+        for (final DaemonEndpoint endpoint in endpoints)
+          if (errors.containsKey(endpoint.id)) endpoint.name,
+      ];
+      return names.length == 1
+          ? 'Could not search ${names.single}'
+          : 'Could not search ${names.length} daemons';
+    }
+    if (_searchStore.searching && _slowSearch) return 'Searching…';
+    if (_searchStore.indexing) return 'Searching saved messages…';
+    if (_searchStore.truncated) {
+      return 'Showing the newest ${InboxSearchStore.pageSize} '
+          'matches per daemon';
+    }
+    return null;
+  }
+}
+
+/// The archived toggle, with the search's status beside it.
+class _SearchOptions extends StatelessWidget {
+  const _SearchOptions({
+    required this.includeArchived,
+    required this.onIncludeArchivedChanged,
+    required this.status,
+    required this.failed,
+    required this.onRetry,
+  });
+
+  final bool includeArchived;
+  final ValueChanged<bool> onIncludeArchivedChanged;
+  final String? status;
+  final bool failed;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final TextTheme textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 8, 4),
+      child: Row(
+        children: <Widget>[
+          InkWell(
+            key: const Key('inbox-include-archived'),
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => onIncludeArchivedChanged(!includeArchived),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Checkbox(
+                    value: includeArchived,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onChanged: (bool? value) =>
+                        onIncludeArchivedChanged(value ?? false),
+                  ),
+                  Text('Archived', style: textTheme.labelMedium),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              status ?? '',
+              key: const Key('inbox-search-status'),
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.labelSmall?.copyWith(
+                color: failed ? scheme.error : scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          if (failed)
+            TextButton(
+              key: const Key('inbox-search-retry'),
+              onPressed: onRetry,
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              child: const Text('Retry'),
+            ),
+        ],
+      ),
     );
   }
 }

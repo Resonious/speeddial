@@ -219,13 +219,22 @@ class SessionsStore extends StoreBase {
   /// deliberately carries the daemon id because protocol ids are only unique
   /// within one daemon, and [done] matches the unread-completion badge shown by
   /// the regular session list.
-  List<RecentSession> recentSessions({int? limit, Set<String>? daemonIds}) {
+  /// [includeArchived] adds archived sessions; [where] narrows the list
+  /// further (the inbox's search filter).
+  List<RecentSession> recentSessions({
+    int? limit,
+    Set<String>? daemonIds,
+    bool includeArchived = false,
+    bool Function(String daemonId, Session session)? where,
+  }) {
     assert(limit == null || limit >= 0);
     final List<RecentSession> sessions =
         <RecentSession>[
           for (final MapEntry<String, Session> entry in _sessionsById.entries)
-            if (!entry.value.archived &&
-                (daemonIds == null || daemonIds.contains(_daemonOf(entry.key))))
+            if ((includeArchived || !entry.value.archived) &&
+                (daemonIds == null ||
+                    daemonIds.contains(_daemonOf(entry.key))) &&
+                (where == null || where(_daemonOf(entry.key), entry.value)))
               (
                 daemonId: _daemonOf(entry.key),
                 session: entry.value,
