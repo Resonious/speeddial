@@ -491,7 +491,7 @@ class _NotesIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
     final NotesStore notes = data.notes;
-    for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    for (final DaemonEndpoint endpoint in data.connections.activeEndpoints) {
       notes.ensureLoaded(endpoint.id);
     }
     return ListenableBuilder(

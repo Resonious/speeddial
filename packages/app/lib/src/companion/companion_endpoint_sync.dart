@@ -111,7 +111,7 @@ class CompanionEndpointSync {
       unawaited(_publishEndpoints(connections, payload: payload));
       if (definitionsChanged ||
           _lastSessionPayload != null ||
-          connections.endpoints.isEmpty) {
+          connections.activeEndpoints.isEmpty) {
         _queueSessionSync();
       }
     }
@@ -125,7 +125,7 @@ class CompanionEndpointSync {
     connections.addListener(endpointListener);
     sessions.addListener(sessionListener);
     await _publishEndpoints(connections);
-    if (connections.endpoints.isEmpty) {
+    if (connections.activeEndpoints.isEmpty) {
       await _publishSessions(connections, sessions);
     }
   }
@@ -179,7 +179,7 @@ class CompanionEndpointSync {
   Future<void> refreshWatchSessions(AppData data) async {
     await data.connectAll();
     final Set<String> refreshedDaemonIds = <String>{};
-    for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    for (final DaemonEndpoint endpoint in data.connections.activeEndpoints) {
       try {
         await data.sessions.refresh(endpoint.id);
         refreshedDaemonIds.add(endpoint.id);
@@ -211,7 +211,7 @@ class CompanionEndpointSync {
 
   String _buildEndpointPayload(ConnectionsStore connections) =>
       jsonEncode(<Object?>[
-        for (final DaemonEndpoint endpoint in connections.endpoints)
+        for (final DaemonEndpoint endpoint in connections.activeEndpoints)
           if (!endpoint.embedded) endpoint.toJson(),
       ]);
 
@@ -239,7 +239,7 @@ class CompanionEndpointSync {
     SessionsStore sessions,
   ) async {
     final Set<String> daemonIds = <String>{
-      for (final DaemonEndpoint endpoint in connections.endpoints)
+      for (final DaemonEndpoint endpoint in connections.activeEndpoints)
         if (!endpoint.embedded) endpoint.id,
     };
     final String payload = buildCompanionSessionPayload(

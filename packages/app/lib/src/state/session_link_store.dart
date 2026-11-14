@@ -35,7 +35,7 @@ class SessionLinkStore extends StoreBase {
     try {
       final List<_SessionLinkResult>
       results = await Future.wait<_SessionLinkResult>(
-        _data.connections.endpoints.map((DaemonEndpoint endpoint) async {
+        _data.connections.activeEndpoints.map((DaemonEndpoint endpoint) async {
           try {
             final DaemonClient client = _data.clientFor(endpoint.id);
             // On cold launch the initial connection may still be in flight.

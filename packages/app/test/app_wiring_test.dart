@@ -404,6 +404,62 @@ void main() {
     );
   });
 
+  test('disabling an endpoint closes its client and persists', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final ConnectionsStore connections = ConnectionsStore();
+    await connections.addEndpoint(
+      id: 'ep-a',
+      name: 'A',
+      url: 'not-a-ws://a',
+      token: '',
+    );
+    await connections.addEndpoint(
+      id: 'ep-b',
+      name: 'B',
+      url: 'not-a-ws://b',
+      token: '',
+    );
+    final AppData data = AppData(
+      connections: connections,
+      selection: SelectionStore(),
+    );
+    addTearDown(data.dispose);
+    await data.connectAll();
+    final DaemonClient before = data.clientFor('ep-a');
+
+    await connections.setDisabled('ep-a', true);
+    expect(connections.isDisabled('ep-a'), isTrue);
+    expect(connections.endpoints, hasLength(2));
+    expect(
+      connections.activeEndpoints.map((DaemonEndpoint e) => e.id),
+      <String>['ep-b'],
+    );
+    expect(connections.statusOf('ep-a'), ConnectionStatus.disconnected);
+    expect(() => data.clientFor('ep-a'), throwsStateError);
+    // Late status updates from the torn-down client are ignored.
+    connections.setStatus('ep-a', ConnectionStatus.failed);
+    expect(connections.statusOf('ep-a'), ConnectionStatus.disconnected);
+
+    final ConnectionsStore reloaded = ConnectionsStore();
+    await reloaded.init();
+    expect(reloaded.isDisabled('ep-a'), isTrue);
+    expect(reloaded.isDisabled('ep-b'), isFalse);
+
+    await connections.setDisabled('ep-a', false);
+    final DaemonClient after = data.clientFor('ep-a');
+    expect(after, isA<WsDaemonClient>());
+    expect(identical(after, before), isFalse);
+    await waitFor(
+      () => data.connections.statusOf('ep-a') == ConnectionStatus.failed,
+    );
+
+    await connections.setDisabled('ep-b', true);
+    await connections.removeEndpoint('ep-b');
+    final ConnectionsStore afterRemove = ConnectionsStore();
+    await afterRemove.init();
+    expect(afterRemove.isDisabled('ep-b'), isFalse);
+  });
+
   test('buildDemoAppData wires the fake under the demo endpoint', () {
     final AppData data = buildDemoAppData();
     addTearDown(data.dispose);

@@ -26,7 +26,7 @@ class PullRequestLinkStore extends StoreBase {
     _matches = const <PullRequestMatch>[];
     notifyListeners();
     final List<List<PullRequestMatch>> results = await Future.wait(
-      data.connections.endpoints.map((DaemonEndpoint endpoint) async {
+      data.connections.activeEndpoints.map((DaemonEndpoint endpoint) async {
         try {
           final DaemonClient client = data.clientFor(endpoint.id);
           if (client is WsDaemonClient) {

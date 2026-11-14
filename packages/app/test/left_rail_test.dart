@@ -441,6 +441,80 @@ void main() {
     expect(find.text('Other Project'), findsOneWidget);
   });
 
+  testWidgets('disabling a daemon hides its sessions until re-enabled', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    await addOtherDaemon(app);
+    final Project otherProject = await app.projects.add(
+      'other',
+      '/other',
+      name: 'Other Project',
+    );
+    await app.sessions.create(
+      'other',
+      projectId: otherProject.id,
+      providerId: 'omp',
+      title: 'Only on other',
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('endpoint-actions-other')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('endpoint-action-toggle-disabled')));
+    await tester.pumpAndSettle();
+    expect(app.connections.isDisabled('other'), isTrue);
+    expect(find.byKey(const Key('endpoint-disabled-other')), findsOneWidget);
+    expect(find.textContaining('Disabled'), findsOneWidget);
+    // The selection stayed on the still-enabled daemon.
+    expect(app.selection.selectedDaemonId, 'fake');
+
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.text('Only on other'), findsNothing);
+    expect(find.text('Build the feature'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('rail-tab-sessions')));
+    await tester.pumpAndSettle();
+    // A disabled tile only offers enable/edit/remove.
+    await tester.tap(find.byKey(const Key('endpoint-actions-other')));
+    await tester.pumpAndSettle();
+    expect(find.text('MCP servers'), findsNothing);
+    expect(find.text('Enable'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('endpoint-action-toggle-disabled')));
+    await tester.pumpAndSettle();
+    expect(app.connections.isDisabled('other'), isFalse);
+    expect(app.selection.selectedDaemonId, 'other');
+
+    await tester.tap(find.byKey(const Key('rail-tab-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.text('Only on other'), findsOneWidget);
+  });
+
+  testWidgets('disabling the selected daemon moves to another one', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await addOtherDaemon(app);
+    await selectFakeDaemon(tester, app);
+
+    await tester.tap(find.byKey(const Key('endpoint-actions-fake')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disable'));
+    await tester.pumpAndSettle();
+    expect(app.selection.selectedDaemonId, 'other');
+
+    await tester.tap(find.text('Fake daemon'));
+    await tester.pumpAndSettle();
+    expect(find.text('This daemon is disabled'), findsOneWidget);
+    expect(find.text('Demo Project'), findsNothing);
+    await tester.tap(find.byKey(const Key('enable-daemon')));
+    await tester.pumpAndSettle();
+    expect(app.connections.isDisabled('fake'), isFalse);
+    expect(find.text('Demo Project'), findsOneWidget);
+  });
+
   testWidgets(
     'Inbox filters summaries across daemons and follows title updates',
     (WidgetTester tester) async {

@@ -95,27 +95,62 @@ class DaemonEndpoint {
 /// connection status. Persists the endpoint list as JSON via
 /// shared_preferences; connection status is intentionally not persisted.
 ///
+/// An endpoint can be temporarily disabled ([setDisabled]): it stays listed in
+/// [endpoints] (so the rail can offer to re-enable it) but drops out of
+/// [activeEndpoints], which is what the app connects to and shows sessions
+/// from. Disabled ids persist under their own key so the embedded endpoint,
+/// which is never persisted itself, can be disabled too.
+///
 /// Stores never hold a BuildContext; UI reads them through [AppScope].
 class ConnectionsStore extends ChangeNotifier {
   ConnectionsStore();
 
   static const String storageKey = 'speeddial.connections.v1';
+  static const String disabledStorageKey = 'speeddial.connections.disabled.v1';
 
   final List<DaemonEndpoint> _endpoints = <DaemonEndpoint>[];
+  final Set<String> _disabled = <String>{};
   final Map<String, ConnectionStatus> _statuses = <String, ConnectionStatus>{};
   static int _idCounter = 0;
 
+  /// Every configured endpoint, disabled ones included. Anything that
+  /// connects to daemons or shows their sessions wants [activeEndpoints].
   List<DaemonEndpoint> get endpoints =>
       List<DaemonEndpoint>.unmodifiable(_endpoints);
+
+  /// The endpoints the app connects to and shows sessions from: [endpoints]
+  /// minus the disabled ones.
+  List<DaemonEndpoint> get activeEndpoints => List<DaemonEndpoint>.unmodifiable(
+    _endpoints.where((DaemonEndpoint e) => !_disabled.contains(e.id)),
+  );
+
+  /// True when [id] was disabled with [setDisabled].
+  bool isDisabled(String id) => _disabled.contains(id);
+
+  /// Disables or re-enables endpoint [id] and persists the choice. The daemon
+  /// itself is untouched; the app just stops connecting to it and hides its
+  /// sessions. Setting the current value is a no-op.
+  Future<void> setDisabled(String id, bool disabled) async {
+    final bool changed = disabled ? _disabled.add(id) : _disabled.remove(id);
+    if (!changed) return;
+    if (disabled && _statuses.containsKey(id)) {
+      _statuses[id] = ConnectionStatus.disconnected;
+    }
+    notifyListeners();
+    await _persistDisabled();
+  }
 
   ConnectionStatus statusOf(String id) =>
       _statuses[id] ?? ConnectionStatus.disconnected;
 
   /// Updates the in-memory status of an existing endpoint and notifies
   /// listeners. Unknown ids are ignored (no status is materialized); setting
-  /// the same value is a no-op.
+  /// the same value is a no-op. Disabled endpoints stay `disconnected`.
   void setStatus(String id, ConnectionStatus status) {
     if (!_statuses.containsKey(id) || _statuses[id] == status) return;
+    if (_disabled.contains(id) && status != ConnectionStatus.disconnected) {
+      return;
+    }
     _statuses[id] = status;
     notifyListeners();
   }
@@ -123,6 +158,9 @@ class ConnectionsStore extends ChangeNotifier {
   /// Loads persisted endpoints (called once at startup).
   Future<void> init() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
+    _disabled
+      ..clear()
+      ..addAll(prefs.getStringList(disabledStorageKey) ?? const <String>[]);
     final String? raw = prefs.getString(storageKey);
     if (raw == null || raw.isEmpty) return;
     try {
@@ -205,8 +243,10 @@ class ConnectionsStore extends ChangeNotifier {
     _endpoints.removeWhere((DaemonEndpoint e) => e.id == id);
     if (_endpoints.length == before) return;
     _statuses.remove(id);
+    final bool wasDisabled = _disabled.remove(id);
     notifyListeners();
     await _persist();
+    if (wasDisabled) await _persistDisabled();
   }
 
   /// Replaces the endpoint [id] in place (same id, normalized [url]).
@@ -265,6 +305,11 @@ class ConnectionsStore extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
+  }
+
+  Future<void> _persistDisabled() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(disabledStorageKey, _disabled.toList()..sort());
   }
 
   Future<void> _persist() async {
@@ -467,12 +512,16 @@ class AppData {
   /// for a known [DaemonEndpoint]. The first touch of a lazily created
   /// client also starts its (unawaited) connection; failures land in
   /// [ConnectionsStore.statusOf] as `failed` via the connState listener.
-  /// Throws [StateError] for unknown ids.
+  /// Throws [StateError] for unknown ids and for disabled endpoints, whose
+  /// WebSocket the app deliberately keeps closed.
   DaemonClient clientFor(String daemonId) {
     final DaemonClient? client = _clients[daemonId];
     if (client != null) return client;
     final DaemonClient Function(String daemonId)? fallback = _fallbackClientFor;
     if (fallback != null) return fallback(daemonId);
+    if (connections.isDisabled(daemonId)) {
+      throw StateError('Daemon "$daemonId" is disabled');
+    }
     final WsDaemonClient wsClient = _ensureWebSocketClient(daemonId);
     // A lazy client is created only once per endpoint; the first time it is
     // touched, trigger its connect. A connect already started by
@@ -493,7 +542,7 @@ class AppData {
   /// returning rather than treating "started" as "ready".
   Future<void> connectAll() async {
     if (_fallbackClientFor != null) return;
-    for (final DaemonEndpoint endpoint in connections.endpoints) {
+    for (final DaemonEndpoint endpoint in connections.activeEndpoints) {
       if (_clients.containsKey(endpoint.id)) continue;
       _connectedEndpointIds.add(endpoint.id);
       await _connectQuietly(endpoint.id);
@@ -502,16 +551,21 @@ class AppData {
 
   void _onNotesConnectionsChanged() {
     notes.retainDaemons(<String>{
-      for (final DaemonEndpoint endpoint in connections.endpoints) endpoint.id,
-      ..._clients.keys,
+      for (final DaemonEndpoint endpoint in connections.activeEndpoints)
+        endpoint.id,
+      for (final String id in _clients.keys)
+        if (!connections.isDisabled(id)) id,
     });
     notes.onConnectionChanged();
   }
 
   void _onConnectionsChanged() {
     if (_fallbackClientFor != null) return;
+    // Disabled endpoints count as unknown: their client is torn down below
+    // and a fresh one connects when they are re-enabled.
     final Set<String> known = <String>{
-      for (final DaemonEndpoint endpoint in connections.endpoints) endpoint.id,
+      for (final DaemonEndpoint endpoint in connections.activeEndpoints)
+        endpoint.id,
     };
     for (final String id in known) {
       if (_clients.containsKey(id)) continue; // registered fake: leave alone
@@ -612,7 +666,7 @@ class AppData {
   /// constructor-provided clients own their lifecycle.
   void reconnectAll() {
     if (_disposed || _fallbackClientFor != null) return;
-    for (final DaemonEndpoint endpoint in connections.endpoints) {
+    for (final DaemonEndpoint endpoint in connections.activeEndpoints) {
       reconnect(endpoint.id);
     }
   }
@@ -625,6 +679,7 @@ class AppData {
   /// lifecycle; nothing happens for them.
   void reconnect(String daemonId) {
     if (_clients.containsKey(daemonId)) return;
+    if (connections.isDisabled(daemonId)) return;
     final WsDaemonClient? live = _websocketClients[daemonId];
     if (live != null) {
       if (live.connState.value == DaemonConnectionState.connected) {
@@ -667,9 +722,10 @@ class AppData {
       await controller.stop();
       if (!config.enabled) {
         if (selection.selectedDaemonId == embeddedDaemonId) {
-          final Iterable<DaemonEndpoint> others = connections.endpoints.where(
-            (DaemonEndpoint endpoint) => endpoint.id != embeddedDaemonId,
-          );
+          final Iterable<DaemonEndpoint> others = connections.activeEndpoints
+              .where(
+                (DaemonEndpoint endpoint) => endpoint.id != embeddedDaemonId,
+              );
           selection.selectDaemon(others.firstOrNull?.id);
         }
         await connections.removeEndpoint(embeddedDaemonId);

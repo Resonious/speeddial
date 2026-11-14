@@ -186,9 +186,12 @@ class _SessionsTab extends StatelessWidget {
                           child: _EndpointTile(
                             endpoint: endpoint,
                             status: data.connections.statusOf(endpoint.id),
+                            disabled: data.connections.isDisabled(endpoint.id),
                             selected:
                                 data.selection.selectedDaemonId == endpoint.id,
                             onTap: () => _selectDaemon(context, endpoint),
+                            onToggleDisabled: () =>
+                                _toggleDisabled(context, endpoint),
                             onRetry: () => data.reconnect(endpoint.id),
                             onMcpServers: () =>
                                 _showMcpServers(context, endpoint),
@@ -221,6 +224,9 @@ class _SessionsTab extends StatelessWidget {
   ) async {
     final AppData data = AppScope.of(context);
     data.selection.selectDaemon(endpoint.id);
+    // A disabled daemon's tile still selects (the tree offers to re-enable
+    // it) but has no connection to load from.
+    if (data.connections.isDisabled(endpoint.id)) return;
     try {
       await data.projects.refresh(endpoint.id);
       await data.sessions.refresh(endpoint.id);
@@ -228,6 +234,33 @@ class _SessionsTab extends StatelessWidget {
       // Unregistered daemons (e.g. freshly added, not yet wired up) surface
       // here; the stores keep their own errors, the rail stays usable.
       debugPrint('LeftRail: failed to load projects for ${endpoint.id}: $e');
+    }
+  }
+
+  /// Disables or re-enables [endpoint]. Disabling only affects this app: it
+  /// closes the connection and hides the daemon's sessions; the daemon keeps
+  /// running. A disabled selected daemon hands the selection to the first
+  /// enabled one, and re-enabling selects it again.
+  static Future<void> _toggleDisabled(
+    BuildContext context,
+    DaemonEndpoint endpoint,
+  ) async {
+    final AppData data = AppScope.of(context);
+    final bool disable = !data.connections.isDisabled(endpoint.id);
+    if (disable && data.selection.selectedDaemonId == endpoint.id) {
+      // Clear first: the panes key off the selected daemon, whose client is
+      // about to close.
+      data.selection.selectDaemon(null);
+    }
+    await data.connections.setDisabled(endpoint.id, disable);
+    if (!context.mounted) return;
+    if (disable) {
+      final DaemonEndpoint? next = data.selection.selectedDaemonId == null
+          ? data.connections.activeEndpoints.firstOrNull
+          : null;
+      if (next != null) await _selectDaemon(context, next);
+    } else {
+      await _selectDaemon(context, endpoint);
     }
   }
 
@@ -376,6 +409,7 @@ class _ProjectTree extends StatelessWidget {
 
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[
+        data.connections,
         data.selection,
         data.projects,
         data.sessions,
@@ -389,6 +423,41 @@ class _ProjectTree extends StatelessWidget {
               style: textTheme.bodySmall?.copyWith(
                 color: scheme.onSurfaceVariant,
               ),
+            ),
+          );
+        }
+        if (data.connections.isDisabled(daemonId)) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(
+                  Icons.pause_circle_outline,
+                  size: 28,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This daemon is disabled',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  key: const Key('enable-daemon'),
+                  onPressed: () async {
+                    await data.connections.setDisabled(daemonId, false);
+                    try {
+                      await data.projects.refresh(daemonId);
+                      await data.sessions.refresh(daemonId);
+                    } on Object catch (e) {
+                      debugPrint('LeftRail: failed to load $daemonId: $e');
+                    }
+                  },
+                  child: const Text('Enable'),
+                ),
+              ],
             ),
           );
         }
@@ -834,6 +903,7 @@ class _AddProjectDialogState extends State<_AddProjectDialog> {
 
 /// Menu entries on a daemon endpoint tile.
 enum _EndpointAction {
+  toggleDisabled,
   retry,
   mcpServers,
   harnesses,
@@ -847,8 +917,10 @@ class _EndpointTile extends StatelessWidget {
   const _EndpointTile({
     required this.endpoint,
     required this.status,
+    required this.disabled,
     required this.selected,
     required this.onTap,
+    required this.onToggleDisabled,
     required this.onRetry,
     required this.onMcpServers,
     required this.onHarnesses,
@@ -860,8 +932,13 @@ class _EndpointTile extends StatelessWidget {
 
   final DaemonEndpoint endpoint;
   final ConnectionStatus status;
+
+  /// Disabled in this app ([ConnectionsStore.setDisabled]): drawn dimmed and
+  /// paused, with only enable/edit/remove on offer.
+  final bool disabled;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onToggleDisabled;
 
   /// Resets the reconnect backoff and retries immediately ([AppData.reconnect]).
   final VoidCallback onRetry;
@@ -879,8 +956,9 @@ class _EndpointTile extends StatelessWidget {
     // Retry matters while the endpoint is down or mid-retry; a connected
     // endpoint has nothing to retry.
     final bool canRetry =
-        status == ConnectionStatus.failed ||
-        status == ConnectionStatus.reconnecting;
+        !disabled &&
+        (status == ConnectionStatus.failed ||
+            status == ConnectionStatus.reconnecting);
     // Embedded daemons expose configuration and retry, but not URL
     // editing/removal.
     final bool embedded = endpoint.embedded;
@@ -891,16 +969,27 @@ class _EndpointTile extends StatelessWidget {
         leading: SizedBox(
           width: 24,
           height: 24,
-          child: Center(child: ConnectionStatusIndicator(status: status)),
+          child: Center(
+            child: disabled
+                ? Icon(
+                    Icons.pause_circle_outline,
+                    key: Key('endpoint-disabled-${endpoint.id}'),
+                    size: 16,
+                    color: scheme.onSurfaceVariant,
+                  )
+                : ConnectionStatusIndicator(status: status),
+          ),
         ),
         title: Text(
           endpoint.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: textTheme.bodyMedium,
+          style: disabled
+              ? textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)
+              : textTheme.bodyMedium,
         ),
         subtitle: Text(
-          endpoint.url,
+          disabled ? 'Disabled · ${endpoint.url}' : endpoint.url,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
@@ -911,26 +1000,33 @@ class _EndpointTile extends StatelessWidget {
           icon: const Icon(Icons.more_vert, size: 18),
           itemBuilder: (BuildContext context) =>
               <PopupMenuEntry<_EndpointAction>>[
-                const PopupMenuItem<_EndpointAction>(
-                  key: Key('endpoint-action-mcp-servers'),
-                  value: _EndpointAction.mcpServers,
-                  child: Text('MCP servers'),
+                PopupMenuItem<_EndpointAction>(
+                  key: const Key('endpoint-action-toggle-disabled'),
+                  value: _EndpointAction.toggleDisabled,
+                  child: Text(disabled ? 'Enable' : 'Disable'),
                 ),
-                const PopupMenuItem<_EndpointAction>(
-                  key: Key('endpoint-action-harnesses'),
-                  value: _EndpointAction.harnesses,
-                  child: Text('Harnesses'),
-                ),
-                const PopupMenuItem<_EndpointAction>(
-                  key: Key('endpoint-action-environment'),
-                  value: _EndpointAction.environment,
-                  child: Text('Environment'),
-                ),
-                const PopupMenuItem<_EndpointAction>(
-                  key: Key('endpoint-action-archive'),
-                  value: _EndpointAction.archive,
-                  child: Text('Clear archive…'),
-                ),
+                if (!disabled) ...<PopupMenuEntry<_EndpointAction>>[
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-mcp-servers'),
+                    value: _EndpointAction.mcpServers,
+                    child: Text('MCP servers'),
+                  ),
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-harnesses'),
+                    value: _EndpointAction.harnesses,
+                    child: Text('Harnesses'),
+                  ),
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-environment'),
+                    value: _EndpointAction.environment,
+                    child: Text('Environment'),
+                  ),
+                  const PopupMenuItem<_EndpointAction>(
+                    key: Key('endpoint-action-archive'),
+                    value: _EndpointAction.archive,
+                    child: Text('Clear archive…'),
+                  ),
+                ],
                 if (canRetry)
                   const PopupMenuItem<_EndpointAction>(
                     key: Key('endpoint-action-retry'),
@@ -949,6 +1045,7 @@ class _EndpointTile extends StatelessWidget {
                   ),
               ],
           onSelected: (_EndpointAction action) => switch (action) {
+            _EndpointAction.toggleDisabled => onToggleDisabled(),
             _EndpointAction.retry => onRetry(),
             _EndpointAction.mcpServers => onMcpServers(),
             _EndpointAction.harnesses => onHarnesses(),

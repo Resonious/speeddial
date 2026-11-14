@@ -277,7 +277,7 @@ class ShareStore extends ChangeNotifier {
     if (shortcutId == null || shortcutId.isEmpty) return;
     final ShareTarget? target = _targets[shortcutId];
     if (target == null ||
-        !data.connections.endpoints.any(
+        !data.connections.activeEndpoints.any(
           (DaemonEndpoint endpoint) => endpoint.id == target.daemonId,
         )) {
       _error = 'This project share target is no longer available';
@@ -401,7 +401,7 @@ class ShareStore extends ChangeNotifier {
   void _syncProjects() {
     final Set<String> known = <String>{};
     bool changed = false;
-    for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+    for (final DaemonEndpoint endpoint in data.connections.activeEndpoints) {
       final List<Project> projects = data.projects.projectsFor(endpoint.id);
       for (final Project project in projects) {
         final String id = targetId(endpoint.id, project.id);
@@ -424,7 +424,7 @@ class ShareStore extends ChangeNotifier {
     // cached targets until a successful list arrives; removed endpoints are
     // always removed immediately.
     final Set<String> endpointIds = <String>{
-      for (final DaemonEndpoint endpoint in data.connections.endpoints)
+      for (final DaemonEndpoint endpoint in data.connections.activeEndpoints)
         endpoint.id,
     };
     final int before = _targets.length;

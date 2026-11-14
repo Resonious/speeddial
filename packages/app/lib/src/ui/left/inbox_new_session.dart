@@ -59,7 +59,8 @@ class _SessionLocationDialogState extends State<_SessionLocationDialog> {
   @override
   void initState() {
     super.initState();
-    final List<DaemonEndpoint> endpoints = widget.data.connections.endpoints;
+    final List<DaemonEndpoint> endpoints =
+        widget.data.connections.activeEndpoints;
     final String? selected = widget.data.selection.selectedDaemonId;
     _daemonId = endpoints.any((DaemonEndpoint e) => e.id == selected)
         ? selected
@@ -105,7 +106,7 @@ class _SessionLocationDialogState extends State<_SessionLocationDialog> {
         data.projects,
       ]),
       builder: (BuildContext context, Widget? _) {
-        final List<DaemonEndpoint> endpoints = data.connections.endpoints;
+        final List<DaemonEndpoint> endpoints = data.connections.activeEndpoints;
         final String? daemonId =
             endpoints.any((DaemonEndpoint endpoint) => endpoint.id == _daemonId)
             ? _daemonId

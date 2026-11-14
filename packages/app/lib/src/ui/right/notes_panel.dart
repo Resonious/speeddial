@@ -202,7 +202,7 @@ class _NotesPanelState extends State<NotesPanel> {
   }
 
   Widget _panel(BuildContext context, AppData data) {
-    final List<DaemonEndpoint> endpoints = data.connections.endpoints;
+    final List<DaemonEndpoint> endpoints = data.connections.activeEndpoints;
     for (final DaemonEndpoint endpoint in endpoints) {
       data.notes.ensureLoaded(endpoint.id);
     }

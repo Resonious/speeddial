@@ -66,7 +66,9 @@ Future<void> main(List<String> args) async {
             persist: false,
             embedded: true,
           );
-          data.selection.selectedDaemonId = AppData.embeddedDaemonId;
+          if (!data.connections.isDisabled(AppData.embeddedDaemonId)) {
+            data.selection.selectedDaemonId = AppData.embeddedDaemonId;
+          }
         } else if (url == null && !data.isDisposed) {
           // Bind failure (e.g. configured port in use): surface it through the
           // store so the embedded-daemon settings page can show it.
@@ -113,7 +115,7 @@ Future<void> main(List<String> args) async {
 }
 
 Future<void> _refreshShareCatalog(AppData data) async {
-  for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+  for (final DaemonEndpoint endpoint in data.connections.activeEndpoints) {
     await data.projects.refresh(endpoint.id);
     try {
       await data.sessions.refresh(endpoint.id);
@@ -127,7 +129,7 @@ Future<void> _refreshShareCatalog(AppData data) async {
 
 Future<void> _connectAndRefreshSessions(AppData data) async {
   await data.connectAll();
-  for (final DaemonEndpoint endpoint in data.connections.endpoints) {
+  for (final DaemonEndpoint endpoint in data.connections.activeEndpoints) {
     try {
       await data.sessions.refresh(endpoint.id);
     } on Object catch (error) {

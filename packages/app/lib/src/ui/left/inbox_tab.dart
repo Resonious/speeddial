@@ -86,7 +86,7 @@ class _InboxTabState extends State<InboxTab> {
 
   Set<String> get _configuredDaemons => <String>{
     for (final DaemonEndpoint endpoint
-        in _data?.connections.endpoints ?? const <DaemonEndpoint>[])
+        in _data?.connections.activeEndpoints ?? const <DaemonEndpoint>[])
       endpoint.id,
   };
 
@@ -179,7 +179,7 @@ class _InboxTabState extends State<InboxTab> {
     final AppData? data = _data;
     if (data == null) return;
     final Set<String> configured = <String>{
-      for (final DaemonEndpoint endpoint in data.connections.endpoints)
+      for (final DaemonEndpoint endpoint in data.connections.activeEndpoints)
         endpoint.id,
     };
     _requested.removeWhere((String id) => !configured.contains(id));
@@ -266,7 +266,7 @@ class _InboxTabState extends State<InboxTab> {
         _searchStore,
       ]),
       builder: (BuildContext context, Widget? _) {
-        final List<DaemonEndpoint> endpoints = data.connections.endpoints;
+        final List<DaemonEndpoint> endpoints = data.connections.activeEndpoints;
         final Set<String> daemonIds = <String>{
           for (final DaemonEndpoint endpoint in endpoints) endpoint.id,
         };
