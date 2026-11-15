@@ -41,7 +41,7 @@ DaemonInfo = {
 }
 
 ProviderInfo = {
-  id: string,                 // "omp" | "claude" | "codex" | "ante" | "goose" | custom
+  id: string,                 // "omp" | "claude" | "codex" | "ante" | "goose" | "antigravity" | custom
   name: string,               // display name
   available: boolean,         // command resolvable on this host
   command: string,            // resolved spawn command (display/debug)

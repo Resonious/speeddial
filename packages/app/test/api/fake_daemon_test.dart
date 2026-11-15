@@ -31,7 +31,13 @@ void main() {
     final DaemonInfo info = await client.info();
     expect(info.version, '0.0.0-fake');
     expect(info.protocolVersion, 1);
-    expect(info.providers, hasLength(5));
+    expect(info.providers, hasLength(6));
+    final ProviderInfo antigravity = info.providers.firstWhere(
+      (ProviderInfo info) => info.id == 'antigravity',
+    );
+    expect(antigravity.name, 'Google Antigravity');
+    expect(antigravity.command, 'agy acp');
+    expect(antigravity.protocol, 'acp');
     expect(
       info.providers
           .firstWhere((ProviderInfo info) => info.id == 'codex')

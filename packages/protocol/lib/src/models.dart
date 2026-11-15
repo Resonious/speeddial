@@ -1367,7 +1367,7 @@ class ProviderInfo {
     this.sandboxModes = const <SessionSandboxMode>[],
   });
 
-  /// "omp" | "claude" | "codex" | "ante" | "goose" | custom id.
+  /// "omp" | "claude" | "codex" | "ante" | "goose" | "antigravity" | custom id.
   final String id;
 
   /// Display name.

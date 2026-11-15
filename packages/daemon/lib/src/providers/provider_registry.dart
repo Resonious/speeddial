@@ -6,6 +6,7 @@
 ///   * `codex`  → `codex app-server --stdio` (Codex app-server)
 ///   * `ante`   → `ante serve --stdio` (Ante)
 ///   * `goose`  → `goose acp` (ACP)
+///   * `antigravity` → `agy acp` (ACP)
 ///
 /// `~/.speeddial/config.json` may add or override providers under the
 /// `providers` key:
@@ -82,7 +83,7 @@ class ProviderSpec {
     this.catalogCommand,
   });
 
-  /// Provider id ("omp", "claude", "codex", "ante", "goose", or a custom id).
+  /// Provider id ("omp", "claude", "codex", "ante", "goose", "antigravity", or a custom id).
   final String id;
 
   /// Display name.
@@ -181,6 +182,11 @@ class ProviderRegistry {
         id: 'goose',
         name: 'Goose',
         command: <String>['goose', 'acp'],
+      ),
+      'antigravity': const ProviderSpec(
+        id: 'antigravity',
+        name: 'Google Antigravity',
+        command: <String>['agy', 'acp'],
       ),
     };
     _applyConfig(configOverrides ?? _readConfigFile());

@@ -378,6 +378,13 @@ class FakeDaemonClient implements DaemonClient {
           command: 'goose acp',
           models: <String>[],
         ),
+        ProviderInfo(
+          id: 'antigravity',
+          name: 'Google Antigravity',
+          available: true,
+          command: 'agy acp',
+          models: <String>[],
+        ),
       ],
     );
   }

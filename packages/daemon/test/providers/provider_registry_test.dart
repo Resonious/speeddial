@@ -80,6 +80,7 @@ void main() {
       'codex',
       'ante',
       'goose',
+      'antigravity',
     ]);
     final omp = registry.byId('omp')!;
     expect(omp.name, 'OMP');
@@ -116,6 +117,18 @@ void main() {
     expect(goose.command, <String>['goose', 'acp']);
     expect(goose.commandFor(yolo: true), <String>['goose', 'acp']);
     expect(goose.protocol, ProviderProtocol.acp);
+    final antigravity = registry.byId('antigravity')!;
+    expect(antigravity.name, 'Google Antigravity');
+    expect(antigravity.commandFor(yolo: false), <String>['agy', 'acp']);
+    expect(antigravity.commandFor(yolo: true), <String>['agy', 'acp']);
+    expect(antigravity.protocol, ProviderProtocol.acp);
+    final antigravityInfo = providers.firstWhere(
+      (info) => info.id == 'antigravity',
+    );
+    expect(antigravityInfo.command, 'agy acp');
+    expect(antigravityInfo.protocol, 'acp');
+    expect(antigravityInfo.models, isEmpty);
+    expect(antigravityInfo.sandboxModes, isEmpty);
 
     // ProviderInfo carries the joined command and the (stubbed) model list.
     expect(providers.first.command, 'omp acp');
@@ -129,6 +142,28 @@ void main() {
         SessionSandboxMode.unrestricted,
       ],
     );
+  });
+
+  test('Antigravity command overrides control availability', () async {
+    for (final String command in <String>[
+      Platform.resolvedExecutable,
+      'definitely-not-a-real-binary-xyz-9876',
+    ]) {
+      final ProviderRegistry registry = registryWith(<String, Object?>{
+        'providers': <String, Object?>{
+          'antigravity': <String, Object?>{
+            'name': 'Google Antigravity',
+            'command': <String>[command, 'acp'],
+          },
+        },
+      });
+      final ProviderInfo info = (await registry.list()).firstWhere(
+        (info) => info.id == 'antigravity',
+      );
+      expect(info.available, command == Platform.resolvedExecutable);
+      expect(info.command, '$command acp');
+      expect(info.protocol, 'acp');
+    }
   });
 
   test('byId returns null for unknown providers', () {
@@ -223,6 +258,7 @@ void main() {
       'codex',
       'ante',
       'goose',
+      'antigravity',
       'custom',
     ]);
     final customInfo = providers.firstWhere((info) => info.id == 'custom');
@@ -306,6 +342,7 @@ void main() {
       'codex',
       'ante',
       'goose',
+      'antigravity',
     ]);
     expect(registry.byId('omp')!.command, <String>['omp', 'acp']);
   });
