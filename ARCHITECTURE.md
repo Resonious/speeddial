@@ -198,6 +198,8 @@ lib/src/providers/  Provider registry. Built-ins:
                       ante   → ["ante", "serve", "--stdio"]                (Ante)
                       goose  → ["goose", "acp"]                            (ACP)
                       antigravity → ["agy", "acp"]                         (ACP)
+                    Antigravity also appears in Harnesses settings when agy is installed;
+                    version detection and updates use agy --version and agy update.
                     OMP also defines a native yolo launch command selected per session; provider
                     overrides do not inherit those harness-specific arguments. Ante selects yolo
                     in its StartSession operation instead of its server launch command.
@@ -216,8 +218,8 @@ lib/src/providers/  Provider registry. Built-ins:
                     migrates it on the first credential lookup; helpers always
                     count), plus settings-named providers. Availability = command[0]
                     resolvable via PATH (or absolute exists).
-lib/src/harnesses/  HarnessService detects the four supported installed CLIs
-                    (OMP, Claude Code, Codex, Ante), probes their versions, and
+lib/src/harnesses/  HarnessService detects supported installed CLIs
+                    (OMP, Claude Code, Codex, Ante, Goose, Google Antigravity), probes their versions, and
                     runs their native update commands. Daemon-managed
                     environment values are overlaid on probes, updates, and new
                     agent processes.

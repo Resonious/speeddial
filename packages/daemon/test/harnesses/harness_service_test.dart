@@ -44,18 +44,21 @@ void main() {
         'codex',
         'ante',
         'goose',
+        'antigravity',
       ]);
       expect(harnesses.map((HarnessInfo value) => value.version), <String>[
         'omp version 1.2.3',
         'codex version 1.2.3',
         'ante version 1.2.3',
         'goose version 1.2.3',
+        'agy version 1.2.3',
       ]);
       expect(invocations, <String>[
         'omp --version',
         'codex --version',
         'ante --version',
         'goose --version',
+        'agy --version',
       ]);
     },
   );
@@ -80,10 +83,12 @@ void main() {
           },
     );
 
-    final HarnessInfo updated = await service.update('codex');
+    final HarnessInfo updated = await service.update('antigravity');
 
-    expect(updated.version, 'codex 2.0.0');
-    expect(invocations, <String>['codex update', 'codex --version']);
+    expect(updated.id, 'antigravity');
+    expect(updated.name, 'Google Antigravity');
+    expect(updated.version, 'agy 2.0.0');
+    expect(invocations, <String>['agy update', 'agy --version']);
   });
 
   test('reports unknown, unavailable, and failed updates', () async {

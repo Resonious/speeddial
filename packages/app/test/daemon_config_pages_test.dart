@@ -29,6 +29,7 @@ void main() {
     expect(find.text('Claude Code'), findsOneWidget);
     expect(find.text('Codex'), findsOneWidget);
     expect(find.text('Ante'), findsOneWidget);
+    expect(find.text('Google Antigravity'), findsOneWidget);
     expect(find.text('codex-cli 0.148.0'), findsOneWidget);
 
     await tester.tap(find.byKey(const Key('harness-update-codex')));
@@ -36,6 +37,19 @@ void main() {
 
     expect(client.harnessUpdateCalls, <String>['codex']);
     expect(find.textContaining('Codex is now codex-cli'), findsOneWidget);
+
+    final Finder antigravity = find.byKey(
+      const Key('harness-update-antigravity'),
+    );
+    await tester.ensureVisible(antigravity);
+    await tester.tap(antigravity);
+    await tester.pumpAndSettle();
+
+    expect(client.harnessUpdateCalls, <String>['codex', 'antigravity']);
+    expect(
+      find.textContaining('Google Antigravity is now 1.5.9'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('adds, replaces, and removes a write-only environment variable', (

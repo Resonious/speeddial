@@ -62,6 +62,11 @@ class FakeDaemonClient implements DaemonClient {
       version: 'ante 0.preview.83',
     ),
     'goose': const HarnessInfo(id: 'goose', name: 'Goose', version: '1.9.0'),
+    'antigravity': const HarnessInfo(
+      id: 'antigravity',
+      name: 'Google Antigravity',
+      version: '1.5.9',
+    ),
   };
   final Map<String, String> _environment = <String, String>{};
 

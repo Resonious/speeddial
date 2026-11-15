@@ -1429,7 +1429,7 @@ class HarnessInfo {
     required this.version,
   });
 
-  /// Stable built-in id: "omp", "claude", "codex", "ante", or "goose".
+  /// Stable built-in id: "omp", "claude", "codex", "ante", "goose", or "antigravity".
   final String id;
 
   /// Human-readable CLI name.

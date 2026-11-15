@@ -71,7 +71,7 @@ ProviderInfo = {
 }
 
 HarnessInfo = {
-  id: string,                 // "omp" | "claude" | "codex" | "ante" | "goose"
+  id: string,                 // "omp" | "claude" | "codex" | "ante" | "goose" | "antigravity"
   name: string,               // display name
   version: string,            // installed CLI's version output
 }
@@ -461,7 +461,7 @@ cancellation and process failure also invalidate pending requests.
 
 ### Harnesses
 - `harnesses.list {}` → `{harnesses: HarnessInfo[]}` — returns only installed built-in
-  harnesses (OMP, Claude Code, Codex, and Ante) and probes each with its native `--version`
+  harnesses (OMP, Claude Code, Codex, Ante, Goose, and Google Antigravity) and probes each with its native `--version`
   command
 - `harnesses.update {id: string}` → `{harness: HarnessInfo}` — runs the installed harness's
   native `update` command and returns its newly probed version; errors `-32002` for an unknown

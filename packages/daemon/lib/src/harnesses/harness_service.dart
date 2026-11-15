@@ -27,6 +27,7 @@ const List<_HarnessSpec> _supportedHarnesses = <_HarnessSpec>[
   (id: 'codex', name: 'Codex', executable: 'codex'),
   (id: 'ante', name: 'Ante', executable: 'ante'),
   (id: 'goose', name: 'Goose', executable: 'goose'),
+  (id: 'antigravity', name: 'Google Antigravity', executable: 'agy'),
 ];
 
 /// Runs only fixed commands for SpeedDial's supported, installed harnesses.
