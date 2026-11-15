@@ -77,6 +77,20 @@ Future<FakeDaemonClient> addOtherDaemon(AppData app, {bool load = true}) async {
   return other;
 }
 
+/// Holds [listProjects] open while [gate] is pending, so a test can look at
+/// the rail mid-refresh.
+class _GatedProjectsClient extends FakeDaemonClient {
+  _GatedProjectsClient() : super(eventDelay: const Duration(milliseconds: 1));
+
+  Completer<void>? gate;
+
+  @override
+  Future<List<Project>> listProjects() async {
+    await gate?.future;
+    return super.listProjects();
+  }
+}
+
 Session testSession({
   required String id,
   required String title,
@@ -212,6 +226,94 @@ void main() {
     await openRail();
     expect(find.text('Daemons'), findsOneWidget);
     expect(app.settings.leftRailTab, LeftRailTab.sessions);
+  });
+
+  testWidgets('slow swipe to Inbox does not refresh stores mid-drag', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    int projectNotifications = 0;
+    void countProjects() => projectNotifications++;
+    app.projects.addListener(countProjects);
+    addTearDown(() => app.projects.removeListener(countProjects));
+
+    Future<void> slowSwipe(double dx) async {
+      projectNotifications = 0;
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byType(TabBarView)),
+      );
+      for (int i = 0; i < 60; i++) {
+        await gesture.moveBy(Offset(dx, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      // Still held: the Inbox is on screen but must not have loaded yet.
+      expect(find.byType(InboxSessionList), findsOneWidget);
+      expect(projectNotifications, 0);
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    await slowSwipe(-4);
+    expect(app.settings.leftRailTab, LeftRailTab.inbox);
+    // Settled: the deferred load runs.
+    expect(projectNotifications, greaterThan(0));
+
+    // Swiping back and forth again reuses the kept-alive Inbox.
+    await slowSwipe(4);
+    expect(app.settings.leftRailTab, LeftRailTab.sessions);
+    await slowSwipe(-4);
+    await tester.pump(const Duration(seconds: 1));
+    expect(projectNotifications, 0);
+  });
+
+  testWidgets('refreshing projects keeps the loaded tree mounted', (
+    WidgetTester tester,
+  ) async {
+    final _GatedProjectsClient client = _GatedProjectsClient();
+    final AppData app = await pumpRail(tester, client: client);
+    await selectFakeDaemon(tester, app);
+    app.selection.selectedProjectId = 'proj-demo';
+    await tester.pumpAndSettle();
+    final Finder tile = find.byType(ExpansionTile).first;
+    final State<StatefulWidget> before = tester.state(tile);
+    expect(tester.widget<ExpansionTile>(tile).controller!.isExpanded, isTrue);
+
+    // The Inbox refreshes every daemon's projects when it first loads.
+    final Completer<void> gate = client.gate = Completer<void>();
+    final Future<void> refresh = app.projects.refresh('fake');
+    await tester.pump();
+    expect(app.projects.isLoading('fake'), isTrue);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    gate.complete();
+    await refresh;
+    await tester.pumpAndSettle();
+
+    expect(identical(tester.state(tile), before), isTrue);
+    expect(tester.widget<ExpansionTile>(tile).controller!.isExpanded, isTrue);
+  });
+
+  testWidgets('selected project mounts expanded without animating', (
+    WidgetTester tester,
+  ) async {
+    final AppData app = await pumpRail(tester);
+    await selectFakeDaemon(tester, app);
+    app.selection.selectedProjectId = 'proj-demo';
+    await tester.pumpAndSettle();
+    // Remount the rail, as opening the phone drawer does.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildSpeedDialTheme(),
+        home: Scaffold(
+          body: AppScope(data: app, child: const LeftRail()),
+        ),
+      ),
+    );
+    final Finder tile = find.byType(ExpansionTile).first;
+    expect(tester.widget<ExpansionTile>(tile).controller!.isExpanded, isTrue);
+    await tester.pump();
+    expect(tester.hasRunningAnimations, isFalse);
   });
 
   testWidgets('rail restores the tab from client preferences', (

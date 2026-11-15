@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
@@ -74,6 +75,7 @@ class _InboxTabState extends State<InboxTab> {
 
   @override
   void dispose() {
+    _swipe?.removeListener(_swipeChanged);
     _data?.connections.removeListener(_scheduleRefresh);
     _data?.projects.removeListener(_scheduleRefresh);
     _loadRevision.dispose();
@@ -171,8 +173,33 @@ class _InboxTabState extends State<InboxTab> {
     _refreshScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshScheduled = false;
-      if (mounted) _refreshNewEndpoints();
+      if (mounted && !_waitForSwipe()) _refreshNewEndpoints();
     });
+  }
+
+  /// Set while a refresh waits for the rail's tab swipe to come to rest.
+  ValueListenable<bool>? _swipe;
+
+  /// The tab swipe mounts this page mid-drag. Loading then would refresh the
+  /// project and session stores, rebuilding both rail pages under the finger,
+  /// so a slow drag stutters. Defers the load until the swipe settles.
+  bool _waitForSwipe() {
+    if (_swipe != null) return true;
+    final ValueListenable<bool>? scrolling = Scrollable.maybeOf(
+      context,
+      axis: Axis.horizontal,
+    )?.position.isScrollingNotifier;
+    if (scrolling == null || !scrolling.value) return false;
+    _swipe = scrolling..addListener(_swipeChanged);
+    return true;
+  }
+
+  void _swipeChanged() {
+    final ValueListenable<bool>? swipe = _swipe;
+    if (swipe == null || swipe.value) return;
+    swipe.removeListener(_swipeChanged);
+    _swipe = null;
+    _scheduleRefresh();
   }
 
   void _refreshNewEndpoints() {

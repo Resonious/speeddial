@@ -95,14 +95,86 @@ class _LeftRailState extends State<LeftRail>
             child: TabBarView(
               controller: _controller,
               children: <Widget>[
-                _SessionsTab(onSessionCreated: widget.onSessionCreated),
-                InboxTab(onSessionCreated: widget.onSessionCreated),
+                _RailPage(
+                  controller: _controller,
+                  index: LeftRailTab.sessions.index,
+                  child: _SessionsTab(
+                    onSessionCreated: widget.onSessionCreated,
+                  ),
+                ),
+                _RailPage(
+                  controller: _controller,
+                  index: LeftRailTab.inbox.index,
+                  child: InboxTab(onSessionCreated: widget.onSessionCreated),
+                ),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+/// Keeps a rail tab mounted after it is swiped away, so swiping back does not
+/// rebuild it (and the Inbox does not refetch every daemon) mid-drag. Tickers
+/// pause while the page is fully out of view.
+class _RailPage extends StatefulWidget {
+  const _RailPage({
+    required this.controller,
+    required this.index,
+    required this.child,
+  });
+
+  final TabController controller;
+  final int index;
+  final Widget child;
+
+  @override
+  State<_RailPage> createState() => _RailPageState();
+}
+
+class _RailPageState extends State<_RailPage>
+    with AutomaticKeepAliveClientMixin {
+  late bool _visible = _computeVisible();
+
+  @override
+  bool get wantKeepAlive => true;
+
+  bool _computeVisible() =>
+      (widget.controller.animation!.value - widget.index).abs() < 1.0;
+
+  void _update() {
+    final bool visible = _computeVisible();
+    if (visible != _visible) setState(() => _visible = visible);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.animation!.addListener(_update);
+  }
+
+  @override
+  void didUpdateWidget(_RailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller)) {
+      oldWidget.controller.animation!.removeListener(_update);
+      widget.controller.animation!.addListener(_update);
+    }
+    _visible = _computeVisible();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.animation!.removeListener(_update);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return TickerMode(enabled: _visible, child: widget.child);
   }
 }
 
@@ -499,7 +571,11 @@ class _ProjectTree extends StatelessWidget {
                 ],
               ),
             ),
-            if (data.projects.isLoading(daemonId))
+            // Only the first load shows a spinner. A refresh (the Inbox runs
+            // one per daemon) keeps the loaded tree mounted; swapping it for a
+            // spinner would collapse and re-expand every project.
+            if (data.projects.isLoading(daemonId) &&
+                !data.projects.hasLoaded(daemonId))
               const Expanded(child: Center(child: CircularProgressIndicator()))
             else if (projects.isEmpty)
               Expanded(
@@ -638,6 +714,11 @@ class _ProjectTileState extends State<_ProjectTile> {
     final AppData data = AppScope.of(context);
     if (!identical(_data, data)) {
       _data?.selection.removeListener(_onSelectionChanged);
+      // A freshly mounted selected tile starts open. Expanding it a frame
+      // later would animate it open on every remount (drawer open, reload).
+      if (_data == null && data.selection.selectedProjectId == project.id) {
+        _controller.expand();
+      }
       _data = data;
       // Selection is a plain store notification, not an inherited-widget
       // change, so react to it directly.
