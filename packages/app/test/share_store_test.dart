@@ -235,6 +235,50 @@ void main() {
     );
   });
 
+  testWidgets('floating share card can be dragged out of the way', (
+    WidgetTester tester,
+  ) async {
+    final (AppData data, FakeDaemonClient fake) = await setup();
+    final Session session = (await fake.listSessions()).first;
+    data.selection
+      ..selectedDaemonId = 'fake'
+      ..selectedProjectId = session.projectId
+      ..selectedSessionId = session.id;
+    tester.view.physicalSize = const Size(1100, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(SpeedDialApp(data: data));
+    await tester.pump();
+    await data.shares.receive(<String, Object?>{
+      'name': 'bug.txt',
+      'mimeType': 'text/plain',
+      'data': base64Encode(utf8.encode('bug details')),
+    });
+    await tester.pump();
+
+    final Finder card = find.byKey(const Key('shared-file-drag'));
+    final Rect home = tester.getRect(card);
+    expect(home.right, 1100 - 8);
+    expect(home.top, 8);
+
+    await tester.drag(card, const Offset(-300, 400));
+    await tester.pump();
+    final Rect moved = tester.getRect(card);
+    expect(moved.topLeft, home.topLeft + const Offset(-300, 400));
+
+    // Flung far past the edges, it stays fully on screen.
+    await tester.drag(card, const Offset(-5000, 5000));
+    await tester.pump();
+    final Rect clamped = tester.getRect(card);
+    expect(clamped.left, 8);
+    expect(clamped.bottom, 800 - 8);
+
+    // Still works where it landed.
+    await tester.tap(find.byKey(const Key('attach-shared-file')));
+    await tester.pump();
+    expect(data.shares.stagedFor('fake', session.id).single.name, 'bug.txt');
+  });
+
   test(
     'project target creates session with cached settings and stages file',
     () async {

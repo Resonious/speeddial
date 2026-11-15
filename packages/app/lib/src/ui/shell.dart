@@ -76,12 +76,55 @@ class SpeedDialShell extends StatelessWidget {
   }
 }
 
-class _FloatingShare extends StatelessWidget {
+/// The floating card for a shared or floated file. It starts in the top
+/// right corner; drag it anywhere on screen so it never hides what you need.
+/// The spot it is dropped at holds for later files too.
+class _FloatingShare extends StatefulWidget {
   const _FloatingShare();
+
+  @override
+  State<_FloatingShare> createState() => _FloatingShareState();
+}
+
+class _FloatingShareState extends State<_FloatingShare> {
+  static const double _margin = 8;
+
+  final GlobalKey _cardKey = GlobalKey();
+
+  /// How far the card has been dragged from its top-right home.
+  Offset _offset = Offset.zero;
+  bool _dragging = false;
+
+  /// Where the pointer went down and where the card was then, so the card
+  /// stays under the pointer instead of lagging by the drag slop.
+  Offset _grabPointer = Offset.zero;
+  Offset _grabOffset = Offset.zero;
+
+  /// Keeps the whole card inside the window (less safe-area insets).
+  Offset _clamp(Offset offset, Size screen, EdgeInsets padding) {
+    final RenderBox? box =
+        _cardKey.currentContext?.findRenderObject() as RenderBox?;
+    final Size card = box != null && box.hasSize ? box.size : Size.zero;
+    final double maxLeft = math.max(
+      0,
+      screen.width - padding.horizontal - card.width - _margin * 2,
+    );
+    final double maxDown = math.max(
+      0,
+      screen.height - padding.vertical - card.height - _margin * 2,
+    );
+    return Offset(
+      offset.dx.clamp(-maxLeft, 0).toDouble(),
+      offset.dy.clamp(0, maxDown).toDouble(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final AppData data = AppScope.of(context);
+    final Size screen = MediaQuery.sizeOf(context);
+    final EdgeInsets padding = MediaQuery.paddingOf(context);
+    final bool reduceMotion = MediaQuery.disableAnimationsOf(context);
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[data.shares, data.selection]),
       builder: (BuildContext context, Widget? _) {
@@ -95,69 +138,102 @@ class _FloatingShare extends StatelessWidget {
             daemonId != null &&
             sessionId != null &&
             !data.shares.creating;
+        // A shrunk window may leave the card partly off screen; pull it back.
+        final Offset offset = _clamp(_offset, screen, padding);
         return Positioned(
-          top: MediaQuery.paddingOf(context).top + 8,
-          right: MediaQuery.paddingOf(context).right + 8,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxWidth: (MediaQuery.sizeOf(context).width - 16).clamp(0, 300),
-            ),
-            child: Material(
-              elevation: 8,
-              color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Row(
+          top: padding.top + _margin + offset.dy,
+          right: padding.right + _margin - offset.dx,
+          child: MouseRegion(
+            cursor: _dragging
+                ? SystemMouseCursors.grabbing
+                : SystemMouseCursors.grab,
+            child: GestureDetector(
+              key: const Key('shared-file-drag'),
+              onPanDown: (DragDownDetails details) {
+                _grabPointer = details.globalPosition;
+                _grabOffset = offset;
+              },
+              onPanStart: (DragStartDetails _) =>
+                  setState(() => _dragging = true),
+              onPanUpdate: (DragUpdateDetails details) => setState(
+                () => _offset = _clamp(
+                  _grabOffset + details.globalPosition - _grabPointer,
+                  screen,
+                  padding,
+                ),
+              ),
+              onPanEnd: (DragEndDetails _) => setState(() => _dragging = false),
+              onPanCancel: () => setState(() => _dragging = false),
+              child: ConstrainedBox(
+                key: _cardKey,
+                constraints: BoxConstraints(
+                  maxWidth: (screen.width - 16).clamp(0, 300),
+                ),
+                child: Material(
+                  // Lifted a little higher while it is being carried.
+                  elevation: _dragging ? 14 : 8,
+                  animationDuration: reduceMotion
+                      ? Duration.zero
+                      : kThemeChangeDuration,
+                  color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        const Icon(Icons.attach_file, size: 18),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            file?.name ?? 'Share failed',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: <Widget>[
+                            const Icon(Icons.attach_file, size: 18),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                file?.name ?? 'Share failed',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              key: const Key('cancel-shared-file'),
+                              tooltip: 'Dismiss shared file',
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: data.shares.cancel,
+                            ),
+                          ],
+                        ),
+                        if (error != null)
+                          Text(
+                            error,
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
                           ),
-                        ),
-                        IconButton(
-                          key: const Key('cancel-shared-file'),
-                          tooltip: 'Dismiss shared file',
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: data.shares.cancel,
-                        ),
+                        if (data.shares.creating)
+                          const LinearProgressIndicator()
+                        else if (file != null)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton.icon(
+                              key: const Key('attach-shared-file'),
+                              onPressed: canAttach
+                                  ? () => data.shares.attachTo(
+                                      daemonId,
+                                      sessionId,
+                                    )
+                                  : null,
+                              icon: const Icon(Icons.add, size: 18),
+                              label: Text(
+                                canAttach
+                                    ? 'Attach to session'
+                                    : 'Open a session to attach',
+                              ),
+                            ),
+                          ),
                       ],
                     ),
-                    if (error != null)
-                      Text(
-                        error,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    if (data.shares.creating)
-                      const LinearProgressIndicator()
-                    else if (file != null)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          key: const Key('attach-shared-file'),
-                          onPressed: canAttach
-                              ? () => data.shares.attachTo(daemonId, sessionId)
-                              : null,
-                          icon: const Icon(Icons.add, size: 18),
-                          label: Text(
-                            canAttach
-                                ? 'Attach to session'
-                                : 'Open a session to attach',
-                          ),
-                        ),
-                      ),
-                  ],
+                  ),
                 ),
               ),
             ),
