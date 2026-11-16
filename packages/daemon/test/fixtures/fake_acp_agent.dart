@@ -83,8 +83,8 @@ bool _modelEnabled = true;
 /// `initialize` from the `<cwd>/agent.no_thinking` marker.
 bool _thinkingEnabled = true;
 
-final Map<int, Completer<Map<String, Object?>>> _agentRequests =
-    <int, Completer<Map<String, Object?>>>{};
+final Map<Object, Completer<Map<String, Object?>>> _agentRequests =
+    <Object, Completer<Map<String, Object?>>>{};
 final Map<Object, bool> _pendingPrompts = <Object, bool>{};
 Future<void> _writeQueue = Future<void>.value();
 int _nextId = 1;
@@ -161,7 +161,11 @@ Future<Map<String, Object?>> _request(
   String method,
   Map<String, Object?> params,
 ) async {
-  final id = _nextId++;
+  final number = _nextId++;
+  final Object id =
+      File(p.join(Directory.current.path, 'agent.string_ids')).existsSync()
+      ? 'agent-$number'
+      : number;
   final completer = Completer<Map<String, Object?>>();
   _agentRequests[id] = completer;
   await _send(<String, Object?>{
@@ -198,7 +202,7 @@ String _promptText(Map<String, Object?> params) {
 Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
   final method = message['method'];
   final rawId = message['id'];
-  final id = rawId is num ? rawId.toInt() : null;
+  final id = rawId is String || rawId is int ? rawId : null;
 
   // Response to one of our agent-to-client requests.
   if (method == null && id != null) {

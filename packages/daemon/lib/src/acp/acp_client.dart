@@ -288,7 +288,9 @@ class AcpClient implements AgentClient {
         ? Map<String, Object?>.from(rawParams)
         : const <String, Object?>{};
     final rawId = message['id'];
-    final id = rawId is num ? rawId.toInt() : null;
+    // Agent request IDs are opaque: string IDs must be echoed unchanged,
+    // just like integer IDs, or the agent waits forever for its response.
+    final id = rawId is String || rawId is int ? rawId : null;
     switch (method) {
       case 'session/update':
         _handleSessionUpdate(params);

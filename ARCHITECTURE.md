@@ -73,6 +73,8 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
                     fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+                    Agent request IDs (strings or integers) are echoed unchanged in
+                    success, error, and cancellation responses.
                     Session creation/resume uses existing provider credentials; advertised
                     login methods are not automatically invoked (Claude uses terminal login).
                     Claude Code creation and resume append SpeedDial guidance through the

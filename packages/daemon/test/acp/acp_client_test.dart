@@ -283,6 +283,31 @@ void main() {
     },
   );
 
+  test('answers string-ID file and permission requests', () async {
+    File(p.join(tempDir.path, 'agent.string_ids')).writeAsStringSync('');
+    final calls = <String>[];
+    final client = spawnClient(
+      cwd: tempDir.path,
+      targetPath: targetPath,
+      readTextFile: (sessionId, path) async {
+        calls.add('read:$sessionId:$path');
+        return 'contents';
+      },
+      requestPermission: (sessionId, toolCallId, title, options) async {
+        calls.add('permission:$sessionId:$toolCallId');
+        return 'allow';
+      },
+    );
+    addTearDown(client.dispose);
+    await client.initialized;
+    final session = await client.newSession(cwd: tempDir.path);
+    final result = await client
+        .prompt(session.sessionId, textBlocks('read'))
+        .timeout(const Duration(seconds: 3));
+    expect(result.stopReason, 'end_turn');
+    expect(calls, ['read:s1:$targetPath', 'permission:s1:tc1']);
+  });
+
   test(
     'newSession and loadSession forward MCP server configurations',
     () async {
