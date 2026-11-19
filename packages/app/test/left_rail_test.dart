@@ -1596,6 +1596,9 @@ void main() {
       ),
       isNot(ConnectionStatus.connected),
     );
+    await tester.pumpWidget(const SizedBox.shrink());
+    app.dispose();
+    await tester.pump();
   });
 
   testWidgets('endpoint menu edits a daemon in place', (

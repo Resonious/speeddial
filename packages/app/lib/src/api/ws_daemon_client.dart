@@ -4,46 +4,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:speeddial_protocol/speeddial_protocol.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'daemon_client.dart';
+import 'daemon_frame_channel.dart';
 import 'local_history.dart';
 import 'saved_history_client.dart';
+import 'ws_frame_channel.dart';
 
-/// One bidirectional stream of daemon WebSocket text frames.
-///
-/// The normal implementation wraps `package:web_socket_channel`. The Wear OS
-/// target injects a channel whose frames cross the Wear Data Layer and whose
-/// actual WebSocket is opened by the paired phone. Keeping this boundary at
-/// raw text frames preserves the protocol codec, authentication, reconnect,
-/// and notification behavior in one place.
-abstract interface class DaemonFrameChannel {
-  Future<void> get ready;
-  Stream<Object?> get stream;
-  void add(Object? data);
-  Future<void> close();
-}
-
-typedef DaemonFrameChannelFactory = DaemonFrameChannel Function(Uri uri);
-
-class _WebSocketDaemonFrameChannel implements DaemonFrameChannel {
-  _WebSocketDaemonFrameChannel(Uri uri)
-    : _channel = WebSocketChannel.connect(uri);
-
-  final WebSocketChannel _channel;
-
-  @override
-  Future<void> get ready => _channel.ready;
-
-  @override
-  Stream<Object?> get stream => _channel.stream;
-
-  @override
-  void add(Object? data) => _channel.sink.add(data);
-
-  @override
-  Future<void> close() => _channel.sink.close();
-}
+export 'daemon_frame_channel.dart';
 
 /// Notification feeds belong to the configured endpoint, surviving edits to
 /// its connection parameters. Stores may subscribe for the app's lifetime.
@@ -78,8 +46,10 @@ class _DaemonNotifications {
 }
 
 /// Live [DaemonClient] speaking PROTOCOL.md's JSON-RPC 2.0 envelope over a
-/// WebSocket. Transport is `package:web_socket_channel` (works on native and
-/// web; no `dart:io` import), decoded frames are fed to an [RpcPeer].
+/// WebSocket. Transport uses a per-attempt native `dart:io` WebSocket on
+/// native platforms (with bounded connect timeout, force-abortable handshakes,
+/// and protocol pings) and `package:web_socket_channel` on web; decoded frames
+/// are fed to an [RpcPeer].
 ///
 /// [connect] must be called before use: the client authenticates first when a
 /// [token] is configured and then switches `connState` to connected. Socket
@@ -87,8 +57,8 @@ class _DaemonNotifications {
 /// are retried with exponential backoff starting at [reconnectBase] (doubling
 /// per attempt, capped at 15s); after each successful connect that followed
 /// a failure the client re-authenticates and emits on [resynced] so stores
-/// can backfill history missed while offline. [retryNow] resets the backoff
-/// and retries immediately.
+/// can backfill history missed while offline. [retryNow] resets the backoff,
+/// aborts any hung in-flight attempt, and retries immediately.
 ///
 /// Live notifications are broadcast without buffering: a session that nobody
 /// is watching simply loses its events (stores watch deliberately and recover
@@ -103,12 +73,22 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
     // field's default next to its declaration.
     Duration reconnectBase = const Duration(milliseconds: 500),
     Duration livenessProbeTimeout = const Duration(seconds: 3),
+    Duration connectTimeout = const Duration(seconds: 10),
+    Duration? pingInterval = const Duration(seconds: 25),
     this.historyDetail = SessionHistoryDetail.full,
   }) : _notifications = _DaemonNotifications(),
-       _channelFactory = channelFactory ?? _WebSocketDaemonFrameChannel.new,
+       _channelFactory =
+           channelFactory ??
+           ((Uri uri) => connectWebSocketFrameChannel(
+             uri,
+             connectTimeout: connectTimeout,
+             pingInterval: pingInterval,
+           )),
        reconnectBase = reconnectBase, // ignore: prefer_initializing_formals
        // ignore: prefer_initializing_formals
-       livenessProbeTimeout = livenessProbeTimeout;
+       livenessProbeTimeout = livenessProbeTimeout,
+       connectTimeout = connectTimeout, // ignore: prefer_initializing_formals
+       pingInterval = pingInterval; // ignore: prefer_initializing_formals
 
   WsDaemonClient._replacement(
     WsDaemonClient previous, {
@@ -118,6 +98,8 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
        _channelFactory = previous._channelFactory,
        reconnectBase = previous.reconnectBase,
        livenessProbeTimeout = previous.livenessProbeTimeout,
+       connectTimeout = previous.connectTimeout,
+       pingInterval = previous.pingInterval,
        historyDetail = previous.historyDetail,
        localHistory = previous.localHistory {
     _resyncNeeded = true;
@@ -174,6 +156,14 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   /// before declaring the socket half-dead (see there).
   final Duration livenessProbeTimeout;
 
+  /// Maximum time allowed for each connection phase (socket handshake and
+  /// `auth.authenticate`) before tearing down and retrying. Bounds stalls
+  /// caused by silent packet drops during mobile backgrounding or handoffs.
+  final Duration connectTimeout;
+
+  /// Native WebSocket keepalive ping interval; null disables protocol pings.
+  final Duration? pingInterval;
+
   /// Projection requested for persisted history pages. Compact targets use
   /// summary events while desktop/mobile retain the full payload by default.
   final SessionHistoryDetail historyDetail;
@@ -201,19 +191,30 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
       _notifications.projects;
 
   static const Duration _maxReconnectDelay = Duration(seconds: 15);
+  static const Duration _gracefulCloseTimeout = Duration(seconds: 2);
 
   DaemonFrameChannel? _channel;
 
   /// Whether [_channel] has completed its connect handshake (`ready`). Only
-  /// an established channel gets a graceful (awaited) close; closing a
-  /// channel whose handshake failed can wait forever for a close handshake
-  /// the peer will never send, so those are released without awaiting.
+  /// an established channel gets a graceful (awaited) close on disposal;
+  /// failed, timed-out, or aborted channels are released without awaiting.
   bool _socketReady = false;
   RpcPeer? _peer;
   StreamSubscription<dynamic>? _socketSub;
   StreamSubscription<RpcNotification>? _notificationSub;
   Timer? _reconnectTimer;
+  Timer? _connectTimer;
   Future<void>? _inFlightConnect;
+  Future<void>? _inFlightProbe;
+
+  /// Monotonically incremented on each connect attempt, forced retry, liveness
+  /// teardown, and disposal so an abandoned attempt can never clobber a newer
+  /// connection's socket, state, or retry timer.
+  int _connectEpoch = 0;
+
+  /// Completed when the active establish attempt is superseded by [retryNow]
+  /// or [dispose], unblocking any hung handshake or auth call immediately.
+  Completer<void>? _attemptAbort;
 
   /// Completed by the next inbound frame while [verifyLiveness] is probing.
   Completer<void>? _inboundFrame;
@@ -239,22 +240,94 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   /// armed — the state self-heals to connected once the daemon answers.
   Future<void> connect() => _startEstablish(initial: true);
 
-  Future<void> _startEstablish({required bool initial}) {
+  Future<void> _startEstablish({
+    required bool initial,
+    bool forceRestart = false,
+  }) {
     if (_disposed) return Future<void>.value();
-    final Future<void>? inFlight = _inFlightConnect;
-    if (inFlight != null) return inFlight;
+    if (!forceRestart) {
+      final Future<void>? inFlight = _inFlightConnect;
+      if (inFlight != null) return inFlight;
+    }
     if (connState.value == DaemonConnectionState.connected &&
         _channel != null &&
         _socketReady &&
         _peer != null) {
       return Future<void>.value();
     }
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    if (forceRestart) {
+      _abortInFlightAttempt();
+    }
+    final int epoch = ++_connectEpoch;
+    final Completer<void> abort = Completer<void>();
+    _attemptAbort = abort;
     late final Future<void> attempt;
-    attempt = _establish(initial: initial).whenComplete(() {
-      if (identical(_inFlightConnect, attempt)) _inFlightConnect = null;
-    });
+    attempt = _establish(epoch: epoch, initial: initial, abort: abort)
+        .whenComplete(() {
+          if (identical(_inFlightConnect, attempt)) _inFlightConnect = null;
+          if (identical(_attemptAbort, abort)) _attemptAbort = null;
+        });
     _inFlightConnect = attempt;
     return attempt;
+  }
+
+  /// Aborts any active establish attempt synchronously so a replacement
+  /// attempt can start right away without waiting on a wedged handshake.
+  void _abortInFlightAttempt() {
+    _connectTimer?.cancel();
+    _connectTimer = null;
+    final Completer<void>? abort = _attemptAbort;
+    _attemptAbort = null;
+    if (abort != null && !abort.isCompleted) {
+      abort.complete();
+    }
+    _establishing = false;
+    unawaited(_tearDownSocket(graceful: false));
+  }
+
+  /// Races [operation] against [abort] and [connectTimeout] using a timer that
+  /// is cancelled synchronously on completion, abort, or disposal.
+  Future<T> _awaitConnectPhase<T>(
+    Future<T> operation, {
+    required Completer<void> abort,
+    required String phase,
+  }) {
+    final Completer<T> result = Completer<T>();
+    _connectTimer?.cancel();
+    late final Timer timer;
+    timer = Timer(connectTimeout, () {
+      if (identical(_connectTimer, timer)) _connectTimer = null;
+      if (!result.isCompleted) {
+        result.completeError(
+          TimeoutException('Daemon $phase timed out', connectTimeout),
+        );
+      }
+    });
+    _connectTimer = timer;
+    void finish() {
+      timer.cancel();
+      if (identical(_connectTimer, timer)) _connectTimer = null;
+    }
+
+    operation.then(
+      (T value) {
+        finish();
+        if (!result.isCompleted) result.complete(value);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        finish();
+        if (!result.isCompleted) result.completeError(error, stackTrace);
+      },
+    );
+    abort.future.then((void _) {
+      finish();
+      if (!result.isCompleted) {
+        result.completeError(const DaemonConnectionError('connect aborted'));
+      }
+    });
+    return result.future;
   }
 
   /// Establishes one connection. [initial] distinguishes the user-visible
@@ -262,22 +335,45 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   /// reconnects (failures only schedule another backoff retry). Either way a
   /// failure arms the backoff timer, so a `failed` initial connect still
   /// self-heals once the daemon comes up.
-  Future<void> _establish({required bool initial}) async {
-    if (_disposed) return;
+  Future<void> _establish({
+    required int epoch,
+    required bool initial,
+    required Completer<void> abort,
+  }) async {
+    await _establishAttempt(epoch: epoch, initial: initial, abort: abort);
+    if (!_disposed && epoch != _connectEpoch) {
+      final Future<void>? replacement = _inFlightConnect;
+      if (replacement != null) return replacement;
+    }
+  }
+
+  Future<void> _establishAttempt({
+    required int epoch,
+    required bool initial,
+    required Completer<void> abort,
+  }) async {
+    if (_disposed || epoch != _connectEpoch) return;
     _establishing = true;
     try {
       connState.value = initial
           ? DaemonConnectionState.connecting
           : DaemonConnectionState.reconnecting;
-      await _openSocket();
-      if (_disposed) return;
+      await _openSocket(epoch: epoch, abort: abort);
+      if (_disposed || epoch != _connectEpoch) return;
       final String? token = this.token;
       if (token != null) {
-        await _peer!.call('auth.authenticate', <String, Object?>{
-          'token': token,
-        });
+        final Future<Object?> authCall = _peer!.call(
+          'auth.authenticate',
+          <String, Object?>{'token': token},
+        );
+        await _awaitConnectPhase<Object?>(
+          authCall,
+          abort: abort,
+          phase: 'authentication',
+        );
+        if (_disposed || epoch != _connectEpoch) return;
       }
-      if (_disposed) return;
+      if (_disposed || epoch != _connectEpoch) return;
       connState.value = DaemonConnectionState.connected;
       _reconnectAttempt = 0;
       // Stores may already be displaying disk snapshots while the first
@@ -288,52 +384,59 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
         _resyncNeeded = false;
         _resyncController.add(null);
       }
-    } on DaemonError {
-      if (_disposed) return;
-      _resyncNeeded = true;
-      await _tearDownSocket();
-      _scheduleReconnect();
-      if (initial) connState.value = DaemonConnectionState.failed;
-      rethrow;
     } on Object {
-      if (_disposed) return;
+      if (_disposed || epoch != _connectEpoch) return;
       _resyncNeeded = true;
-      await _tearDownSocket();
+      await _tearDownSocket(graceful: false);
+      if (_disposed || epoch != _connectEpoch) return;
       _scheduleReconnect();
       if (initial) connState.value = DaemonConnectionState.failed;
       rethrow;
     } finally {
-      _establishing = false;
+      if (epoch == _connectEpoch) {
+        _establishing = false;
+      }
     }
   }
 
   /// Closes the current socket and its peer, if any. Idempotent; safe to run
   /// when the transport already shut the channel down on its own.
-  Future<void> _tearDownSocket() async {
+  ///
+  /// Every live field is captured and cleared synchronously before any `await`
+  /// so an older teardown can never clobber a replacement connection. When
+  /// [graceful] is false (failed, timed-out, or aborted connections), the
+  /// underlying channel closes without awaiting so a dead peer never stalls
+  /// reconnection.
+  Future<void> _tearDownSocket({bool graceful = true}) async {
     final DaemonFrameChannel? channel = _channel;
     final bool established = _socketReady;
+    final StreamSubscription<RpcNotification>? notificationSub =
+        _notificationSub;
+    final StreamSubscription<dynamic>? socketSub = _socketSub;
+    final RpcPeer? peer = _peer;
     _channel = null;
     _socketReady = false;
-    await _notificationSub?.cancel();
     _notificationSub = null;
-    await _socketSub?.cancel();
     _socketSub = null;
-    await _peer?.close();
     _peer = null;
-    if (channel == null) return;
-    if (established) {
-      // The handshake completed, so a close frame round-trips normally.
-      try {
-        await channel.close();
-      } on Object {
-        // Already closed by the transport; nothing to do.
-      }
-    } else {
-      // The channel never completed its handshake (connection refused,
-      // unreachable host): adapters' `sink.close()` can wait forever for a
-      // close handshake that will never arrive. Release it without awaiting
-      // — the socket is unreachable either way.
+    final bool awaitClose = graceful && established;
+    if (channel != null && !awaitClose) {
+      // The channel never completed its handshake or is already known dead:
+      // start closing immediately without awaiting so any wedged HttpClient
+      // aborts synchronously and reconnection never stalls.
       unawaited(_closeQuietly(channel));
+    }
+    if (notificationSub != null) await notificationSub.cancel();
+    if (socketSub != null) await socketSub.cancel();
+    if (peer != null) await peer.close();
+    if (channel != null && awaitClose) {
+      // The handshake completed, so a close frame normally round-trips quickly;
+      // bound it anyway so disposal never hangs on a half-dead peer.
+      try {
+        await channel.close().timeout(_gracefulCloseTimeout);
+      } on Object {
+        // Already closed by the transport or peer unreachable.
+      }
     }
   }
 
@@ -342,12 +445,15 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
     try {
       await channel.close();
     } on Object {
-      // The socket was never established; nothing to clean up.
+      // The socket was never established or already closed; nothing to clean up.
     }
   }
 
   /// Opens a fresh socket and attaches a fresh [RpcPeer] to it.
-  Future<void> _openSocket() async {
+  Future<void> _openSocket({
+    required int epoch,
+    required Completer<void> abort,
+  }) async {
     final Uri uri = Uri.parse(url);
     if (uri.scheme != 'ws' && uri.scheme != 'wss') {
       throw ArgumentError.value(
@@ -358,14 +464,42 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
     }
     final DaemonFrameChannel channel = _channelFactory(uri);
     _channel = channel;
-    await channel.ready;
-    _socketReady = true;
-    if (_disposed) {
-      await channel.close();
+    final Future<void> ready = channel.ready;
+    // If the handshake resolves or errors after a timeout or forced retry,
+    // close the orphaned socket quietly and absorb any late error.
+    unawaited(
+      ready.then(
+        (void _) {
+          if (_disposed ||
+              epoch != _connectEpoch ||
+              !identical(_channel, channel)) {
+            unawaited(_closeQuietly(channel));
+          }
+        },
+        onError: (Object _) {
+          // Handled by the active attempt or ignored once superseded.
+        },
+      ),
+    );
+    await _awaitConnectPhase<void>(ready, abort: abort, phase: 'handshake');
+    if (_disposed || epoch != _connectEpoch || !identical(_channel, channel)) {
+      unawaited(_closeQuietly(channel));
       return;
     }
-    _peer?.close();
-    await _notificationSub?.cancel();
+    _socketReady = true;
+    final RpcPeer? previousPeer = _peer;
+    _peer = null;
+    unawaited(previousPeer?.close());
+    final StreamSubscription<RpcNotification>? previousNotificationSub =
+        _notificationSub;
+    _notificationSub = null;
+    if (previousNotificationSub != null) {
+      await previousNotificationSub.cancel();
+    }
+    if (_disposed || epoch != _connectEpoch || !identical(_channel, channel)) {
+      unawaited(_closeQuietly(channel));
+      return;
+    }
 
     final StreamController<Object?> incoming = StreamController<Object?>();
     final RpcPeer peer = RpcPeer(
@@ -469,16 +603,18 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   @override
   bool get isConnected => connState.value == DaemonConnectionState.connected;
 
-  /// Manual retry hook for the UI: cancels any pending backoff attempt,
-  /// resets the backoff counter, and reconnects immediately. No-op when
-  /// disposed or already connected; an in-flight attempt is joined.
+  /// Manual retry and resume hook: cancels any pending backoff attempt,
+  /// resets the backoff counter, aborts any hung in-flight attempt (such as a
+  /// handshake stalled while Android suspended or switched networks), and
+  /// reconnects immediately. No-op when disposed or already connected.
   void retryNow() {
     if (_disposed) return;
     if (connState.value == DaemonConnectionState.connected) return;
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _reconnectAttempt = 0;
     unawaited(
-      connect().catchError((Object _) {
+      _startEstablish(initial: true, forceRestart: true).catchError((Object _) {
         // The failed attempt scheduled the next retry before rethrowing.
       }),
     );
@@ -500,12 +636,27 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   /// probe's answer can queue behind large responses (e.g. download chunks
   /// that resume when a native save dialog hands focus back), and tearing
   /// that socket down would fail the healthy transfer with "peer closed".
-  Future<void> verifyLiveness() async {
+  Future<void> verifyLiveness() {
     if (_disposed || connState.value != DaemonConnectionState.connected) {
-      return;
+      return Future<void>.value();
     }
+    final Future<void>? inFlight = _inFlightProbe;
+    if (inFlight != null) return inFlight;
     final RpcPeer? peer = _peer;
-    if (peer == null || !_socketReady) return;
+    if (peer == null || !_socketReady) return Future<void>.value();
+    final int epoch = _connectEpoch;
+    late final Future<void> probe;
+    probe = _runLivenessProbe(peer: peer, epoch: epoch).whenComplete(() {
+      if (identical(_inFlightProbe, probe)) _inFlightProbe = null;
+    });
+    _inFlightProbe = probe;
+    return probe;
+  }
+
+  Future<void> _runLivenessProbe({
+    required RpcPeer peer,
+    required int epoch,
+  }) async {
     final Completer<void> inbound = Completer<void>();
     _inboundFrame = inbound;
     try {
@@ -514,15 +665,19 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
         inbound.future,
       ]).timeout(livenessProbeTimeout);
     } on Object {
-      // A genuine drop raced the probe: its close handler already tore the
-      // socket down and armed its own reconnect; do not double up.
-      if (_disposed || connState.value != DaemonConnectionState.connected) {
+      // A genuine drop or reconnect raced the probe: its handler already tore
+      // the socket down and armed its own reconnect; do not double up.
+      if (_disposed ||
+          epoch != _connectEpoch ||
+          connState.value != DaemonConnectionState.connected) {
         return;
       }
+      final int teardownEpoch = ++_connectEpoch;
       _resyncNeeded = true;
+      _reconnectAttempt = 0;
       connState.value = DaemonConnectionState.reconnecting;
-      await _tearDownSocket();
-      if (_disposed) return;
+      await _tearDownSocket(graceful: false);
+      if (_disposed || teardownEpoch != _connectEpoch) return;
       _scheduleReconnect();
     } finally {
       if (identical(_inboundFrame, inbound)) _inboundFrame = null;
@@ -533,6 +688,14 @@ class WsDaemonClient implements DaemonClient, SavedHistoryClient {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _connectEpoch++;
+    _connectTimer?.cancel();
+    _connectTimer = null;
+    final Completer<void>? abort = _attemptAbort;
+    _attemptAbort = null;
+    if (abort != null && !abort.isCompleted) {
+      abort.complete();
+    }
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     await _tearDownSocket();

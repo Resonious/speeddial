@@ -330,6 +330,9 @@ void main() {
       expect(controller.lastToken, 'net-token');
       expect(data.embeddedDaemon.config.host, '0.0.0.0');
       expect(find.byKey(const Key('embedded-daemon-error')), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      data.dispose();
+      await tester.pump();
     });
 
     testWidgets('rejects a non-loopback interface without a token', (
@@ -372,6 +375,9 @@ void main() {
 
       expect(find.byKey(const Key('embedded-daemon-url')), findsOneWidget);
       expect(find.byKey(const Key('embedded-daemon-error')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      data.dispose();
+      await tester.pump();
     });
 
     testWidgets(

@@ -7,6 +7,7 @@ import 'package:speeddial_protocol/speeddial_protocol.dart';
 
 import 'package:speeddial_app/src/api/daemon_client.dart';
 import 'package:speeddial_app/src/api/ws_daemon_client.dart';
+import 'package:speeddial_app/src/api/ws_frame_channel.dart';
 import 'package:speeddial_app/src/state/chat_store.dart';
 
 /// Polls until [condition] holds, failing the test after [timeout].
@@ -77,6 +78,11 @@ class TestDaemonServer {
   /// but never gets a response.
   Duration daemonInfoDelay = Duration.zero;
 
+  /// When non-zero, `auth.authenticate` waits this long before answering —
+  /// used to simulate a socket that hangs right after the WebSocket upgrade.
+  Duration authDelay = Duration.zero;
+  int authRequests = 0;
+
   /// Stops the periodic `session.event` pushes, so a stalled `daemon.info`
   /// looks like a truly half-dead socket (no inbound frames at all).
   bool silent = false;
@@ -112,7 +118,14 @@ class TestDaemonServer {
     );
     peers.add(peer);
 
-    peer.registerHandler('auth.authenticate', (Map<String, Object?> params) {
+    peer.registerHandler('auth.authenticate', (
+      Map<String, Object?> params,
+    ) async {
+      authRequests++;
+      final Duration delay = authDelay;
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
       if (params['token'] != token) {
         throw DaemonError(kErrUnauthenticated, 'bad token');
       }
@@ -1317,4 +1330,308 @@ void main() {
       everyElement(containsPair('detail', 'summary')),
     );
   });
+
+  test(
+    'retryNow aborts a hung background handshake and connects immediately',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+
+      final Completer<void> stalledReady = Completer<void>();
+      bool stalledClosed = false;
+      int attempts = 0;
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(seconds: 30),
+        channelFactory: (Uri uri) {
+          attempts++;
+          if (attempts == 2) {
+            return _StalledFrameChannel(
+              ready: stalledReady.future,
+              onClose: () {
+                stalledClosed = true;
+              },
+            );
+          }
+          return connectWebSocketFrameChannel(
+            uri,
+            connectTimeout: const Duration(seconds: 5),
+          );
+        },
+      );
+      addTearDown(client.dispose);
+
+      await client.connect();
+      expect(client.isConnected, isTrue);
+
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
+
+      // Drop the connection; the automatic reconnect starts on attempt 2 and
+      // wedges in `channel.ready` (simulating a silent background packet drop).
+      await server.kick();
+      await waitFor(() => attempts == 2);
+      expect(client.connState.value, DaemonConnectionState.reconnecting);
+
+      // App resume / manual retry must supersede the wedged handshake rather
+      // than joining it and staying yellow forever.
+      client.retryNow();
+      await waitFor(
+        () =>
+            client.connState.value == DaemonConnectionState.connected &&
+            resyncCount == 1,
+      );
+      expect(stalledClosed, isTrue);
+      expect(attempts, 3);
+
+      // Even if the abandoned channel finishes `ready` late, it must not
+      // disturb the live connection.
+      stalledReady.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(client.isConnected, isTrue);
+      final DaemonInfo info = await client.info();
+      expect(info.version, '1.2.3');
+    },
+  );
+
+  test(
+    'retryNow aborts a hung auth.authenticate call and connects immediately',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(seconds: 30),
+      );
+      addTearDown(client.dispose);
+
+      await client.connect();
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
+
+      // Stall authentication on the automatic reconnect after a drop.
+      server.authDelay = const Duration(seconds: 30);
+      await server.kick();
+      await waitFor(() => server.authRequests == 2);
+      expect(client.connState.value, DaemonConnectionState.reconnecting);
+
+      // Restore normal auth and resume; retryNow must replace the stuck call.
+      server.authDelay = Duration.zero;
+      client.retryNow();
+      await waitFor(
+        () =>
+            client.connState.value == DaemonConnectionState.connected &&
+            resyncCount == 1,
+      );
+      expect(server.authRequests, greaterThanOrEqualTo(3));
+    },
+  );
+
+  test(
+    'connectTimeout bounds a blackholed HTTP upgrade handshake and retries',
+    () async {
+      // Accept TCP connections but never answer the HTTP Upgrade request.
+      final ServerSocket blackhole = await ServerSocket.bind(
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final List<Socket> accepted = <Socket>[];
+      final StreamSubscription<Socket> acceptSub = blackhole.listen(
+        accepted.add,
+      );
+      addTearDown(() async {
+        await acceptSub.cancel();
+        for (final Socket s in accepted) {
+          s.destroy();
+        }
+        await blackhole.close();
+      });
+
+      final WsDaemonClient client = WsDaemonClient(
+        url: 'ws://127.0.0.1:${blackhole.port}/ws',
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(milliseconds: 120),
+      );
+      addTearDown(client.dispose);
+
+      await expectLater(client.connect(), throwsA(anything));
+      expect(client.connState.value, DaemonConnectionState.failed);
+      expect(accepted, isNotEmpty);
+    },
+  );
+
+  test(
+    'connectTimeout recovers automatically from a hung auth.authenticate',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(milliseconds: 120),
+      );
+      addTearDown(client.dispose);
+
+      await client.connect();
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
+
+      server.authDelay = const Duration(seconds: 5);
+      await server.kick();
+      await waitFor(() => server.authRequests == 2);
+
+      // Once the network recovers, the timed-out attempt tears down and the
+      // next backoff retry lands automatically without manual intervention.
+      server.authDelay = Duration.zero;
+      await waitFor(
+        () =>
+            client.connState.value == DaemonConnectionState.connected &&
+            resyncCount == 1,
+      );
+    },
+  );
+
+  test(
+    'verifyLiveness does not hang when closing a dead channel never completes',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+
+      int attempts = 0;
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        livenessProbeTimeout: const Duration(milliseconds: 100),
+        channelFactory: (Uri uri) {
+          attempts++;
+          final DaemonFrameChannel real = connectWebSocketFrameChannel(
+            uri,
+            connectTimeout: const Duration(seconds: 5),
+          );
+          if (attempts == 1) {
+            return _UnclosableFrameChannel(real);
+          }
+          return real;
+        },
+      );
+      addTearDown(client.dispose);
+
+      await client.connect();
+      int resyncCount = 0;
+      final StreamSubscription<void> resyncSub = client.resynced.listen(
+        (void _) => resyncCount++,
+      );
+      addTearDown(resyncSub.cancel);
+
+      server.daemonInfoDelay = const Duration(seconds: 5);
+      server.silent = true;
+      await client.verifyLiveness();
+      expect(client.connState.value, DaemonConnectionState.reconnecting);
+
+      server.daemonInfoDelay = Duration.zero;
+      server.silent = false;
+      await waitFor(
+        () =>
+            client.connState.value == DaemonConnectionState.connected &&
+            resyncCount == 1,
+      );
+    },
+  );
+
+  test(
+    'in-flight connect caller follows a retryNow replacement attempt',
+    () async {
+      final TestDaemonServer server = await TestDaemonServer.start();
+      addTearDown(server.close);
+
+      final Completer<void> stalledReady = Completer<void>();
+      int attempts = 0;
+      final WsDaemonClient client = WsDaemonClient(
+        url: server.url,
+        token: 'secret',
+        reconnectBase: const Duration(milliseconds: 20),
+        connectTimeout: const Duration(seconds: 30),
+        channelFactory: (Uri uri) {
+          attempts++;
+          if (attempts == 1) {
+            return _StalledFrameChannel(ready: stalledReady.future);
+          }
+          return connectWebSocketFrameChannel(
+            uri,
+            connectTimeout: const Duration(seconds: 5),
+          );
+        },
+      );
+      addTearDown(client.dispose);
+
+      final Future<void> initialConnect = client.connect();
+      await waitFor(() => attempts == 1);
+
+      client.retryNow();
+      await initialConnect;
+      expect(client.isConnected, isTrue);
+      expect(attempts, 2);
+    },
+  );
+}
+
+class _StalledFrameChannel implements DaemonFrameChannel {
+  _StalledFrameChannel({required this.ready, this.onClose});
+
+  @override
+  final Future<void> ready;
+  final void Function()? onClose;
+  final StreamController<Object?> _stream = StreamController<Object?>();
+
+  @override
+  Stream<Object?> get stream => _stream.stream;
+
+  @override
+  void add(Object? data) {}
+
+  @override
+  Future<void> close() async {
+    onClose?.call();
+    if (!_stream.isClosed) unawaited(_stream.close());
+  }
+}
+
+class _UnclosableFrameChannel implements DaemonFrameChannel {
+  _UnclosableFrameChannel(this._inner);
+
+  final DaemonFrameChannel _inner;
+
+  @override
+  Future<void> get ready => _inner.ready;
+
+  @override
+  Stream<Object?> get stream => _inner.stream;
+
+  @override
+  void add(Object? data) => _inner.add(data);
+
+  @override
+  Future<void> close() {
+    // Simulate a half-dead socket whose close handshake never completes.
+    unawaited(_inner.close());
+    return Completer<void>().future;
+  }
 }

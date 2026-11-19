@@ -428,12 +428,11 @@ class AppData {
     git = GitStore(clientFor: this.clientFor);
     notes = NotesStore(
       clientFor: this.clientFor,
-      canLoad: (String daemonId) => switch (this.connections.statusOf(
-        daemonId,
-      )) {
-        ConnectionStatus.connected || ConnectionStatus.disconnected => true,
-        _ => false,
-      },
+      canLoad: (String daemonId) =>
+          switch (this.connections.statusOf(daemonId)) {
+            ConnectionStatus.connected || ConnectionStatus.disconnected => true,
+            _ => false,
+          },
     );
     mcp = McpStore(clientFor: this.clientFor);
     daemonConfig = DaemonConfigStore(clientFor: this.clientFor);
@@ -542,11 +541,13 @@ class AppData {
   /// returning rather than treating "started" as "ready".
   Future<void> connectAll() async {
     if (_fallbackClientFor != null) return;
+    final List<Future<void>> pending = <Future<void>>[];
     for (final DaemonEndpoint endpoint in connections.activeEndpoints) {
       if (_clients.containsKey(endpoint.id)) continue;
       _connectedEndpointIds.add(endpoint.id);
-      await _connectQuietly(endpoint.id);
+      pending.add(_connectQuietly(endpoint.id));
     }
+    await Future.wait<void>(pending);
   }
 
   void _onNotesConnectionsChanged() {
