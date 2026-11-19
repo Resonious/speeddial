@@ -451,7 +451,10 @@ Selections are exact option labels; a free-text answer has an empty selection an
 Empty selection and note leave a question unanswered. Invalid answers return `-32602`
 and leave the request pending. Question resolution uses `answer`, `dismiss`, or `expired`
 in `permissionResolved.optionId`. Ante questions expire on TurnResume/TurnEnd; ordinary
-cancellation and process failure also invalidate pending requests.
+cancellation and process failure also invalidate pending requests. ACP agents ask through
+form `elicitation/create` (e.g. Antigravity's `ask_question`): each choice or text field
+becomes a question, a `<field>_other` companion receives the note, and the question
+expires when the turn ends or is cancelled.
 
 ## Methods
 

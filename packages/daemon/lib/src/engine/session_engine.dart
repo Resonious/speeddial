@@ -1180,6 +1180,24 @@ class SessionEngine {
       String requestTitle,
       List<PermissionOptionData> options,
     ) => _onPermissionRequest(session.id, toolCallId, requestTitle, options);
+    Future<String> questionHandler(
+      String? toolCallId,
+      List<UserQuestion> questions,
+      Future<void> expired,
+    ) => _onPermissionRequest(
+      session.id,
+      toolCallId,
+      'Answer the agent',
+      const <PermissionOptionData>[
+        PermissionOptionData(
+          optionId: 'dismiss',
+          name: 'Skip questions',
+          kind: 'reject_once',
+        ),
+      ],
+      questions: questions,
+      expired: expired,
+    );
     final List<String> command = spec.commandFor(yolo: session.yolo);
     return switch (spec.protocol) {
       ProviderProtocol.acp => AcpClient.spawn(
@@ -1188,6 +1206,7 @@ class SessionEngine {
         environment: environment,
         systemPromptAppend: spec.systemPromptAppend,
         requestPermission: permissionHandler,
+        requestQuestions: questionHandler,
         readTextFile: (providerSessionId, path) =>
             _readTextFile(session.id, path),
         writeTextFile: (providerSessionId, path, content) =>
@@ -1208,20 +1227,7 @@ class SessionEngine {
         environment: environment,
         requestPermission: permissionHandler,
         onTurnStarted: (turnId) => _store.recordAnteTurn(session.id, turnId),
-        requestQuestions: (toolId, questions, expired) => _onPermissionRequest(
-          session.id,
-          toolId,
-          'Answer the agent',
-          const <PermissionOptionData>[
-            PermissionOptionData(
-              optionId: 'dismiss',
-              name: 'Skip questions',
-              kind: 'reject_once',
-            ),
-          ],
-          questions: questions,
-          expired: expired,
-        ),
+        requestQuestions: questionHandler,
       ),
     };
   }

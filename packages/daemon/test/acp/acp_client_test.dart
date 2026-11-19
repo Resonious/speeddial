@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:speeddial_daemon/src/acp/acp_client.dart';
 import 'package:speeddial_daemon/src/acp/acp_types.dart';
 import 'package:speeddial_daemon/src/agents/agent_client.dart';
+import 'package:speeddial_protocol/speeddial_protocol.dart';
 import 'package:test/test.dart';
 
 /// Resolves the fake agent fixture whether the test runner's cwd is the
@@ -32,6 +33,7 @@ AcpClient spawnClient({
   String? targetPath,
   String? cwd,
   AgentPermissionHandler? requestPermission,
+  AgentQuestionHandler? requestQuestions,
   AcpReadTextFileHandler? readTextFile,
   AcpWriteTextFileHandler? writeTextFile,
 }) {
@@ -40,6 +42,7 @@ AcpClient spawnClient({
     cwd: cwd ?? Directory.current.path,
     environment: <String, String>{'FAKE_ACP_TARGET': ?targetPath},
     requestPermission: requestPermission,
+    requestQuestions: requestQuestions,
     readTextFile: readTextFile,
     writeTextFile: writeTextFile,
   );
@@ -282,6 +285,115 @@ void main() {
       expect(readCalls.single.$2, targetPath);
     },
   );
+
+  group('form elicitation', () {
+    Future<Object?> ask(AcpClient client) async {
+      addTearDown(client.dispose);
+      await client.initialized;
+      final session = await client.newSession(cwd: tempDir.path);
+      final result = await client
+          .prompt(session.sessionId, textBlocks('ask'))
+          .timeout(const Duration(seconds: 5));
+      expect(result.stopReason, 'end_turn');
+      final file = File(p.join(tempDir.path, 'agent.elicitation.json'));
+      return file.existsSync() ? jsonDecode(file.readAsStringSync()) : null;
+    }
+
+    test('presents questions and accepts the answers', () async {
+      String? toolCallId;
+      List<UserQuestion>? asked;
+      final response = await ask(
+        spawnClient(
+          cwd: tempDir.path,
+          requestQuestions: (id, questions, expired) async {
+            toolCallId = id;
+            asked = questions;
+            return jsonEncode(<String, Object?>{
+              'Answered': <Object?>[
+                const UserQuestionAnswer(
+                  selected: <String>['Blue'],
+                  note: 'teal',
+                ).toJson(),
+                const UserQuestionAnswer(selected: <String>['Cats', 'Dogs'])
+                    .toJson(),
+              ],
+            });
+          },
+        ),
+      );
+      expect(toolCallId, 'ask1');
+      expect(asked!.map((q) => q.toJson()).toList(), <Object?>[
+        const UserQuestion(
+          header: 'Question 1',
+          question: 'Which color?',
+          options: <UserQuestionOption>[
+            UserQuestionOption(label: 'Red', description: ''),
+            UserQuestionOption(label: 'Blue', description: ''),
+          ],
+        ).toJson(),
+        const UserQuestion(
+          header: 'Question 2',
+          question: 'Which pets?',
+          multiSelect: true,
+          options: <UserQuestionOption>[
+            UserQuestionOption(label: 'Cats', description: ''),
+            UserQuestionOption(label: 'Dogs', description: ''),
+          ],
+        ).toJson(),
+      ]);
+      expect(response, <String, Object?>{
+        'action': 'accept',
+        'content': <String, Object?>{
+          'q1': '2',
+          'q1_other': 'teal',
+          'q2': <Object?>['1', '2'],
+        },
+      });
+    });
+
+    test('declines dismissed questions', () async {
+      final response = await ask(
+        spawnClient(
+          cwd: tempDir.path,
+          requestQuestions: (_, _, _) async => jsonEncode('Dismissed'),
+        ),
+      );
+      expect(response, <String, Object?>{'action': 'decline'});
+    });
+
+    test('cancelling the turn cancels and expires the question', () async {
+      final asked = Completer<Future<void>>();
+      final client = spawnClient(
+        cwd: tempDir.path,
+        requestQuestions: (_, _, expired) {
+          asked.complete(expired);
+          return Completer<String>().future; // Never answered by the user.
+        },
+      );
+      addTearDown(client.dispose);
+      await client.initialized;
+      final session = await client.newSession(cwd: tempDir.path);
+      final turn = client.prompt(session.sessionId, textBlocks('ask'));
+      final expired = await asked.future.timeout(const Duration(seconds: 5));
+      await client.cancel(session.sessionId);
+      await expired.timeout(const Duration(seconds: 3));
+      expect(
+        (await turn.timeout(const Duration(seconds: 3))).stopReason,
+        'cancelled',
+      );
+      final file = File(p.join(tempDir.path, 'agent.elicitation.json'));
+      for (var i = 0; i < 100 && !file.existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(jsonDecode(file.readAsStringSync()), <String, Object?>{
+        'action': 'cancel',
+      });
+    });
+
+    test('is not advertised without a question handler', () async {
+      expect(await ask(spawnClient(cwd: tempDir.path)), isNull);
+    });
+  });
 
   test('answers string-ID file and permission requests', () async {
     File(p.join(tempDir.path, 'agent.string_ids')).writeAsStringSync('');

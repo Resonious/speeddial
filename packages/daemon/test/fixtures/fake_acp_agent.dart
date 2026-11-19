@@ -37,6 +37,11 @@
 //       - "hang": sends nothing and never resolves the turn.
 //       - "hold": sends nothing until `<cwd>/agent.release` appears, then
 //         deletes it and resolves `end_turn`.
+//       - "ask": like Antigravity's ask_question, sends a form
+//         `elicitation/create` (single select + `_other`, multi select) when
+//         the client advertised `elicitation.form`, records the response to
+//         `<cwd>/agent.elicitation.json`, then resolves `end_turn`. Without
+//         the capability it resolves `end_turn` without asking.
 //   * `session/cancel` (notification) resolves any pending prompt with
 //     `cancelled`.
 //   * `_session/steering` is advertised (`_meta.steering.supported`) only
@@ -74,6 +79,9 @@ String _thinkingCurrent = 'auto';
 /// The fake's in-memory current model, reported as the model config
 /// option's currentValue and updated by `session/set_config_option`.
 String _modelCurrent = 'fake-fast';
+
+/// Whether the client advertised form elicitation at `initialize`.
+bool _clientElicitsForms = false;
 
 /// Whether the model config option is advertised; set once at `initialize`
 /// from the `<cwd>/agent.no_model` marker.
@@ -226,6 +234,10 @@ Future<void> _dispatch(Map<String, Object?> message, String targetPath) async {
 
   switch (method) {
     case 'initialize':
+      final Object? capabilities = params(message)['clientCapabilities'];
+      final Object? elicitation =
+          capabilities is Map ? capabilities['elicitation'] : null;
+      _clientElicitsForms = elicitation is Map && elicitation['form'] is Map;
       _modelEnabled = !File('${Directory.current.path}/agent.no_model')
           .existsSync();
       _thinkingEnabled = !File('${Directory.current.path}/agent.no_thinking')
@@ -682,6 +694,53 @@ Future<void> _runTurn(
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     exit(0);
+  }
+  if (text == 'ask') {
+    if (_clientElicitsForms) {
+      Object response;
+      try {
+        response = await _request('elicitation/create', <String, Object?>{
+          'sessionId': sessionId,
+          'toolCallId': 'ask1',
+          'mode': 'form',
+          'message': 'The agent has 2 questions.',
+          'requestedSchema': <String, Object?>{
+            'type': 'object',
+            'properties': <String, Object?>{
+              'q1': <String, Object?>{
+                'type': 'string',
+                'title': 'Which color?',
+                'oneOf': <Object?>[
+                  <String, Object?>{'const': '1', 'title': 'Red'},
+                  <String, Object?>{'const': '2', 'title': 'Blue'},
+                ],
+              },
+              'q1_other': <String, Object?>{
+                'type': 'string',
+                'title': 'Other',
+                'description': 'Optional free-form answer to: Which color?',
+              },
+              'q2': <String, Object?>{
+                'type': 'array',
+                'title': 'Which pets?',
+                'items': <String, Object?>{
+                  'anyOf': <Object?>[
+                    <String, Object?>{'const': '1', 'title': 'Cats'},
+                    <String, Object?>{'const': '2', 'title': 'Dogs'},
+                  ],
+                },
+              },
+            },
+          },
+        });
+      } on StateError catch (error) {
+        response = <String, Object?>{'error': '$error'};
+      }
+      File(
+        p.join(Directory.current.path, 'agent.elicitation.json'),
+      ).writeAsStringSync(jsonEncode(response));
+    }
+    return _resolvePrompt(promptId, 'end_turn');
   }
   if (text == 'weird') {
     // Unknown update variant: the client must drop it without crashing.

@@ -3,8 +3,8 @@
 /// Talks to an agent process over newline-delimited JSON-RPC 2.0 on its
 /// stdio streams. The client performs the `initialize` handshake, creates
 /// sessions, drives prompt turns, and delegates agent-to-client requests
-/// (`session/request_permission`, `fs/read_text_file`, `fs/write_text_file`)
-/// to the handlers supplied at spawn time.
+/// (`session/request_permission`, `elicitation/create`, `fs/read_text_file`,
+/// `fs/write_text_file`) to the handlers supplied at spawn time.
 library;
 
 import 'dart:async';
@@ -13,6 +13,7 @@ import 'dart:io';
 
 import 'package:speeddial_protocol/speeddial_protocol.dart';
 
+import 'acp_elicitation.dart';
 import 'acp_types.dart';
 import '../agents/agent_client.dart';
 
@@ -82,6 +83,19 @@ class _PendingPermission {
   bool responded = false;
 }
 
+/// An `elicitation/create` request from the agent that has not yet been
+/// answered.
+class _PendingElicitation {
+  _PendingElicitation(this.sessionId);
+
+  final String sessionId;
+
+  /// Completed when the request is answered on the user's behalf (turn
+  /// cancelled or ended), which clears the question from the UI.
+  final Completer<void> expired = Completer<void>();
+  bool responded = false;
+}
+
 /// Client for an ACP v1 agent subprocess.
 ///
 /// Use [spawn] to launch an agent executable and drive it. All methods throw
@@ -95,6 +109,7 @@ class AcpClient implements AgentClient {
     String? systemPromptAppend,
     this.initTimeout = const Duration(seconds: 30),
     AgentPermissionHandler? requestPermission,
+    AgentQuestionHandler? requestQuestions,
     AcpReadTextFileHandler? readTextFile,
     AcpWriteTextFileHandler? writeTextFile,
     AcpBusyWaitHandler? busyWaitChanged,
@@ -112,6 +127,7 @@ class AcpClient implements AgentClient {
                },
              },
        _permissionHandler = requestPermission,
+       _questionHandler = requestQuestions,
        _readTextFileHandler = readTextFile,
        _writeTextFileHandler = writeTextFile,
        // ignore: prefer_initializing_formals — public API name
@@ -127,6 +143,7 @@ class AcpClient implements AgentClient {
   final Map<String, Completer<void>> _promptCancellations =
       <String, Completer<void>>{};
   final AgentPermissionHandler? _permissionHandler;
+  final AgentQuestionHandler? _questionHandler;
   final AcpReadTextFileHandler? _readTextFileHandler;
   final AcpWriteTextFileHandler? _writeTextFileHandler;
   final AcpBusyWaitHandler? _busyWaitChanged;
@@ -136,6 +153,8 @@ class AcpClient implements AgentClient {
   final Map<int, _PendingRequest> _pendingRequests = <int, _PendingRequest>{};
   final Map<Object, _PendingPermission> _pendingPermissions =
       <Object, _PendingPermission>{};
+  final Map<Object, _PendingElicitation> _pendingElicitations =
+      <Object, _PendingElicitation>{};
   final Map<String, StreamController<AcpSessionUpdate>> _sessionStreams =
       <String, StreamController<AcpSessionUpdate>>{};
   final Map<String, Set<String>> _sessionModeIds = <String, Set<String>>{};
@@ -216,6 +235,7 @@ class AcpClient implements AgentClient {
     }
     _pendingRequests.clear();
     _pendingPermissions.clear();
+    _expireElicitations(null);
     _sessionModeIds.clear();
     for (final controller in _sessionStreams.values) {
       if (!controller.isClosed) controller.close();
@@ -297,6 +317,9 @@ class AcpClient implements AgentClient {
         return;
       case 'session/request_permission':
         await _handlePermissionRequest(id, params);
+        return;
+      case 'elicitation/create':
+        await _handleElicitation(id, params);
         return;
       case 'fs/read_text_file':
         await _handleReadTextFile(id, params);
@@ -404,6 +427,92 @@ class AcpClient implements AgentClient {
     }
   }
 
+  /// Presents a form elicitation (Antigravity's `ask_question`) as provider
+  /// questions and answers with `accept`, `decline`, or `cancel`.
+  Future<void> _handleElicitation(
+    Object? id,
+    Map<String, Object?> params,
+  ) async {
+    if (id == null) return;
+    final handler = _questionHandler;
+    if (handler == null) {
+      await _sendResponseError(
+        id,
+        -32601,
+        'Method not found: elicitation/create',
+      );
+      return;
+    }
+    final AcpElicitationForm? form = params['mode'] == 'form'
+        ? AcpElicitationForm.parse(params['requestedSchema'])
+        : null;
+    if (form == null) {
+      await _sendResponseError(id, -32602, 'Unsupported elicitation request');
+      return;
+    }
+    final pending = _PendingElicitation(params['sessionId'] as String? ?? '');
+    _pendingElicitations[id] = pending;
+    Map<String, Object?> result;
+    try {
+      // Agent requests are handled in wire order, so stop waiting once the
+      // question expires or the read loop would stall behind it.
+      final String reply = await Future.any(<Future<String>>[
+        handler(
+          params['toolCallId'] as String?,
+          form.questions,
+          pending.expired.future,
+        ),
+        pending.expired.future.then((_) => jsonEncode('Dismissed')),
+      ]);
+      final Object? decoded = jsonDecode(reply);
+      final Object? answered = decoded is Map ? decoded['Answered'] : null;
+      result = answered is List
+          ? <String, Object?>{
+              'action': 'accept',
+              'content': form.content(<UserQuestionAnswer>[
+                for (final answer in answered)
+                  UserQuestionAnswer.fromJson(
+                    Map<String, Object?>.from(answer as Map),
+                  ),
+              ]),
+            }
+          : const <String, Object?>{'action': 'decline'};
+    } on Object {
+      if (pending.responded) return;
+      pending.responded = true;
+      _pendingElicitations.remove(id);
+      try {
+        await _sendResponseError(id, -32603, 'Elicitation handler failed');
+      } on Object {
+        // Agent process is gone; nothing left to report to.
+      }
+      return;
+    }
+    if (pending.responded) return;
+    pending.responded = true;
+    _pendingElicitations.remove(id);
+    await _sendResponse(id, result);
+  }
+
+  /// Answers [sessionId]'s pending elicitations (all when null) with
+  /// `cancel` and clears them from the UI.
+  void _expireElicitations(String? sessionId) {
+    for (final entry in _pendingElicitations.entries.toList()) {
+      final pending = entry.value;
+      if (sessionId != null && pending.sessionId != sessionId) continue;
+      _pendingElicitations.remove(entry.key);
+      if (!pending.expired.isCompleted) pending.expired.complete();
+      if (pending.responded) continue;
+      pending.responded = true;
+      if (_exited || _disposed) continue;
+      unawaited(
+        _sendResponse(entry.key, const <String, Object?>{
+          'action': 'cancel',
+        }).catchError((Object _) {}),
+      );
+    }
+  }
+
   Future<void> _handleReadTextFile(
     Object? id,
     Map<String, Object?> params,
@@ -459,6 +568,8 @@ class AcpClient implements AgentClient {
       'clientCapabilities': <String, Object?>{
         'fs': <String, Object?>{'readTextFile': true, 'writeTextFile': true},
         'terminal': false,
+        if (_questionHandler != null)
+          'elicitation': <String, Object?>{'form': <String, Object?>{}},
       },
       'clientInfo': <String, Object?>{
         'name': 'speeddial',
@@ -675,6 +786,7 @@ class AcpClient implements AgentClient {
     } finally {
       setBusyWaiting(false);
       _promptCancellations.remove(sessionId);
+      _expireElicitations(sessionId);
     }
   }
 
@@ -686,6 +798,7 @@ class AcpClient implements AgentClient {
   Future<void> cancel(String sessionId) async {
     final cancelled = _promptCancellations[sessionId];
     if (cancelled != null && !cancelled.isCompleted) cancelled.complete();
+    _expireElicitations(sessionId);
     // Answer pending permission requests first so the agent cannot hang.
     final pending = _pendingPermissions.entries.toList();
     for (final entry in pending) {
@@ -865,6 +978,7 @@ class AcpClient implements AgentClient {
     }
     _pendingRequests.clear();
     _pendingPermissions.clear();
+    _expireElicitations(null);
     _sessionModeIds.clear();
     for (final controller in _sessionStreams.values) {
       if (!controller.isClosed) controller.close();

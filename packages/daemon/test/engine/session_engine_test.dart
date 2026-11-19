@@ -2389,6 +2389,70 @@ void main() {
     },
   );
 
+  test('ACP form elicitations become questions, even in yolo', () async {
+    final session = await engine.createSession(
+      projectId: 'p1',
+      providerId: 'fake',
+      yolo: true,
+    );
+    await engine.sendMessage(session.id, 'ask');
+    await waitFor(
+      () => store
+          .listEvents(session.id)
+          .events
+          .whereType<PermissionRequestEvent>()
+          .isNotEmpty,
+    );
+    final request = store
+        .listEvents(session.id)
+        .events
+        .whereType<PermissionRequestEvent>()
+        .single
+        .request;
+    expect(request.toolCallId, 'ask1');
+    expect(request.questions.map((q) => q.question), [
+      'Which color?',
+      'Which pets?',
+    ]);
+    expect(
+      store.getSession(session.id)!.status,
+      SessionStatus.waitingPermission,
+    );
+    await engine.respondPermission(
+      session.id,
+      request.requestId,
+      'answer',
+      answers: const [
+        UserQuestionAnswer(selected: [], note: 'Green'),
+        UserQuestionAnswer(selected: ['Dogs']),
+      ],
+    );
+    await waitFor(
+      () => store.getSession(session.id)!.status == SessionStatus.idle,
+    );
+    expect(
+      store
+          .listEvents(session.id)
+          .events
+          .whereType<PermissionResolvedEvent>()
+          .single
+          .optionId,
+      'answer',
+    );
+    expect(
+      jsonDecode(
+        File(p.join(tempDir.path, 'agent.elicitation.json')).readAsStringSync(),
+      ),
+      {
+        'action': 'accept',
+        'content': {
+          'q1_other': 'Green',
+          'q2': ['2'],
+        },
+      },
+    );
+  });
+
   test('createSession spawns an idle session and persists it', () async {
     final session = await engine.createSession(
       projectId: 'p1',

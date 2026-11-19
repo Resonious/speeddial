@@ -72,7 +72,12 @@ lib/src/acp/        ACP (Agent Client Protocol) client over newline-delimited JS
                     agent_message_chunk, agent_thought_chunk, tool_call, tool_call_update,
                     plan, available_commands_update, current_mode_update, usage_update);
                     agent→client requests: session/request_permission, fs/read_text_file,
-                    fs/write_text_file (sandboxed to the session cwd; terminal/* → error).
+                    fs/write_text_file (sandboxed to the session cwd; terminal/* → error),
+                    elicitation/create (form mode only, advertised as the
+                    `elicitation.form` client capability; `acp_elicitation.dart` maps
+                    choice/text properties and `<key>_other` companions to provider
+                    questions — Antigravity's ask_question uses it and silently skips the
+                    question when the capability is missing).
                     Agent request IDs (strings or integers) are echoed unchanged in
                     success, error, and cancellation responses.
                     Session creation/resume uses existing provider credentials; advertised

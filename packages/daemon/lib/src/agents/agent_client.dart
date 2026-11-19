@@ -12,7 +12,7 @@ typedef AgentPermissionHandler = Future<String> Function(
 
 /// Returns an encoded provider question reply. Expiration clears the UI prompt.
 typedef AgentQuestionHandler = Future<String> Function(
-  String toolCallId,
+  String? toolCallId,
   List<UserQuestion> questions,
   Future<void> expired,
 );
